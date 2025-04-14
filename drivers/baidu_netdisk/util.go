@@ -79,6 +79,12 @@ func (d *BaiduNetdisk) request(furl string, method string, callback base.ReqCall
 					return retry.Unrecoverable(err2)
 				}
 			}
+
+			if 31023 == errno && d.DownloadAPI == "crack_video" {
+				result = res.Body()
+				return nil
+			}
+
 			return fmt.Errorf("req: [%s] ,errno: %d, refer to https://pan.baidu.com/union/doc/", furl, errno)
 		}
 		result = res.Body()
@@ -131,7 +137,16 @@ func (d *BaiduNetdisk) getFiles(dir string) ([]File, error) {
 		if len(resp.List) == 0 {
 			break
 		}
-		res = append(res, resp.List...)
+
+		if d.OnlyListVideoFile {
+			for _, file := range resp.List {
+				if file.Isdir == 1 || file.Category == 1 {
+					res = append(res, file)
+				}
+			}
+		} else {
+			res = append(res, resp.List...)
+		}
 	}
 	return res, nil
 }
@@ -181,6 +196,34 @@ func (d *BaiduNetdisk) linkCrack(file model.Obj, _ model.LinkArgs) (*model.Link,
 
 	return &model.Link{
 		URL: resp.Info[0].Dlink,
+		Header: http.Header{
+			"User-Agent": []string{d.CustomCrackUA},
+		},
+	}, nil
+}
+
+func (d *BaiduNetdisk) linkCrackVideo(file model.Obj, _ model.LinkArgs) (*model.Link, error) {
+	param := map[string]string{
+		"type":       "VideoURL",
+		"path":       fmt.Sprintf("%s", file.GetPath()),
+		"fs_id":      file.GetID(),
+		"devuid":     "0%1",
+		"clienttype": "1",
+		"channel":    "android_15_25010PN30C_bd-netdisk_1523a",
+		"nom3u8":     "1",
+		"dlink":      "1",
+		"media":      "1",
+		"origin":     "dlna",
+	}
+	resp, err := d.request("https://pan.baidu.com/api/mediainfo", http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(param)
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.Link{
+		URL: utils.Json.Get(resp, "info", "dlink").ToString(),
 		Header: http.Header{
 			"User-Agent": []string{d.CustomCrackUA},
 		},

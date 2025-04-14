@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"net/http"
 	stdpath "path"
 	"strconv"
 	"strings"
@@ -129,15 +128,16 @@ func localProxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange boo
 	if proxyRange {
 		common.ProxyRange(link, file.GetSize())
 	}
+	Writer := &common.WrittenResponseWriter{ResponseWriter: c.Writer}
 
 	//优先处理md文件
 	if utils.Ext(file.GetName()) == "md" && setting.GetBool(conf.FilterReadMeScripts) {
-		w := c.Writer
 		buf := bytes.NewBuffer(make([]byte, 0, file.GetSize()))
-		err = common.Proxy(&proxyResponseWriter{ResponseWriter: w, Writer: buf}, c.Request, link, file)
+		w := &common.InterceptResponseWriter{ResponseWriter: Writer, Writer: buf}
+		err = common.Proxy(w, c.Request, link, file)
 		if err == nil && buf.Len() > 0 {
-			if w.Status() < 200 || w.Status() > 300 {
-				w.Write(buf.Bytes())
+			if c.Writer.Status() < 200 || c.Writer.Status() > 300 {
+				c.Writer.Write(buf.Bytes())
 				return
 			}
 
@@ -148,18 +148,22 @@ func localProxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange boo
 				buf.Reset()
 				err = bluemonday.UGCPolicy().SanitizeReaderToWriter(&html, buf)
 				if err == nil {
-					w.Header().Set("Content-Length", strconv.FormatInt(int64(buf.Len()), 10))
-					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-					_, err = utils.CopyWithBuffer(c.Writer, buf)
+					Writer.Header().Set("Content-Length", strconv.FormatInt(int64(buf.Len()), 10))
+					Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+					_, err = utils.CopyWithBuffer(Writer, buf)
 				}
 			}
 		}
 	} else {
-		err = common.Proxy(c.Writer, c.Request, link, file)
+		err = common.Proxy(Writer, c.Request, link, file)
 	}
-	if err != nil {
-		common.ErrorResp(c, err, 500, true)
+	if err == nil {
 		return
+	}
+	if Writer.IsWritten() {
+		log.Errorf("%s %s local proxy error: %+v", c.Request.Method, c.Request.URL.Path, err)
+	} else {
+		common.ErrorResp(c, err, 500, true)
 	}
 }
 
@@ -181,13 +185,4 @@ func canProxy(storage driver.Driver, filename string) bool {
 		return true
 	}
 	return false
-}
-
-type proxyResponseWriter struct {
-	http.ResponseWriter
-	io.Writer
-}
-
-func (pw *proxyResponseWriter) Write(p []byte) (int, error) {
-	return pw.Writer.Write(p)
 }

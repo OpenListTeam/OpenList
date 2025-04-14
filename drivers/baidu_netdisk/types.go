@@ -17,7 +17,7 @@ type TokenErrResp struct {
 type File struct {
 	//TkbindId     int    `json:"tkbind_id"`
 	//OwnerType    int    `json:"owner_type"`
-	//Category     int    `json:"category"`
+	Category int `json:"category"`
 	//RealCategory string `json:"real_category"`
 	FsId int64 `json:"fs_id"`
 	//OperId      int   `json:"oper_id"`

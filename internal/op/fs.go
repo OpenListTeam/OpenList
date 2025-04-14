@@ -3,12 +3,14 @@ package op
 import (
 	"context"
 	stdpath "path"
+	"slices"
 	"time"
 
 	"github.com/Xhofe/go-cache"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
+	"github.com/alist-org/alist/v3/internal/stream"
 	"github.com/alist-org/alist/v3/pkg/generic_sync"
 	"github.com/alist-org/alist/v3/pkg/singleflight"
 	"github.com/alist-org/alist/v3/pkg/utils"
@@ -25,6 +27,12 @@ func updateCacheObj(storage driver.Driver, path string, oldObj model.Obj, newObj
 	key := Key(storage, path)
 	objs, ok := listCache.Get(key)
 	if ok {
+		for i, obj := range objs {
+			if obj.GetName() == newObj.GetName() {
+				objs = slices.Delete(objs, i, i+1)
+				break
+			}
+		}
 		for i, obj := range objs {
 			if obj.GetName() == oldObj.GetName() {
 				objs[i] = newObj
@@ -510,6 +518,12 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			log.Errorf("failed to close file streamer, %v", err)
 		}
 	}()
+	// UrlTree PUT
+	if storage.GetStorage().Driver == "UrlTree" {
+		var link string
+		dstDirPath, link = urlTreeSplitLineFormPath(stdpath.Join(dstDirPath, file.GetName()))
+		file = &stream.FileStream{Obj: &model.Object{Name: link}}
+	}
 	// if file exist and size = 0, delete it
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	dstPath := stdpath.Join(dstDirPath, file.GetName())

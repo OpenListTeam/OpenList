@@ -17,34 +17,32 @@ import (
 )
 
 var AndroidAlgorithms = []string{
-	"7xOq4Z8s",
-	"QE9/9+IQco",
-	"WdX5J9CPLZp",
-	"NmQ5qFAXqH3w984cYhMeC5TJR8j",
-	"cc44M+l7GDhav",
-	"KxGjo/wHB+Yx8Lf7kMP+/m9I+",
-	"wla81BUVSmDkctHDpUT",
-	"c6wMr1sm1WxiR3i8LDAm3W",
-	"hRLrEQCFNYi0PFPV",
-	"o1J41zIraDtJPNuhBu7Ifb/q3",
-	"U",
-	"RrbZvV0CTu3gaZJ56PVKki4IeP",
-	"NNuRbLckJqUp1Do0YlrKCUP",
-	"UUwnBbipMTvInA0U0E9",
-	"VzGc",
+	"SOP04dGzk0TNO7t7t9ekDbAmx+eq0OI1ovEx",
+	"nVBjhYiND4hZ2NCGyV5beamIr7k6ifAsAbl",
+	"Ddjpt5B/Cit6EDq2a6cXgxY9lkEIOw4yC1GDF28KrA",
+	"VVCogcmSNIVvgV6U+AochorydiSymi68YVNGiz",
+	"u5ujk5sM62gpJOsB/1Gu/zsfgfZO",
+	"dXYIiBOAHZgzSruaQ2Nhrqc2im",
+	"z5jUTBSIpBN9g4qSJGlidNAutX6",
+	"KJE2oveZ34du/g1tiimm",
 }
 
 var WebAlgorithms = []string{
-	"fyZ4+p77W1U4zcWBUwefAIFhFxvADWtT1wzolCxhg9q7etmGUjXr",
-	"uSUX02HYJ1IkyLdhINEFcCf7l2",
-	"iWt97bqD/qvjIaPXB2Ja5rsBWtQtBZZmaHH2rMR41",
-	"3binT1s/5a1pu3fGsN",
-	"8YCCU+AIr7pg+yd7CkQEY16lDMwi8Rh4WNp5",
-	"DYS3StqnAEKdGddRP8CJrxUSFh",
-	"crquW+4",
-	"ryKqvW9B9hly+JAymXCIfag5Z",
-	"Hr08T/NDTX1oSJfHk90c",
-	"i",
+	"C9qPpZLN8ucRTaTiUMWYS9cQvWOE",
+	"+r6CQVxjzJV6LCV",
+	"F",
+	"pFJRC",
+	"9WXYIDGrwTCz2OiVlgZa90qpECPD6olt",
+	"/750aCr4lm/Sly/c",
+	"RB+DT/gZCrbV",
+	"",
+	"CyLsf7hdkIRxRm215hl",
+	"7xHvLi2tOYP0Y92b",
+	"ZGTXXxu8E/MIWaEDB+Sm/",
+	"1UI3",
+	"E7fP5Pfijd+7K+t6Tg/NhuLq0eEUVChpJSkrKxpO",
+	"ihtqpG6FMt65+Xk+tWUH2",
+	"NhXXU9rg4XXdzo7u5o",
 }
 
 var PCAlgorithms = []string{
@@ -63,17 +61,17 @@ var PCAlgorithms = []string{
 const (
 	AndroidClientID      = "YNxT9w7GMdWvEOKa"
 	AndroidClientSecret  = "dbw2OtmVEeuUvIptb1Coyg"
-	AndroidClientVersion = "1.49.3"
+	AndroidClientVersion = "1.53.2"
 	AndroidPackageName   = "com.pikcloud.pikpak"
-	AndroidSdkVersion    = "2.0.4.204101"
+	AndroidSdkVersion    = "2.0.6.206003"
 	WebClientID          = "YUMx5nI8ZU8Ap8pm"
 	WebClientSecret      = "dbw2OtmVEeuUvIptb1Coyg"
-	WebClientVersion     = "undefined"
-	WebPackageName       = "drive.mypikpak.com"
+	WebClientVersion     = "2.0.0"
+	WebPackageName       = "mypikpak.com"
 	WebSdkVersion        = "8.0.3"
 	PCClientID           = "YvtoWO6GNHiuCl7x"
 	PCClientSecret       = "1NIH5R1IEe2pAxZE3hv3uA"
-	PCClientVersion      = "undefined" // 2.5.6.4831
+	PCClientVersion      = "undefined" // 2.6.11.4955
 	PCPackageName        = "mypikpak.com"
 	PCSdkVersion         = "8.0.3"
 )

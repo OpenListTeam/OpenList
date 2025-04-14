@@ -2,19 +2,19 @@ package _139
 
 import (
 	"context"
-	"encoding/base64"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"path"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
+	streamPkg "github.com/alist-org/alist/v3/internal/stream"
 	"github.com/alist-org/alist/v3/pkg/cron"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/pkg/utils/random"
@@ -71,28 +71,29 @@ func (d *Yun139) Init(ctx context.Context) error {
 	default:
 		return errs.NotImplement
 	}
-	if d.ref != nil {
-		return nil
-	}
-	decode, err := base64.StdEncoding.DecodeString(d.Authorization)
-	if err != nil {
-		return err
-	}
-	decodeStr := string(decode)
-	splits := strings.Split(decodeStr, ":")
-	if len(splits) < 2 {
-		return fmt.Errorf("authorization is invalid, splits < 2")
-	}
-	d.Account = splits[1]
-	_, err = d.post("/orchestration/personalCloud/user/v1.0/qryUserExternInfo", base.Json{
-		"qryUserExternInfoReq": base.Json{
-			"commonAccountInfo": base.Json{
-				"account":     d.getAccount(),
-				"accountType": 1,
-			},
-		},
-	}, nil)
-	return err
+	// if d.ref != nil {
+	// 	return nil
+	// }
+	// decode, err := base64.StdEncoding.DecodeString(d.Authorization)
+	// if err != nil {
+	// 	return err
+	// }
+	// decodeStr := string(decode)
+	// splits := strings.Split(decodeStr, ":")
+	// if len(splits) < 2 {
+	// 	return fmt.Errorf("authorization is invalid, splits < 2")
+	// }
+	// d.Account = splits[1]
+	// _, err = d.post("/orchestration/personalCloud/user/v1.0/qryUserExternInfo", base.Json{
+	// 	"qryUserExternInfoReq": base.Json{
+	// 		"commonAccountInfo": base.Json{
+	// 			"account":     d.getAccount(),
+	// 			"accountType": 1,
+	// 		},
+	// 	},
+	// }, nil)
+	// return err
+	return nil
 }
 
 func (d *Yun139) InitReference(storage driver.Driver) error {
@@ -502,23 +503,15 @@ func (d *Yun139) Remove(ctx context.Context, obj model.Obj) error {
 	}
 }
 
-const (
-	_  = iota //ignore first value by assigning to blank identifier
-	KB = 1 << (10 * iota)
-	MB
-	GB
-	TB
-)
-
 func (d *Yun139) getPartSize(size int64) int64 {
 	if d.CustomUploadPartSize != 0 {
 		return d.CustomUploadPartSize
 	}
 	// 网盘对于分片数量存在上限
-	if size/GB > 30 {
-		return 512 * MB
+	if size/utils.GB > 30 {
+		return 512 * utils.MB
 	}
-	return 100 * MB
+	return 100 * utils.MB
 }
 
 func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
@@ -526,29 +519,28 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	case MetaPersonalNew:
 		var err error
 		fullHash := stream.GetHash().GetHash(utils.SHA256)
-		if len(fullHash) <= 0 {
-			tmpF, err := stream.CacheFullInTempFile()
-			if err != nil {
-				return err
-			}
-			fullHash, err = utils.HashFile(utils.SHA256, tmpF)
+		if len(fullHash) != utils.SHA256.Width {
+			_, fullHash, err = streamPkg.CacheFullInTempFileAndHash(stream, utils.SHA256)
 			if err != nil {
 				return err
 			}
 		}
 
-		partInfos := []PartInfo{}
-		var partSize = d.getPartSize(stream.GetSize())
-		part := (stream.GetSize() + partSize - 1) / partSize
-		if part == 0 {
+		size := stream.GetSize()
+		var partSize = d.getPartSize(size)
+		part := size / partSize
+		if size%partSize > 0 {
+			part++
+		} else if part == 0 {
 			part = 1
 		}
+		partInfos := make([]PartInfo, 0, part)
 		for i := int64(0); i < part; i++ {
 			if utils.IsCanceled(ctx) {
 				return ctx.Err()
 			}
 			start := i * partSize
-			byteSize := stream.GetSize() - start
+			byteSize := size - start
 			if byteSize > partSize {
 				byteSize = partSize
 			}
@@ -576,7 +568,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			"contentType":          "application/octet-stream",
 			"parallelUpload":       false,
 			"partInfos":            firstPartInfos,
-			"size":                 stream.GetSize(),
+			"size":                 size,
 			"parentFileId":         dstDir.GetID(),
 			"name":                 stream.GetName(),
 			"type":                 "file",
@@ -629,7 +621,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			}
 
 			// Progress
-			p := driver.NewProgress(stream.GetSize(), up)
+			p := driver.NewProgress(size, up)
 
 			rateLimited := driver.NewLimitedUploadStream(ctx, stream)
 			// 上传所有分片
@@ -740,14 +732,20 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				break
 			}
 		}
+		var reportSize int64
+		if d.ReportRealSize {
+			reportSize = stream.GetSize()
+		} else {
+			reportSize = 0
+		}
 		data := base.Json{
 			"manualRename": 2,
 			"operation":    0,
 			"fileCount":    1,
-			"totalSize":    0, // 去除上传大小限制
+			"totalSize":    reportSize,
 			"uploadContentList": []base.Json{{
 				"contentName": stream.GetName(),
-				"contentSize": 0, // 去除上传大小限制
+				"contentSize": reportSize,
 				// "digest": "5a3231986ce7a6b46e408612d385bafa"
 			}},
 			"parentCatalogID": dstDir.GetID(),
@@ -765,10 +763,10 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				"operation":    0,
 				"path":         path.Join(dstDir.GetPath(), dstDir.GetID()),
 				"seqNo":        random.String(32), //序列号不能为空
-				"totalSize":    0,
+				"totalSize":    reportSize,
 				"uploadContentList": []base.Json{{
 					"contentName": stream.GetName(),
-					"contentSize": 0,
+					"contentSize": reportSize,
 					// "digest": "5a3231986ce7a6b46e408612d385bafa"
 				}},
 			})
@@ -779,13 +777,18 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		if err != nil {
 			return err
 		}
+		if resp.Data.Result.ResultCode != "0" {
+			return fmt.Errorf("get file upload url failed with result code: %s, message: %s", resp.Data.Result.ResultCode, resp.Data.Result.ResultDesc)
+		}
 
+		size := stream.GetSize()
 		// Progress
-		p := driver.NewProgress(stream.GetSize(), up)
-
-		var partSize = d.getPartSize(stream.GetSize())
-		part := (stream.GetSize() + partSize - 1) / partSize
-		if part == 0 {
+		p := driver.NewProgress(size, up)
+		var partSize = d.getPartSize(size)
+		part := size / partSize
+		if size%partSize > 0 {
+			part++
+		} else if part == 0 {
 			part = 1
 		}
 		rateLimited := driver.NewLimitedUploadStream(ctx, stream)
@@ -795,10 +798,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			}
 
 			start := i * partSize
-			byteSize := stream.GetSize() - start
-			if byteSize > partSize {
-				byteSize = partSize
-			}
+			byteSize := min(size-start, partSize)
 
 			limitReader := io.LimitReader(rateLimited, byteSize)
 			// Update Progress
@@ -810,7 +810,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 
 			req = req.WithContext(ctx)
 			req.Header.Set("Content-Type", "text/plain;name="+unicode(stream.GetName()))
-			req.Header.Set("contentSize", strconv.FormatInt(stream.GetSize(), 10))
+			req.Header.Set("contentSize", strconv.FormatInt(size, 10))
 			req.Header.Set("range", fmt.Sprintf("bytes=%d-%d", start, start+byteSize-1))
 			req.Header.Set("uploadtaskID", resp.Data.UploadResult.UploadTaskID)
 			req.Header.Set("rangeType", "0")
@@ -820,13 +820,23 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			if err != nil {
 				return err
 			}
-			_ = res.Body.Close()
-			log.Debugf("%+v", res)
 			if res.StatusCode != http.StatusOK {
+				res.Body.Close()
 				return fmt.Errorf("unexpected status code: %d", res.StatusCode)
 			}
+			bodyBytes, err := io.ReadAll(res.Body)
+			if err != nil {
+				return fmt.Errorf("error reading response body: %v", err)
+			}
+			var result InterLayerUploadResult
+			err = xml.Unmarshal(bodyBytes, &result)
+			if err != nil {
+				return fmt.Errorf("error parsing XML: %v", err)
+			}
+			if result.ResultCode != 0 {
+				return fmt.Errorf("upload failed with result code: %d, message: %s", result.ResultCode, result.Msg)
+			}
 		}
-
 		return nil
 	default:
 		return errs.NotImplement

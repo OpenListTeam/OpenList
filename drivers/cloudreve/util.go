@@ -204,7 +204,7 @@ func (d *Cloudreve) upLocal(ctx context.Context, stream model.FileStreamer, u Up
 			req.SetContentLength(true)
 			req.SetHeader("Content-Length", strconv.FormatInt(byteSize, 10))
 			req.SetHeader("User-Agent", d.getUA())
-			req.SetBody(driver.NewLimitedUploadStream(ctx, bytes.NewBuffer(byteData)))
+			req.SetBody(driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData)))
 		}, nil)
 		if err != nil {
 			break
@@ -239,7 +239,7 @@ func (d *Cloudreve) upRemote(ctx context.Context, stream model.FileStreamer, u U
 			return err
 		}
 		req, err := http.NewRequest("POST", uploadUrl+"?chunk="+strconv.Itoa(chunk),
-			driver.NewLimitedUploadStream(ctx, bytes.NewBuffer(byteData)))
+			driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData)))
 		if err != nil {
 			return err
 		}
@@ -280,7 +280,7 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequest("PUT", uploadUrl, driver.NewLimitedUploadStream(ctx, bytes.NewBuffer(byteData)))
+		req, err := http.NewRequest("PUT", uploadUrl, driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData)))
 		if err != nil {
 			return err
 		}
@@ -307,6 +307,85 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 	err := d.request(http.MethodPost, "/callback/onedrive/finish/"+u.SessionID, func(req *resty.Request) {
 		req.SetBody("{}")
 	}, nil)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u UploadInfo, up driver.UpdateProgress) error {
+	var finish int64 = 0
+	var chunk int = 0
+	var etags []string
+	DEFAULT := int64(u.ChunkSize)
+	for finish < stream.GetSize() {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
+		}
+		utils.Log.Debugf("[Cloudreve-S3] upload: %d", finish)
+		var byteSize = DEFAULT
+		left := stream.GetSize() - finish
+		if left < DEFAULT {
+			byteSize = left
+		}
+		byteData := make([]byte, byteSize)
+		n, err := io.ReadFull(stream, byteData)
+		utils.Log.Debug(err, n)
+		if err != nil {
+			return err
+		}
+		req, err := http.NewRequest("PUT", u.UploadURLs[chunk],
+			driver.NewLimitedUploadStream(ctx, bytes.NewBuffer(byteData)))
+		if err != nil {
+			return err
+		}
+		req = req.WithContext(ctx)
+		req.ContentLength = byteSize
+		finish += byteSize
+		res, err := base.HttpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		_ = res.Body.Close()
+		etags = append(etags, res.Header.Get("ETag"))
+		up(float64(finish) * 100 / float64(stream.GetSize()))
+		chunk++
+	}
+
+	// s3LikeFinishUpload
+	// https://github.com/cloudreve/frontend/blob/b485bf297974cbe4834d2e8e744ae7b7e5b2ad39/src/component/Uploader/core/api/index.ts#L204-L252
+	bodyBuilder := &strings.Builder{}
+	bodyBuilder.WriteString("<CompleteMultipartUpload>")
+	for i, etag := range etags {
+		bodyBuilder.WriteString(fmt.Sprintf(
+			`<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>`,
+			i+1, // PartNumber 从 1 开始
+			etag,
+		))
+	}
+	bodyBuilder.WriteString("</CompleteMultipartUpload>")
+	req, err := http.NewRequest(
+		"POST",
+		u.CompleteURL,
+		strings.NewReader(bodyBuilder.String()),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/xml")
+	req.Header.Set("User-Agent", d.getUA())
+	res, err := base.HttpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		return fmt.Errorf("up status: %d, error: %s", res.StatusCode, string(body))
+	}
+
+	// 上传成功发送回调请求
+	err = d.request(http.MethodGet, "/callback/s3/"+u.SessionID, nil, nil)
 	if err != nil {
 		return err
 	}

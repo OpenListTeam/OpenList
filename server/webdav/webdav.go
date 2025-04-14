@@ -24,7 +24,6 @@ import (
 	"github.com/alist-org/alist/v3/internal/sign"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/server/common"
-	log "github.com/sirupsen/logrus"
 )
 
 type Handler struct {
@@ -59,7 +58,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, err = h.handleOptions(brw, r)
 		case "GET", "HEAD", "POST":
 			useBufferedWriter = false
-			status, err = h.handleGetHeadPost(w, r)
+			Writer := &common.WrittenResponseWriter{ResponseWriter: w}
+			status, err = h.handleGetHeadPost(Writer, r)
+			if status != 0 && Writer.IsWritten() {
+				status = 0
+			}
 		case "DELETE":
 			status, err = h.handleDelete(brw, r)
 		case "PUT":
@@ -247,8 +250,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		}
 		err = common.Proxy(w, r, link, fi)
 		if err != nil {
-			log.Errorf("webdav proxy error: %+v", err)
-			return http.StatusInternalServerError, err
+			return http.StatusInternalServerError, fmt.Errorf("webdav proxy error: %+v", err)
 		}
 	} else if storage.GetStorage().WebdavProxy() && downProxyUrl != "" {
 		u := fmt.Sprintf("%s%s?sign=%s",
