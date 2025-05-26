@@ -154,7 +154,7 @@ func (m *MountPoint) GetSourceCode() []File {
 		Type:     "file",
 		UpdateAt: m.Release.CreatedAt,
 		CreateAt: m.Release.CreatedAt,
-		Url:      m.Release.TarballUrl,
+		Url:      m.Release.ZipballUrl,
 	})
 	files = append(files, File{
 		Path:     m.Point + "/" + "Source code (tar.gz)",
@@ -163,7 +163,7 @@ func (m *MountPoint) GetSourceCode() []File {
 		Type:     "file",
 		UpdateAt: m.Release.CreatedAt,
 		CreateAt: m.Release.CreatedAt,
-		Url:      m.Release.ZipballUrl,
+		Url:      m.Release.TarballUrl,
 	})
 
 	return files
