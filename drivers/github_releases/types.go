@@ -169,6 +169,34 @@ func (m *MountPoint) GetSourceCode() []File {
 	return files
 }
 
+func (m *MountPoint) GetSourceCodeByTagName(tagName string) []File {
+	for _, item := range *m.Releases {
+		if item.TagName == tagName {
+			files := make([]File, 0)
+			files = append(files, File{
+				Path:     m.Point + "/" + "Source code (zip)",
+				FileName: "Source code (zip)",
+				Size:     1,
+				Type:     "file",
+				UpdateAt: item.CreatedAt,
+				CreateAt: item.CreatedAt,
+				Url:      item.ZipballUrl,
+			})
+			files = append(files, File{
+				Path:     m.Point + "/" + "Source code (tar.gz)",
+				FileName: "Source code (tar.gz)",
+				Size:     1,
+				Type:     "file",
+				UpdateAt: item.CreatedAt,
+				CreateAt: item.CreatedAt,
+				Url:      item.TarballUrl,
+			})
+			return files
+		}
+	}
+	return nil
+}
+
 func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error), refresh bool) []File {
 	if m.OtherFile == nil || refresh {
 		resp, _ := get("https://api.github.com/repos/" + m.Repo + "/contents")
