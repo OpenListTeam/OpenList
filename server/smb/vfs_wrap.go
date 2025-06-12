@@ -84,6 +84,8 @@ func (v *VFSWrapper) Read(handle vfs.VfsHandle, bytes []byte, u uint64, i int) (
 	n, err := v.fs.Read(handle, bytes, u, i)
 	if err != nil {
 		log.Errorf("SMB: %s called Read(%d, len=%d, offset=%d), read %d bytes and got error %+v", v.user, handle, len(bytes), u, n, err)
+	} else {
+		log.Infof("SMB: %s called Read(%d, len=%d, offset=%d), read %d bytes", v.user, handle, len(bytes), u, n)
 	}
 	return n, err
 }
@@ -92,6 +94,8 @@ func (v *VFSWrapper) Write(handle vfs.VfsHandle, bytes []byte, u uint64, i int) 
 	n, err := v.fs.Write(handle, bytes, u, i)
 	if err != nil {
 		log.Errorf("SMB: %s called Write(%d, len=%d, offset=%d, mode=%d), write %d bytes and got error %+v", v.user, handle, len(bytes), u, i, n, err)
+	} else {
+		log.Infof("SMB: %s called Write(%d, len=%d, offset=%d, mode=%d), write %d bytes", v.user, handle, len(bytes), u, i, n)
 	}
 	return n, err
 }
