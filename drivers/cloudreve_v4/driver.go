@@ -179,7 +179,6 @@ func (d *CloudreveV4) Rename(ctx context.Context, srcObj model.Obj, newName stri
 			"uri":      srcObj.GetPath(),
 		})
 	}, nil)
-
 }
 
 func (d *CloudreveV4) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {

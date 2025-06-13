@@ -20,8 +20,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var upClient *resty.Client
-var once sync.Once
+var (
+	upClient *resty.Client
+	once     sync.Once
+)
 
 func (d *LanZou) doupload(callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	return d.post(d.BaseUrl+"/doupload.php", func(req *resty.Request) {
@@ -244,8 +246,10 @@ func (d *LanZou) getFileShareUrlByID(fileID string) (*FileShare, error) {
 */
 
 // 判断类容
-var isFileReg = regexp.MustCompile(`class="fileinfo"|id="file"|文件描述`)
-var isFolderReg = regexp.MustCompile(`id="infos"`)
+var (
+	isFileReg   = regexp.MustCompile(`class="fileinfo"|id="file"|文件描述`)
+	isFolderReg = regexp.MustCompile(`id="infos"`)
+)
 
 // 获取文件文件夹基础信息
 

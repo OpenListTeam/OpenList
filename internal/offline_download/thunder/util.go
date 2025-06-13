@@ -10,8 +10,10 @@ import (
 	"github.com/Xhofe/go-cache"
 )
 
-var taskCache = cache.NewMemCache(cache.WithShards[[]thunder.OfflineTask](16))
-var taskG singleflight.Group[[]thunder.OfflineTask]
+var (
+	taskCache = cache.NewMemCache(cache.WithShards[[]thunder.OfflineTask](16))
+	taskG     singleflight.Group[[]thunder.OfflineTask]
+)
 
 func (t *Thunder) GetTasks(thunderDriver *thunder.Thunder) ([]thunder.OfflineTask, error) {
 	key := op.Key(thunderDriver, "/drive/v1/task")

@@ -138,7 +138,7 @@ func (mr *MultiReadable) Close() error {
 
 func Retry(attempts int, sleep time.Duration, f func() error) (err error) {
 	for i := 0; i < attempts; i++ {
-		//fmt.Println("This is attempt number", i)
+		// fmt.Println("This is attempt number", i)
 		if i > 0 {
 			log.Println("retrying after error:", err)
 			time.Sleep(sleep)
@@ -178,10 +178,11 @@ func (c *Closers) Close() error {
 	}
 	return errors.Join(errs...)
 }
+
 func (c *Closers) Add(closer io.Closer) {
 	c.closers = append(c.closers, closer)
-
 }
+
 func (c *Closers) AddClosers(closers Closers) {
 	c.closers = append(c.closers, closers.closers...)
 }
@@ -189,6 +190,7 @@ func (c *Closers) AddClosers(closers Closers) {
 func EmptyClosers() Closers {
 	return Closers{[]io.Closer{}}
 }
+
 func NewClosers(c ...io.Closer) Closers {
 	return Closers{c}
 }
@@ -199,6 +201,7 @@ func Min[T constraints.Ordered](a, b T) T {
 	}
 	return b
 }
+
 func Max[T constraints.Ordered](a, b T) T {
 	if a < b {
 		return b

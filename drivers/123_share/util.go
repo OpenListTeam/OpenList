@@ -26,7 +26,7 @@ const (
 	MainApi      = BApi
 	FileList     = MainApi + "/share/get"
 	DownloadInfo = MainApi + "/share/download/info"
-	//AuthKeySalt      = "8-8D$sL8gPjom7bk#cY"
+	// AuthKeySalt      = "8-8D$sL8gPjom7bk#cY"
 )
 
 func signPath(path string, os string, version string) (k string, v string) {

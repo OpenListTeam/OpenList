@@ -74,7 +74,7 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 }
 
 func (d *WebDav) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	return d.client.MkdirAll(path.Join(parentDir.GetPath(), dirName), 0644)
+	return d.client.MkdirAll(path.Join(parentDir.GetPath(), dirName), 0o644)
 }
 
 func (d *WebDav) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
@@ -102,7 +102,7 @@ func (d *WebDav) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer
 		Reader:         s,
 		UpdateProgress: up,
 	})
-	err := d.client.WriteStream(path.Join(dstDir.GetPath(), s.GetName()), reader, 0644, callback)
+	err := d.client.WriteStream(path.Join(dstDir.GetPath(), s.GetName()), reader, 0o644, callback)
 	return err
 }
 

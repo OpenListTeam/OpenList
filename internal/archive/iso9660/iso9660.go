@@ -12,8 +12,7 @@ import (
 	"github.com/kdomanski/iso9660"
 )
 
-type ISO9660 struct {
-}
+type ISO9660 struct{}
 
 func (ISO9660) AcceptedExtensions() []string {
 	return []string{".iso"}
@@ -80,7 +79,7 @@ func (ISO9660) Decompress(ss []*stream.SeekableStream, outputPath string, args m
 	if obj.IsDir() {
 		if args.InnerPath != "/" {
 			outputPath = stdpath.Join(outputPath, obj.Name())
-			if err = os.MkdirAll(outputPath, 0700); err != nil {
+			if err = os.MkdirAll(outputPath, 0o700); err != nil {
 				return err
 			}
 		}

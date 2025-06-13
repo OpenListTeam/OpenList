@@ -11,8 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/internal/stream"
 )
 
-type Zip struct {
-}
+type Zip struct{}
 
 func (Zip) AcceptedExtensions() []string {
 	return []string{}

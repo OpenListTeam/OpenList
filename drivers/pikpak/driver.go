@@ -35,7 +35,6 @@ func (d *PikPak) GetAddition() driver.Additional {
 }
 
 func (d *PikPak) Init(ctx context.Context) (err error) {
-
 	if d.Common == nil {
 		d.Common = &Common{
 			client:       base.NewRestyClient(),
@@ -249,7 +248,7 @@ func (d *PikPak) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	}
 
 	params := resp.Resumable.Params
-	//endpoint := strings.Join(strings.Split(params.Endpoint, ".")[1:], ".")
+	// endpoint := strings.Join(strings.Split(params.Endpoint, ".")[1:], ".")
 	// web 端上传 返回的endpoint 为 `mypikpak.net` | android 端上传 返回的endpoint 为 `vip-lixian-07.mypikpak.net`·
 	if d.Addition.Platform == "android" {
 		params.Endpoint = "mypikpak.net"
@@ -279,7 +278,6 @@ func (d *PikPak) OfflineDownload(ctx context.Context, fileUrl string, parentDir 
 	_, err := d.request("https://api-drive.mypikpak.net/drive/v1/files", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(requestBody)
 	}, &resp)
-
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +324,6 @@ func (d *PikPak) OfflineList(ctx context.Context, nextPageToken string, phase []
 		req.SetContext(ctx).
 			SetQueryParams(params)
 	}, &resp)
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to get offline list: %w", err)
 	}

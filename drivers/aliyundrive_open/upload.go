@@ -150,7 +150,7 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 	// 1. create
 	// Part Size Unit: Bytes, Default: 20MB,
 	// Maximum number of slices 10,000, ≈195.3125GB
-	var partSize = calPartSize(stream.GetSize())
+	partSize := calPartSize(stream.GetSize())
 	const dateFormat = "2006-01-02T15:04:05.000Z"
 	mtimeStr := stream.ModTime().UTC().Format(dateFormat)
 	ctimeStr := stream.CreateTime().UTC().Format(dateFormat)
@@ -222,7 +222,7 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 
 		preTime := time.Now()
 		var offset, length int64 = 0, partSize
-		//var length
+		// var length
 		for i := 0; i < len(createResp.PartInfoList); i++ {
 			if utils.IsCanceled(ctx) {
 				return nil, ctx.Err()

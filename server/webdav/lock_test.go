@@ -492,7 +492,6 @@ func TestMemLS(t *testing.T) {
 					t.Fatalf("iteration #%d: Unlock %q: %v", i, name, err)
 				}
 			}
-
 		} else {
 			nCreate++
 			var err error

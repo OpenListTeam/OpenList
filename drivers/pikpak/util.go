@@ -263,7 +263,6 @@ type Common struct {
 }
 
 func generateDeviceSign(deviceID, packageName string) string {
-
 	signatureBase := fmt.Sprintf("%s%s%s%s", deviceID, packageName, "1", "appkey")
 
 	sha1Hash := sha1.New()
@@ -331,6 +330,7 @@ func (c *Common) SetUserAgent(userAgent string) {
 func (c *Common) SetCaptchaToken(captchaToken string) {
 	c.CaptchaToken = captchaToken
 }
+
 func (c *Common) GetCaptchaToken() string {
 	return c.CaptchaToken
 }
@@ -397,7 +397,6 @@ func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string) err
 	_, err := d.request("https://user.mypikpak.net/v1/shield/captcha/init", http.MethodPost, func(req *resty.Request) {
 		req.SetError(&e).SetBody(param).SetQueryParam("client_id", d.ClientID)
 	}, &resp)
-
 	if err != nil {
 		return err
 	}

@@ -23,6 +23,7 @@ func (f *File) GetPath() string    { return "" }
 func (f *File) GetPKey() string {
 	return f.PFolder.DirKey
 }
+
 func (f *File) CreateTime() time.Time {
 	return time.Time(f.FileCtime)
 }

@@ -34,7 +34,7 @@ func (d *Mega) GetAddition() driver.Additional {
 }
 
 func (d *Mega) Init(ctx context.Context) error {
-	var twoFACode = d.TwoFACode
+	twoFACode := d.TwoFACode
 	d.c = mega.New()
 	if d.TwoFASecret != "" {
 		code, err := totp.GenerateCode(d.TwoFASecret, time.Now())

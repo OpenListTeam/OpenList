@@ -26,7 +26,7 @@ func (m *MegaNode) CreateTime() time.Time {
 }
 
 func (m *MegaNode) GetHash() utils.HashInfo {
-	//Meganz use md5, but can't get the original file hash, due to it's encrypted in the cloud
+	// Meganz use md5, but can't get the original file hash, due to it's encrypted in the cloud
 	return utils.HashInfo{}
 }
 

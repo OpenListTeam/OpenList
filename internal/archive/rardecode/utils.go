@@ -31,7 +31,7 @@ func (v *VolumeFile) Size() int64 {
 }
 
 func (v *VolumeFile) Mode() fs.FileMode {
-	return 0644
+	return 0o644
 }
 
 func (v *VolumeFile) ModTime() time.Time {
@@ -185,7 +185,7 @@ func decompress(reader *rardecode.Reader, header *rardecode.FileHeader, filePath
 	dir, base := stdpath.Split(filePath)
 	if dir != "" {
 		targetPath = stdpath.Join(targetPath, dir)
-		err := os.MkdirAll(targetPath, 0700)
+		err := os.MkdirAll(targetPath, 0o700)
 		if err != nil {
 			return err
 		}
@@ -200,7 +200,7 @@ func decompress(reader *rardecode.Reader, header *rardecode.FileHeader, filePath
 }
 
 func _decompress(reader *rardecode.Reader, header *rardecode.FileHeader, targetPath string, up model.UpdateProgress) error {
-	f, err := os.OpenFile(stdpath.Join(targetPath, stdpath.Base(header.Name)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := os.OpenFile(stdpath.Join(targetPath, stdpath.Base(header.Name)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

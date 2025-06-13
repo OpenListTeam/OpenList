@@ -19,7 +19,7 @@ type File struct {
 
 type PathResp struct {
 	Type string `json:"type"`
-	//Meta  Meta         `json:"meta"`
+	// Meta  Meta         `json:"meta"`
 	Files []File `json:"files"`
 }
 

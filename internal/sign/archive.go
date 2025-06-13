@@ -9,8 +9,10 @@ import (
 	"github.com/OpenListTeam/OpenList/pkg/sign"
 )
 
-var onceArchive sync.Once
-var instanceArchive sign.Sign
+var (
+	onceArchive     sync.Once
+	instanceArchive sign.Sign
+)
 
 func SignArchive(data string) string {
 	expire := setting.GetInt(conf.LinkExpiration, 0)

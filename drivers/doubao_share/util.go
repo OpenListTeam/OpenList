@@ -95,7 +95,7 @@ func (d *DoubaoShare) request(path string, method string, callback base.ReqCallb
 func (d *DoubaoShare) getFiles(dirId, nodeId, cursor string) (resp []File, err error) {
 	var r NodeInfoResp
 
-	var body = base.Json{
+	body := base.Json{
 		"share_id": dirId,
 		"node_id":  nodeId,
 	}
@@ -138,7 +138,7 @@ func (d *DoubaoShare) getShareOverview(shareId, cursor string) (resp []File, err
 func (d *DoubaoShare) getShareOverviewWithHistory(shareId, cursor string, cursorHistory map[string]bool) (resp []File, err error) {
 	var r NodeInfoResp
 
-	var body = base.Json{
+	body := base.Json{
 		"share_id": shareId,
 	}
 	// 如果有游标，则设置游标和大小

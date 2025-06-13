@@ -295,8 +295,7 @@ type ChardataEmptyTest struct {
 	Contents *string `xml:",chardata"`
 }
 
-type MyMarshalerTest struct {
-}
+type MyMarshalerTest struct{}
 
 var _ Marshaler = (*MyMarshalerTest)(nil)
 
@@ -926,7 +925,8 @@ var marshalTests = []struct {
 		},
 	},
 	{
-		Value: &AnyTest{Nested: "known",
+		Value: &AnyTest{
+			Nested: "known",
 			AnyField: AnyHolder{
 				XML:     "<unknown/>",
 				XMLName: Name{Local: "AnyField"},

@@ -26,8 +26,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const stateLength = 16
-const stateExpire = time.Minute * 5
+const (
+	stateLength = 16
+	stateExpire = time.Minute * 5
+)
 
 var stateCache = cache.NewMemCache[string](cache.WithShards[string](stateLength))
 

@@ -220,7 +220,6 @@ func (c *Common) GetDeviceID() string {
 }
 
 func generateDeviceSign(deviceID, packageName string) string {
-
 	signatureBase := fmt.Sprintf("%s%s%s%s", deviceID, packageName, "1", "appkey")
 
 	sha1Hash := sha1.New()
@@ -309,7 +308,6 @@ func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string
 	_, err := d.request("https://user.mypikpak.net/v1/shield/captcha/init", http.MethodPost, func(req *resty.Request) {
 		req.SetError(&e).SetBody(param)
 	}, &resp)
-
 	if err != nil {
 		return err
 	}

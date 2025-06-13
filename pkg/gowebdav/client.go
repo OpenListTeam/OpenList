@@ -191,7 +191,6 @@ func (c *Client) ReadDir(path string) ([]os.FileInfo, error) {
 		</d:propfind>`,
 		&response{},
 		parse)
-
 	if err != nil {
 		if _, ok := err.(*os.PathError); !ok {
 			err = newPathErrorErr("ReadDir", path, err)
@@ -243,7 +242,6 @@ func (c *Client) Stat(path string) (os.FileInfo, error) {
 		</d:propfind>`,
 		&response{},
 		parse)
-
 	if err != nil {
 		if _, ok := err.(*os.PathError); !ok {
 			err = newPathErrorErr("ReadDir", path, err)
@@ -353,7 +351,6 @@ func (c *Client) Link(path string) (string, http.Header, error) {
 	method := "GET"
 	u := PathEscape(Join(c.root, path))
 	r, err := http.NewRequest(method, u, nil)
-
 	if err != nil {
 		return "", nil, newPathErrorErr("Link", path, err)
 	}
@@ -465,7 +462,6 @@ func (c *Client) Write(path string, data []byte, _ os.FileMode) (err error) {
 
 // WriteStream writes a stream
 func (c *Client) WriteStream(path string, stream io.Reader, _ os.FileMode, callback func(r *http.Request)) (err error) {
-
 	err = c.createParentCollection(path)
 	if err != nil {
 		return err

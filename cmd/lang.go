@@ -71,7 +71,7 @@ func writeFile(name string, data interface{}) {
 		log.Infof("%s.json no changed, skip", name)
 	} else {
 		log.Infof("%s.json changed, update file", name)
-		//log.Infof("old: %+v\nnew:%+v", oldData, data)
+		// log.Infof("old: %+v\nnew:%+v", oldData, data)
 		utils.WriteJsonToFile(fmt.Sprintf("lang/%s.json", name), newData, true)
 	}
 }
@@ -130,7 +130,7 @@ func generateSettingsJson() {
 		}
 	}
 	writeFile("settings", settingsLang)
-	//utils.WriteJsonToFile("lang/settings.json", settingsLang)
+	// utils.WriteJsonToFile("lang/settings.json", settingsLang)
 }
 
 // LangCmd represents the lang command
@@ -139,7 +139,7 @@ var LangCmd = &cobra.Command{
 	Short: "Generate language json file",
 	Run: func(cmd *cobra.Command, args []string) {
 		bootstrap.InitConfig()
-		err := os.MkdirAll("lang", 0777)
+		err := os.MkdirAll("lang", 0o777)
 		if err != nil {
 			utils.Log.Fatalf("failed create folder: %s", err.Error())
 		}

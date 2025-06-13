@@ -2,12 +2,12 @@ package errs
 
 import (
 	"errors"
-	pkgerr "github.com/pkg/errors"
 	"testing"
+
+	pkgerr "github.com/pkg/errors"
 )
 
 func TestErrs(t *testing.T) {
-
 	err1 := NewErr(StorageNotFound, "please add a storage first")
 	t.Logf("err1: %s", err1)
 	if !errors.Is(err1, StorageNotFound) {

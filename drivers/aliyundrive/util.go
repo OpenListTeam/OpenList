@@ -52,7 +52,7 @@ func (d *AliDrive) sign() {
 	singdata := fmt.Sprintf("%s:%s:%s:%d", secpAppID, state.deviceID, d.UserID, 0)
 	hash := sha256.Sum256([]byte(singdata))
 	data, _ := ecc.SignBytes(state.privateKey, hash[:], ecc.RecID|ecc.LowerS)
-	state.signature = hex.EncodeToString(data) //strconv.Itoa(state.nonce)
+	state.signature = hex.EncodeToString(data) // strconv.Itoa(state.nonce)
 }
 
 // do others that not defined in Driver interface
@@ -62,7 +62,7 @@ func (d *AliDrive) refreshToken() error {
 	var resp base.TokenResp
 	var e RespErr
 	_, err := base.RestyClient.R().
-		//ForceContentType("application/json").
+		// ForceContentType("application/json").
 		SetBody(base.Json{"refresh_token": d.RefreshToken, "grant_type": "refresh_token"}).
 		SetResult(&resp).
 		SetError(&e).

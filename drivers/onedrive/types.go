@@ -62,7 +62,7 @@ func fileToObj(f File, parentID string) *Object {
 				IsFolder: f.File == nil,
 			},
 			Thumbnail: model.Thumbnail{Thumbnail: thumb},
-			//Url:       model.Url{Url: f.Url},
+			// Url:       model.Url{Url: f.Url},
 		},
 		ParentID: parentID,
 	}

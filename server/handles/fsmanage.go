@@ -225,7 +225,7 @@ func FsRemove(c *gin.Context) {
 			return
 		}
 	}
-	//fs.ClearCache(req.Dir)
+	// fs.ClearCache(req.Dir)
 	common.SuccessResp(c)
 }
 
@@ -335,8 +335,8 @@ func Link(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	//user := c.MustGet("user").(*model.User)
-	//rawPath := stdpath.Join(user.BasePath, req.Path)
+	// user := c.MustGet("user").(*model.User)
+	// rawPath := stdpath.Join(user.BasePath, req.Path)
 	// why need not join base_path? because it's always the full path
 	rawPath := req.Path
 	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})

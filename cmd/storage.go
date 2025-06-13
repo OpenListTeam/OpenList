@@ -70,7 +70,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "q", "ctrl+c":
 			return m, tea.Quit
-			//case "enter":
+			// case "enter":
 			//	return m, tea.Batch(
 			//		tea.Printf("Let's go to %s!", m.table.SelectedRow()[1]),
 			//	)
@@ -84,69 +84,70 @@ func (m model) View() string {
 	return baseStyle.Render(m.table.View()) + "\n"
 }
 
-var storageTableHeight int
-var listStorageCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all storages",
-	Run: func(cmd *cobra.Command, args []string) {
-		Init()
-		defer Release()
-		storages, _, err := db.GetStorages(1, -1)
-		if err != nil {
-			utils.Log.Errorf("failed to query storages: %+v", err)
-		} else {
-			utils.Log.Infof("Found %d storages", len(storages))
-			columns := []table.Column{
-				{Title: "ID", Width: 4},
-				{Title: "Driver", Width: 16},
-				{Title: "Mount Path", Width: 30},
-				{Title: "Enabled", Width: 7},
-			}
-
-			var rows []table.Row
-			for i := range storages {
-				storage := storages[i]
-				enabled := "true"
-				if storage.Disabled {
-					enabled = "false"
+var (
+	storageTableHeight int
+	listStorageCmd     = &cobra.Command{
+		Use:   "list",
+		Short: "List all storages",
+		Run: func(cmd *cobra.Command, args []string) {
+			Init()
+			defer Release()
+			storages, _, err := db.GetStorages(1, -1)
+			if err != nil {
+				utils.Log.Errorf("failed to query storages: %+v", err)
+			} else {
+				utils.Log.Infof("Found %d storages", len(storages))
+				columns := []table.Column{
+					{Title: "ID", Width: 4},
+					{Title: "Driver", Width: 16},
+					{Title: "Mount Path", Width: 30},
+					{Title: "Enabled", Width: 7},
 				}
-				rows = append(rows, table.Row{
-					strconv.Itoa(int(storage.ID)),
-					storage.Driver,
-					storage.MountPath,
-					enabled,
-				})
-			}
-			t := table.New(
-				table.WithColumns(columns),
-				table.WithRows(rows),
-				table.WithFocused(true),
-				table.WithHeight(storageTableHeight),
-			)
 
-			s := table.DefaultStyles()
-			s.Header = s.Header.
-				BorderStyle(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color("240")).
-				BorderBottom(true).
-				Bold(false)
-			s.Selected = s.Selected.
-				Foreground(lipgloss.Color("229")).
-				Background(lipgloss.Color("57")).
-				Bold(false)
-			t.SetStyles(s)
+				var rows []table.Row
+				for i := range storages {
+					storage := storages[i]
+					enabled := "true"
+					if storage.Disabled {
+						enabled = "false"
+					}
+					rows = append(rows, table.Row{
+						strconv.Itoa(int(storage.ID)),
+						storage.Driver,
+						storage.MountPath,
+						enabled,
+					})
+				}
+				t := table.New(
+					table.WithColumns(columns),
+					table.WithRows(rows),
+					table.WithFocused(true),
+					table.WithHeight(storageTableHeight),
+				)
 
-			m := model{t}
-			if _, err := tea.NewProgram(m).Run(); err != nil {
-				utils.Log.Errorf("failed to run program: %+v", err)
-				os.Exit(1)
+				s := table.DefaultStyles()
+				s.Header = s.Header.
+					BorderStyle(lipgloss.NormalBorder()).
+					BorderForeground(lipgloss.Color("240")).
+					BorderBottom(true).
+					Bold(false)
+				s.Selected = s.Selected.
+					Foreground(lipgloss.Color("229")).
+					Background(lipgloss.Color("57")).
+					Bold(false)
+				t.SetStyles(s)
+
+				m := model{t}
+				if _, err := tea.NewProgram(m).Run(); err != nil {
+					utils.Log.Errorf("failed to run program: %+v", err)
+					os.Exit(1)
+				}
 			}
-		}
-	},
-}
+		},
+	}
+)
 
 func init() {
-
 	RootCmd.AddCommand(storageCmd)
 	storageCmd.AddCommand(disableStorageCmd)
 	storageCmd.AddCommand(listStorageCmd)

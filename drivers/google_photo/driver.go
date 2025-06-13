@@ -100,7 +100,6 @@ func (d *GooglePhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 	res, err := base.NoRedirectClient.R().SetHeaders(postHeaders).
 		SetError(&e).
 		Post(url)
-
 	if err != nil {
 		return err
 	}
@@ -115,9 +114,9 @@ func (d *GooglePhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 		return fmt.Errorf("%s: %v", e.Error.Message, e.Error.Errors)
 	}
 
-	//Upload to the Google Photo
+	// Upload to the Google Photo
 	postUrl := res.Header().Get("X-Goog-Upload-URL")
-	//chunkSize := res.Header().Get("X-Goog-Upload-Chunk-Granularity")
+	// chunkSize := res.Header().Get("X-Goog-Upload-Chunk-Granularity")
 	postHeaders = map[string]string{
 		"X-Goog-Upload-Command": "upload, finalize",
 		"X-Goog-Upload-Offset":  "0",
@@ -126,11 +125,10 @@ func (d *GooglePhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 	resp, err := d.request(postUrl, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(driver.NewLimitedUploadStream(ctx, stream)).SetContext(ctx)
 	}, nil, postHeaders)
-
 	if err != nil {
 		return err
 	}
-	//Create MediaItem
+	// Create MediaItem
 	createItemUrl := "https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate"
 
 	postHeaders = map[string]string{

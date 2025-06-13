@@ -1,8 +1,9 @@
 package model
 
 import (
-	"golang.org/x/crypto/ssh"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 type SSHPublicKey struct {

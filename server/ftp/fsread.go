@@ -94,7 +94,7 @@ func (o *OsFileInfoAdapter) Size() int64 {
 }
 
 func (o *OsFileInfoAdapter) Mode() fs2.FileMode {
-	var mode fs2.FileMode = 0755
+	var mode fs2.FileMode = 0o755
 	if o.IsDir() {
 		mode |= fs2.ModeDir
 	}

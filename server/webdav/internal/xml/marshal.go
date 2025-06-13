@@ -199,7 +199,6 @@ var (
 // elements (including the StartElement itself) will use the declared
 // prefix when encoding names with matching namespace URIs.
 func (enc *Encoder) EncodeToken(t Token) error {
-
 	p := &enc.p
 	switch t := t.(type) {
 	case StartElement:

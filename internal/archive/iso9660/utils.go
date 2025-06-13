@@ -62,7 +62,7 @@ func toModelObj(file *iso9660.File) model.Obj {
 }
 
 func decompress(f *iso9660.File, path string, up model.UpdateProgress) error {
-	file, err := os.OpenFile(stdpath.Join(path, f.Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	file, err := os.OpenFile(stdpath.Join(path, f.Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func decompressAll(children []*iso9660.File, path string) error {
 				return err
 			}
 			nextPath := stdpath.Join(path, child.Name())
-			if err = os.MkdirAll(nextPath, 0700); err != nil {
+			if err = os.MkdirAll(nextPath, 0o700); err != nil {
 				return err
 			}
 			if err = decompressAll(nextChildren, nextPath); err != nil {

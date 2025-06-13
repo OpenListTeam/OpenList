@@ -54,7 +54,8 @@ func (d *Yun139) Init(ctx context.Context) error {
 			"userInfo": base.Json{
 				"userType":    1,
 				"accountType": 1,
-				"accountName": d.Account},
+				"accountName": d.Account,
+			},
 			"modAddrType": 1,
 		}, &resp)
 		if err != nil {
@@ -529,7 +530,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		}
 
 		size := stream.GetSize()
-		var partSize = d.getPartSize(size)
+		partSize := d.getPartSize(size)
 		part := size / partSize
 		if size%partSize > 0 {
 			part++
@@ -764,7 +765,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				"manualRename": 2,
 				"operation":    0,
 				"path":         path.Join(dstDir.GetPath(), dstDir.GetID()),
-				"seqNo":        random.String(32), //序列号不能为空
+				"seqNo":        random.String(32), // 序列号不能为空
 				"totalSize":    reportSize,
 				"uploadContentList": []base.Json{{
 					"contentName": stream.GetName(),
@@ -786,7 +787,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		size := stream.GetSize()
 		// Progress
 		p := driver.NewProgress(size, up)
-		var partSize = d.getPartSize(size)
+		partSize := d.getPartSize(size)
 		part := size / partSize
 		if size%partSize > 0 {
 			part++

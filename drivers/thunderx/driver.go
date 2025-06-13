@@ -279,7 +279,7 @@ func (xc *XunLeiXCommon) Link(ctx context.Context, file model.Obj, args model.Li
 	_, err := xc.Request(FILE_API_URL+"/{fileID}", http.MethodGet, func(r *resty.Request) {
 		r.SetContext(ctx)
 		r.SetPathParam("fileID", file.GetID())
-		//r.SetQueryParam("space", "")
+		// r.SetQueryParam("space", "")
 	}, &lFile)
 	if err != nil {
 		return nil, err

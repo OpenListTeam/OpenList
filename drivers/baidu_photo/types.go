@@ -156,11 +156,11 @@ type (
 	}
 
 	PrecreateResp struct {
-		ReturnType int `json:"return_type"` //存在返回2 不存在返回1 已经保存3
-		//存在返回
+		ReturnType int `json:"return_type"` // 存在返回2 不存在返回1 已经保存3
+		// 存在返回
 		CreateFileResp
 
-		//不存在返回
+		// 不存在返回
 		Path      string `json:"path"`
 		UploadID  string `json:"uploadid"`
 		BlockList []int  `json:"block_list"`

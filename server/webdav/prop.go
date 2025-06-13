@@ -390,6 +390,7 @@ func findContentLength(ctx context.Context, ls LockSystem, name string, fi model
 func findLastModified(ctx context.Context, ls LockSystem, name string, fi model.Obj) (string, error) {
 	return fi.ModTime().UTC().Format(http.TimeFormat), nil
 }
+
 func findCreationDate(ctx context.Context, ls LockSystem, name string, fi model.Obj) (string, error) {
 	userAgent := ctx.Value("userAgent").(string)
 	if strings.Contains(strings.ToLower(userAgent), "microsoft-webdav") {

@@ -32,7 +32,7 @@ const (
 
 const (
 	UPLOAD_TYPE_UNKNOWN = "UPLOAD_TYPE_UNKNOWN"
-	//UPLOAD_TYPE_FORM      = "UPLOAD_TYPE_FORM"
+	// UPLOAD_TYPE_FORM      = "UPLOAD_TYPE_FORM"
 	UPLOAD_TYPE_RESUMABLE = "UPLOAD_TYPE_RESUMABLE"
 	UPLOAD_TYPE_URL       = "UPLOAD_TYPE_URL"
 )
@@ -76,6 +76,7 @@ type Common struct {
 func (c *Common) SetCaptchaToken(captchaToken string) {
 	c.captchaToken = captchaToken
 }
+
 func (c *Common) GetCaptchaToken() string {
 	return c.captchaToken
 }
@@ -83,6 +84,7 @@ func (c *Common) GetCaptchaToken() string {
 func (c *Common) SetCreditKey(creditKey string) {
 	c.creditKey = creditKey
 }
+
 func (c *Common) GetCreditKey() string {
 	return c.creditKey
 }
@@ -140,7 +142,6 @@ func (c *Common) refreshCaptchaToken(action string, metas map[string]string) err
 	_, err := c.Request(XLUSER_API_URL+"/shield/captcha/init", http.MethodPost, func(req *resty.Request) {
 		req.SetError(&e).SetBody(param)
 	}, &resp)
-
 	if err != nil {
 		return err
 	}
@@ -219,7 +220,7 @@ func (c *Common) getReviewData(res *resty.Response) error {
 
 	// 将reviewData转为JSON字符串
 	reviewDataJSON, _ := json.MarshalIndent(reviewData, "", "  ")
-	//reviewDataJSON, _ := json.Marshal(reviewData)
+	// reviewDataJSON, _ := json.Marshal(reviewData)
 
 	return fmt.Errorf(`
 <div style="font-family: Arial, sans-serif; padding: 15px; border-radius: 5px; border: 1px solid #e0e0e0;>
@@ -262,7 +263,6 @@ func getGcid(r io.Reader, size int64) (string, error) {
 }
 
 func generateDeviceSign(deviceID, packageName string) string {
-
 	signatureBase := fmt.Sprintf("%s%s%s%s", deviceID, packageName, APPID, APPKey)
 
 	sha1Hash := sha1.New()

@@ -20,7 +20,6 @@ func NewPrivateKeyFromHex(hex_ string) (*ecdsa.PrivateKey, error) {
 		return nil, err
 	}
 	return NewPrivateKeyFromBytes(data), nil
-
 }
 
 func NewPrivateKeyFromBytes(priv []byte) *ecdsa.PrivateKey {

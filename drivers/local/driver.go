@@ -47,7 +47,7 @@ func (d *Local) Config() driver.Config {
 
 func (d *Local) Init(ctx context.Context) error {
 	if d.MkdirPerm == "" {
-		d.mkdirPerm = 0777
+		d.mkdirPerm = 0o777
 	} else {
 		v, err := strconv.ParseUint(d.MkdirPerm, 8, 32)
 		if err != nil {
@@ -136,6 +136,7 @@ func (d *Local) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	}
 	return files, nil
 }
+
 func (d *Local) FileInfoToObj(ctx context.Context, f fs.FileInfo, reqPath string, fullPath string) model.Obj {
 	thumb := ""
 	if d.Thumbnail {
@@ -174,6 +175,7 @@ func (d *Local) FileInfoToObj(ctx context.Context, f fs.FileInfo, reqPath string
 	}
 	return &file
 }
+
 func (d *Local) GetMeta(ctx context.Context, path string) (model.Obj, error) {
 	f, err := os.Stat(path)
 	if err != nil {
@@ -185,7 +187,6 @@ func (d *Local) GetMeta(ctx context.Context, path string) (model.Obj, error) {
 	//	s.SetHash(h,"SHA1")
 	//}
 	return file, nil
-
 }
 
 func (d *Local) Get(ctx context.Context, path string) (model.Obj, error) {
@@ -245,7 +246,7 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 			link.MFile = open
 		} else {
 			link.MFile = model.NewNopMFile(bytes.NewReader(buf.Bytes()))
-			//link.Header.Set("Content-Length", strconv.Itoa(buf.Len()))
+			// link.Header.Set("Content-Length", strconv.Itoa(buf.Len()))
 		}
 	} else {
 		open, err := os.Open(fullPath)

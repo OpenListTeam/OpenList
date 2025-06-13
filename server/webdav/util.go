@@ -1,10 +1,11 @@
 package webdav
 
 import (
-	log "github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 func (h *Handler) getModTime(r *http.Request) time.Time {

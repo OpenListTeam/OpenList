@@ -20,7 +20,7 @@ func GetMD5EncodeStr(data string) string {
 	return HashData(MD5, []byte(data))
 }
 
-//inspired by "github.com/rclone/rclone/fs/hash"
+// inspired by "github.com/rclone/rclone/fs/hash"
 
 // ErrUnsupported should be returned by filesystem,
 // if it is requested to deliver an unsupported hash type.
@@ -130,7 +130,7 @@ func fromTypes(types []*HashType) map[*HashType]hash.Hash {
 // the hashers.
 func toMultiWriter(h map[*HashType]hash.Hash) io.Writer {
 	// Convert to to slice
-	var w = make([]io.Writer, 0, len(h))
+	w := make([]io.Writer, 0, len(h))
 	for _, v := range h {
 		w = append(w, v)
 	}
@@ -204,6 +204,7 @@ func (hi HashInfo) String() string {
 	}
 	return string(result)
 }
+
 func FromString(str string) HashInfo {
 	hi := NewHashInfo(nil, "")
 	var tmp map[string]string
@@ -220,6 +221,7 @@ func FromString(str string) HashInfo {
 
 	return hi
 }
+
 func (hi HashInfo) GetHash(ht *HashType) string {
 	return hi.h[ht]
 }

@@ -64,7 +64,6 @@ func (m *Meilisearch) Index(ctx context.Context, node model.SearchNode) error {
 
 func (m *Meilisearch) BatchIndex(ctx context.Context, nodes []model.SearchNode) error {
 	documents, _ := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
-
 		return &searchDocument{
 			ID:         uuid.NewString(),
 			SearchNode: src,
@@ -120,7 +119,6 @@ func (m *Meilisearch) Get(ctx context.Context, parent string) ([]model.SearchNod
 	return utils.SliceConvert(result, func(src *searchDocument) (model.SearchNode, error) {
 		return src.SearchNode, nil
 	})
-
 }
 
 func (m *Meilisearch) getParentsByPrefix(ctx context.Context, parent string) ([]string, error) {

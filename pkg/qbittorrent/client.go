@@ -35,7 +35,7 @@ func New(webuiUrl string) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	var c = &client{
+	c := &client{
 		url:    u,
 		client: http.Client{Jar: jar},
 	}

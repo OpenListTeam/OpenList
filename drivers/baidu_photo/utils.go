@@ -351,7 +351,6 @@ func (d *BaiduPhoto) linkAlbum(ctx context.Context, file *AlbumFile, args model.
 			"uk":       fmt.Sprint(file.Uk),
 		})
 	}, nil)
-
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +392,6 @@ func (d *BaiduPhoto) linkFile(ctx context.Context, file *File, args model.LinkAr
 			"fsid": fmt.Sprint(file.Fsid),
 		})
 	}, &downloadUrl)
-
 	// resp, err := d.Request(base.NoRedirectClient, FILE_API_URL_V1+"/download", http.MethodHead, func(r *resty.Request) {
 	// 	r.SetContext(ctx)
 	// 	r.SetHeaders(headers)
@@ -401,7 +399,6 @@ func (d *BaiduPhoto) linkFile(ctx context.Context, file *File, args model.LinkAr
 	// 		"fsid": fmt.Sprint(file.Fsid),
 	// 	})
 	// }, nil)
-
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +465,6 @@ func (d *BaiduPhoto) linkFile(ctx context.Context, file *File, args model.LinkAr
 func (d *BaiduPhoto) uInfo() (*UInfo, error) {
 	var info UInfo
 	_, err := d.Get(USER_API_URL+"/getuinfo", func(req *resty.Request) {
-
 	}, &info)
 	if err != nil {
 		return nil, err

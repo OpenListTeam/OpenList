@@ -148,7 +148,7 @@ func cmdGet(c *d.Client, p0, p1 string) (err error) {
 		if p1 == "" {
 			p1 = filepath.Join(".", p0)
 		}
-		err = writeFile(p1, bytes, 0644)
+		err = writeFile(p1, bytes, 0o644)
 		if err == nil {
 			fmt.Println(fmt.Sprintf("Written %d bytes to: %s", len(bytes), p1))
 		}
@@ -164,14 +164,14 @@ func cmdRm(c *d.Client, p0, _ string) (err error) {
 }
 
 func cmdMkdir(c *d.Client, p0, _ string) (err error) {
-	if err = c.Mkdir(p0, 0755); err == nil {
+	if err = c.Mkdir(p0, 0o755); err == nil {
 		fmt.Println("Mkdir: " + p0)
 	}
 	return
 }
 
 func cmdMkdirAll(c *d.Client, p0, _ string) (err error) {
-	if err = c.MkdirAll(p0, 0755); err == nil {
+	if err = c.MkdirAll(p0, 0o755); err == nil {
 		fmt.Println("MkdirAll: " + p0)
 	}
 	return
@@ -211,7 +211,7 @@ func cmdPut(c *d.Client, p0, p1 string) (err error) {
 	}
 	defer stream.Close()
 
-	if err = c.WriteStream(p0, stream, 0644, nil); err == nil {
+	if err = c.WriteStream(p0, stream, 0o644, nil); err == nil {
 		fmt.Println("Put: " + p1 + " -> " + p0)
 	}
 	return
@@ -236,7 +236,6 @@ func writeFile(path string, bytes []byte, mode os.FileMode) error {
 }
 
 func getStream(pathOrString string) (io.ReadCloser, error) {
-
 	fi, err := os.Stat(pathOrString)
 	if err != nil {
 		return nil, err

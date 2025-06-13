@@ -131,7 +131,7 @@ func (d *Pan123) uploadS3Chunk(ctx context.Context, upReq *UploadResp, s3PreSign
 	}
 	req = req.WithContext(ctx)
 	req.ContentLength = curSize
-	//req.Header.Set("Content-Length", strconv.FormatInt(curSize, 10))
+	// req.Header.Set("Content-Length", strconv.FormatInt(curSize, 10))
 	res, err := base.HttpClient.Do(req)
 	if err != nil {
 		return err

@@ -14,17 +14,21 @@ import (
 	"github.com/pkg/errors"
 )
 
-var settingCache = cache.NewMemCache(cache.WithShards[*model.SettingItem](4))
-var settingG singleflight.Group[*model.SettingItem]
-var settingCacheF = func(item *model.SettingItem) {
-	settingCache.Set(item.Key, item, cache.WithEx[*model.SettingItem](time.Hour))
-}
+var (
+	settingCache  = cache.NewMemCache(cache.WithShards[*model.SettingItem](4))
+	settingG      singleflight.Group[*model.SettingItem]
+	settingCacheF = func(item *model.SettingItem) {
+		settingCache.Set(item.Key, item, cache.WithEx[*model.SettingItem](time.Hour))
+	}
+)
 
-var settingGroupCache = cache.NewMemCache(cache.WithShards[[]model.SettingItem](4))
-var settingGroupG singleflight.Group[[]model.SettingItem]
-var settingGroupCacheF = func(key string, item []model.SettingItem) {
-	settingGroupCache.Set(key, item, cache.WithEx[[]model.SettingItem](time.Hour))
-}
+var (
+	settingGroupCache  = cache.NewMemCache(cache.WithShards[[]model.SettingItem](4))
+	settingGroupG      singleflight.Group[[]model.SettingItem]
+	settingGroupCacheF = func(key string, item []model.SettingItem) {
+		settingGroupCache.Set(key, item, cache.WithEx[[]model.SettingItem](time.Hour))
+	}
+)
 
 var settingChangingCallbacks = make([]func(), 0)
 

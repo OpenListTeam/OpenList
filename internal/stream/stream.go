@@ -24,9 +24,9 @@ type FileStream struct {
 	Mimetype          string
 	WebPutAsTask      bool
 	ForceStreamUpload bool
-	Exist             model.Obj //the file existed in the destination, we can reuse some info since we wil overwrite it
+	Exist             model.Obj // the file existed in the destination, we can reuse some info since we wil overwrite it
 	utils.Closers
-	tmpFile  *os.File //if present, tmpFile has full content, it will be deleted at last
+	tmpFile  *os.File // if present, tmpFile has full content, it will be deleted at last
 	peekBuff *bytes.Reader
 }
 
@@ -74,6 +74,7 @@ func (f *FileStream) Close() error {
 func (f *FileStream) GetExist() model.Obj {
 	return f.Exist
 }
+
 func (f *FileStream) SetExist(obj model.Obj) {
 	f.Exist = obj
 }
@@ -107,8 +108,10 @@ func (f *FileStream) GetFile() model.File {
 	return nil
 }
 
-const InMemoryBufMaxSize = 10 // Megabytes
-const InMemoryBufMaxSizeBytes = InMemoryBufMaxSize * 1024 * 1024
+const (
+	InMemoryBufMaxSize      = 10 // Megabytes
+	InMemoryBufMaxSizeBytes = InMemoryBufMaxSize * 1024 * 1024
+)
 
 // RangeRead have to cache all data first since only Reader is provided.
 // also support a peeking RangeRead at very start, but won't buffer more than 10MB data in memory
@@ -149,10 +152,12 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	return io.NewSectionReader(cache, httpRange.Start, httpRange.Length), nil
 }
 
-var _ model.FileStreamer = (*SeekableStream)(nil)
-var _ model.FileStreamer = (*FileStream)(nil)
+var (
+	_ model.FileStreamer = (*SeekableStream)(nil)
+	_ model.FileStreamer = (*FileStream)(nil)
+)
 
-//var _ seekableStream = (*FileStream)(nil)
+// var _ seekableStream = (*FileStream)(nil)
 
 // for most internal stream, which is either RangeReadCloser or MFile
 // Any functionality implemented based on SeekableStream should implement a Close method,
@@ -254,10 +259,10 @@ func (ss *SeekableStream) RangeRead(httpRange http_range.Range) (io.Reader, erro
 
 // only provide Reader as full stream when it's demanded. in rapid-upload, we can skip this to save memory
 func (ss *SeekableStream) Read(p []byte) (n int, err error) {
-	//f.mu.Lock()
+	// f.mu.Lock()
 
-	//f.peekedOnce = true
-	//defer f.mu.Unlock()
+	// f.peekedOnce = true
+	// defer f.mu.Unlock()
 	if ss.Reader == nil {
 		if ss.rangeReadCloser == nil {
 			return 0, fmt.Errorf("illegal seekableStream")
@@ -398,6 +403,7 @@ func (c *headCache) read(p []byte) (n int, err error) {
 	}
 	return
 }
+
 func (r *headCache) Close() error {
 	for i := range r.bufs {
 		r.bufs[i] = nil

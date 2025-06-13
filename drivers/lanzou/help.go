@@ -128,8 +128,8 @@ func CalcAcwScV2(html string) (string, error) {
 }
 
 func Unbox(hex string) string {
-	var box = []int{6, 28, 34, 31, 33, 18, 30, 23, 9, 8, 19, 38, 17, 24, 0, 5, 32, 21, 10, 22, 25, 14, 15, 3, 16, 27, 13, 35, 2, 29, 11, 26, 4, 36, 1, 39, 37, 7, 20, 12}
-	var newBox = make([]byte, len(hex))
+	box := []int{6, 28, 34, 31, 33, 18, 30, 23, 9, 8, 19, 38, 17, 24, 0, 5, 32, 21, 10, 22, 25, 14, 15, 3, 16, 27, 13, 35, 2, 29, 11, 26, 4, 36, 1, 39, 37, 7, 20, 12}
+	newBox := make([]byte, len(hex))
 	for i := 0; i < len(box); i++ {
 		j := box[i]
 		if len(newBox) > j {
@@ -149,8 +149,10 @@ func HexXor(hex1, hex2 string) string {
 	return out.String()
 }
 
-var findDataReg = regexp.MustCompile(`data[:\s]+({[^}]+})`)    // 查找json
-var findKVReg = regexp.MustCompile(`'(.+?)':('?([^' },]*)'?)`) // 拆分kv
+var (
+	findDataReg = regexp.MustCompile(`data[:\s]+({[^}]+})`)      // 查找json
+	findKVReg   = regexp.MustCompile(`'(.+?)':('?([^' },]*)'?)`) // 拆分kv
+)
 
 // 根据key查询js变量
 func findJSVarFunc(key, data string) string {
@@ -173,8 +175,10 @@ func findJSVarFunc(key, data string) string {
 	return values[1]
 }
 
-var findFunction = regexp.MustCompile(`(?ims)^function[^{]+`)
-var findFunctionAll = regexp.MustCompile(`(?is)function[^{]+`)
+var (
+	findFunction    = regexp.MustCompile(`(?ims)^function[^{]+`)
+	findFunctionAll = regexp.MustCompile(`(?is)function[^{]+`)
+)
 
 // 查找所有方法位置
 func findJSFunctionIndex(data string, all bool) [][2]int {
@@ -260,7 +264,7 @@ func htmlJsonToMap(html string) (map[string]string, error) {
 }
 
 func jsonToMap(data, html string) map[string]string {
-	var param = make(map[string]string)
+	param := make(map[string]string)
 	kvs := findKVReg.FindAllStringSubmatch(data, -1)
 	for _, kv := range kvs {
 		k, v := kv[1], kv[3]
@@ -294,7 +298,7 @@ func htmlFormToMap(html string) (map[string]string, error) {
 }
 
 func formToMap(from string) map[string]string {
-	var param = make(map[string]string)
+	param := make(map[string]string)
 	for _, kv := range strings.Split(from, "&") {
 		kv := strings.SplitN(kv, "=", 2)[:2]
 		param[kv[0]] = kv[1]

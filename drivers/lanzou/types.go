@@ -9,9 +9,11 @@ import (
 	"github.com/OpenListTeam/OpenList/pkg/utils"
 )
 
-var ErrFileShareCancel = errors.New("file sharing cancellation")
-var ErrFileNotExist = errors.New("file does not exist")
-var ErrCookieExpiration = errors.New("cookie expiration")
+var (
+	ErrFileShareCancel  = errors.New("file sharing cancellation")
+	ErrFileNotExist     = errors.New("file does not exist")
+	ErrCookieExpiration = errors.New("cookie expiration")
+)
 
 type RespText[T any] struct {
 	Text T `json:"text"`
@@ -21,32 +23,34 @@ type RespInfo[T any] struct {
 	Info T `json:"info"`
 }
 
-var _ model.Obj = (*FileOrFolder)(nil)
-var _ model.Obj = (*FileOrFolderByShareUrl)(nil)
+var (
+	_ model.Obj = (*FileOrFolder)(nil)
+	_ model.Obj = (*FileOrFolderByShareUrl)(nil)
+)
 
 type FileOrFolder struct {
 	Name string `json:"name"`
-	//Onof        string `json:"onof"` // 是否存在提取码
-	//IsLock      string `json:"is_lock"`
-	//IsCopyright int    `json:"is_copyright"`
+	// Onof        string `json:"onof"` // 是否存在提取码
+	// IsLock      string `json:"is_lock"`
+	// IsCopyright int    `json:"is_copyright"`
 
 	// 文件通用
 	ID      string `json:"id"`
 	NameAll string `json:"name_all"`
 	Size    string `json:"size"`
 	Time    string `json:"time"`
-	//Icon          string `json:"icon"`
-	//Downs         string `json:"downs"`
-	//Filelock      string `json:"filelock"`
-	//IsBakdownload int    `json:"is_bakdownload"`
-	//Bakdownload   string `json:"bakdownload"`
-	//IsDes         int    `json:"is_des"` // 是否存在描述
-	//IsIco         int    `json:"is_ico"`
+	// Icon          string `json:"icon"`
+	// Downs         string `json:"downs"`
+	// Filelock      string `json:"filelock"`
+	// IsBakdownload int    `json:"is_bakdownload"`
+	// Bakdownload   string `json:"bakdownload"`
+	// IsDes         int    `json:"is_des"` // 是否存在描述
+	// IsIco         int    `json:"is_ico"`
 
 	// 文件夹
 	FolID string `json:"fol_id"`
-	//Folderlock string `json:"folderlock"`
-	//FolderDes  string `json:"folder_des"`
+	// Folderlock string `json:"folderlock"`
+	// FolderDes  string `json:"folder_des"`
 
 	// 缓存字段
 	size       *int64     `json:"-"`
@@ -69,6 +73,7 @@ func (f *FileOrFolder) GetID() string {
 	}
 	return f.ID
 }
+
 func (f *FileOrFolder) GetName() string {
 	if f.IsDir() {
 		return f.Name
@@ -95,6 +100,7 @@ func (f *FileOrFolder) ModTime() time.Time {
 func (f *FileOrFolder) SetShareInfo(fs *FileShare) {
 	f.shareInfo = fs
 }
+
 func (f *FileOrFolder) GetShareInfo() *FileShare {
 	return f.shareInfo
 }
@@ -127,9 +133,9 @@ type FileOrFolderByShareUrl struct {
 	Duan string `json:"duan"`
 	Size string `json:"size"`
 	Time string `json:"time"`
-	//Icon          string `json:"icon"`
-	//PIco int `json:"p_ico"`
-	//T int `json:"t"`
+	// Icon          string `json:"icon"`
+	// PIco int `json:"p_ico"`
+	// T int `json:"t"`
 
 	// 文件夹特有
 	IsFloder bool `json:"-"`

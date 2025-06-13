@@ -304,9 +304,11 @@ func (d *AliyundriveOpen) Other(ctx context.Context, args model.OtherArgs) (inte
 	return resp, nil
 }
 
-var _ driver.Driver = (*AliyundriveOpen)(nil)
-var _ driver.MkdirResult = (*AliyundriveOpen)(nil)
-var _ driver.MoveResult = (*AliyundriveOpen)(nil)
-var _ driver.RenameResult = (*AliyundriveOpen)(nil)
-var _ driver.PutResult = (*AliyundriveOpen)(nil)
-var _ driver.GetRooter = (*AliyundriveOpen)(nil)
+var (
+	_ driver.Driver       = (*AliyundriveOpen)(nil)
+	_ driver.MkdirResult  = (*AliyundriveOpen)(nil)
+	_ driver.MoveResult   = (*AliyundriveOpen)(nil)
+	_ driver.RenameResult = (*AliyundriveOpen)(nil)
+	_ driver.PutResult    = (*AliyundriveOpen)(nil)
+	_ driver.GetRooter    = (*AliyundriveOpen)(nil)
+)

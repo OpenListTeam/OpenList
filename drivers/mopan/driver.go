@@ -350,7 +350,7 @@ func (d *MoPan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 			return nil, err
 		}
 	}
-	//step.5
+	// step.5
 	uFile, err := d.client.CommitMultiUploadFile(initUpdload.UploadFileID, nil)
 	if err != nil {
 		return nil, err
@@ -363,10 +363,12 @@ func (d *MoPan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	}, nil
 }
 
-var _ driver.Driver = (*MoPan)(nil)
-var _ driver.MkdirResult = (*MoPan)(nil)
-var _ driver.MoveResult = (*MoPan)(nil)
-var _ driver.RenameResult = (*MoPan)(nil)
-var _ driver.Remove = (*MoPan)(nil)
-var _ driver.CopyResult = (*MoPan)(nil)
-var _ driver.PutResult = (*MoPan)(nil)
+var (
+	_ driver.Driver       = (*MoPan)(nil)
+	_ driver.MkdirResult  = (*MoPan)(nil)
+	_ driver.MoveResult   = (*MoPan)(nil)
+	_ driver.RenameResult = (*MoPan)(nil)
+	_ driver.Remove       = (*MoPan)(nil)
+	_ driver.CopyResult   = (*MoPan)(nil)
+	_ driver.PutResult    = (*MoPan)(nil)
+)

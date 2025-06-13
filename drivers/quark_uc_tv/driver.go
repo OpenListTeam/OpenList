@@ -32,7 +32,6 @@ func (d *QuarkUCTV) GetAddition() driver.Additional {
 }
 
 func (d *QuarkUCTV) Init(ctx context.Context) error {
-
 	if d.Addition.DeviceID == "" {
 		d.Addition.DeviceID = utils.GetMD5EncodeStr(time.Now().String())
 	}

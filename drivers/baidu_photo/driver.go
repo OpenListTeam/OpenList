@@ -137,7 +137,6 @@ func (d *BaiduPhoto) List(ctx context.Context, dir model.Obj, args model.ListArg
 			return &album
 		})...,
 	), nil
-
 }
 
 func (d *BaiduPhoto) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
@@ -178,13 +177,13 @@ func (d *BaiduPhoto) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.
 	switch file := srcObj.(type) {
 	case *File:
 		if album, ok := dstDir.(*Album); ok {
-			//rootfile ->  album
+			// rootfile ->  album
 			return d.AddAlbumFile(ctx, album, file)
 		}
 	case *AlbumFile:
 		switch album := dstDir.(type) {
 		case *Root:
-			//albumfile -> root
+			// albumfile -> root
 			return d.CopyAlbumFile(ctx, file)
 		case *Album:
 			// albumfile -> root -> album
@@ -339,7 +338,7 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	}
 
 	switch precreateResp.ReturnType {
-	case 1: //step.3 上传文件切片
+	case 1: // step.3 上传文件切片
 		threadG, upCtx := errgroup.NewGroupWithContext(ctx, d.uploadThread,
 			retry.Attempts(3),
 			retry.Delay(time.Second),
@@ -389,7 +388,7 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 			return nil, err
 		}
 		fallthrough
-	case 2: //step.4 创建文件
+	case 2: // step.4 创建文件
 		params["uploadid"] = precreateResp.UploadID
 		_, err = d.Post(FILE_API_URL_V1+"/create", func(r *resty.Request) {
 			r.SetContext(ctx)
@@ -400,7 +399,7 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 			return nil, err
 		}
 		fallthrough
-	case 3: //step.5 增加到相册
+	case 3: // step.5 增加到相册
 		rootfile := precreateResp.Data.toFile()
 		if album, ok := dstDir.(*Album); ok {
 			return d.AddAlbumFile(ctx, album, rootfile)
@@ -410,11 +409,13 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	return nil, errs.NotSupport
 }
 
-var _ driver.Driver = (*BaiduPhoto)(nil)
-var _ driver.GetRooter = (*BaiduPhoto)(nil)
-var _ driver.MkdirResult = (*BaiduPhoto)(nil)
-var _ driver.CopyResult = (*BaiduPhoto)(nil)
-var _ driver.MoveResult = (*BaiduPhoto)(nil)
-var _ driver.Remove = (*BaiduPhoto)(nil)
-var _ driver.PutResult = (*BaiduPhoto)(nil)
-var _ driver.RenameResult = (*BaiduPhoto)(nil)
+var (
+	_ driver.Driver       = (*BaiduPhoto)(nil)
+	_ driver.GetRooter    = (*BaiduPhoto)(nil)
+	_ driver.MkdirResult  = (*BaiduPhoto)(nil)
+	_ driver.CopyResult   = (*BaiduPhoto)(nil)
+	_ driver.MoveResult   = (*BaiduPhoto)(nil)
+	_ driver.Remove       = (*BaiduPhoto)(nil)
+	_ driver.PutResult    = (*BaiduPhoto)(nil)
+	_ driver.RenameResult = (*BaiduPhoto)(nil)
+)

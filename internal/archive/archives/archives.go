@@ -13,8 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/pkg/utils"
 )
 
-type Archives struct {
-}
+type Archives struct{}
 
 func (Archives) AcceptedExtensions() []string {
 	return []string{
@@ -107,7 +106,7 @@ func (Archives) Decompress(ss []*stream.SeekableStream, outputPath string, args 
 		if stat.IsDir() {
 			isDir = true
 			outputPath = stdpath.Join(outputPath, stat.Name())
-			err = os.Mkdir(outputPath, 0700)
+			err = os.Mkdir(outputPath, 0o700)
 			if err != nil {
 				return filterPassword(err)
 			}
@@ -121,7 +120,7 @@ func (Archives) Decompress(ss []*stream.SeekableStream, outputPath string, args 
 			relPath := strings.TrimPrefix(p, path+"/")
 			dstPath := stdpath.Join(outputPath, relPath)
 			if d.IsDir() {
-				err = os.MkdirAll(dstPath, 0700)
+				err = os.MkdirAll(dstPath, 0o700)
 			} else {
 				dir := stdpath.Dir(dstPath)
 				err = decompress(fsys, p, dir, func(_ float64) {})

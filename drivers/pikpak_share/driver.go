@@ -119,7 +119,6 @@ func (d *PikPakShare) Link(ctx context.Context, file model.Obj, args model.LinkA
 		} else {
 			downloadUrl = resp.FileInfo.Medias[0].Link.Url
 		}
-
 	}
 
 	return &model.Link{

@@ -179,5 +179,4 @@ func (d *ChaoXing) Login() (string, error) {
 	}
 	defer resp.Body.Close()
 	return CookiesToString(resp.Cookies()), nil
-
 }

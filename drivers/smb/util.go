@@ -130,7 +130,7 @@ func (d *SMB) Exists(name string) bool {
 func (d *SMB) CreateNestedFile(path string) (*smb2.File, error) {
 	basePath := filepath.Dir(path)
 	if !d.Exists(basePath) {
-		err := d.fs.MkdirAll(basePath, 0700)
+		err := d.fs.MkdirAll(basePath, 0o700)
 		if err != nil {
 			return nil, err
 		}

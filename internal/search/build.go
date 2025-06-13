@@ -22,9 +22,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var (
-	Quit = atomic.Pointer[chan struct{}]{}
-)
+var Quit = atomic.Pointer[chan struct{}]{}
 
 func Running() bool {
 	return Quit.Load() != nil

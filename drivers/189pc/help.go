@@ -100,6 +100,7 @@ func (t *Time) UnmarshalXML(e *xml.Decoder, ee xml.StartElement) error {
 	}
 	return e.Skip()
 }
+
 func (t *Time) Unmarshal(b []byte) error {
 	bs := strings.Trim(string(b), "\"")
 	var v time.Time
@@ -129,6 +130,7 @@ func (t *String) UnmarshalXML(e *xml.Decoder, ee xml.StartElement) error {
 	}
 	return e.Skip()
 }
+
 func (s *String) Unmarshal(b []byte) error {
 	*s = String(bytes.Trim(b, "\""))
 	return nil

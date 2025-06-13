@@ -39,7 +39,7 @@ func start() {
 		Args: args,
 		Env:  os.Environ(),
 	}
-	stdout, err := os.OpenFile(filepath.Join(filepath.Dir(pidFile), "start.log"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0666)
+	stdout, err := os.OpenFile(filepath.Join(filepath.Dir(pidFile), "start.log"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		log.Fatal(os.Getpid(), ": failed to open start log file:", err)
 	}
@@ -50,7 +50,7 @@ func start() {
 		log.Fatal("failed to start children process: ", err)
 	}
 	log.Infof("success start pid: %d", cmd.Process.Pid)
-	err = os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0666)
+	err = os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o666)
 	if err != nil {
 		log.Warn("failed to record pid, you may not be able to stop the program with `./openlist stop`")
 	}

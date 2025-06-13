@@ -10,7 +10,7 @@ type Config struct {
 	NeedMs            bool   `json:"need_ms"` // if need get message from user, such as validate code
 	DefaultRoot       string `json:"default_root"`
 	CheckStatus       bool   `json:"-"`
-	Alert             string `json:"alert"` //info,success,warning,danger
+	Alert             string `json:"alert"` // info,success,warning,danger
 	NoOverwriteUpload bool   `json:"-"`     // whether to support overwrite upload
 	ProxyRangeOption  bool   `json:"-"`
 }

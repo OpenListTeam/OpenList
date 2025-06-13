@@ -7,8 +7,8 @@ import (
 
 type Addition struct {
 	// Usually one of two
-	//driver.RootPath
-	//driver.RootID
+	// driver.RootPath
+	// driver.RootID
 	// define other
 
 	FileNameEnc string `json:"filename_encryption" type:"select" required:"true" options:"off,standard,obfuscate" default:"off"`

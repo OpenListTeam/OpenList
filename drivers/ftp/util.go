@@ -64,7 +64,7 @@ func (r *FileReader) ReadAt(buf []byte, off int64) (n int, err error) {
 	defer r.mu.Unlock()
 
 	if off != r.readAtOffset {
-		//have to restart the connection, to correct offset
+		// have to restart the connection, to correct offset
 		_ = r.resp.Close()
 		r.resp = nil
 	}

@@ -164,10 +164,10 @@ func (d *Terabox) getFiles(dir string) ([]File, error) {
 }
 
 func sign(s1, s2 string) string {
-	var a = make([]int, 256)
-	var p = make([]int, 256)
+	a := make([]int, 256)
+	p := make([]int, 256)
 	var o []byte
-	var v = len(s1)
+	v := len(s1)
 	for q := 0; q < 256; q++ {
 		a[q] = int(s1[(q % v) : (q%v)+1][0])
 		p[q] = q

@@ -55,5 +55,7 @@ func (o *Obj) ModTime() time.Time {
 	return time.Unix(o.Upt, 0)
 }
 
-var _ model.Obj = (*Obj)(nil)
-var _ model.Thumb = (*Obj)(nil)
+var (
+	_ model.Obj   = (*Obj)(nil)
+	_ model.Thumb = (*Obj)(nil)
+)

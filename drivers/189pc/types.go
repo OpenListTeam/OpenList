@@ -132,7 +132,7 @@ type AppSessionResp struct {
 
 	// 会话刷新Token
 	AccessToken string `json:"accessToken"`
-	//Token刷新
+	// Token刷新
 	RefreshToken string `json:"refreshToken"`
 }
 
@@ -161,7 +161,7 @@ type Cloud189File struct {
 	LastOpTime Time `json:"lastOpTime"`
 	CreateDate Time `json:"createDate"`
 	Icon       struct {
-		//iconOption 5
+		// iconOption 5
 		SmallUrl string `json:"smallUrl"`
 		LargeUrl string `json:"largeUrl"`
 
@@ -225,8 +225,8 @@ func (c *Cloud189Folder) GetID() string      { return string(c.ID) }
 func (c *Cloud189Folder) GetPath() string    { return "" }
 
 type Cloud189FilesResp struct {
-	//ResCode    int    `json:"res_code"`
-	//ResMessage string `json:"res_message"`
+	// ResCode    int    `json:"res_code"`
+	// ResMessage string `json:"res_message"`
 	FileListAO struct {
 		Count      int              `json:"count"`
 		FileList   []Cloud189File   `json:"fileList"`
@@ -253,7 +253,7 @@ type BatchTaskInfo struct {
 
 /* 上传部分 */
 type InitMultiUploadResp struct {
-	//Code string `json:"code"`
+	// Code string `json:"code"`
 	Data struct {
 		UploadType     int    `json:"uploadType"`
 		UploadHost     string `json:"uploadHost"`
@@ -358,7 +358,7 @@ type BatchTaskStateResp struct {
 	SuccessedCount      int     `json:"successedCount"`
 	SuccessedFileIDList []int64 `json:"successedFileIdList"`
 	TaskID              string  `json:"taskId"`
-	TaskStatus          int     `json:"taskStatus"` //1 初始化 2 存在冲突 3 执行中，4 完成
+	TaskStatus          int     `json:"taskStatus"` // 1 初始化 2 存在冲突 3 执行中，4 完成
 }
 
 type BatchTaskConflictTaskInfoResp struct {

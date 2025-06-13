@@ -281,7 +281,7 @@ func (xc *XunLeiCommon) Link(ctx context.Context, file model.Obj, args model.Lin
 	_, err := xc.Request(FILE_API_URL+"/{fileID}", http.MethodGet, func(r *resty.Request) {
 		r.SetContext(ctx)
 		r.SetPathParam("fileID", file.GetID())
-		//r.SetQueryParam("space", "")
+		// r.SetQueryParam("space", "")
 	}, &lFile)
 	if err != nil {
 		return nil, err
@@ -531,12 +531,12 @@ func (xc *XunLeiCommon) RefreshToken(refreshToken string) (*TokenResp, error) {
 
 // 登录
 func (xc *XunLeiCommon) Login(username, password string) (*TokenResp, error) {
-	//v3 login拿到 sessionID
+	// v3 login拿到 sessionID
 	sessionID, err := xc.CoreLogin(username, password)
 	if err != nil {
 		return nil, err
 	}
-	//v1 login拿到令牌
+	// v1 login拿到令牌
 	url := XLUSER_API_URL + "/auth/signin/token"
 	if err = xc.RefreshCaptchaTokenInLogin(GetAction(http.MethodPost, url), username); err != nil {
 		return nil, err
@@ -581,7 +581,6 @@ func (xc *XunLeiCommon) OfflineDownload(ctx context.Context, fileUrl string, par
 			},
 		})
 	}, &resp)
-
 	if err != nil {
 		return nil, err
 	}
@@ -604,7 +603,6 @@ func (xc *XunLeiCommon) OfflineList(ctx context.Context, nextPageToken string) (
 				"page_token": nextPageToken,
 			})
 	}, &resp)
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to get offline list: %w", err)
 	}

@@ -11,12 +11,12 @@ import (
 // will give the best guessing based on the path
 func guessPath(path string) (isFolder, secondTry bool) {
 	if strings.HasSuffix(path, "/") {
-		//confirmed a folder
+		// confirmed a folder
 		return true, false
 	}
 	lastSlash := strings.LastIndex(path, "/")
 	if strings.Index(path[lastSlash:], ".") < 0 {
-		//no dot, try folder then try file
+		// no dot, try folder then try file
 		return true, true
 	}
 	return false, true
@@ -34,7 +34,6 @@ func (d *Crypt) getPathForRemote(path string, isFolder bool) (remoteFullPath str
 		remoteFileName = d.cipher.EncryptFileName(fileName)
 	}
 	return stdpath.Join(d.RemotePath, remoteDir, remoteFileName)
-
 }
 
 // actual path is used for internal only. any link for user should come from remoteFullPath

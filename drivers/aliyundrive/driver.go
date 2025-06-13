@@ -45,7 +45,7 @@ func (d *AliDrive) GetAddition() driver.Additional {
 
 func (d *AliDrive) Init(ctx context.Context) error {
 	// TODO login / refresh token
-	//op.MustSaveDriverStorage(d)
+	// op.MustSaveDriverStorage(d)
 	err := d.refreshToken()
 	if err != nil {
 		return err
@@ -171,7 +171,7 @@ func (d *AliDrive) Put(ctx context.Context, dstDir model.Obj, streamer model.Fil
 		Mimetype: streamer.GetMimetype(),
 	}
 	const DEFAULT int64 = 10485760
-	var count = int(math.Ceil(float64(streamer.GetSize()) / float64(DEFAULT)))
+	count := int(math.Ceil(float64(streamer.GetSize()) / float64(DEFAULT)))
 
 	partInfoList := make([]base.Json, 0, count)
 	for i := 1; i <= count; i++ {

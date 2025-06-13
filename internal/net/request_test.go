@@ -20,7 +20,6 @@ import (
 var buf22MB = make([]byte, 1024*1024*22)
 
 func dummyHttpRequest(data []byte, p http_range.Range) io.ReadCloser {
-
 	end := p.Start + p.Length - 1
 
 	if end >= int64(len(data)) {
@@ -51,7 +50,6 @@ func TestDownloadOrder(t *testing.T) {
 		Size:  int64(len(buff)),
 	}
 	readCloser, err := d.Download(context.Background(), req)
-
 	if err != nil {
 		t.Fatalf("expect no error, got %v", err)
 	}
@@ -80,6 +78,7 @@ func TestDownloadOrder(t *testing.T) {
 		t.Errorf("expect %v ranges, got %v", e, a)
 	}
 }
+
 func init() {
 	Formatter := new(logrus.TextFormatter)
 	Formatter.TimestampFormat = "2006-01-02T15:04:05.999999999"
@@ -107,7 +106,6 @@ func TestDownloadSingle(t *testing.T) {
 	}
 
 	readCloser, err := d.Download(context.Background(), req)
-
 	if err != nil {
 		t.Fatalf("expect no error, got %v", err)
 	}

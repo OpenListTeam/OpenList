@@ -15,29 +15,29 @@ type TokenErrResp struct {
 }
 
 type File struct {
-	//TkbindId     int    `json:"tkbind_id"`
-	//OwnerType    int    `json:"owner_type"`
+	// TkbindId     int    `json:"tkbind_id"`
+	// OwnerType    int    `json:"owner_type"`
 	Category int `json:"category"`
-	//RealCategory string `json:"real_category"`
+	// RealCategory string `json:"real_category"`
 	FsId int64 `json:"fs_id"`
-	//OperId      int   `json:"oper_id"`
+	// OperId      int   `json:"oper_id"`
 	Thumbs struct {
-		//Icon string `json:"icon"`
+		// Icon string `json:"icon"`
 		Url3 string `json:"url3"`
-		//Url2 string `json:"url2"`
-		//Url1 string `json:"url1"`
+		// Url2 string `json:"url2"`
+		// Url1 string `json:"url1"`
 	} `json:"thumbs"`
-	//Wpfile         int    `json:"wpfile"`
+	// Wpfile         int    `json:"wpfile"`
 
 	Size int64 `json:"size"`
-	//ExtentTinyint7 int    `json:"extent_tinyint7"`
+	// ExtentTinyint7 int    `json:"extent_tinyint7"`
 	Path string `json:"path"`
-	//Share          int    `json:"share"`
-	//Pl             int    `json:"pl"`
+	// Share          int    `json:"share"`
+	// Pl             int    `json:"pl"`
 	ServerFilename string `json:"server_filename"`
 	Md5            string `json:"md5"`
-	//OwnerId        int    `json:"owner_id"`
-	//Unlist int `json:"unlist"`
+	// OwnerId        int    `json:"owner_id"`
+	// Unlist int `json:"unlist"`
 	Isdir int `json:"isdir"`
 
 	// list resp
@@ -45,7 +45,7 @@ type File struct {
 	ServerMtime int64 `json:"server_mtime"`
 	LocalMtime  int64 `json:"local_mtime"`
 	LocalCtime  int64 `json:"local_ctime"`
-	//ServerAtime    int64    `json:"server_atime"` `
+	// ServerAtime    int64    `json:"server_atime"` `
 
 	// only create and precreate resp
 	Ctime int64 `json:"ctime"`
@@ -91,8 +91,8 @@ type DownloadResp struct {
 	Errmsg string `json:"errmsg"`
 	Errno  int    `json:"errno"`
 	List   []struct {
-		//Category    int    `json:"category"`
-		//DateTaken   int    `json:"date_taken,omitempty"`
+		// Category    int    `json:"category"`
+		// DateTaken   int    `json:"date_taken,omitempty"`
 		Dlink string `json:"dlink"`
 		//Filename    string `json:"filename"`
 		//FsId        int64  `json:"fs_id"`
@@ -120,12 +120,12 @@ type DownloadResp struct {
 type DownloadResp2 struct {
 	Errno int `json:"errno"`
 	Info  []struct {
-		//ExtentTinyint4 int `json:"extent_tinyint4"`
-		//ExtentTinyint1 int `json:"extent_tinyint1"`
-		//Bitmap string `json:"bitmap"`
-		//Category int `json:"category"`
-		//Isdir int `json:"isdir"`
-		//Videotag int `json:"videotag"`
+		// ExtentTinyint4 int `json:"extent_tinyint4"`
+		// ExtentTinyint1 int `json:"extent_tinyint1"`
+		// Bitmap string `json:"bitmap"`
+		// Category int `json:"category"`
+		// Isdir int `json:"isdir"`
+		// Videotag int `json:"videotag"`
 		Dlink string `json:"dlink"`
 		//OperID int64 `json:"oper_id"`
 		//PathMd5 int `json:"path_md5"`

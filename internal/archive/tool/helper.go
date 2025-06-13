@@ -140,7 +140,7 @@ func DecompressFromFolderTraversal(r ArchiveReader, outputPath string, args mode
 			} else if strings.HasPrefix(name, innerPath+"/") {
 				targetPath := stdpath.Join(outputPath, innerBase)
 				if !createdBaseDir {
-					err = os.Mkdir(targetPath, 0700)
+					err = os.Mkdir(targetPath, 0o700)
 					if err != nil {
 						return err
 					}
@@ -162,7 +162,7 @@ func decompress(file SubFile, filePath, outputPath, password string) error {
 	dir, base := stdpath.Split(filePath)
 	if dir != "" {
 		targetPath = stdpath.Join(targetPath, dir)
-		err := os.MkdirAll(targetPath, 0700)
+		err := os.MkdirAll(targetPath, 0o700)
 		if err != nil {
 			return err
 		}
@@ -185,7 +185,7 @@ func _decompress(file SubFile, targetPath, password string, up model.UpdateProgr
 		return err
 	}
 	defer func() { _ = rc.Close() }()
-	f, err := os.OpenFile(stdpath.Join(targetPath, file.FileInfo().Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := os.OpenFile(stdpath.Join(targetPath, file.FileInfo().Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

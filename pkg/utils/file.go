@@ -96,7 +96,7 @@ func Exists(name string) bool {
 
 // CreateNestedDirectory create nested directory
 func CreateNestedDirectory(path string) error {
-	err := os.MkdirAll(path, 0700)
+	err := os.MkdirAll(path, 0o700)
 	if err != nil {
 		log.Errorf("can't create folder, %s", err)
 	}

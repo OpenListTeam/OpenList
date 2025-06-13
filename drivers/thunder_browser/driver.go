@@ -39,7 +39,6 @@ func (x *ThunderBrowser) GetAddition() driver.Additional {
 }
 
 func (x *ThunderBrowser) Init(ctx context.Context) (err error) {
-
 	spaceTokenFunc := func() error {
 		// 如果用户未设置 "超级保险柜" 密码 则直接返回
 		if x.SafePassword == "" {
@@ -140,7 +139,6 @@ func (x *ThunderBrowserExpert) GetAddition() driver.Additional {
 }
 
 func (x *ThunderBrowserExpert) Init(ctx context.Context) (err error) {
-
 	spaceTokenFunc := func() error {
 		// 如果用户未设置 "超级保险柜" 密码 则直接返回
 		if x.SafePassword == "" {
@@ -328,7 +326,7 @@ func (xc *XunLeiBrowserCommon) Link(ctx context.Context, file model.Obj, args mo
 		r.SetContext(ctx)
 		r.SetPathParam("fileID", file.GetID())
 		r.SetQueryParams(params)
-		//r.SetQueryParam("space", "")
+		// r.SetQueryParam("space", "")
 	}, &lFile)
 	if err != nil {
 		return nil, err
@@ -367,7 +365,6 @@ func (xc *XunLeiBrowserCommon) MakeDir(ctx context.Context, parentDir model.Obj,
 }
 
 func (xc *XunLeiBrowserCommon) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-
 	params := map[string]string{
 		"_from": srcObj.(*Files).GetSpace(),
 	}
@@ -386,7 +383,6 @@ func (xc *XunLeiBrowserCommon) Move(ctx context.Context, srcObj, dstDir model.Ob
 }
 
 func (xc *XunLeiBrowserCommon) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-
 	params := map[string]string{
 		"space": srcObj.(*Files).GetSpace(),
 	}
@@ -401,7 +397,6 @@ func (xc *XunLeiBrowserCommon) Rename(ctx context.Context, srcObj model.Obj, new
 }
 
 func (xc *XunLeiBrowserCommon) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-
 	params := map[string]string{
 		"_from": srcObj.(*Files).GetSpace(),
 	}
@@ -420,7 +415,6 @@ func (xc *XunLeiBrowserCommon) Copy(ctx context.Context, srcObj, dstDir model.Ob
 }
 
 func (xc *XunLeiBrowserCommon) Remove(ctx context.Context, obj model.Obj) error {
-
 	js := base.Json{
 		"ids":   []string{obj.GetID()},
 		"space": obj.(*Files).GetSpace(),
@@ -610,7 +604,6 @@ func (xc *XunLeiBrowserCommon) Request(url string, method string, callback base.
 			} else {
 				xc.SetSpaceTokenResp(token)
 			}
-
 		}
 		if errResp.ErrorMsg == "captcha_invalid" {
 			// 验证码token过期

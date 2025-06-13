@@ -52,8 +52,8 @@ func putAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) 
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to create temp file")
 		}
-		//file.SetReader(tempFile)
-		//file.SetTmpFile(tempFile)
+		// file.SetReader(tempFile)
+		// file.SetTmpFile(tempFile)
 	}
 	taskCreator, _ := ctx.Value("user").(*model.User) // taskCreator is nil when convert failed
 	t := &UploadTask{

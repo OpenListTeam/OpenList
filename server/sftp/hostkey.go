@@ -69,12 +69,12 @@ func LoadOrGenerateRSAHostKey(parentDir string) (ssh.Signer, bool) {
 	}
 	privateBytes := rsaEncodePrivateKey(privateKey)
 	publicBytes := ssh.MarshalAuthorizedKey(publicKey)
-	err = os.WriteFile(privateKeyPath, privateBytes, 0600)
+	err = os.WriteFile(privateKeyPath, privateBytes, 0o600)
 	if err != nil {
 		utils.Log.Fatalf("failed to write RSA private key to file: %+v", err)
 		return nil, false
 	}
-	err = os.WriteFile(publicKeyPath, publicBytes, 0644)
+	err = os.WriteFile(publicKeyPath, publicBytes, 0o644)
 	if err != nil {
 		_ = os.Remove(privateKeyPath)
 		utils.Log.Fatalf("failed to write RSA public key to file: %+v", err)

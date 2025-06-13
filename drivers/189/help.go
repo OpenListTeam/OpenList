@@ -125,10 +125,10 @@ func EncodeParam(v url.Values) string {
 }
 
 func encode(str string) string {
-	//str = strings.ReplaceAll(str, "%", "%25")
-	//str = strings.ReplaceAll(str, "&", "%26")
-	//str = strings.ReplaceAll(str, "+", "%2B")
-	//return str
+	// str = strings.ReplaceAll(str, "%", "%25")
+	// str = strings.ReplaceAll(str, "&", "%26")
+	// str = strings.ReplaceAll(str, "+", "%2B")
+	// return str
 	return url.QueryEscape(str)
 }
 
@@ -166,7 +166,7 @@ func getMd5(data []byte) []byte {
 
 func decodeURIComponent(str string) string {
 	r, _ := url.PathUnescape(str)
-	//r = strings.ReplaceAll(r, " ", "+")
+	// r = strings.ReplaceAll(r, " ", "+")
 	return r
 }
 

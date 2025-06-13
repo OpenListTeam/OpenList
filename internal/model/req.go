@@ -5,10 +5,12 @@ type PageReq struct {
 	PerPage int `json:"per_page" form:"per_page"`
 }
 
-const MaxUint = ^uint(0)
-const MinUint = 0
-const MaxInt = int(MaxUint >> 1)
-const MinInt = -MaxInt - 1
+const (
+	MaxUint = ^uint(0)
+	MinUint = 0
+	MaxInt  = int(MaxUint >> 1)
+	MinInt  = -MaxInt - 1
+)
 
 func (p *PageReq) Validate() {
 	if p.Page < 1 {

@@ -41,10 +41,10 @@ func (f File) Size() int64 {
 func (f File) Mode() os.FileMode {
 	// TODO check webdav perms
 	if f.isdir {
-		return 0775 | os.ModeDir
+		return 0o775 | os.ModeDir
 	}
 
-	return 0664
+	return 0o664
 }
 
 // ModTime returns the modified time of a file

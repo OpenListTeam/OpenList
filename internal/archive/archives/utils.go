@@ -69,7 +69,7 @@ func decompress(fsys fs2.FS, filePath, targetPath string, up model.UpdateProgres
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(stdpath.Join(targetPath, stat.Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := os.OpenFile(stdpath.Join(targetPath, stat.Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

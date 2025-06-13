@@ -22,7 +22,7 @@ import (
 
 type TransferTask struct {
 	task.TaskExtension
-	Status       string        `json:"-"` //don't save status to save space
+	Status       string        `json:"-"` // don't save status to save space
 	SrcObjPath   string        `json:"src_obj_path"`
 	DstDirPath   string        `json:"dst_dir_path"`
 	SrcStorage   driver.Driver `json:"-"`
@@ -72,9 +72,7 @@ func (t *TransferTask) OnFailed() {
 	}
 }
 
-var (
-	TransferTaskManager *tache.Manager[*TransferTask]
-)
+var TransferTaskManager *tache.Manager[*TransferTask]
 
 func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy DeletePolicy) error {
 	dstStorage, dstDirActualPath, err := op.GetStorageAndActualPath(dstDirPath)

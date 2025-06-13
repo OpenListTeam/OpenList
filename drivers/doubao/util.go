@@ -105,7 +105,7 @@ func (d *Doubao) request(path string, method string, callback base.ReqCallback, 
 func (d *Doubao) getFiles(dirId, cursor string) (resp []File, err error) {
 	var r NodeInfoResp
 
-	var body = base.Json{
+	body := base.Json{
 		"node_id": dirId,
 	}
 	// 如果有游标，则设置游标和大小
@@ -669,7 +669,6 @@ func (d *Doubao) initMultipartUpload(config *UploadConfig, uploadUrl string, sto
 			"phase":      "init",
 		})
 	}, &uploadResp)
-
 	if err != nil {
 		return uploadId, err
 	}
@@ -703,7 +702,6 @@ func (d *Doubao) uploadPart(config *UploadConfig, uploadUrl, uploadID string, pa
 		req.SetBody(data)
 		req.SetContentLength(true)
 	}, &uploadResp)
-
 	if err != nil {
 		return resp, err
 	}
@@ -734,7 +732,6 @@ func (d *Doubao) completeMultipartUpload(config *UploadConfig, uploadUrl, upload
 			})
 			req.SetBody(body)
 		}, &uploadResp)
-
 		if err != nil {
 			return err
 		}
@@ -745,7 +742,6 @@ func (d *Doubao) completeMultipartUpload(config *UploadConfig, uploadUrl, upload
 
 		return err
 	})
-
 	if err != nil {
 		return fmt.Errorf("failed to complete multipart upload: %w", err)
 	}
@@ -776,7 +772,6 @@ func (d *Doubao) commitMultipartUpload(uploadConfig *UploadConfig) error {
 		req.SetHeader("Content-Type", "application/json")
 		req.SetQueryParams(params)
 		req.SetBody(jsonBytes)
-
 	}, &videoCommitUploadResp)
 	if err != nil {
 		return err

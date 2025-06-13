@@ -77,8 +77,10 @@ func (f File) Thumb() string {
 	return du.String()
 }
 
-var _ model.Obj = (*File)(nil)
-var _ model.Thumb = (*File)(nil)
+var (
+	_ model.Obj   = (*File)(nil)
+	_ model.Thumb = (*File)(nil)
+)
 
 //func (f File) Thumb() string {
 //
@@ -86,7 +88,7 @@ var _ model.Thumb = (*File)(nil)
 //var _ model.Thumb = (*File)(nil)
 
 type Files struct {
-	//BaseResp
+	// BaseResp
 	Data struct {
 		Next     string `json:"Next"`
 		Total    int    `json:"Total"`
@@ -102,7 +104,7 @@ type Files struct {
 //}
 
 type UploadResp struct {
-	//BaseResp
+	// BaseResp
 	Data struct {
 		AccessKeyId     string `json:"AccessKeyId"`
 		Bucket          string `json:"Bucket"`

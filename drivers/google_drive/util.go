@@ -24,16 +24,16 @@ import (
 // do others that not defined in Driver interface
 
 type googleDriveServiceAccount struct {
-	//Type                    string `json:"type"`
-	//ProjectID               string `json:"project_id"`
-	//PrivateKeyID            string `json:"private_key_id"`
+	// Type                    string `json:"type"`
+	// ProjectID               string `json:"project_id"`
+	// PrivateKeyID            string `json:"private_key_id"`
 	PrivateKey  string `json:"private_key"`
 	ClientEMail string `json:"client_email"`
-	//ClientID                string `json:"client_id"`
-	//AuthURI                 string `json:"auth_uri"`
+	// ClientID                string `json:"client_id"`
+	// AuthURI                 string `json:"auth_uri"`
 	TokenURI string `json:"token_uri"`
-	//AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
-	//ClientX509CertURL       string `json:"client_x509_cert_url"`
+	// AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
+	// ClientX509CertURL       string `json:"client_x509_cert_url"`
 }
 
 func (d *GoogleDrive) refreshToken() error {
@@ -214,7 +214,7 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 }
 
 func (d *GoogleDrive) chunkUpload(ctx context.Context, stream model.FileStreamer, url string) error {
-	var defaultChunkSize = d.ChunkSize * 1024 * 1024
+	defaultChunkSize := d.ChunkSize * 1024 * 1024
 	var offset int64 = 0
 	for offset < stream.GetSize() {
 		if utils.IsCanceled(ctx) {

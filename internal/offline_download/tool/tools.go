@@ -7,9 +7,7 @@ import (
 	"github.com/OpenListTeam/OpenList/internal/model"
 )
 
-var (
-	Tools = make(ToolsManager)
-)
+var Tools = make(ToolsManager)
 
 type ToolsManager map[string]Tool
 

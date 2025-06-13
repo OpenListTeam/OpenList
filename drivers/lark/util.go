@@ -2,18 +2,23 @@ package lark
 
 import (
 	"context"
+	"path"
+	"time"
+
 	"github.com/Xhofe/go-cache"
 	larkdrive "github.com/larksuite/oapi-sdk-go/v3/service/drive/v1"
 	log "github.com/sirupsen/logrus"
-	"path"
-	"time"
 )
 
-const objTokenCacheDuration = 5 * time.Minute
-const emptyFolderToken = "empty"
+const (
+	objTokenCacheDuration = 5 * time.Minute
+	emptyFolderToken      = "empty"
+)
 
-var objTokenCache = cache.NewMemCache[string]()
-var exOpts = cache.WithEx[string](objTokenCacheDuration)
+var (
+	objTokenCache = cache.NewMemCache[string]()
+	exOpts        = cache.WithEx[string](objTokenCacheDuration)
+)
 
 func (c *Lark) getObjToken(ctx context.Context, folderPath string) (string, bool) {
 	if token, ok := objTokenCache.Get(folderPath); ok {
@@ -38,7 +43,6 @@ func (c *Lark) getObjToken(ctx context.Context, folderPath string) (string, bool
 
 	req := larkdrive.NewListFileReqBuilder().FolderToken(parentToken).Build()
 	resp, err := c.client.Drive.File.ListByIterator(ctx, req)
-
 	if err != nil {
 		log.WithError(err).Error("failed to list files")
 		return emptyFolderToken, false

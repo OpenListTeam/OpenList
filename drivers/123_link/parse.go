@@ -31,7 +31,7 @@ import (
 // if there are no name, use the last segment of url as name
 func BuildTree(text string) (*Node, error) {
 	lines := strings.Split(text, "\n")
-	var root = &Node{Level: -1, Name: "root"}
+	root := &Node{Level: -1, Name: "root"}
 	stack := []*Node{root}
 	for _, line := range lines {
 		// calculate indent

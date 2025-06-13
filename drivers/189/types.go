@@ -18,7 +18,7 @@ type File struct {
 	Size       int64  `json:"size"`
 	Icon       struct {
 		SmallUrl string `json:"smallUrl"`
-		//LargeUrl string `json:"largeUrl"`
+		// LargeUrl string `json:"largeUrl"`
 	} `json:"icon"`
 	Url string `json:"url"`
 }

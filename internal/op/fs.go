@@ -20,8 +20,10 @@ import (
 
 // In order to facilitate adding some other things before and after file op
 
-var listCache = cache.NewMemCache(cache.WithShards[[]model.Obj](64))
-var listG singleflight.Group[[]model.Obj]
+var (
+	listCache = cache.NewMemCache(cache.WithShards[[]model.Obj](64))
+	listG     singleflight.Group[[]model.Obj]
+)
 
 func updateCacheObj(storage driver.Driver, path string, oldObj model.Obj, newObj model.Obj) {
 	key := Key(storage, path)
@@ -243,8 +245,10 @@ func GetUnwrap(ctx context.Context, storage driver.Driver, path string) (model.O
 	return model.UnwrapObj(obj), err
 }
 
-var linkCache = cache.NewMemCache(cache.WithShards[*model.Link](16))
-var linkG singleflight.Group[*model.Link]
+var (
+	linkCache = cache.NewMemCache(cache.WithShards[*model.Link](16))
+	linkG     singleflight.Group[*model.Link]
+)
 
 // Link get link, if is an url. should have an expiry time
 func Link(ctx context.Context, storage driver.Driver, path string, args model.LinkArgs) (*model.Link, model.Obj, error) {

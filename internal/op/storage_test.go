@@ -24,7 +24,7 @@ func init() {
 }
 
 func TestCreateStorage(t *testing.T) {
-	var storages = []struct {
+	storages := []struct {
 		storage model.Storage
 		isErr   bool
 	}{
@@ -51,7 +51,7 @@ func TestGetStorageVirtualFilesByPath(t *testing.T) {
 	for _, virtualFile := range virtualFiles {
 		names = append(names, virtualFile.GetName())
 	}
-	var expectedNames = []string{"b", "c", "d"}
+	expectedNames := []string{"b", "c", "d"}
 	if utils.SliceEqual(names, expectedNames) {
 		t.Logf("passed")
 	} else {
@@ -72,7 +72,7 @@ func TestGetBalancedStorage(t *testing.T) {
 }
 
 func setupStorages(t *testing.T) {
-	var storages = []model.Storage{
+	storages := []model.Storage{
 		{Driver: "Local", MountPath: "/a/b", Order: 0, Addition: `{"root_folder_path":"."}`},
 		{Driver: "Local", MountPath: "/adc", Order: 0, Addition: `{"root_folder_path":"."}`},
 		{Driver: "Local", MountPath: "/a/c", Order: 1, Addition: `{"root_folder_path":"."}`},

@@ -23,7 +23,7 @@ type File struct {
 		Cover string `json:"cover"`
 		Src   string `json:"src"`
 	} `json:"file"`
-	//FileID string `json:"file_id"`
+	// FileID string `json:"file_id"`
 	ID string `json:"id"`
 
 	Size       string        `json:"size"`

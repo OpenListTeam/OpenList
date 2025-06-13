@@ -91,7 +91,7 @@ func (d *SMB) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) 
 		return err
 	}
 	fullPath := filepath.Join(parentDir.GetPath(), dirName)
-	err := d.fs.MkdirAll(fullPath, 0700)
+	err := d.fs.MkdirAll(fullPath, 0o700)
 	if err != nil {
 		d.cleanLastConnTime()
 		return err

@@ -24,17 +24,17 @@ func (d *AliyundriveOpen) _refreshToken() (string, string, error) {
 	if d.OauthTokenURL != "" && d.ClientID == "" {
 		url = d.OauthTokenURL
 	}
-	//var resp base.TokenResp
+	// var resp base.TokenResp
 	var e ErrResp
 	res, err := base.RestyClient.R().
-		//ForceContentType("application/json").
+		// ForceContentType("application/json").
 		SetBody(base.Json{
 			"client_id":     d.ClientID,
 			"client_secret": d.ClientSecret,
 			"grant_type":    "refresh_token",
 			"refresh_token": d.RefreshToken,
 		}).
-		//SetResult(&resp).
+		// SetResult(&resp).
 		SetError(&e).
 		Post(url)
 	if err != nil {

@@ -74,7 +74,7 @@ func (d *KodBox) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 				Size:     f.Size,
 				IsFolder: f.Type == "folder",
 			},
-			//Thumbnail: model.Thumbnail{},
+			// Thumbnail: model.Thumbnail{},
 		}, nil
 	})
 }
@@ -85,7 +85,8 @@ func (d *KodBox) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		URL: fmt.Sprintf("%s/?explorer/index/fileOut&path=%s&download=1&accessToken=%s",
 			d.Address,
 			path,
-			d.authorization)}, nil
+			d.authorization),
+	}, nil
 }
 
 func (d *KodBox) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
@@ -262,7 +263,8 @@ func (d *KodBox) getFileOrFolderName(ctx context.Context, path string) (*string,
 	var resp *CommonResp
 	_, err := d.request(http.MethodPost, "/?explorer/index/pathInfo", func(req *resty.Request) {
 		req.SetResult(&resp).SetFormData(map[string]string{
-			"dataArr": fmt.Sprintf("[{\"path\": \"%s\"}]", path)})
+			"dataArr": fmt.Sprintf("[{\"path\": \"%s\"}]", path),
+		})
 	})
 	if err != nil {
 		return nil, err

@@ -15,9 +15,7 @@ import (
 // Obj
 type ObjsUpdateHook = func(parent string, objs []model.Obj)
 
-var (
-	objsUpdateHooks = make([]ObjsUpdateHook, 0)
-)
+var objsUpdateHooks = make([]ObjsUpdateHook, 0)
 
 func RegisterObjsUpdateHook(hook ObjsUpdateHook) {
 	objsUpdateHooks = append(objsUpdateHooks, hook)

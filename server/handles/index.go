@@ -15,7 +15,7 @@ import (
 type UpdateIndexReq struct {
 	Paths    []string `json:"paths"`
 	MaxDepth int      `json:"max_depth"`
-	//IgnorePaths []string `json:"ignore_paths"`
+	// IgnorePaths []string `json:"ignore_paths"`
 }
 
 func BuildIndex(c *gin.Context) {

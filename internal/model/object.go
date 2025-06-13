@@ -41,6 +41,7 @@ func (o *Object) GetSize() int64 {
 func (o *Object) ModTime() time.Time {
 	return o.Modified
 }
+
 func (o *Object) CreateTime() time.Time {
 	if o.Ctime.IsZero() {
 		return o.ModTime()

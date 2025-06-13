@@ -181,7 +181,7 @@ func (d *Quqi) MakeDir(ctx context.Context, parentDir model.Obj, dirName string)
 }
 
 func (d *Quqi) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	var moveRes = &MoveRes{}
+	moveRes := &MoveRes{}
 
 	if _, err := d.request("", "/api/dir/mvDir", resty.MethodPost, func(req *resty.Request) {
 		req.SetFormData(map[string]string{
@@ -208,7 +208,7 @@ func (d *Quqi) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, e
 }
 
 func (d *Quqi) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	var realName = newName
+	realName := newName
 
 	if !srcObj.IsDir() {
 		srcExt, newExt := utils.Ext(srcObj.GetName()), utils.Ext(newName)

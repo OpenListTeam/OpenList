@@ -26,8 +26,10 @@ func Release() {
 	db.Close()
 }
 
-var pid = -1
-var pidFile string
+var (
+	pid     = -1
+	pidFile string
+)
 
 func initDaemon() {
 	ex, err := os.Executable()
@@ -35,7 +37,7 @@ func initDaemon() {
 		log.Fatal(err)
 	}
 	exPath := filepath.Dir(ex)
-	_ = os.MkdirAll(filepath.Join(exPath, "daemon"), 0700)
+	_ = os.MkdirAll(filepath.Join(exPath, "daemon"), 0o700)
 	pidFile = filepath.Join(exPath, "daemon/pid")
 	if utils.Exists(pidFile) {
 		bytes, err := os.ReadFile(pidFile)

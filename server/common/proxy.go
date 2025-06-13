@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
-
-	"maps"
 
 	"github.com/OpenListTeam/OpenList/internal/model"
 	"github.com/OpenListTeam/OpenList/internal/net"
@@ -70,7 +69,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 			Limiter:           stream.ServerDownloadLimit,
 		})
 	} else {
-		//transparent proxy
+		// transparent proxy
 		header := net.ProcessHeader(r.Header, link.Header)
 		res, err := net.RequestHttp(r.Context(), r.Method, header, link.URL)
 		if err != nil {
@@ -91,12 +90,14 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 		return err
 	}
 }
+
 func attachHeader(w http.ResponseWriter, file model.Obj) {
 	fileName := file.GetName()
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, fileName, url.PathEscape(fileName)))
 	w.Header().Set("Content-Type", utils.GetMimeType(fileName))
 	w.Header().Set("Etag", GetEtag(file))
 }
+
 func GetEtag(file model.Obj) string {
 	hash := ""
 	for _, v := range file.GetHash().Export() {
@@ -118,7 +119,7 @@ func ProxyRange(link *model.Link, size int64) {
 		return
 	}
 	if link.RangeReadCloser == nil {
-		var rrc, err = stream.GetRangeReadCloserFromLink(size, link)
+		rrc, err := stream.GetRangeReadCloserFromLink(size, link)
 		if err != nil {
 			log.Warnf("ProxyRange error: %s", err)
 			return

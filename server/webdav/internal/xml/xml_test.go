@@ -471,7 +471,6 @@ const testScalarsInput = `<allscalars>
 func TestAllScalars(t *testing.T) {
 	var a allScalars
 	err := Unmarshal([]byte(testScalarsInput), &a)
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +633,6 @@ var characterTests = []struct {
 }
 
 func TestDisallowedCharacters(t *testing.T) {
-
 	for i, tt := range characterTests {
 		d := NewDecoder(strings.NewReader(tt.in))
 		var err error

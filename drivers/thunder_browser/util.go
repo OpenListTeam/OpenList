@@ -51,7 +51,7 @@ const (
 
 const (
 	UPLOAD_TYPE_UNKNOWN = "UPLOAD_TYPE_UNKNOWN"
-	//UPLOAD_TYPE_FORM      = "UPLOAD_TYPE_FORM"
+	// UPLOAD_TYPE_FORM      = "UPLOAD_TYPE_FORM"
 	UPLOAD_TYPE_RESUMABLE = "UPLOAD_TYPE_RESUMABLE"
 	UPLOAD_TYPE_URL       = "UPLOAD_TYPE_URL"
 )
@@ -101,6 +101,7 @@ func (c *Common) SetDeviceID(deviceID string) {
 func (c *Common) SetCaptchaToken(captchaToken string) {
 	c.captchaToken = captchaToken
 }
+
 func (c *Common) GetCaptchaToken() string {
 	return c.captchaToken
 }
@@ -158,7 +159,6 @@ func (c *Common) refreshCaptchaToken(action string, metas map[string]string) err
 	_, err := c.Request(XLUSER_API_URL+"/shield/captcha/init", http.MethodPost, func(req *resty.Request) {
 		req.SetError(&e).SetBody(param)
 	}, &resp)
-
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,6 @@ func EncryptPassword(password string) string {
 }
 
 func generateDeviceSign(deviceID, packageName string) string {
-
 	signatureBase := fmt.Sprintf("%s%s%s%s", deviceID, packageName, "22062", "a5d7416858147a4ab99573872ffccef8")
 
 	sha1Hash := sha1.New()
@@ -294,7 +293,7 @@ func generateDeviceSign(deviceID, packageName string) string {
 }
 
 func BuildCustomUserAgent(deviceID, appName, sdkVersion, clientVersion, packageName string) string {
-	//deviceSign := generateDeviceSign(deviceID, packageName)
+	// deviceSign := generateDeviceSign(deviceID, packageName)
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("ANDROID-%s/%s ", appName, clientVersion))

@@ -18,8 +18,10 @@ var (
 	ERRORED   = "errored"
 )
 
-type Func[K comparable] func(task *Task[K]) error
-type Callback[K comparable] func(task *Task[K])
+type (
+	Func[K comparable]     func(task *Task[K]) error
+	Callback[K comparable] func(task *Task[K])
+)
 
 type Task[K comparable] struct {
 	ID       K

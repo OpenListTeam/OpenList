@@ -133,7 +133,6 @@ func BeginAuthnRegistration(c *gin.Context) {
 	}
 
 	options, sessionData, err := authnInstance.BeginRegistration(user)
-
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 	}
@@ -177,7 +176,6 @@ func FinishAuthnRegistration(c *gin.Context) {
 	}
 
 	credential, err := authnInstance.FinishRegistration(user, sessionData, c.Request)
-
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return

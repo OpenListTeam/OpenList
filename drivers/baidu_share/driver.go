@@ -38,7 +38,7 @@ func (d *BaiduShare) GetAddition() driver.Additional {
 
 func (d *BaiduShare) Init(ctx context.Context) error {
 	// TODO login / refresh token
-	//op.MustSaveDriverStorage(d)
+	// op.MustSaveDriverStorage(d)
 	d.client = resty.New().
 		SetBaseURL("https://pan.baidu.com").
 		SetHeader("User-Agent", "netdisk").

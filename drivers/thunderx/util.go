@@ -57,7 +57,7 @@ const (
 
 const (
 	UPLOAD_TYPE_UNKNOWN = "UPLOAD_TYPE_UNKNOWN"
-	//UPLOAD_TYPE_FORM      = "UPLOAD_TYPE_FORM"
+	// UPLOAD_TYPE_FORM      = "UPLOAD_TYPE_FORM"
 	UPLOAD_TYPE_RESUMABLE = "UPLOAD_TYPE_RESUMABLE"
 	UPLOAD_TYPE_URL       = "UPLOAD_TYPE_URL"
 )
@@ -105,6 +105,7 @@ func (c *Common) SetUserAgent(userAgent string) {
 func (c *Common) SetCaptchaToken(captchaToken string) {
 	c.captchaToken = captchaToken
 }
+
 func (c *Common) GetCaptchaToken() string {
 	return c.captchaToken
 }
@@ -162,7 +163,6 @@ func (c *Common) refreshCaptchaToken(action string, metas map[string]string) err
 	_, err := c.Request(XLUSER_API_URL+"/shield/captcha/init", http.MethodPost, func(req *resty.Request) {
 		req.SetError(&e).SetBody(param)
 	}, &resp)
-
 	if err != nil {
 		return err
 	}
@@ -243,7 +243,6 @@ func getGcid(r io.Reader, size int64) (string, error) {
 }
 
 func generateDeviceSign(deviceID, packageName string) string {
-
 	signatureBase := fmt.Sprintf("%s%s%s%s", deviceID, packageName, "1", "appkey")
 
 	sha1Hash := sha1.New()

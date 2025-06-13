@@ -300,7 +300,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if err := fs.Remove(ctx, reqPath); err != nil {
 		return http.StatusMethodNotAllowed, err
 	}
-	//fs.ClearCache(path.Dir(reqPath))
+	// fs.ClearCache(path.Dir(reqPath))
 	return http.StatusNoContent, nil
 }
 
@@ -385,7 +385,7 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	}
 
 	// RFC 4918 9.3.1
-	//405 (Method Not Allowed) - MKCOL can only be executed on an unmapped URL
+	// 405 (Method Not Allowed) - MKCOL can only be executed on an unmapped URL
 	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err == nil {
 		return http.StatusMethodNotAllowed, err
 	}

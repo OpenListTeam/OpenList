@@ -52,7 +52,7 @@ func (h *gcid) Write(p []byte) (n int, err error) {
 	n = len(p)
 	for len(p) > 0 {
 		if h.offset < h.blockSize {
-			var lastSize = h.blockSize - h.offset
+			lastSize := h.blockSize - h.offset
 			if lastSize > len(p) {
 				lastSize = len(p)
 			}

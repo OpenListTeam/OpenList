@@ -43,7 +43,7 @@ func Log() {
 			Filename:   logConfig.Name,
 			MaxSize:    logConfig.MaxSize, // megabytes
 			MaxBackups: logConfig.MaxBackups,
-			MaxAge:     logConfig.MaxAge,   //days
+			MaxAge:     logConfig.MaxAge,   // days
 			Compress:   logConfig.Compress, // disabled by default
 		}
 		if flags.Debug || flags.Dev || flags.LogStd {

@@ -50,7 +50,7 @@ func (d *SftpDriver) GetConfig() *sftpd.Config {
 		ServerConfig: serverConfig,
 		HostPort:     conf.Conf.SFTP.Listen,
 		ErrorLogFunc: utils.Log.Error,
-		//DebugLogFunc: utils.Log.Debugf,
+		// DebugLogFunc: utils.Log.Debugf,
 	}
 	return d.config
 }

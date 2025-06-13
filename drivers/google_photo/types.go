@@ -37,11 +37,9 @@ type MediaMetadata struct {
 	Video        Video     `json:"video,omitempty"`
 }
 
-type Photo struct {
-}
+type Photo struct{}
 
-type Video struct {
-}
+type Video struct{}
 
 func fileToObj(f MediaItem) *model.ObjThumb {
 	if !reflect.DeepEqual(f.MediaMetadata, MediaMetadata{}) {

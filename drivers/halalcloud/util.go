@@ -41,7 +41,6 @@ const (
 )
 
 func (d *HalalCloud) NewAuthServiceWithOauth(options ...HalalOption) (*AuthService, error) {
-
 	aService := &AuthService{}
 	err2 := errors.New("")
 
@@ -80,12 +79,10 @@ func (d *HalalCloud) NewAuthServiceWithOauth(options ...HalalOption) (*AuthServi
 	}
 
 	if oauthToken.Url != "" {
-
 		return nil, fmt.Errorf(`need verify: <a target="_blank" href="%s">Click Here</a>`, oauthToken.Url)
 	}
 
 	return aService, err2
-
 }
 
 func (d *HalalCloud) NewAuthService(refreshToken string, options ...HalalOption) (*AuthService, error) {
@@ -145,7 +142,6 @@ func (d *HalalCloud) NewAuthService(refreshToken string, options ...HalalOption)
 		return err
 	}))
 	grpcConnection, err := grpc.NewClient(grpcServer, grpcOptions...)
-
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +159,6 @@ func (s *AuthService) OnAccessTokenRefreshed(accessToken string, accessTokenExpi
 	if s.dopts.onTokenRefreshed != nil {
 		s.dopts.onTokenRefreshed(accessToken, accessTokenExpiredAt, refreshToken, refreshTokenExpiredAt)
 	}
-
 }
 
 func (s *AuthService) GetGrpcConnection() *grpc.ClientConn {
@@ -215,11 +210,9 @@ func (d *HalalCloud) GetCurrentDir(dir model.Obj) string {
 	return currentDir
 }
 
-type Common struct {
-}
+type Common struct{}
 
 func getRawFiles(addr *pubUserFile.SliceDownloadInfo) ([]byte, error) {
-
 	if addr == nil {
 		return nil, errors.New("addr is nil")
 	}
@@ -229,7 +222,6 @@ func getRawFiles(addr *pubUserFile.SliceDownloadInfo) ([]byte, error) {
 	}
 	resp, err := client.Get(addr.DownloadAddress)
 	if err != nil {
-
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -264,7 +256,6 @@ func getRawFiles(addr *pubUserFile.SliceDownloadInfo) ([]byte, error) {
 	}
 
 	return body, nil
-
 }
 
 type openObject struct {
@@ -307,7 +298,7 @@ func (oo *openObject) Read(p []byte) (n int, err error) {
 	}
 	// Skip data at the start if requested
 	for oo.skip > 0 {
-		//size := 1024 * 1024
+		// size := 1024 * 1024
 		_, size, err := oo.ChunkLocation(oo.id)
 		if err != nil {
 			return 0, err

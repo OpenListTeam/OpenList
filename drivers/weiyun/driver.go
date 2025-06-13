@@ -360,7 +360,7 @@ func (d *WeiYun) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				break
 			}
 
-			var channel = channel
+			channel := channel
 			threadG.Go(func(ctx context.Context) error {
 				for {
 					channel.Len = int(math.Min(float64(stream.GetSize()-channel.Offset), float64(channel.Len)))
@@ -395,13 +395,19 @@ func (d *WeiYun) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 // 	return nil, errs.NotSupport
 // }
 
-var _ driver.Driver = (*WeiYun)(nil)
-var _ driver.GetRooter = (*WeiYun)(nil)
-var _ driver.MkdirResult = (*WeiYun)(nil)
+var (
+	_ driver.Driver      = (*WeiYun)(nil)
+	_ driver.GetRooter   = (*WeiYun)(nil)
+	_ driver.MkdirResult = (*WeiYun)(nil)
+)
 
 // var _ driver.CopyResult = (*WeiYun)(nil)
-var _ driver.MoveResult = (*WeiYun)(nil)
-var _ driver.Remove = (*WeiYun)(nil)
+var (
+	_ driver.MoveResult = (*WeiYun)(nil)
+	_ driver.Remove     = (*WeiYun)(nil)
+)
 
-var _ driver.PutResult = (*WeiYun)(nil)
-var _ driver.RenameResult = (*WeiYun)(nil)
+var (
+	_ driver.PutResult    = (*WeiYun)(nil)
+	_ driver.RenameResult = (*WeiYun)(nil)
+)

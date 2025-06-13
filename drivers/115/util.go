@@ -309,7 +309,8 @@ func (c *Pan115) UploadByOSS(ctx context.Context, params *driver115.UploadOSSPar
 
 // UploadByMultipart upload by mutipart blocks
 func (d *Pan115) UploadByMultipart(ctx context.Context, params *driver115.UploadOSSParams, fileSize int64, s model.FileStreamer,
-	dirID string, up driver.UpdateProgress, opts ...driver115.UploadMultipartOption) (*UploadResult, error) {
+	dirID string, up driver.UpdateProgress, opts ...driver115.UploadMultipartOption,
+) (*UploadResult, error) {
 	var (
 		chunks    []oss.FileChunk
 		parts     []oss.UploadPart

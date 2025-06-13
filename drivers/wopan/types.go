@@ -19,7 +19,7 @@ func fileToObj(file wopan.File) (model.Obj, error) {
 		ObjThumb: model.ObjThumb{
 			Object: model.Object{
 				ID: file.Id,
-				//Path:     "",
+				// Path:     "",
 				Name:     file.Name,
 				Size:     file.Size,
 				Modified: t,

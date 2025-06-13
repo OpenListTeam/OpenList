@@ -79,7 +79,7 @@ func getDigestAuthorization(digestParts map[string]string) string {
 	var (
 		ha1        string
 		ha2        string
-		nonceCount = 00000001
+		nonceCount = 0o0000001
 		cnonce     = getCnonce()
 		response   string
 	)

@@ -22,8 +22,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var archiveMetaCache = cache.NewMemCache(cache.WithShards[*model.ArchiveMetaProvider](64))
-var archiveMetaG singleflight.Group[*model.ArchiveMetaProvider]
+var (
+	archiveMetaCache = cache.NewMemCache(cache.WithShards[*model.ArchiveMetaProvider](64))
+	archiveMetaG     singleflight.Group[*model.ArchiveMetaProvider]
+)
 
 func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, args model.ArchiveMetaArgs) (*model.ArchiveMetaProvider, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -181,8 +183,10 @@ func getArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 	return obj, archiveMetaProvider, err
 }
 
-var archiveListCache = cache.NewMemCache(cache.WithShards[[]model.Obj](64))
-var archiveListG singleflight.Group[[]model.Obj]
+var (
+	archiveListCache = cache.NewMemCache(cache.WithShards[[]model.Obj](64))
+	archiveListG     singleflight.Group[[]model.Obj]
+)
 
 func ListArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -382,8 +386,10 @@ type extractLink struct {
 	Obj  model.Obj
 }
 
-var extractCache = cache.NewMemCache(cache.WithShards[*extractLink](16))
-var extractG singleflight.Group[*extractLink]
+var (
+	extractCache = cache.NewMemCache(cache.WithShards[*extractLink](16))
+	extractG     singleflight.Group[*extractLink]
+)
 
 func DriverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {

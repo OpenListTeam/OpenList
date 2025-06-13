@@ -32,7 +32,7 @@ func (d *Alias) listRoot() []model.Obj {
 
 // do others that not defined in Driver interface
 func getPair(path string) (string, string) {
-	//path = strings.TrimSpace(path)
+	// path = strings.TrimSpace(path)
 	if strings.Contains(path, ":") {
 		pair := strings.SplitN(path, ":", 2)
 		if !strings.Contains(pair[0], "/") {

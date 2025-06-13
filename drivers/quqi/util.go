@@ -255,9 +255,9 @@ func (d *Quqi) linkFromCDN(id string) (*model.Link, error) {
 				encryptedLength = -1
 			}
 		}
-		//log.Debugf("size: %d\tencrypted_size: %d", urlExchangeResp.Data.Size, urlExchangeResp.Data.EncryptedSize)
-		//log.Debugf("http range offset: %d, length: %d", httpRange.Start, httpRange.Length)
-		//log.Debugf("encrypted offset: %d, length: %d, decrypted offset: %d", encryptedOffset, encryptedLength, decryptedOffset)
+		// log.Debugf("size: %d\tencrypted_size: %d", urlExchangeResp.Data.Size, urlExchangeResp.Data.EncryptedSize)
+		// log.Debugf("http range offset: %d, length: %d", httpRange.Start, httpRange.Length)
+		// log.Debugf("encrypted offset: %d, length: %d, decrypted offset: %d", encryptedOffset, encryptedLength, decryptedOffset)
 
 		rrc, err := stream.GetRangeReadCloserFromLink(urlExchangeResp.Data.EncryptedSize, &model.Link{
 			URL: urlExchangeResp.Data.Url,

@@ -23,7 +23,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-//this file is inspired by GO_SDK net.http.ServeContent
+// this file is inspired by GO_SDK net.http.ServeContent
 
 //type RangeReadCloser struct {
 //	GetReaderForRange RangeReaderFunc
@@ -211,6 +211,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 	}
 	return nil
 }
+
 func ProcessHeader(origin, override http.Header) http.Header {
 	result := http.Header{}
 	// client header
@@ -261,8 +262,10 @@ func RequestHttp(ctx context.Context, httpMethod string, headerOverride http.Hea
 	return res, nil
 }
 
-var once sync.Once
-var httpClient *http.Client
+var (
+	once       sync.Once
+	httpClient *http.Client
+)
 
 func HttpClient() *http.Client {
 	once.Do(func() {

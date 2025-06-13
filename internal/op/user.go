@@ -11,10 +11,12 @@ import (
 	"github.com/Xhofe/go-cache"
 )
 
-var userCache = cache.NewMemCache(cache.WithShards[*model.User](2))
-var userG singleflight.Group[*model.User]
-var guestUser *model.User
-var adminUser *model.User
+var (
+	userCache = cache.NewMemCache(cache.WithShards[*model.User](2))
+	userG     singleflight.Group[*model.User]
+	guestUser *model.User
+	adminUser *model.User
+)
 
 func GetAdmin() (*model.User, error) {
 	if adminUser == nil {

@@ -202,8 +202,8 @@ func (c *Client) put(path string, stream io.Reader, callback func(r *http.Reques
 		return
 	}
 	defer rs.Body.Close()
-	//all, _ := io.ReadAll(rs.Body)
-	//logrus.Debugln("put res: ", string(all))
+	// all, _ := io.ReadAll(rs.Body)
+	// logrus.Debugln("put res: ", string(all))
 	status = rs.StatusCode
 	return
 }
@@ -214,5 +214,5 @@ func (c *Client) createParentCollection(itemPath string) (err error) {
 		return nil
 	}
 
-	return c.MkdirAll(parentPath, 0755)
+	return c.MkdirAll(parentPath, 0o755)
 }

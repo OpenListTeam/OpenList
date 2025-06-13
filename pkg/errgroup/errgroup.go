@@ -9,17 +9,19 @@ import (
 	"github.com/avast/retry-go"
 )
 
-type token struct{}
-type Group struct {
-	cancel func(error)
-	ctx    context.Context
-	opts   []retry.Option
+type (
+	token struct{}
+	Group struct {
+		cancel func(error)
+		ctx    context.Context
+		opts   []retry.Option
 
-	success uint64
+		success uint64
 
-	wg  sync.WaitGroup
-	sem chan token
-}
+		wg  sync.WaitGroup
+		sem chan token
+	}
+)
 
 func NewGroupWithContext(ctx context.Context, limit int, retryOpts ...retry.Option) (*Group, context.Context) {
 	ctx, cancel := context.WithCancelCause(ctx)

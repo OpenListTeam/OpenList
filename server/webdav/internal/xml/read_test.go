@@ -340,10 +340,12 @@ func TestUnmarshalBadPaths(t *testing.T) {
 	}
 }
 
-const OK = "OK"
-const withoutNameTypeData = `
+const (
+	OK                  = "OK"
+	withoutNameTypeData = `
 <?xml version="1.0" charset="utf-8"?>
 <Test3 Attr="OK" />`
+)
 
 type TestThree struct {
 	XMLName Name   `xml:"Test3"`

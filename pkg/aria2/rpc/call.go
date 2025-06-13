@@ -144,7 +144,7 @@ type websocketCaller struct {
 }
 
 func newWebsocketCaller(ctx context.Context, uri string, timeout time.Duration, notifier Notifier) (*websocketCaller, error) {
-	var header = http.Header{}
+	header := http.Header{}
 	conn, _, err := websocket.DefaultDialer.Dial(uri, header)
 	if err != nil {
 		return nil, err
@@ -267,7 +267,7 @@ type sendRequest struct {
 }
 
 var reqid = func() func() uint64 {
-	var id = uint64(time.Now().UnixNano())
+	id := uint64(time.Now().UnixNano())
 	return func() uint64 {
 		return atomic.AddUint64(&id, 1)
 	}

@@ -22,6 +22,7 @@ var metaG singleflight.Group[*model.Meta]
 func GetNearestMeta(path string) (*model.Meta, error) {
 	return getNearestMeta(utils.FixAndCleanPath(path))
 }
+
 func getNearestMeta(path string) (*model.Meta, error) {
 	meta, err := GetMetaByPath(path)
 	if err == nil {
@@ -39,6 +40,7 @@ func getNearestMeta(path string) (*model.Meta, error) {
 func GetMetaByPath(path string) (*model.Meta, error) {
 	return getMetaByPath(utils.FixAndCleanPath(path))
 }
+
 func getMetaByPath(path string) (*model.Meta, error) {
 	meta, ok := metaCache.Get(path)
 	if ok {

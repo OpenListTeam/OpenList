@@ -64,16 +64,16 @@ type PartInfo struct {
 }
 
 type CreateResp struct {
-	//Type         string `json:"type"`
-	//ParentFileId string `json:"parent_file_id"`
-	//DriveId      string `json:"drive_id"`
+	// Type         string `json:"type"`
+	// ParentFileId string `json:"parent_file_id"`
+	// DriveId      string `json:"drive_id"`
 	FileId string `json:"file_id"`
-	//RevisionId   string `json:"revision_id"`
-	//EncryptMode  string `json:"encrypt_mode"`
-	//DomainId     string `json:"domain_id"`
-	//FileName     string `json:"file_name"`
+	// RevisionId   string `json:"revision_id"`
+	// EncryptMode  string `json:"encrypt_mode"`
+	// DomainId     string `json:"domain_id"`
+	// FileName     string `json:"file_name"`
 	UploadId string `json:"upload_id"`
-	//Location     string `json:"location"`
+	// Location     string `json:"location"`
 	RapidUpload  bool       `json:"rapid_upload"`
 	PartInfoList []PartInfo `json:"part_info_list"`
 }

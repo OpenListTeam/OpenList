@@ -42,6 +42,7 @@ func (f File) GetName() string {
 func (f File) ModTime() time.Time {
 	return f.UpdateAt
 }
+
 func (f File) CreateTime() time.Time {
 	return f.UpdateAt
 }
@@ -76,8 +77,10 @@ func (f File) Thumb() string {
 	return du.String()
 }
 
-var _ model.Obj = (*File)(nil)
-var _ model.Thumb = (*File)(nil)
+var (
+	_ model.Obj   = (*File)(nil)
+	_ model.Thumb = (*File)(nil)
+)
 
 //func (f File) Thumb() string {
 //
@@ -85,7 +88,7 @@ var _ model.Thumb = (*File)(nil)
 //var _ model.Thumb = (*File)(nil)
 
 type Files struct {
-	//BaseResp
+	// BaseResp
 	Data struct {
 		InfoList []File `json:"InfoList"`
 		Next     string `json:"Next"`

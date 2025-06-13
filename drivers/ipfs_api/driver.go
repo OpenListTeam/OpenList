@@ -139,8 +139,10 @@ func (d *IPFS) Rename(ctx context.Context, srcObj model.Obj, newName string) (mo
 	}
 	dstPath := path.Join(path.Dir(srcObj.GetPath()), newName)
 	d.sh.FilesRm(ctx, dstPath, true)
-	return &model.Object{ID: srcObj.GetID(), Name: newName, Path: dstPath, Size: int64(srcObj.GetSize()),
-		IsFolder: srcObj.IsDir()}, d.sh.FilesMv(ctx, srcObj.GetPath(), dstPath)
+	return &model.Object{
+		ID: srcObj.GetID(), Name: newName, Path: dstPath, Size: int64(srcObj.GetSize()),
+		IsFolder: srcObj.IsDir(),
+	}, d.sh.FilesMv(ctx, srcObj.GetPath(), dstPath)
 }
 
 func (d *IPFS) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {

@@ -121,10 +121,8 @@ type UserInfoResp struct {
 type AppUserInfo struct {
 	BuiAuditInfo string `json:"bui_audit_info"`
 }
-type AuditInfo struct {
-}
-type Details struct {
-}
+type AuditInfo struct{}
+type Details struct{}
 type BuiAuditInfo struct {
 	AuditInfo      AuditInfo `json:"audit_info"`
 	IsAuditing     bool      `json:"is_auditing"`

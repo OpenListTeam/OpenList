@@ -42,7 +42,7 @@ type ExpertAddition struct {
 	UserAgent         string `json:"user_agent"  required:"false" default:""`
 	DownloadUserAgent string `json:"download_user_agent"  required:"false" default:""`
 
-	//优先使用视频链接代替下载链接
+	// 优先使用视频链接代替下载链接
 	UseVideoUrl bool `json:"use_video_url"`
 }
 

@@ -57,12 +57,12 @@ func (f *Files) GetName() string {
 }
 
 func (f *Files) ModTime() time.Time {
-	//return time.Unix(f.UpdatedAt, 0)
+	// return time.Unix(f.UpdatedAt, 0)
 	return time.Unix(0, f.UpdatedAt*int64(time.Millisecond))
 }
 
 func (f *Files) CreateTime() time.Time {
-	//return time.Unix(f.CreatedAt, 0)
+	// return time.Unix(f.CreatedAt, 0)
 	return time.Unix(0, f.CreatedAt*int64(time.Millisecond))
 }
 

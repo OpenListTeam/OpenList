@@ -175,7 +175,6 @@ func (d *HalalCloud) SetTokenResp(tr *TokenResp) {
 }
 
 func (d *HalalCloud) getFiles(ctx context.Context, dir model.Obj) ([]model.Obj, error) {
-
 	files := make([]model.Obj, 0)
 	limit := int64(100)
 	token := ""
@@ -209,7 +208,6 @@ func (d *HalalCloud) getFiles(ctx context.Context, dir model.Obj) ([]model.Obj, 
 }
 
 func (d *HalalCloud) getLink(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-
 	client := pubUserFile.NewPubUserFileClient(d.HalalCommon.serv.GetGrpcConnection())
 	ctx1, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
@@ -364,7 +362,6 @@ func (d *HalalCloud) remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *HalalCloud) put(ctx context.Context, dstDir model.Obj, fileStream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-
 	newDir := path.Join(dstDir.GetPath(), fileStream.GetName())
 
 	result, err := pubUserFile.NewPubUserFileClient(d.HalalCommon.serv.GetGrpcConnection()).CreateUploadToken(ctx, &pubUserFile.File{
@@ -399,7 +396,6 @@ func (d *HalalCloud) put(ctx context.Context, dstDir model.Obj, fileStream model
 		Body:   io.TeeReader(reader, driver.NewProgress(fileStream.GetSize(), up)),
 	})
 	return nil, err
-
 }
 
 var _ driver.Driver = (*HalalCloud)(nil)

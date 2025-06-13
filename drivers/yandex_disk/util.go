@@ -50,7 +50,7 @@ func (d *YandexDisk) request(pathname string, method string, callback base.ReqCa
 	if err != nil {
 		return nil, err
 	}
-	//log.Debug(res.String())
+	// log.Debug(res.String())
 	if e.Error != "" {
 		if e.Error == "UnauthorizedError" {
 			err = d.refreshToken()

@@ -12,8 +12,10 @@ import (
 
 type DriverConstructor func() driver.Driver
 
-var driverMap = map[string]DriverConstructor{}
-var driverInfoMap = map[string]driver.Info{}
+var (
+	driverMap     = map[string]DriverConstructor{}
+	driverInfoMap = map[string]driver.Info{}
+)
 
 func RegisterDriver(driver DriverConstructor) {
 	// log.Infof("register driver: [%s]", config.Name)
@@ -82,16 +84,17 @@ func getMainItems(config driver.Config) []driver.Item {
 		})
 	}
 	if !config.OnlyProxy && !config.OnlyLocal {
-		items = append(items, []driver.Item{{
-			Name: "web_proxy",
-			Type: conf.TypeBool,
-		}, {
-			Name:     "webdav_policy",
-			Type:     conf.TypeSelect,
-			Options:  "302_redirect,use_proxy_url,native_proxy",
-			Default:  "302_redirect",
-			Required: true,
-		},
+		items = append(items, []driver.Item{
+			{
+				Name: "web_proxy",
+				Type: conf.TypeBool,
+			}, {
+				Name:     "webdav_policy",
+				Type:     conf.TypeSelect,
+				Options:  "302_redirect,use_proxy_url,native_proxy",
+				Default:  "302_redirect",
+				Required: true,
+			},
 		}...)
 		if config.ProxyRangeOption {
 			item := driver.Item{
@@ -147,6 +150,7 @@ func getMainItems(config driver.Config) []driver.Item {
 	})
 	return items
 }
+
 func getAdditionalItems(t reflect.Type, defaultRoot string) []driver.Item {
 	var items []driver.Item
 	for i := 0; i < t.NumField(); i++ {

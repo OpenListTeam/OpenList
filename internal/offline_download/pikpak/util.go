@@ -10,8 +10,10 @@ import (
 	"github.com/Xhofe/go-cache"
 )
 
-var taskCache = cache.NewMemCache(cache.WithShards[[]pikpak.OfflineTask](16))
-var taskG singleflight.Group[[]pikpak.OfflineTask]
+var (
+	taskCache = cache.NewMemCache(cache.WithShards[[]pikpak.OfflineTask](16))
+	taskG     singleflight.Group[[]pikpak.OfflineTask]
+)
 
 func (p *PikPak) GetTasks(pikpakDriver *pikpak.PikPak) ([]pikpak.OfflineTask, error) {
 	key := op.Key(pikpakDriver, "/drive/v1/task")

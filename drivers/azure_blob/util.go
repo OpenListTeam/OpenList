@@ -214,7 +214,6 @@ func (d *AzureBlob) copyFile(ctx context.Context, srcPath, dstPath string) error
 
 	_, err = dstBlob.StartCopyFromURL(ctx, srcURL, nil)
 	return err
-
 }
 
 // createContainerIfNotExists - Create container if not exists
@@ -223,7 +222,7 @@ func (d *AzureBlob) createContainerIfNotExists(ctx context.Context, containerNam
 	serviceClient := d.client.ServiceClient()
 	containerClient := serviceClient.NewContainerClient(containerName)
 
-	var options = service.CreateContainerOptions{}
+	options := service.CreateContainerOptions{}
 	_, err := containerClient.Create(ctx, &options)
 	if err != nil {
 		var responseErr *azcore.ResponseError

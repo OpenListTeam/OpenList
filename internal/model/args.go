@@ -33,7 +33,7 @@ type Link struct {
 	Expiration *time.Duration // local cache expire Duration
 	IPCacheKey bool           `json:"-"` // add ip to cache key
 
-	//for accelerating request, use multi-thread downloading
+	// for accelerating request, use multi-thread downloading
 	Concurrency int `json:"concurrency"`
 	PartSize    int `json:"part_size"`
 }

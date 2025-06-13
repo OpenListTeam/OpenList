@@ -10,8 +10,10 @@ type Message[T any] struct {
 	Content T
 }
 
-type BasicConsumer[T any] func(Message[T])
-type AllConsumer[T any] func([]Message[T])
+type (
+	BasicConsumer[T any] func(Message[T])
+	AllConsumer[T any]   func([]Message[T])
+)
 
 type MQ[T any] interface {
 	Publish(Message[T])

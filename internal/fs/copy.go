@@ -22,7 +22,7 @@ import (
 
 type CopyTask struct {
 	task.TaskExtension
-	Status       string        `json:"-"` //don't save status to save space
+	Status       string        `json:"-"` // don't save status to save space
 	SrcObjPath   string        `json:"src_path"`
 	DstDirPath   string        `json:"dst_path"`
 	srcStorage   driver.Driver `json:"-"`

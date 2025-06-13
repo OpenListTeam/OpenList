@@ -2,6 +2,4 @@ package errs
 
 import "errors"
 
-var (
-	PermissionDenied = errors.New("permission denied")
-)
+var PermissionDenied = errors.New("permission denied")

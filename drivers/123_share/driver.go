@@ -38,7 +38,7 @@ func (d *Pan123Share) GetAddition() driver.Additional {
 
 func (d *Pan123Share) Init(ctx context.Context) error {
 	// TODO login / refresh token
-	//op.MustSaveDriverStorage(d)
+	// op.MustSaveDriverStorage(d)
 	return nil
 }
 
@@ -70,7 +70,7 @@ func (d *Pan123Share) List(ctx context.Context, dir model.Obj, args model.ListAr
 func (d *Pan123Share) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	// TODO return link of file, required
 	if f, ok := file.(File); ok {
-		//var resp DownResp
+		// var resp DownResp
 		var headers map[string]string
 		if !utils.IsLocalIPAddr(args.IP) {
 			headers = map[string]string{

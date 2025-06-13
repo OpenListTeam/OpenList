@@ -9,7 +9,7 @@ type BaseReq struct {
 }
 
 type BaseRes struct {
-	//Data    interface{} `json:"data"`
+	// Data    interface{} `json:"data"`
 	Code    int    `json:"err"`
 	Message string `json:"msg"`
 }

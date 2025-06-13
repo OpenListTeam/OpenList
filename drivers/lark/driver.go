@@ -137,7 +137,6 @@ func (c *Lark) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 		AppID:     c.AppId,
 		AppSecret: c.AppSecret,
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +360,6 @@ func (c *Lark) Put(ctx context.Context, dstDir model.Obj, stream model.FileStrea
 			return nil, err
 		}
 		resp, err := c.client.Drive.File.UploadPart(ctx, req)
-
 		if err != nil {
 			return nil, err
 		}
@@ -373,7 +371,7 @@ func (c *Lark) Put(ctx context.Context, dstDir model.Obj, stream model.FileStrea
 		up(float64(i) / float64(blockCount))
 	}
 
-	//close
+	// close
 	closeReq := larkdrive.NewUploadFinishFileReqBuilder().
 		Body(larkdrive.NewUploadFinishFileReqBodyBuilder().
 			UploadId(uploadId).

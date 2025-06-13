@@ -191,7 +191,7 @@ func (d *QuarkUCTV) isLogin(ctx context.Context) (bool, error) {
 }
 
 func (d *QuarkUCTV) generateReqSign(method string, pathname string, key string) (string, string, string) {
-	//timestamp 13位时间戳
+	// timestamp 13位时间戳
 	timestamp := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)
 	deviceID := d.Addition.DeviceID
 	if deviceID == "" {

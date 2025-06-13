@@ -140,8 +140,10 @@ func (d *Seafile) listLibraries() (resp []LibraryItemResp, err error) {
 	return resp, nil
 }
 
-var repoPwdNotConfigured = errors.New("library password not configured")
-var repoPwdIncorrect = errors.New("library password is incorrect")
+var (
+	repoPwdNotConfigured = errors.New("library password not configured")
+	repoPwdIncorrect     = errors.New("library password is incorrect")
+)
 
 func (d *Seafile) decryptLibrary(repo *LibraryInfo) (err error) {
 	if !repo.Encrypted {
