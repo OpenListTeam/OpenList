@@ -13,7 +13,7 @@ type Addition struct {
 	RefreshToken string `json:"refresh_token" required:"true"`
 	driver.RootPath
 
-	OauthTokenURL string `json:"oauth_token_url" default:"https://api.example.com/alist/dropbox/token"` // TODO: Replace this with a community hosted api endpoint
+	OauthTokenURL string `json:"oauth_token_url" default:"https://api.example.com/alist/dropbox/token"` // TODO: replace
 	ClientID      string `json:"client_id" required:"false" help:"Keep it empty if you don't have one"`
 	ClientSecret  string `json:"client_secret" required:"false" help:"Keep it empty if you don't have one"`
 

@@ -136,7 +136,7 @@ func Generate2FA(c *gin.Context) {
 		return
 	}
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "Alist",
+		Issuer:      "OpenList",
 		AccountName: user.Username,
 	})
 	if err != nil {

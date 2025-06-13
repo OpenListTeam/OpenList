@@ -1,4 +1,4 @@
-package alist_v3
+package openlist
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (d *AListV3) login() error {
+func (d *OpenList) login() error {
 	if d.Username == "" {
 		return nil
 	}
@@ -31,7 +31,7 @@ func (d *AListV3) login() error {
 	return nil
 }
 
-func (d *AListV3) request(api, method string, callback base.ReqCallback, retry ...bool) ([]byte, int, error) {
+func (d *OpenList) request(api, method string, callback base.ReqCallback, retry ...bool) ([]byte, int, error) {
 	url := d.Address + "/api" + api
 	req := base.RestyClient.R()
 	req.SetHeader("Authorization", d.Token)
@@ -46,7 +46,7 @@ func (d *AListV3) request(api, method string, callback base.ReqCallback, retry .
 		}
 		return nil, code, err
 	}
-	log.Debugf("[alist_v3] response body: %s", res.String())
+	log.Debugf("[openlist] response body: %s", res.String())
 	if res.StatusCode() >= 400 {
 		return nil, res.StatusCode(), fmt.Errorf("request failed, status: %s", res.Status())
 	}
