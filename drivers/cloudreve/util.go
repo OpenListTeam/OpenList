@@ -334,7 +334,6 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 		// req.Header.Set("Content-Length", strconv.Itoa(int(byteSize)))
 		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
 		req.Header.Set("User-Agent", d.getUA())
-		finish += byteSize
 		res, err := base.HttpClient.Do(req)
 		if err != nil {
 			return err
@@ -394,7 +393,6 @@ func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u Uploa
 		}
 		req = req.WithContext(ctx)
 		req.ContentLength = byteSize
-		finish += byteSize
 		res, err := base.HttpClient.Do(req)
 		if err != nil {
 			return err
@@ -411,7 +409,7 @@ func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u Uploa
 			utils.Log.Warnf("[Cloudreve-S3] server errors %d while uploading, retrying after %v...", res.StatusCode, backoff)
 			time.Sleep(backoff)
 		case etag == "":
-			return errors.New("faild to get ETag from header")
+			return errors.New("failed to get ETag from header")
 		default:
 			retryCount = 0
 			etags = append(etags, etag)
