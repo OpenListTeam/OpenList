@@ -531,7 +531,8 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		// 读取块
 		silceMd5.Reset()
 		if _, err := io.ReadFull(teeReader, byteData); err != io.EOF && err != nil {
-			sem.Release(1)
+			// 此处不需要释放信号量，因为信号量的创建和释放完全由 threadG 处理
+			// 此处释放会导致 semaphore: released more than held
 			return nil, err
 		}
 
