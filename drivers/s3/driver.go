@@ -42,7 +42,7 @@ func (d *S3) GetAddition() driver.Additional {
 
 func (d *S3) Init(ctx context.Context) error {
 	if d.Region == "" {
-		d.Region = "alist"
+		d.Region = "openlist"
 	}
 	if d.config.Name == "Doge" {
 		// 多吉云每次临时生成的秘钥有效期为 2h，所以这里设置为 118 分钟重新生成一次

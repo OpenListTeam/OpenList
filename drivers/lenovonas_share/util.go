@@ -13,7 +13,7 @@ func (d *LenovoNasShare) request(url string, method string, callback base.ReqCal
 	req.SetHeaders(map[string]string{
 		"origin":      "https://siot-share.lenovo.com.cn",
 		"referer":     "https://siot-share.lenovo.com.cn/",
-		"user-agent":  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) alist-client",
+		"user-agent":  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) openlist-client",
 		"platform":    "web",
 		"app-version": "3",
 	})

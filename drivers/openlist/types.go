@@ -1,4 +1,4 @@
-package alist_v3
+package openlist
 
 import (
 	"time"

@@ -96,7 +96,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.VERSION, Value: conf.Version, Type: conf.TypeString, Group: model.SITE, Flag: model.READONLY},
 		//{Key: conf.ApiUrl, Value: "", Type: conf.TypeString, Group: model.SITE},
 		//{Key: conf.BasePath, Value: "", Type: conf.TypeString, Group: model.SITE},
-		{Key: conf.SiteTitle, Value: "AList", Type: conf.TypeString, Group: model.SITE},
+		{Key: conf.SiteTitle, Value: "OpenList", Type: conf.TypeString, Group: model.SITE},
 		{Key: conf.Announcement, Value: "### repo\nhttps://github.com/OpenListTeam/OpenList", Type: conf.TypeText, Group: model.SITE},
 		{Key: "pagination_type", Value: "all", Type: conf.TypeSelect, Options: "all,pagination,load_more,auto_load_more", Group: model.SITE},
 		{Key: "default_page_size", Value: "30", Type: conf.TypeNumber, Group: model.SITE},
@@ -125,7 +125,7 @@ func InitialSettings() []model.SettingItem {
 		"Google":"https://docs.google.com/gview?url=$e_url&embedded=true"
 	},
 	"pdf": {
-		"PDF.js":"https://alist-org.github.io/pdf.js/web/viewer.html?file=$e_url"
+		"PDF.js":"https://alist-org.github.io/pdf.js/web/viewer.html?file=$e_url" 
 	},
 	"epub": {
 		"EPUB.js":"https://alist-org.github.io/static/epub.js/viewer.html?url=$e_url"

@@ -134,7 +134,7 @@ func (c *client) AddFromLink(link string, savePath string, id string) error {
 	}
 	addField("urls", link)
 	addField("savepath", savePath)
-	addField("tags", "alist-"+id)
+	addField("tags", "openlist-"+id)
 	addField("autoTMM", "false")
 	if err != nil {
 		return err
@@ -250,7 +250,7 @@ type InfoNotFoundError struct {
 }
 
 func (i InfoNotFoundError) Error() string {
-	return "there should be exactly one task with tag \"alist-" + i.Id + "\""
+	return "there should be exactly one task with tag \"openlist-" + i.Id + "\""
 }
 
 func NewInfoNotFoundError(id string) InfoNotFoundError {
@@ -266,7 +266,7 @@ func (c *client) GetInfo(id string) (TorrentInfo, error) {
 	}
 
 	v := url.Values{}
-	v.Set("tag", "alist-"+id)
+	v.Set("tag", "openlist-"+id)
 	response, err := c.post("/api/v2/torrents/info", v)
 	if err != nil {
 		return TorrentInfo{}, err
@@ -354,7 +354,7 @@ func (c *client) Delete(id string, deleteFiles bool) error {
 	}
 
 	v = url.Values{}
-	v.Set("tags", "alist-"+id)
+	v.Set("tags", "openlist-"+id)
 	response, err = c.post("/api/v2/torrents/deleteTags", v)
 	if err != nil {
 		return err

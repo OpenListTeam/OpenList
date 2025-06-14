@@ -1,4 +1,4 @@
-package alist_v3
+package openlist
 
 import (
 	"context"
@@ -20,20 +20,20 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type AListV3 struct {
+type OpenList struct {
 	model.Storage
 	Addition
 }
 
-func (d *AListV3) Config() driver.Config {
+func (d *OpenList) Config() driver.Config {
 	return config
 }
 
-func (d *AListV3) GetAddition() driver.Additional {
+func (d *OpenList) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
-func (d *AListV3) Init(ctx context.Context) error {
+func (d *OpenList) Init(ctx context.Context) error {
 	d.Addition.Address = strings.TrimSuffix(d.Addition.Address, "/")
 	var resp common.Resp[MeResp]
 	_, _, err := d.request("/me", http.MethodGet, func(req *resty.Request) {
@@ -70,11 +70,11 @@ func (d *AListV3) Init(ctx context.Context) error {
 	return err
 }
 
-func (d *AListV3) Drop(ctx context.Context) error {
+func (d *OpenList) Drop(ctx context.Context) error {
 	return nil
 }
 
-func (d *AListV3) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+func (d *OpenList) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	var resp common.Resp[FsListResp]
 	_, _, err := d.request("/fs/list", http.MethodPost, func(req *resty.Request) {
 		req.SetResult(&resp).SetBody(ListReq{
@@ -108,7 +108,7 @@ func (d *AListV3) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	return files, nil
 }
 
-func (d *AListV3) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+func (d *OpenList) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp common.Resp[FsGetResp]
 	// if PassUAToUpsteam is true, then pass the user-agent to the upstream
 	userAgent := base.UserAgent
@@ -132,7 +132,7 @@ func (d *AListV3) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	}, nil
 }
 
-func (d *AListV3) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+func (d *OpenList) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
 	_, _, err := d.request("/fs/mkdir", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MkdirOrLinkReq{
 			Path: path.Join(parentDir.GetPath(), dirName),
@@ -141,7 +141,7 @@ func (d *AListV3) MakeDir(ctx context.Context, parentDir model.Obj, dirName stri
 	return err
 }
 
-func (d *AListV3) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
+func (d *OpenList) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	_, _, err := d.request("/fs/move", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MoveCopyReq{
 			SrcDir: path.Dir(srcObj.GetPath()),
@@ -152,7 +152,7 @@ func (d *AListV3) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	return err
 }
 
-func (d *AListV3) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
+func (d *OpenList) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
 	_, _, err := d.request("/fs/rename", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(RenameReq{
 			Path: srcObj.GetPath(),
@@ -162,7 +162,7 @@ func (d *AListV3) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 	return err
 }
 
-func (d *AListV3) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
+func (d *OpenList) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	_, _, err := d.request("/fs/copy", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MoveCopyReq{
 			SrcDir: path.Dir(srcObj.GetPath()),
@@ -173,7 +173,7 @@ func (d *AListV3) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	return err
 }
 
-func (d *AListV3) Remove(ctx context.Context, obj model.Obj) error {
+func (d *OpenList) Remove(ctx context.Context, obj model.Obj) error {
 	_, _, err := d.request("/fs/remove", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(RemoveReq{
 			Dir:   path.Dir(obj.GetPath()),
@@ -183,7 +183,7 @@ func (d *AListV3) Remove(ctx context.Context, obj model.Obj) error {
 	return err
 }
 
-func (d *AListV3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
+func (d *OpenList) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
 	reader := driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
 		Reader:         s,
 		UpdateProgress: up,
@@ -217,7 +217,7 @@ func (d *AListV3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 	if err != nil {
 		return err
 	}
-	log.Debugf("[alist_v3] response body: %s", string(bytes))
+	log.Debugf("[openlist] response body: %s", string(bytes))
 	if res.StatusCode >= 400 {
 		return fmt.Errorf("request failed, status: %s", res.Status)
 	}
@@ -234,7 +234,7 @@ func (d *AListV3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 	return nil
 }
 
-func (d *AListV3) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
+func (d *OpenList) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
 	if !d.ForwardArchiveReq {
 		return nil, errs.NotImplement
 	}
@@ -267,7 +267,7 @@ func (d *AListV3) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.
 	}, nil
 }
 
-func (d *AListV3) ListArchive(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) ([]model.Obj, error) {
+func (d *OpenList) ListArchive(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) ([]model.Obj, error) {
 	if !d.ForwardArchiveReq {
 		return nil, errs.NotImplement
 	}
@@ -311,7 +311,7 @@ func (d *AListV3) ListArchive(ctx context.Context, obj model.Obj, args model.Arc
 	return files, nil
 }
 
-func (d *AListV3) Extract(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) (*model.Link, error) {
+func (d *OpenList) Extract(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) (*model.Link, error) {
 	if !d.ForwardArchiveReq {
 		return nil, errs.NotSupport
 	}
@@ -336,7 +336,7 @@ func (d *AListV3) Extract(ctx context.Context, obj model.Obj, args model.Archive
 	}, nil
 }
 
-func (d *AListV3) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) error {
+func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) error {
 	if !d.ForwardArchiveReq {
 		return errs.NotImplement
 	}
@@ -359,4 +359,4 @@ func (d *AListV3) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Ob
 //	return nil, errs.NotSupport
 //}
 
-var _ driver.Driver = (*AListV3)(nil)
+var _ driver.Driver = (*OpenList)(nil)
