@@ -1,16 +1,17 @@
-version: '3.3'
+version: "3.3"
 services:
   openlist:
     restart: always
     volumes:
-      - '/etc/openlist:/opt/openlist/data'
+      - ${CONFIG_PATH:-/etc/openlist}:/opt/openlist/data
     ports:
-      - '5244:5244'
-      - '5245:5245'
+      - ${OPENLIST_PORT-:5244}:5244
+      - ${OPENLIST_PORT_SSL-:5245}:5245
     environment:
-      - PUID=0
-      - PGID=0
-      - UMASK=022
-      - TZ=UTC
+      - PUID=${OPENLIST_UID:-0}
+      - PGID=${OPENLIST_GID:-0}
+      - UMASK=${OPENLIST_UMASK:-022}
+      - TZ=${TZ:-UTC}
     container_name: openlist
-    image: 'ghcr.io/openlistteam/openlist:latest'
+    hostname: openlist
+    image: "ghcr.io/openlistteam/openlist:latest"
