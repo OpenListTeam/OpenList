@@ -127,33 +127,39 @@ func (d *Alias) link(ctx context.Context, dst, sub string, args model.LinkArgs) 
 	return link, err
 }
 
-func (d *Alias) getReqPath(ctx context.Context, obj model.Obj, isParent bool) (*string, error) {
+func (d *Alias) getReqPath(ctx context.Context, obj model.Obj, isParent bool) ([]*string, error) {
 	root, sub := d.getRootAndPath(obj.GetPath())
 	if sub == "" && !isParent {
 		return nil, errs.NotSupport
 	}
 	dsts, ok := d.pathMap[root]
+	all := true
 	if !ok {
 		return nil, errs.ObjectNotFound
 	}
-	var reqPath *string
+	var reqPath []*string
 	for _, dst := range dsts {
 		path := stdpath.Join(dst, sub)
 		_, err := fs.Get(ctx, path, &fs.GetArgs{NoLog: true})
 		if err != nil {
+			all = false
+			if d.ProtectSameName && d.ParallelWrite && len(reqPath) >= 2 {
+				return nil, errs.NotImplement
+			}
 			continue
 		}
-		if !d.ProtectSameName {
-			return &path, nil
+		if !d.ProtectSameName && !d.ParallelWrite {
+			return []*string{&path}, nil
 		}
-		if ok {
-			ok = false
-		} else {
+		reqPath = append(reqPath, &path)
+		if d.ProtectSameName && !d.ParallelWrite && len(reqPath) >= 2 {
 			return nil, errs.NotImplement
 		}
-		reqPath = &path
+		if d.ProtectSameName && d.ParallelWrite && len(reqPath) >= 2 && !all {
+			return nil, errs.NotImplement
+		}
 	}
-	if reqPath == nil {
+	if len(reqPath) == 0 {
 		return nil, errs.ObjectNotFound
 	}
 	return reqPath, nil
