@@ -64,7 +64,9 @@ jobs:
           files: build/compress/*
           prerelease: false
 
-  # We don't have desktop right now
+
+  # TODO: We do not have desktop clients right now. We may need a better way to 
+  # trigger the build of desktop client when we actually have it.     
   # release_desktop:
   #   needs: release
   #   name: Release desktop

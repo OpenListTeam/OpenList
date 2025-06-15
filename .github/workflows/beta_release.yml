@@ -42,15 +42,15 @@ jobs:
           git tag -l
           npx changelogithub --output CHANGELOG.md
 
-      # Disable this right now, use github workflow assets for easier manipulation
-      # - name: Upload assets
-      #   uses: softprops/action-gh-release@v2
-      #   with:
-      #     body_path: "See CHANGELOG.md"
-      #     files: CHANGELOG.md
-      #     prerelease: true
-      #     tag_name: beta
-      - name: Upload assets
+      - name: Upload assets to beta release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: "See CHANGELOG.md"
+          files: CHANGELOG.md
+          prerelease: true
+          tag_name: beta
+
+      - name: Upload assets to github artifact
         uses: actions/upload-artifact@v4
         with:
           name: beta changelog
@@ -94,7 +94,7 @@ jobs:
         run: bash build.sh dev web
 
       - name: Build
-        uses: go-cross/cgo-actions@454cfd6d20816878926b0253ca8f2dbbd2f7d731 # V1.1.0
+        uses: OpenListTeam/cgo-actions@v1.1.1
         with:
           targets: ${{ matrix.target }}
           musl-target-format: $os-$musl-$arch
@@ -102,23 +102,23 @@ jobs:
           output: openlist-$target$ext
           musl-base-url: "https://github.com/OpenListTeam/musl-compilers/releases/latest/download/"
           x-flags: |
-            github.com/alist-org/alist/v3/internal/conf.BuiltAt=$built_at
-            github.com/alist-org/alist/v3/internal/conf.GitAuthor=OpenList
-            github.com/alist-org/alist/v3/internal/conf.GitCommit=$git_commit
-            github.com/alist-org/alist/v3/internal/conf.Version=$tag
-            github.com/alist-org/alist/v3/internal/conf.WebVersion=dev
+            github.com/OpenListTeam/OpenList/internal/conf.BuiltAt=$built_at
+            github.com/OpenListTeam/OpenList/internal/conf.GitAuthor=OpenList
+            github.com/OpenListTeam/OpenList/internal/conf.GitCommit=$git_commit
+            github.com/OpenListTeam/OpenList/internal/conf.Version=$tag
+            github.com/OpenListTeam/OpenList/internal/conf.WebVersion=dev
 
       - name: Compress
         run: |
           bash build.sh zip ${{ matrix.hash }}
 
       # See above           
-      # - name: Upload assets
-      #   uses: softprops/action-gh-release@v2
-      #   with:
-      #     files: build/compress/*
-      #     prerelease: true
-      #     tag_name: beta
+      - name: Upload assets to beta release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/compress/*
+          prerelease: true
+          tag_name: beta
 
       - name: Clean illegal characters from matrix.target
         id: clean_target_name
@@ -129,7 +129,7 @@ jobs:
           echo "Cleaned target: $CLEANED_TARGET"
           echo "cleaned_target=$CLEANED_TARGET" >> $GITHUB_ENV
 
-      - name: Upload assets
+      - name: Upload assets to github artifact
         uses: actions/upload-artifact@v4
         with:
           name: beta builds for ${{ env.cleaned_target }}
@@ -137,7 +137,9 @@ jobs:
           compression-level: 0
           if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
 
-  # TODO: We do not have desktop clients right now.        
+
+  # TODO: We do not have desktop clients right now. We may need a better way to 
+  # trigger the build of desktop client when we actually have it.        
   # desktop:
   #   needs:
   #     - release

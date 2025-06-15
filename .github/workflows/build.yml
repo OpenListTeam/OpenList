@@ -42,17 +42,17 @@ jobs:
         run: bash build.sh dev web
 
       - name: Build
-        uses: go-cross/cgo-actions@v1
+        uses: OpenListTeam/cgo-actions@v1.1.1
         with:
           targets: ${{ matrix.target }}
           musl-target-format: $os-$musl-$arch
           out-dir: build
           x-flags: |
-            github.com/alist-org/alist/v3/internal/conf.BuiltAt=$built_at
-            github.com/alist-org/alist/v3/internal/conf.GitAuthor=Xhofe
-            github.com/alist-org/alist/v3/internal/conf.GitCommit=$git_commit
-            github.com/alist-org/alist/v3/internal/conf.Version=$tag
-            github.com/alist-org/alist/v3/internal/conf.WebVersion=dev
+            github.com/OpenListTeam/OpenList/internal/conf.BuiltAt=$built_at
+            github.com/OpenListTeam/OpenList/internal/conf.GitAuthor=OpenList
+            github.com/OpenListTeam/OpenList/internal/conf.GitCommit=$git_commit
+            github.com/OpenListTeam/OpenList/internal/conf.Version=$tag
+            github.com/OpenListTeam/OpenList/internal/conf.WebVersion=dev
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
