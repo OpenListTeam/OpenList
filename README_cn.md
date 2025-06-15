@@ -1,6 +1,6 @@
 <div align="center">
   <img width="100px" alt="logo" src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/OpenList.svg"/></a>
-  <p><em>🗂一个支持多存储的文件列表程序，使用 Gin 和 Solidjs，基于 alist 项目 fork 开发</em></p>
+  <p><em>🗂一个支持多存储的文件列表程序，使用 Gin 和 SolidJS，基于 AList 项目 fork 开发</em></p>
 <div>
   <a href="https://goreportcard.com/report/github.com/OpenListTeam/OpenList/v3">
     <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
@@ -29,15 +29,13 @@
 
 > [!IMPORTANT]
 >
-> **这是FORK版本！！！**
+> 一个更可信、可持续的 AList 开源替代方案，防范未来可能的闭源、黑箱或不可信变更。
 >
-> 我们诚挚地感谢原作者 [xhofe/alist](https://github.com/xhofe/alist) 为原项目做出的重大贡献。
+> 我们诚挚地感谢原项目 [AlistGo/alist](https://github.com/AlistGo/alist) 的作者 [Xhofe](https://github.com/Xhofe) 以及其他所有贡献者。
 >
-> 本 Fork 尚未稳定, 大量外部链接指向的内容尚未得到审计, 存在投毒风险, 含相关文档网站等. 切勿盲目信任!
->
-> 当前仅移除了被确认超出原作者控制范围的外部链接（如`alistgo.com`），项目具体迁移进度可在[OpenList 迁移工作总结](https://github.com/OpenListTeam/OpenList/issues/6)中查看
+> 本 Fork 尚未稳定, 具体迁移进度可在 [OpenList 迁移工作总结](https://github.com/OpenListTeam/OpenList/issues/6) 中查看。
 
-[English](./README.md) | 中文 | [日本語](./README_ja.md) | [Contributing](./CONTRIBUTING.md) | [CODE_OF_CONDUCT](./CODE_OF_CONDUCT.md)
+[English](./README.md) | 中文 | [日本語](./README_ja.md) | [Contributing](./CONTRIBUTING.md) | [CODE OF CONDUCT](./CODE_OF_CONDUCT.md)
 
 ## 功能
 
@@ -95,15 +93,15 @@
 
 ## 文档
 
-<https://openlistteam.github.io/docs/> (临时)
+<https://docs.openlist.team>
 
 ## Demo
 
-N/A
+N/A（重建中）
 
 ## 讨论
 
-一般问题请到[讨论论坛](https://github.com/OpenListTeam/OpenList/discussions) ，**issue仅针对错误报告和功能请求。**
+一般问题请到 [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) 讨论，***Issues* 仅针对错误报告和功能请求。**
 
 ## 贡献者
 
@@ -113,9 +111,10 @@ N/A
 
 ## 许可
 
-`OpenList` 是在 AGPL-3.0 许可下许可的开源软件。
+`OpenList` 是按 AGPL-3.0 许可证许可的开源软件。
 
 ## 免责声明
+
 - 本程序为免费开源项目，旨在分享网盘文件，方便下载以及学习golang，使用时请遵守相关法律法规，请勿滥用；
 - 本程序通过调用官方sdk/接口实现，无破坏官方接口行为；
 - 本程序仅做302重定向/流量转发，不拦截、存储、篡改任何用户数据；
@@ -124,4 +123,4 @@ N/A
 
 ---
 
-> [@GitHub](https://github.com/OpenListTeam) · [@Telegram 交流群]( https://t.me/OpenListTeam)
+> [@GitHub](https://github.com/OpenListTeam) · [Telegram 交流群](https://t.me/OpenListTeam)
