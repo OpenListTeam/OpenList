@@ -97,9 +97,9 @@ type Put interface {
 	//    before uploading the file or file chunks. Or you can directly call `driver.ServerUploadLimitWaitN`
 	//    if your file chunks are sufficiently small (less than about 50KB).
 	// NOTE that the network speed may be significantly slower than the stream's read speed. Therefore, if
-	// you use a `errgroup.Group` to upload each chunk in parallel, you should consider using a recursive
-	// mutex like `semaphore.Weighted` to limit the maximum number of upload threads, preventing excessive
-	// memory usage caused by buffering too many file chunks awaiting upload.
+	// you use a `errgroup.Group` to upload each chunk in parallel, you should use `Group.SetLimit` to
+	// limit the maximum number of upload threads, preventing excessive memory usage caused by buffering
+	// too many file chunks awaiting upload.
 	Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up UpdateProgress) error
 }
 
@@ -156,9 +156,9 @@ type PutResult interface {
 	//    before uploading the file or file chunks. Or you can directly call `driver.ServerUploadLimitWaitN`
 	//    if your file chunks are sufficiently small (less than about 50KB).
 	// NOTE that the network speed may be significantly slower than the stream's read speed. Therefore, if
-	// you use a `errgroup.Group` to upload each chunk in parallel, you should consider using a recursive
-	// mutex like `semaphore.Weighted` to limit the maximum number of upload threads, preventing excessive
-	// memory usage caused by buffering too many file chunks awaiting upload.
+	// you use a `errgroup.Group` to upload each chunk in parallel, you should use `Group.SetLimit` to
+	// limit the maximum number of upload threads, preventing excessive memory usage caused by buffering
+	// too many file chunks awaiting upload.
 	Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up UpdateProgress) (model.Obj, error)
 }
 

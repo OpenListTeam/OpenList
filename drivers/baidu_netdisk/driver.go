@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"time"
 
-	"golang.org/x/sync/semaphore"
-
 	"github.com/OpenListTeam/OpenList/drivers/base"
 	"github.com/OpenListTeam/OpenList/internal/conf"
 	"github.com/OpenListTeam/OpenList/internal/driver"
@@ -297,7 +295,8 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		retry.Attempts(1),
 		retry.Delay(time.Second),
 		retry.DelayType(retry.BackOffDelay))
-	sem := semaphore.NewWeighted(3)
+	threadG.SetLimit(3)
+
 	for i, partseq := range precreateResp.BlockList {
 		if utils.IsCanceled(upCtx) {
 			break
@@ -308,10 +307,6 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 			byteSize = lastBlockSize
 		}
 		threadG.Go(func(ctx context.Context) error {
-			if err = sem.Acquire(ctx, 1); err != nil {
-				return err
-			}
-			defer sem.Release(1)
 			params := map[string]string{
 				"method":       "upload",
 				"access_token": d.AccessToken,

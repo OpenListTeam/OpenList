@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sync/semaphore"
-
 	"github.com/OpenListTeam/OpenList/drivers/base"
 	"github.com/OpenListTeam/OpenList/internal/driver"
 	"github.com/OpenListTeam/OpenList/internal/model"
@@ -300,7 +298,7 @@ func (d *MoPan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 			retry.Attempts(3),
 			retry.Delay(time.Second),
 			retry.DelayType(retry.BackOffDelay))
-		sem := semaphore.NewWeighted(3)
+		threadG.SetLimit(3)
 
 		// step.3
 		parts, err := d.client.GetAllMultiUploadUrls(initUpdload.UploadFileID, initUpdload.PartInfos)
@@ -319,10 +317,6 @@ func (d *MoPan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 
 			// step.4
 			threadG.Go(func(ctx context.Context) error {
-				if err = sem.Acquire(ctx, 1); err != nil {
-					return err
-				}
-				defer sem.Release(1)
 				reader := io.NewSectionReader(file, int64(part.PartNumber-1)*initUpdload.PartSize, byteSize)
 				req, err := part.NewRequest(ctx, driver.NewLimitedUploadStream(ctx, reader))
 				if err != nil {
