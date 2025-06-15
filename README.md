@@ -1,6 +1,6 @@
 <div align="center">
   <img width="100px" alt="logo" src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/OpenList.svg"/></a>
-  <p><em>🗂️A file list program that supports multiple storages, powered by Gin and Solidjs, fork from alist.</em></p>
+  <p><em>🗂️A file list program that supports multiple storages, powered by Gin and SolidJS, fork of AList.</em></p>
 <div>
   <a href="https://goreportcard.com/report/github.com/OpenListTeam/OpenList/v3">
     <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
@@ -28,16 +28,14 @@
 ---
 
 > [!IMPORTANT]
-> 
-> **THIS IS A FORK VERSION !!!**
 >
-> We sincerely thank the original author [xhofe/alist](https://github.com/xhofe/alist) for his substantial prior contributions.
+> Drop-in replacement for AList with long-term governance, no hidden risks, and full transparency, built to defend open source against trust-based attacks.
 >
-> This fork is not yet stable. A large number of external links point to unaudited content, posing a supply chain attack risk, including related documentation websites, etc. Do not trust!
+> We sincerely thank the author [Xhofe](https://github.com/Xhofe) of the original project [AlistGo/alist](https://github.com/AlistGo/alist) and all other contributors.
 >
-> Currently, only links confirmed to be outside the original author's control (such as `alistgo.com`) have been removed, The detailed migration progress of the project can be viewed in the [OpenList Migration Summary](https://github.com/OpenListTeam/OpenList/issues/6).
+> This fork is not yet stable, specific migration progress can be viewed in [OpenList Migration Work Summary](https://github.com/OpenListTeam/OpenList/issues/6).
 
-English | [中文](./README_cn.md) | [日本語](./README_ja.md) | [Contributing](./CONTRIBUTING.md) | [CODE_OF_CONDUCT](./CODE_OF_CONDUCT.md)
+English | [中文](./README_cn.md) | [日本語](./README_ja.md) | [Contributing](./CONTRIBUTING.md) | [CODE OF CONDUCT](./CODE_OF_CONDUCT.md)
 
 ## Features
 
@@ -97,15 +95,15 @@ English | [中文](./README_cn.md) | [日本語](./README_ja.md) | [Contributing
 
 ## Document
 
-<https://openlistteam.github.io/docs/> (temporally)
+<https://docs.openlist.team>
 
 ## Demo
 
-N/A
+N/A (to be rebuilt)
 
 ## Discussion
 
-Please go to our [discussion forum](https://github.com/OpenListTeam/OpenList/discussions) for general questions, **issues are for bug reports and feature requests only.**
+Please refer to [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) for raising general questions, ***Issues* is for bug reports and feature requests only.**
 
 ## Contributors
 
@@ -118,6 +116,7 @@ Thanks goes to these wonderful people:
 The `OpenList` is open-source software licensed under the AGPL-3.0 license.
 
 ## Disclaimer
+
 - This program is a free and open source project. It is designed to share files on the network disk, which is convenient for downloading and learning Golang. Please abide by relevant laws and regulations when using it, and do not abuse it;
 - This program is implemented by calling the official sdk/interface, without destroying the official interface behavior;
 - This program only does 302 redirect/traffic forwarding, and does not intercept, store, or tamper with any user data;
@@ -126,4 +125,4 @@ The `OpenList` is open-source software licensed under the AGPL-3.0 license.
 
 ---
 
-> [@GitHub](https://github.com/OpenListTeam) · [@Temporary  TelegramGroup]( https://t.me/OpenListTeam)
+> [@GitHub](https://github.com/OpenListTeam) · [Telegram Group](https://t.me/OpenListTeam)

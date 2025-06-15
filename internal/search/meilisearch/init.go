@@ -23,7 +23,7 @@ func init() {
 				Host:   conf.Conf.Meilisearch.Host,
 				APIKey: conf.Conf.Meilisearch.APIKey,
 			}),
-			IndexUid:             conf.Conf.Meilisearch.IndexPrefix + "alist",
+			IndexUid:             conf.Conf.Meilisearch.IndexPrefix + "openlist",
 			FilterableAttributes: []string{"parent", "is_dir", "name"},
 			SearchableAttributes: []string{"name"},
 		}

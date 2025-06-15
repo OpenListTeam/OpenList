@@ -527,7 +527,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	// if file exist and size = 0, delete it
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	dstPath := stdpath.Join(dstDirPath, file.GetName())
-	tempName := file.GetName() + ".alist_to_delete"
+	tempName := file.GetName() + ".openlist_to_delete"
 	tempPath := stdpath.Join(dstDirPath, tempName)
 	fi, err := GetUnwrap(ctx, storage, dstPath)
 	if err == nil {

@@ -88,7 +88,7 @@ func InitConfig() {
 }
 
 func confFromEnv() {
-	prefix := "ALIST_"
+	prefix := "OPENLIST_"
 	if flags.NoPrefix {
 		prefix = ""
 	}

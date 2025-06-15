@@ -69,7 +69,7 @@ func getKey(path string, dir bool) string {
 	return path
 }
 
-var defaultPlaceholderName = ".alist"
+var defaultPlaceholderName = ".openlist"
 
 func getPlaceholderName(placeholder string) string {
 	if placeholder == "" {

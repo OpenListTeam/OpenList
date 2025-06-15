@@ -1,4 +1,4 @@
-package alist_v3
+package openlist
 
 import (
 	"github.com/OpenListTeam/OpenList/internal/driver"
@@ -17,7 +17,7 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:             "AList V3",
+	Name:             "OpenList",
 	LocalSort:        true,
 	DefaultRoot:      "/",
 	CheckStatus:      true,
@@ -26,6 +26,6 @@ var config = driver.Config{
 
 func init() {
 	op.RegisterDriver(func() driver.Driver {
-		return &AListV3{}
+		return &OpenList{}
 	})
 }

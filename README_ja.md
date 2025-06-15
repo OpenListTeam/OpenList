@@ -1,6 +1,6 @@
 <div align="center">
   <img width="100px" alt="logo" src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/OpenList.svg"/></a>
-  <p><em>🗂複数のストレージをサポートするファイルリストプログラムで、Gin と Solidjs を使用し、alist プロジェクトをフォークして開発されました。</em></p>
+  <p><em>🗂複数のストレージをサポートするファイルリストプログラムで、Gin と SolidJS を使用し、AList プロジェクトをフォークして開発されました。</em></p>
 <div>
   <a href="https://goreportcard.com/report/github.com/OpenListTeam/OpenList/v3">
     <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
@@ -28,16 +28,14 @@
 ---
 
 > [!IMPORTANT]
-> 
-> **これはフォーク版です！！！**
-> 
-> オリジナルの著者 [xhofe/alist](https://github.com/xhofe/alist) による多大な貢献に、心より感謝申し上げます。
-> 
-> 本フォークはまだ安定していません。多数の外部リンクが未検証のコンテンツを指しており、ドキュメントサイトなどを含め、サプライチェーン攻撃のリスクがあります。信頼しないでください！
-> 
-> 現時点では、オリジナル作者の管理下にないことが確認されているリンク（例：`alistgo.com`）のみ削除されています，本プロジェクトの具体的な移行進捗状況は、[OpenList 移行作業報告書](https://github.com/OpenListTeam/OpenList/issues/6)でご確認いただけます。
+>
+> より信頼性が高く、持続可能なAListのオープンソース代替案で、将来起こりうる非公開化、ブラックボックス化、または信頼できない変更から保護します。
+>
+> 元のプロジェクト [AlistGo/alist](https://github.com/AlistGo/alist) の作者 [Xhofe](https://github.com/Xhofe) および他のすべての貢献者に心から感謝いたします。
+>
+> このForkはまだ安定していません。具体的な移行の進捗状況は [OpenList 移行作業のまとめ](https://github.com/OpenListTeam/OpenList/issues/6) でご確認いただけます。
 
-[English](./README.md) | [中文](./README_cn.md) | 日本語 | [Contributing](./CONTRIBUTING.md) | [CODE_OF_CONDUCT](./CODE_OF_CONDUCT.md)
+[English](./README.md) | [中文](./README_cn.md) | 日本語 | [Contributing](./CONTRIBUTING.md) | [CODE OF CONDUCT](./CODE_OF_CONDUCT.md)
 
 ## 特徴
 
@@ -96,17 +94,15 @@
 
 ## ドキュメント
 
-<https://openlistteam.github.io/docs/> (temporally)
-再構築中
+<https://docs.openlist.team>
 
 ## デモ
 
-N/A
-再構築中
+N/A （再構築中）
 
 ## ディスカッション
 
-一般的なご質問は[ディスカッションフォーラム](https://github.com/OpenListTeam/OpenList/discussions)をご利用ください。**問題はバグレポートと機能リクエストのみです。**
+一般的なご質問は [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) をご利用ください。***Issues* はバグ報告と機能リクエストに限定されています。**
 
 ## コントリビューター
 
@@ -116,9 +112,10 @@ N/A
 
 ## ライセンス
 
-`OpenList` は AGPL-3.0 ライセンスの下でライセンスされたオープンソースソフトウェアです。
+「`OpenList`」は AGPL-3.0 ライセンスの下で公開されているオープンソースソフトウェアです。
 
 ## 免責事項
+
 - このプログラムはフリーでオープンソースのプロジェクトです。ネットワークディスク上でファイルを共有するように設計されており、golang のダウンロードや学習に便利です。利用にあたっては関連法規を遵守し、悪用しないようお願いします;
 - このプログラムは、公式インターフェースの動作を破壊することなく、公式 sdk/インターフェースを呼び出すことで実装されています;
 - このプログラムは、302リダイレクト/トラフィック転送のみを行い、いかなるユーザーデータも傍受、保存、改ざんしません;
@@ -127,4 +124,4 @@ N/A
 
 ---
 
-> [@GitHub](https://github.com/OpenListTeam) · [@Temporary  TelegramGroup]( https://t.me/OpenListTeam)
+> [@GitHub](https://github.com/OpenListTeam) · [Telegram Group](https://t.me/OpenListTeam)
