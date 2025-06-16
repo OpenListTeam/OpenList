@@ -63,7 +63,10 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 				HeaderRef: header,
 			}
 			rc, err := down.Download(ctx, req)
-			return rc, err
+			if err != nil {
+				return nil, fmt.Errorf("downloader failed: %w", err)
+			}
+			return rc, nil
 		}
 		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), file.GetSize(), &stream.RateLimitRangeReadCloser{
 			RangeReadCloserIF: &model.RangeReadCloser{RangeReader: rangeReader},
