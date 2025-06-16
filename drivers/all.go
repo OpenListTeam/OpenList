@@ -6,6 +6,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/drivers/115_share"
 	_ "github.com/OpenListTeam/OpenList/drivers/123"
 	_ "github.com/OpenListTeam/OpenList/drivers/123_link"
+	_ "github.com/OpenListTeam/OpenList/drivers/123_open"
 	_ "github.com/OpenListTeam/OpenList/drivers/123_share"
 	_ "github.com/OpenListTeam/OpenList/drivers/139"
 	_ "github.com/OpenListTeam/OpenList/drivers/189"
