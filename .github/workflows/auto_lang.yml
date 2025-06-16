@@ -33,9 +33,9 @@ jobs:
       - name: Checkout alist
         uses: actions/checkout@v4
         with:
-          path: openlist
+          path: OpenList
 
-      - name: Checkout openlist-frontend
+      - name: Checkout OpenList-Frontend
         uses: actions/checkout@v4
         with:
           repository: 'OpenListTeam/OpenList-Frontend'
@@ -46,14 +46,14 @@ jobs:
 
       - name: Generate lang
         run: |
-          cd openlist
+          cd OpenList
           go run ./main.go lang
           cd ..
 
       - name: Copy lang file
         run: |
-          cp -f ./openlist/lang/*.json ./OpenList-Frontend/src/lang/en/ 2>/dev/null || :
-
+          cp -f ./OpenList/lang/*.json ./OpenList-Frontend/src/lang/en/ 2>/dev/null || :
+          
       - name: Commit git
         run: |
           cd OpenList-Frontend
