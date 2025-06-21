@@ -94,7 +94,8 @@
 
 ## ドキュメント
 
-<https://docs.openlist.team>
+- https://docs.oplist.org
+- https://docs.openlist.team
 
 ## デモ
 
@@ -124,4 +125,4 @@ N/A （再構築中）
 
 ---
 
-> [@GitHub](https://github.com/OpenListTeam) · [Telegram Group](https://t.me/OpenListTeam)
+> [@GitHub](https://github.com/OpenListTeam) · [Telegram Group](https://t.me/OpenListTeam) · [Telegram Channel](https://t.me/OpenListOfficial)

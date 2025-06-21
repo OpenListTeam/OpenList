@@ -93,6 +93,7 @@
 
 ## 文档
 
+<https://docs.oplist.org>
 <https://docs.openlist.team>
 
 ## Demo
@@ -123,4 +124,4 @@ N/A（重建中）
 
 ---
 
-> [@GitHub](https://github.com/OpenListTeam) · [Telegram 交流群](https://t.me/OpenListTeam)
+> [@GitHub](https://github.com/OpenListTeam) · [Telegram 交流群](https://t.me/OpenListTeam) · [Telegram 频道](https://t.me/OpenListOfficial)
