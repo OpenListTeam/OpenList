@@ -93,8 +93,8 @@
 
 ## 文档
 
-<https://docs.oplist.org>
-<https://docs.openlist.team>
+- https://docs.oplist.org
+- https://docs.openlist.team
 
 ## Demo
 
