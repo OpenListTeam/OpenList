@@ -12,4 +12,4 @@ services:
       - UMASK=022
       - TZ=UTC
     container_name: openlist
-    image: 'ghcr.io/openlistteam/openlist:latest'
+    image: 'openlistteam/openlist:latest'
