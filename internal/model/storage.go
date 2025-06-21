@@ -17,6 +17,7 @@ type Storage struct {
 	Disabled        bool      `json:"disabled"` // if disabled
 	DisableIndex    bool      `json:"disable_index"`
 	EnableSign      bool      `json:"enable_sign"`
+	AutoReconnectInterval int       `json:"auto_reconnect_interval"` // 自动重连时间间隔，单位分钟
 	Sort
 	Proxy
 }

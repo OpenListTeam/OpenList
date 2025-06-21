@@ -83,6 +83,23 @@ func LoadStorage(ctx context.Context, storage model.Storage) error {
 	err = initStorage(ctx, storage, storageDriver)
 	go callStorageHooks("add", storageDriver)
 	log.Debugf("storage %+v is created", storageDriver)
+
+	// Add auto-reconnect logic
+	if err != nil && storage.AutoReconnectInterval > 0 {
+		go func() {
+			ticker := time.NewTicker(time.Duration(storage.AutoReconnectInterval) * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				log.Infof("Attempting to reconnect storage: %s", storage.MountPath)
+				reconnectErr := initStorage(context.Background(), storage, storageDriver)
+				if reconnectErr == nil {
+					log.Infof("Successfully reconnected storage: %s", storage.MountPath)
+					break // Stop retrying on success
+				}
+				log.Errorf("Failed to reconnect storage %s: %+v", storage.MountPath, reconnectErr)
+			}
+		}()
+	}
 	return err
 }
 
