@@ -1,0 +1,138 @@
+# Documentation at https://goreleaser.com
+
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    - go mod download
+    - sed -i 's@/build/${TARGETPLATFORM}/@@g' Dockerfile.ci
+
+builds:
+  - binary: openlist
+    flags:
+      - -trimpath
+    ldflags:
+      - -w -s
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.BuiltAt={{ .CommitDate }}'
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.GitAuthor={{ .Env.GITHUB_REPOSITORY_OWNER }}'
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.GitCommit={{ .ShortCommit }}'
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.Version={{ .Tag }}'
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.WebVersion={{ .Env.WEB_VERSION }}'
+    goos:
+      - linux
+    goarch:
+      - 386
+      - amd64
+      - arm
+      - arm64
+      - loong64
+      - ppc64le
+      - s390x
+      - riscv64
+    env:
+    - CGO_ENABLED=1
+    - >-
+        {{- if eq .Os "linux" }}
+          {{- if eq .Arch "386"}}CC=zig cc -target x86-linux-musl{{- end }}
+          {{- if eq .Arch "amd64"}}CC=zig cc -target x86_64-linux-musl{{- end }}
+          {{- if eq .Arch "arm"}}CC=zig cc -target arm-linux-musleabihf{{- end }}
+          {{- if eq .Arch "arm64"}}CC=zig cc -target aarch64-linux-musl{{- end }}
+          {{- if eq .Arch "loong64"}}CC=zig cc -target loongarch64-linux-musl{{- end }}
+          {{- if eq .Arch "ppc64le"}}CC=zig cc -target powerpc64le-linux-musl{{- end }}
+          {{- if eq .Arch "s390x"}}CC=zig cc -target s390x-linux-musl{{- end }}
+          {{- if eq .Arch "riscv64"}}CC=zig cc -target riscv64-linux-musl{{- end }}
+        {{- end }}
+
+archives:
+  - formats: [ 'tar.gz' ]
+    # this name template makes the OS and Arch compatible with the results of uname.
+    name_template: >-
+      openlist-{{- .Os }}-{{ .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # use zip for windows archives
+    format_overrides:
+    - goos: windows
+      formats: [ 'zip' ]
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+dockers:
+  - dockerfile: Dockerfile.ci
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+    goos: linux
+    goarch: amd64
+    goamd64: v1
+    extra_files:
+      - entrypoint.sh
+    image_templates:
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-amd64"
+  - dockerfile: Dockerfile.ci
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+    goos: linux
+    goarch: arm64
+    extra_files:
+      - entrypoint.sh
+    image_templates:
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-arm64"
+  - dockerfile: Dockerfile.ci
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/ppc64le"
+    goos: linux
+    goarch: ppc64le
+    extra_files:
+      - entrypoint.sh
+    image_templates:
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-ppc64le"
+  - dockerfile: Dockerfile.ci
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/riscv64"
+    goos: linux
+    goarch: riscv64
+    extra_files:
+      - entrypoint.sh
+    image_templates:
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-riscv64"
+  - dockerfile: Dockerfile.ci
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/s390x"
+    goos: linux
+    goarch: s390x
+    extra_files:
+      - entrypoint.sh
+    image_templates:
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-s390x"
+
+docker_manifests:
+  - name_template: "ghcr.io/{{ .Env.GHCR_IMAGE }}:latest"
+    image_templates:
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-amd64"
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-arm64"
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-ppc64le"
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-riscv64"
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-s390x"
+
+  - name_template: "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-amd64"
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-arm64"
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-ppc64le"
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-riscv64"
+      - "ghcr.io/{{ .Env.GHCR_IMAGE }}:{{ .Tag }}-s390x"
