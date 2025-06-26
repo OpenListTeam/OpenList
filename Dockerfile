@@ -1,4 +1,4 @@
-FROM docker.io/library/alpine:edge AS builder
+FROM alpine:3.22 AS builder
 LABEL stage=go-builder
 WORKDIR /app/
 RUN apk add --no-cache bash curl jq gcc git go musl-dev
@@ -7,7 +7,7 @@ RUN go mod download
 COPY ./ ./
 RUN bash build.sh release docker
 
-FROM alpine:edge
+FROM alpine:3.22
 
 ARG INSTALL_FFMPEG=false
 ARG INSTALL_ARIA2=false

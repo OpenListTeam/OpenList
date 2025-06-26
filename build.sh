@@ -229,8 +229,8 @@ BuildReleaseLinuxMuslArm() {
 BuildReleaseAndroid() {
   rm -rf .git/
   mkdir -p "build"
-  wget https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
-  unzip android-ndk-r26b-linux.zip
+  wget -q https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
+  unzip -q android-ndk-r26b-linux.zip
   rm android-ndk-r26b-linux.zip
   OS_ARCHES=(amd64 arm64 386 arm)
   CGO_ARGS=(x86_64-linux-android24-clang aarch64-linux-android24-clang i686-linux-android24-clang armv7a-linux-androideabi24-clang)

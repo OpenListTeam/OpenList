@@ -13,52 +13,81 @@ concurrency:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        platform: [ubuntu-latest]
-        target: 
-          - darwin-amd64
-          - darwin-arm64
-          - windows-amd64
-          - linux-arm64-musl
-          - linux-amd64-musl
-          - windows-arm64
-          - android-arm64
     name: Build
-    runs-on: ${{ matrix.platform }}
+    runs-on: ubuntu-latest
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
-
-      - uses: benjlevesque/short-sha@v3.0
-        id: short-sha
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: stable
 
       - name: Setup web
-        run: bash build.sh dev web
+        run: |
+          bash build.sh dev web
+          echo "WEB_VERSION=dev" >> $GITHUB_ENV
+          echo "GHCR_IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          echo "GHCR_IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build
-        uses: OpenListTeam/cgo-actions@v1.1.2
+        uses: goreleaser/goreleaser-action@v6
         with:
-          targets: ${{ matrix.target }}
-          musl-target-format: $os-$musl-$arch
-          out-dir: build
-          x-flags: |
-            github.com/OpenListTeam/OpenList/internal/conf.BuiltAt=$built_at
-            github.com/OpenListTeam/OpenList/internal/conf.GitAuthor=OpenList
-            github.com/OpenListTeam/OpenList/internal/conf.GitCommit=$git_commit
-            github.com/OpenListTeam/OpenList/internal/conf.Version=$tag
-            github.com/OpenListTeam/OpenList/internal/conf.WebVersion=dev
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --snapshot --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openlist_${{ env.SHA }}_${{ matrix.target }}
-          path: build/*
+          name: openlist_binaries_${{ github.sha }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.txt
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ci
+          load: true
+          push: false
+          tags: ghcr.io/${{ env.GHCR_IMAGE_NAME }}:${{ env.GHCR_IMAGE_TAG }}
+
+  release_android:
+    name: Build - Android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          cache: false
+          go-version: stable
+
+      - name: Build Android
+        run: |
+          bash build.sh release android
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist_android_binaries_${{ github.sha }}
+          path: |
+            build/compress/*

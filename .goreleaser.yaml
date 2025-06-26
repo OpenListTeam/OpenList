@@ -1,0 +1,70 @@
+# Documentation at https://goreleaser.com
+
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - binary: openlist
+    flags:
+      - -trimpath
+    ldflags:
+      - -w -s
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.BuiltAt={{ .CommitDate }}'
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.GitAuthor={{ .Env.GITHUB_REPOSITORY_OWNER }}'
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.GitCommit={{ .ShortCommit }}'
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.Version={{ .Tag }}'
+      - -X 'github.com/OpenListTeam/OpenList/internal/conf.WebVersion={{ .Env.WEB_VERSION }}'
+    goos:
+      - darwin
+      - linux
+      - windows
+      - freebsd
+    goarch:
+      - "386"
+      - amd64
+      - arm
+      - arm64
+      - loong64
+      - ppc64le
+      - s390x
+      - riscv64
+    goarm:
+      - 5
+      - 6
+      - 7
+    ignore:
+      - goos: windows
+        goarch: arm
+      - goos: freebsd
+        goarch: arm
+      - goos: freebsd
+        goarch: "386"
+    env:
+    - CGO_ENABLED=0
+
+archives:
+  - formats: [ 'tar.gz' ]
+    # this name template makes the OS and Arch compatible with the results of uname.
+    name_template: >-
+      openlist-{{- .Os }}-{{ .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # use zip for windows archives
+    format_overrides:
+    - goos: windows
+      formats: [ 'zip' ]
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
