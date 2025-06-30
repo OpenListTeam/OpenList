@@ -1,4 +1,4 @@
-name: beta release
+name: Beta Release builds
 
 on:
   push:
@@ -141,33 +141,3 @@ jobs:
           path: ${{ github.workspace }}/build/compress/*
           compression-level: 0
           if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
-
-
-  # TODO: We do not have desktop clients right now. We may need a better way to 
-  # trigger the build of desktop client when we actually have it.        
-  # desktop:
-  #   needs:
-  #     - release
-  #   name: Beta Release Desktop
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout repo
-  #       uses: actions/checkout@v4
-  #       with:
-  #         repository: openlistteam/desktop-release
-  #         ref: main
-  #         persist-credentials: false
-  #         fetch-depth: 0
-
-  #     - name: Commit
-  #       run: |
-  #         git config --local user.email "bot@nn.ci"
-  #         git config --local user.name "IlaBot"
-  #         git commit --allow-empty -m "Trigger build for ${{ github.sha }}"
-
-  #     - name: Push commit
-  #       uses: ad-m/github-push-action@master
-  #       with:
-  #         github_token: ${{ secrets.MY_TOKEN }}
-  #         branch: main
-  #         repository: openlistteam/desktop-release

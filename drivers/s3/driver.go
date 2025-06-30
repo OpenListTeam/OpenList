@@ -14,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/internal/model"
 	"github.com/OpenListTeam/OpenList/internal/stream"
 	"github.com/OpenListTeam/OpenList/pkg/cron"
+	"github.com/OpenListTeam/OpenList/pkg/utils"
 	"github.com/OpenListTeam/OpenList/server/common"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -81,19 +82,21 @@ func (d *S3) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]mo
 
 func (d *S3) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	path := getKey(file.GetPath(), false)
-	filename := stdpath.Base(path)
-	disposition := fmt.Sprintf(`attachment; filename*=UTF-8''%s`, url.PathEscape(filename))
-	if d.AddFilenameToDisposition {
-		disposition = fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename))
-	}
+	fileName := stdpath.Base(path)
 	input := &s3.GetObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &path,
 		//ResponseContentDisposition: &disposition,
 	}
+
 	if d.CustomHost == "" {
+		disposition := fmt.Sprintf(`attachment; filename*=UTF-8''%s`, url.PathEscape(fileName))
+		if d.AddFilenameToDisposition {
+			disposition = utils.GenerateContentDisposition(fileName)
+		}
 		input.ResponseContentDisposition = &disposition
 	}
+
 	req, _ := d.linkClient.GetObjectRequest(input)
 	var link model.Link
 	var err error
@@ -108,7 +111,7 @@ func (d *S3) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*mo
 			link.URL = strings.Replace(link.URL, "/"+d.Bucket, "", 1)
 		}
 	} else {
-		if common.ShouldProxy(d, filename) {
+		if common.ShouldProxy(d, fileName) {
 			err = req.Sign()
 			link.URL = req.HTTPRequest.URL.String()
 			link.Header = req.HTTPRequest.Header

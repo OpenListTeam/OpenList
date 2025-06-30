@@ -1,0 +1,81 @@
+name: "错误报告"
+description: 错误报告 / 问题
+title: "[BUG] 请修改标题为您遇到的问题"
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢您花时间填写此错误报告。
+        请**务必**确认您的问题无重复，且不是因为您的操作、网络或第三方软件问题。
+
+  - type: checkboxes
+    attributes:
+      label: 请确认以下事项
+      description: |
+        您必须勾选以下内容，否则您的问题可能会被直接关闭。
+        或者您可以去[讨论区](https://github.com/OpenListTeam/OpenList/discussions)。
+      options:
+        - label: |
+            我已确认阅读并同意 [AGPL-3.0 第15条](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=15.%20Disclaimer%20of%20Warranty.) 。
+            本程序不提供任何明示或暗示的担保，使用风险由您自行承担。
+        - label: |
+            我已确认阅读并同意 [AGPL-3.0 第16条](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=16.%20Limitation%20of%20Liability.) 。
+            无论何种情况，版权持有人或其他分发者均不对使用本程序所造成的任何损失承担责任。
+        - label: |
+            我确认我的描述清晰，语法礼貌，能帮助开发者快速定位问题，并符合社区规则。
+        - label: |
+            我已确认阅读了[OpenList文档](https://docs.oplist.org)。
+        - label: |
+            我已确认没有重复的问题或讨论。
+        - label: |
+            我已确认是`OpenList`的问题，而不是其他原因（例如 [网络](https://docs.oplist.org/zh/faq/howto.html#tls-handshake-timeout-read-connection-reset-by-peer-dns-lookup-failed-connect-connection-refused-client-timeout-exceeded-while-awaiting-headers-no-such-host) ，`依赖`或`操作`）。
+        - label: |
+            我认为此问题必须由`OpenList`处理，而非第三方。
+        - label: |
+            我已确认这个问题在最新版本中没有被修复。
+
+  - type: input
+    id: version
+    attributes:
+      label: OpenList 版本（必填）
+      description: |
+        您使用的是哪个版本的软件？请不要使用`latest`或`master`作为答案。
+      placeholder: v4.xx.xx
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: 使用的存储驱动（必填）
+      description: |
+        您使用的是哪个存储驱动？
+      placeholder: "例如: OneDrive"
+    validations:
+      required: true
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: 问题描述（必填）
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: 配置文件内容（必填）
+      description: |
+        请提供您的`OpenList`应用的配置文件，并截图相关存储配置。(可隐藏隐私字段)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志（可选）
+      description: |
+        请复制粘贴错误日志，或者截图。(可隐藏隐私字段)
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现链接（可选）
+      description: |
+        请提供能复现此问题的链接。

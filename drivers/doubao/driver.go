@@ -145,7 +145,7 @@ func (d *Doubao) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		}
 
 		// 生成标准的Content-Disposition
-		contentDisposition := generateContentDisposition(u.Name)
+		contentDisposition := utils.GenerateContentDisposition(u.Name)
 
 		return &model.Link{
 			URL: downloadUrl,

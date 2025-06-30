@@ -7,6 +7,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/internal/driver"
 	"github.com/OpenListTeam/OpenList/internal/model"
+	streamPkg "github.com/OpenListTeam/OpenList/internal/stream"
 	"github.com/OpenListTeam/OpenList/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/pkg/utils"
 	driver115 "github.com/SheltonZhu/115driver/pkg/driver"
@@ -184,12 +185,8 @@ func (d *Pan115) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	}
 	preHash = strings.ToUpper(preHash)
 	fullHash := stream.GetHash().GetHash(utils.SHA1)
-	if len(fullHash) <= 0 {
-		tmpF, err := stream.CacheFullInTempFile()
-		if err != nil {
-			return nil, err
-		}
-		fullHash, err = utils.HashFile(utils.SHA1, tmpF)
+	if len(fullHash) != utils.SHA1.Width {
+		_, fullHash, err = streamPkg.CacheFullInTempFileAndHash(stream, utils.SHA1)
 		if err != nil {
 			return nil, err
 		}

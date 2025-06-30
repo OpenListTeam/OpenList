@@ -1,0 +1,48 @@
+name: "功能请求"
+description: 功能请求 / 增强
+title: "[Feature] 请修改标题为您的功能名称"
+labels: [enhancement]
+body:
+  - type: checkboxes
+    attributes:
+      label: 请确认以下事项
+      description: |
+        您必须勾选以下内容，否则您的问题可能会被直接关闭。
+        或者您可以去[讨论区](https://github.com/OpenListTeam/OpenList/discussions)。
+      options:
+        - label: |
+            我已确认阅读并同意 [AGPL-3.0 第15条](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=15.%20Disclaimer%20of%20Warranty.) 。
+            本程序不提供任何明示或暗示的担保，使用风险由您自行承担。
+        - label: |
+            我已确认阅读并同意 [AGPL-3.0 第16条](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=16.%20Limitation%20of%20Liability.) 。
+            无论何种情况，版权持有人或其他分发者均不对使用本程序所造成的任何损失承担责任。
+        - label: |
+            我确认我的描述清晰，语法礼貌，能帮助开发者快速定位问题，并符合社区规则。
+        - label: |
+            我已确认阅读了[OpenList文档](https://docs.oplist.org)。
+        - label: |
+            我已确认没有重复的问题或讨论。
+        - label: |
+            我认为此问题必须由`OpenList`处理，而非第三方。
+        - label: |
+            我已确认此功能尚未被实现。
+        - label: |
+            我已确认此功能是合理的，且有普遍需求，并非我个人需要。
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: 需求描述
+    validations:
+      required: true
+  - type: textarea
+    id: suggested-solution
+    attributes:
+      label: 实现思路
+      description: |
+        实现此需求的解决思路。
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 附加信息
+      description: |
+        相关的任何其他上下文或截图，或者你觉得有帮助的信息

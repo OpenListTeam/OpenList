@@ -13,13 +13,15 @@ import (
 	"github.com/OpenListTeam/OpenList/internal/model"
 	"github.com/OpenListTeam/OpenList/internal/op"
 	"github.com/OpenListTeam/OpenList/internal/setting"
-	"github.com/OpenListTeam/gofakes3"
+	"github.com/itsHenry35/gofakes3"
 )
 
 type Bucket struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
 }
+
+const emptyObjectName = "ThisIsAnEmptyFolderInTheS3Bucket"
 
 func getAndParseBuckets() ([]Bucket, error) {
 	var res []Bucket

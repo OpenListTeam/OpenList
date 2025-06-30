@@ -10,6 +10,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/drivers/123_share"
 	_ "github.com/OpenListTeam/OpenList/drivers/139"
 	_ "github.com/OpenListTeam/OpenList/drivers/189"
+	_ "github.com/OpenListTeam/OpenList/drivers/189_tv"
 	_ "github.com/OpenListTeam/OpenList/drivers/189pc"
 	_ "github.com/OpenListTeam/OpenList/drivers/alias"
 	_ "github.com/OpenListTeam/OpenList/drivers/aliyundrive"

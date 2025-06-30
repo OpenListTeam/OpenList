@@ -1,10 +1,12 @@
-name: release_linux_musl_arm
+name: Release builds (linux_musl_arm)
 
 on:
   release:
     types: [ published ]
     
-permissions: write-all
+permissions:
+  contents: write
+
 jobs:
   release_linux_musl_arm:
     strategy:
@@ -35,3 +37,34 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build/compress/*
+
+  release_linux_musl_arm_lite:
+    strategy:
+      matrix:
+        platform: [ ubuntu-latest ]
+        go-version: [ '1.21' ]
+    name: Release
+    runs-on: ${{ matrix.platform }}
+    steps:
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        run: |
+          bash build.sh release lite linux_musl_arm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/compress/*      
+ 

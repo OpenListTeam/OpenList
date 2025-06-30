@@ -1,9 +1,12 @@
-name: auto changelog
+name: Automatic changelog
 
 on:
   push:
     tags:
       - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
   changelog:

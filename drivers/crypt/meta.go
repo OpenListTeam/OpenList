@@ -28,7 +28,7 @@ type Addition struct {
 var config = driver.Config{
 	Name:              "Crypt",
 	LocalSort:         true,
-	OnlyLocal:         false,
+	OnlyLocal:         true,
 	OnlyProxy:         true,
 	NoCache:           true,
 	NoUpload:          false,

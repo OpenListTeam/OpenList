@@ -1,9 +1,11 @@
-name: release
+name: Release builds
 
 on:
   release:
     types: [ published ]
-permissions: write-all
+
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -67,32 +69,64 @@ jobs:
           files: build/compress/*
           prerelease: false
 
+  release-lite:
+    strategy:
+      matrix:
+        platform: [ ubuntu-latest ]
+        go-version: [ '1.21' ]
+    name: Release Lite
+    runs-on: ${{ matrix.platform }}
+    steps:
 
-  # TODO: We do not have desktop clients right now. We may need a better way to 
-  # trigger the build of desktop client when we actually have it.     
-  # release_desktop:
-  #   needs: release
-  #   name: Release desktop
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout repo
-  #       uses: actions/checkout@v4
-  #       with:
-  #         repository: openlistteam/desktop-release
-  #         ref: main
-  #         persist-credentials: false
-  #         fetch-depth: 0
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # this might remove tools that are actually needed,
+          # if set to "true" but frees about 6 GB
+          tool-cache: false
+          
+          # all of these default to true, but feel free to set to
+          # "false" if necessary for your workflow
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
-  #     - name: Add tag
-  #       run: |
-  #         git config --local user.email "bot@nn.ci"
-  #         git config --local user.name "IlaBot"
-  #         version=$(wget -qO- -t1 -T2 "https://api.github.com/repos/openlistteam/openlist/releases/latest" | grep "tag_name" | head -n 1 | awk -F ":" '{print $2}' | sed 's/\"//g;s/,//g;s/ //g')
-  #         git tag -a $version -m "release $version"
+      - name: Prerelease
+        uses: irongut/EditRelease@v1.2.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          id: ${{ github.event.release.id }}
+          prerelease: true
 
-  #     - name: Push tags
-  #       uses: ad-m/github-push-action@master
-  #       with:
-  #         github_token: ${{ secrets.MY_TOKEN }}
-  #         branch: main
-  #         repository: openlistteam/desktop-release
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo snap install zig --classic --beta
+          docker pull crazymax/xgo:latest
+          go install github.com/crazy-max/xgo@latest
+          sudo apt install upx
+
+      - name: Build
+        run: |
+          bash build.sh release lite
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/compress/*
+          prerelease: false
+

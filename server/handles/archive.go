@@ -3,7 +3,6 @@ package handles
 import (
 	"encoding/json"
 	"fmt"
-	"net/url"
 	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/internal/task"
@@ -392,11 +391,11 @@ func ArchiveInternalExtract(c *gin.Context) {
 		"Referrer-Policy": "no-referrer",
 		"Cache-Control":   "max-age=0, no-cache, no-store, must-revalidate",
 	}
-	filename := stdpath.Base(innerPath)
-	headers["Content-Disposition"] = fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename))
+	fileName := stdpath.Base(innerPath)
+	headers["Content-Disposition"] = utils.GenerateContentDisposition(fileName)
 	contentType := c.Request.Header.Get("Content-Type")
 	if contentType == "" {
-		contentType = utils.GetMimeType(filename)
+		contentType = utils.GetMimeType(fileName)
 	}
 	c.DataFromReader(200, size, contentType, rc, headers)
 }

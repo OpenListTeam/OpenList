@@ -1,8 +1,14 @@
 blank_issues_enabled: true
 contact_links:
+  - name: 问题和讨论
+    url: https://github.com/OpenListTeam/OpenList/discussions
+    about: 讨论、问题、想法等
   - name: Questions & Discussions
     url: https://github.com/OpenListTeam/OpenList/discussions
-    about: Discuss / 讨论、问题、想法等
+    about: Discuss issues, ideas, etc.
+  - name: 即时聊天
+    url: https://t.me/OpenListTeam
+    about: 与我们聊天
   - name: Chat
     url: https://t.me/OpenListTeam
-    about: Chat with us / 与我们聊天
+    about: Chat with us

@@ -1,0 +1,81 @@
+name: "Bug Report"
+description: Bug Report / Issue
+title: "[BUG] Please modify the title to describe the issue you are facing"
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to fill out this bug report.
+        Please **make sure** your issue is not a duplicate and is not caused by your own operation, network, or third-party software.
+
+  - type: checkboxes
+    attributes:
+      label: Please confirm the following
+      description: |
+        You must check all the following, otherwise your issue may be closed directly.
+        Or you can go to the [discussions](https://github.com/OpenListTeam/OpenList/discussions).
+      options:
+        - label: |
+            I have read and agree to [AGPL-3.0 Section 15](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=15.%20Disclaimer%20of%20Warranty.) .
+            The program is provided "as is" without any warranties; you bear all risks of using it.
+        - label: |
+            I have read and agree to [AGPL-3.0 Section 16](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=16.%20Limitation%20of%20Liability.) .
+            The copyright holders and distributors are not liable for any damages resulting from the use or inability to use the program.
+        - label: |
+            I confirm my description is clear, polite, helps developers quickly locate the issue, and complies with community rules.
+        - label: |
+            I have read the [OpenList documentation](https://docs.oplist.org).
+        - label: |
+            I confirm there are no duplicate issues or discussions.
+        - label: |
+            I confirm this is an `OpenList` issue, not caused by other reasons (such as [network](https://docs.oplist.org/faq/howto.html#tls-handshake-timeout-read-connection-reset-by-peer-dns-lookup-failed-connect-connection-refused-client-timeout-exceeded-while-awaiting-headers-no-such-host), dependencies, or operation).
+        - label: |
+            I believe this issue must be handled by `OpenList` and not by a third party.
+        - label: |
+            I confirm this issue is not fixed in the latest version.
+
+  - type: input
+    id: version
+    attributes:
+      label: OpenList Version (required)
+      description: |
+        What version of the software are you using? Please do not use `latest` or `master` as the answer.
+      placeholder: v4.xx.xx
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Storage Driver Used (required)
+      description: |
+        Which storage driver are you using?
+      placeholder: "e.g. OneDrive"
+    validations:
+      required: true
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: Bug Description (required)
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration File Content (required)
+      description: |
+        Please provide your `OpenList` application's configuration file and a screenshot of the relevant storage configuration. (You may mask sensitive fields)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      description: |
+        Please copy and paste any relevant log output or screenshots. (You may mask sensitive fields)
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Link (optional)
+      description: |
+        Please provide a link to a repo or page that can reproduce this issue.

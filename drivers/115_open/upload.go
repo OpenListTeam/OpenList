@@ -68,7 +68,7 @@ func (d *Open115) singleUpload(ctx context.Context, tempF model.File, tokenResp 
 // 	} `json:"data"`
 // }
 
-func (d *Open115) multpartUpload(ctx context.Context, tempF model.File, stream model.FileStreamer, up driver.UpdateProgress, tokenResp *sdk.UploadGetTokenResp, initResp *sdk.UploadInitResp) error {
+func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer, up driver.UpdateProgress, tokenResp *sdk.UploadGetTokenResp, initResp *sdk.UploadInitResp) error {
 	fileSize := stream.GetSize()
 	chunkSize := calPartSize(fileSize)
 

@@ -1,0 +1,48 @@
+name: "Feature Request"
+description: Feature Request / Enhancement
+title: "[Feature] Please change the title to your feature name"
+labels: [enhancement]
+body:
+  - type: checkboxes
+    attributes:
+      label: Please confirm the following
+      description: |
+        You must check all the following, otherwise your request may be closed directly.
+        Or you can go to the [discussions](https://github.com/OpenListTeam/OpenList/discussions).
+      options:
+        - label: |
+            I have read and agree to [AGPL-3.0 Section 15](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=15.%20Disclaimer%20of%20Warranty.).
+            The program is provided "as is" without any warranties; you bear all risks of using it.
+        - label: |
+            I have read and agree to [AGPL-3.0 Section 16](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=16.%20Limitation%20of%20Liability.).
+            The copyright holders and distributors are not liable for any damages resulting from the use or inability to use the program.
+        - label: |
+            I confirm my description is clear, polite, helps developers quickly locate the issue, and complies with community rules.
+        - label: |
+            I have read the [OpenList documentation](https://docs.oplist.org).
+        - label: |
+            I confirm there are no duplicate issues or discussions.
+        - label: |
+            I believe this issue must be handled by `OpenList` and not by a third party.
+        - label: |
+            I confirm this feature has not been implemented yet.
+        - label: |
+            I confirm this feature is reasonable and has general demand, not just my personal need.
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Feature Description
+    validations:
+      required: true
+  - type: textarea
+    id: suggested-solution
+    attributes:
+      label: Suggested Solution
+      description: |
+        Solution or approach to achieve this feature.
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Information
+      description: |
+        Any other context or screenshots related to this feature request, or information you find helpful.

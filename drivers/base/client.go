@@ -15,7 +15,7 @@ var (
 	RestyClient      *resty.Client
 	HttpClient       *http.Client
 )
-var UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36"
+var UserAgent = "Mozilla/5.0 (Macintosh; Apple macOS 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/138.0.0.0"
 var DefaultTimeout = time.Second * 30
 
 func InitClient() {
