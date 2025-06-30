@@ -45,7 +45,7 @@ require (
 	github.com/kdomanski/iso9660 v0.4.0
 	github.com/maruel/natural v1.1.1
 	github.com/meilisearch/meilisearch-go v0.27.2
-	github.com/mholt/archives v0.1.0
+	github.com/mholt/archives v0.1.3
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/ncw/swift/v2 v2.0.3
 	github.com/pkg/errors v0.9.1
@@ -83,6 +83,8 @@ require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.10.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/mikelolasagasti/xz v1.0.1 // indirect
+	github.com/minio/minlz v1.0.0 // indirect
 	github.com/minio/xxml v0.0.3 // indirect
 )
 
@@ -112,7 +114,7 @@ require (
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/matoous/go-nanoid/v2 v2.1.0 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/nwaples/rardecode/v2 v2.0.0-beta.4.0.20241112120701-034e449c6e78
+	github.com/nwaples/rardecode/v2 v2.1.0
 	github.com/sorairolake/lzip-go v0.3.5 // indirect
 	github.com/taruti/bytepool v0.0.0-20160310082835-5e3a9ea56543 // indirect
 	github.com/therootcompany/xz v1.0.1 // indirect
@@ -129,7 +131,7 @@ require (
 	github.com/abbot/go-http-auth v0.4.0 // indirect
 	github.com/aead/ecdh v0.2.0 // indirect
 	github.com/andreburgaud/crypt2go v1.8.0 // indirect
-	github.com/andybalholm/brotli v1.1.1 // indirect
+	github.com/andybalholm/brotli v1.1.2-0.20250424173009-453214e765f3 // indirect
 	github.com/axgle/mahonia v0.0.0-20180208002826-3358181d7394
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/benbjohnson/clock v1.3.0 // indirect
