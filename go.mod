@@ -92,7 +92,7 @@ require (
 	github.com/blevesearch/go-faiss v1.0.20 // indirect
 	github.com/blevesearch/zapx/v16 v16.1.5 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
-	github.com/bodgit/sevenzip v1.6.0
+	github.com/bodgit/sevenzip v1.6.1
 	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/charmbracelet/x/ansi v0.2.3 // indirect
@@ -223,7 +223,7 @@ require (
 	github.com/multiformats/go-varint v0.0.7 // indirect
 	github.com/otiai10/copy v1.14.0
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
-	github.com/pierrec/lz4/v4 v4.1.21 // indirect
+	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/pquerna/cachecontrol v0.1.0 // indirect
