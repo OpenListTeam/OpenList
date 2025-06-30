@@ -1,6 +1,8 @@
 package task
 
-import "github.com/xhofe/tache"
+import (
+	"github.com/xhofe/tache"
+)
 
 type Manager[T tache.Task] interface {
 	Add(task T)

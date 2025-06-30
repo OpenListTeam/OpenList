@@ -7,15 +7,15 @@ import (
 	stdpath "path"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/internal/errs"
-
 	"github.com/OpenListTeam/OpenList/internal/conf"
 	"github.com/OpenListTeam/OpenList/internal/driver"
+	"github.com/OpenListTeam/OpenList/internal/errs"
 	"github.com/OpenListTeam/OpenList/internal/model"
 	"github.com/OpenListTeam/OpenList/internal/op"
 	"github.com/OpenListTeam/OpenList/internal/stream"
 	"github.com/OpenListTeam/OpenList/internal/task"
 	"github.com/OpenListTeam/OpenList/pkg/utils"
+	"github.com/OpenListTeam/OpenList/server/common"
 	"github.com/pkg/errors"
 	"github.com/xhofe/tache"
 )
@@ -40,7 +40,9 @@ func (t *CopyTask) GetStatus() string {
 }
 
 func (t *CopyTask) Run() error {
-	t.ReinitCtx()
+	if err := t.ReinitCtx(); err != nil {
+		return err
+	}
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
@@ -107,6 +109,7 @@ func _copy(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool
 	t := &CopyTask{
 		TaskExtension: task.TaskExtension{
 			Creator: taskCreator,
+			ApiUrl:  common.GetApiUrl(ctx),
 		},
 		srcStorage:   srcStorage,
 		dstStorage:   dstStorage,
@@ -140,6 +143,7 @@ func copyBetween2Storages(t *CopyTask, srcStorage, dstStorage driver.Driver, src
 			CopyTaskManager.Add(&CopyTask{
 				TaskExtension: task.TaskExtension{
 					Creator: t.GetCreator(),
+					ApiUrl:  t.ApiUrl,
 				},
 				srcStorage:   srcStorage,
 				dstStorage:   dstStorage,

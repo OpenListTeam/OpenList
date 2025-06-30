@@ -20,7 +20,6 @@ type LinkArgs struct {
 	IP       string
 	Header   http.Header
 	Type     string
-	HttpReq  *http.Request
 	Redirect bool
 }
 

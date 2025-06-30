@@ -2,17 +2,17 @@ package authn
 
 import (
 	"fmt"
-	"net/http"
 	"net/url"
 
 	"github.com/OpenListTeam/OpenList/internal/conf"
 	"github.com/OpenListTeam/OpenList/internal/setting"
 	"github.com/OpenListTeam/OpenList/server/common"
+	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-func NewAuthnInstance(r *http.Request) (*webauthn.WebAuthn, error) {
-	siteUrl, err := url.Parse(common.GetApiUrl(r))
+func NewAuthnInstance(c *gin.Context) (*webauthn.WebAuthn, error) {
+	siteUrl, err := url.Parse(common.GetApiUrl(c))
 	if err != nil {
 		return nil, err
 	}

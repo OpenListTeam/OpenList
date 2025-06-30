@@ -1,8 +1,6 @@
 package common
 
 import (
-	"context"
-	"net/http"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/cmd/flags"
@@ -89,11 +87,4 @@ func Pluralize(count int, singular, plural string) string {
 		return singular
 	}
 	return plural
-}
-
-func GetHttpReq(ctx context.Context) *http.Request {
-	if c, ok := ctx.(*gin.Context); ok {
-		return c.Request
-	}
-	return nil
 }

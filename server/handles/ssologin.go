@@ -48,9 +48,9 @@ func verifyState(clientID, ip, state string) bool {
 
 func ssoRedirectUri(c *gin.Context, useCompatibility bool, method string) string {
 	if useCompatibility {
-		return common.GetApiUrl(c.Request) + "/api/auth/" + method
+		return common.GetApiUrl(c) + "/api/auth/" + method
 	} else {
-		return common.GetApiUrl(c.Request) + "/api/auth/sso_callback" + "?method=" + method
+		return common.GetApiUrl(c) + "/api/auth/sso_callback" + "?method=" + method
 	}
 }
 
@@ -236,7 +236,7 @@ func OIDCLoginCallback(c *gin.Context) {
 	}
 	if method == "get_sso_id" {
 		if useCompatibility {
-			c.Redirect(302, common.GetApiUrl(c.Request)+"/@manage?sso_id="+userID)
+			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+userID)
 			return
 		}
 		html := fmt.Sprintf(`<!DOCTYPE html>
@@ -263,7 +263,7 @@ func OIDCLoginCallback(c *gin.Context) {
 			common.ErrorResp(c, err, 400)
 		}
 		if useCompatibility {
-			c.Redirect(302, common.GetApiUrl(c.Request)+"/@login?token="+token)
+			c.Redirect(302, common.GetApiUrl(c)+"/@login?token="+token)
 			return
 		}
 		html := fmt.Sprintf(`<!DOCTYPE html>
@@ -364,9 +364,9 @@ func SSOLoginCallback(c *gin.Context) {
 	} else {
 		var redirect_uri string
 		if usecompatibility {
-			redirect_uri = common.GetApiUrl(c.Request) + "/api/auth/" + argument
+			redirect_uri = common.GetApiUrl(c) + "/api/auth/" + argument
 		} else {
-			redirect_uri = common.GetApiUrl(c.Request) + "/api/auth/sso_callback" + "?method=" + argument
+			redirect_uri = common.GetApiUrl(c) + "/api/auth/sso_callback" + "?method=" + argument
 		}
 		resp, err = ssoClient.R().SetHeader("Accept", "application/json").
 			SetFormData(map[string]string{
@@ -401,7 +401,7 @@ func SSOLoginCallback(c *gin.Context) {
 	}
 	if argument == "get_sso_id" {
 		if usecompatibility {
-			c.Redirect(302, common.GetApiUrl(c.Request)+"/@manage?sso_id="+userID)
+			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+userID)
 			return
 		}
 		html := fmt.Sprintf(`<!DOCTYPE html>
@@ -429,7 +429,7 @@ func SSOLoginCallback(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 	}
 	if usecompatibility {
-		c.Redirect(302, common.GetApiUrl(c.Request)+"/@login?token="+token)
+		c.Redirect(302, common.GetApiUrl(c)+"/@login?token="+token)
 		return
 	}
 	html := fmt.Sprintf(`<!DOCTYPE html>

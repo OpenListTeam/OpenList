@@ -101,9 +101,8 @@ func FsArchiveMeta(c *gin.Context) {
 	}
 	archiveArgs := model.ArchiveArgs{
 		LinkArgs: model.LinkArgs{
-			Header:  c.Request.Header,
-			Type:    c.Query("type"),
-			HttpReq: c.Request,
+			Header: c.Request.Header,
+			Type:   c.Query("type"),
 		},
 		Password: req.ArchivePass,
 	}
@@ -132,7 +131,7 @@ func FsArchiveMeta(c *gin.Context) {
 		IsEncrypted: ret.IsEncrypted(),
 		Content:     toContentResp(ret.GetTree()),
 		Sort:        ret.Sort,
-		RawURL:      fmt.Sprintf("%s%s%s", common.GetApiUrl(c.Request), api, utils.EncodePath(reqPath, true)),
+		RawURL:      fmt.Sprintf("%s%s%s", common.GetApiUrl(c), api, utils.EncodePath(reqPath, true)),
 		Sign:        s,
 	})
 }
@@ -181,9 +180,8 @@ func FsArchiveList(c *gin.Context) {
 		ArchiveInnerArgs: model.ArchiveInnerArgs{
 			ArchiveArgs: model.ArchiveArgs{
 				LinkArgs: model.LinkArgs{
-					Header:  c.Request.Header,
-					Type:    c.Query("type"),
-					HttpReq: c.Request,
+					Header: c.Request.Header,
+					Type:   c.Query("type"),
 				},
 				Password: req.ArchivePass,
 			},
@@ -266,9 +264,8 @@ func FsArchiveDecompress(c *gin.Context) {
 			ArchiveInnerArgs: model.ArchiveInnerArgs{
 				ArchiveArgs: model.ArchiveArgs{
 					LinkArgs: model.LinkArgs{
-						Header:  c.Request.Header,
-						Type:    c.Query("type"),
-						HttpReq: c.Request,
+						Header: c.Request.Header,
+						Type:   c.Query("type"),
 					},
 					Password: req.ArchivePass,
 				},
@@ -314,7 +311,6 @@ func ArchiveDown(c *gin.Context) {
 					IP:       c.ClientIP(),
 					Header:   c.Request.Header,
 					Type:     c.Query("type"),
-					HttpReq:  c.Request,
 					Redirect: true,
 				},
 				Password: password,
@@ -344,9 +340,8 @@ func ArchiveProxy(c *gin.Context) {
 		link, file, err := fs.ArchiveDriverExtract(c, archiveRawPath, model.ArchiveInnerArgs{
 			ArchiveArgs: model.ArchiveArgs{
 				LinkArgs: model.LinkArgs{
-					Header:  c.Request.Header,
-					Type:    c.Query("type"),
-					HttpReq: c.Request,
+					Header: c.Request.Header,
+					Type:   c.Query("type"),
 				},
 				Password: password,
 			},
@@ -370,9 +365,8 @@ func ArchiveInternalExtract(c *gin.Context) {
 	rc, size, err := fs.ArchiveInternalExtract(c, archiveRawPath, model.ArchiveInnerArgs{
 		ArchiveArgs: model.ArchiveArgs{
 			LinkArgs: model.LinkArgs{
-				Header:  c.Request.Header,
-				Type:    c.Query("type"),
-				HttpReq: c.Request,
+				Header: c.Request.Header,
+				Type:   c.Query("type"),
 			},
 			Password: password,
 		},

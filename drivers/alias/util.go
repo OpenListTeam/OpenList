@@ -103,7 +103,12 @@ func (d *Alias) link(ctx context.Context, dst, sub string, args model.LinkArgs) 
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := storage.(*Alias); !ok && !args.Redirect {
+	useRawLink := len(common.GetApiUrl(ctx)) == 0 // ftp、s3
+	if !useRawLink {
+		_, ok := storage.(*Alias)
+		useRawLink = !ok && !args.Redirect
+	}
+	if useRawLink {
 		link, _, err := op.Link(ctx, storage, reqActualPath, args)
 		return link, err
 	}
@@ -114,12 +119,9 @@ func (d *Alias) link(ctx context.Context, dst, sub string, args model.LinkArgs) 
 	if common.ShouldProxy(storage, stdpath.Base(sub)) {
 		link := &model.Link{
 			URL: fmt.Sprintf("%s/p%s?sign=%s",
-				common.GetApiUrl(args.HttpReq),
+				common.GetApiUrl(ctx),
 				utils.EncodePath(reqPath, true),
 				sign.Sign(reqPath)),
-		}
-		if args.HttpReq != nil && d.ProxyRange {
-			link.RangeReadCloser = common.NoProxyRange
 		}
 		return link, nil
 	}
@@ -201,31 +203,24 @@ func (d *Alias) extract(ctx context.Context, dst, sub string, args model.Archive
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := storage.(driver.ArchiveReader); ok {
-		if _, ok := storage.(*Alias); !ok && !args.Redirect {
-			link, _, err := op.DriverExtract(ctx, storage, reqActualPath, args)
-			return link, err
-		}
+	if _, ok := storage.(driver.ArchiveReader); !ok {
+		return nil, errs.NotImplement
+	}
+	if args.Redirect && common.ShouldProxy(storage, stdpath.Base(sub)) {
 		_, err = fs.Get(ctx, reqPath, &fs.GetArgs{NoLog: true})
 		if err != nil {
 			return nil, err
 		}
-		if common.ShouldProxy(storage, stdpath.Base(sub)) {
-			link := &model.Link{
-				URL: fmt.Sprintf("%s/ap%s?inner=%s&pass=%s&sign=%s",
-					common.GetApiUrl(args.HttpReq),
-					utils.EncodePath(reqPath, true),
-					utils.EncodePath(args.InnerPath, true),
-					url.QueryEscape(args.Password),
-					sign.SignArchive(reqPath)),
-			}
-			if args.HttpReq != nil && d.ProxyRange {
-				link.RangeReadCloser = common.NoProxyRange
-			}
-			return link, nil
+		link := &model.Link{
+			URL: fmt.Sprintf("%s/ap%s?inner=%s&pass=%s&sign=%s",
+				common.GetApiUrl(ctx),
+				utils.EncodePath(reqPath, true),
+				utils.EncodePath(args.InnerPath, true),
+				url.QueryEscape(args.Password),
+				sign.SignArchive(reqPath)),
 		}
-		link, _, err := op.DriverExtract(ctx, storage, reqActualPath, args)
-		return link, err
+		return link, nil
 	}
-	return nil, errs.NotImplement
+	link, _, err := op.DriverExtract(ctx, storage, reqActualPath, args)
+	return link, err
 }

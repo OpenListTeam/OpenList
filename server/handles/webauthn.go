@@ -24,7 +24,7 @@ func BeginAuthnLogin(c *gin.Context) {
 		common.ErrorStrResp(c, "WebAuthn is not enabled", 403)
 		return
 	}
-	authnInstance, err := authn.NewAuthnInstance(c.Request)
+	authnInstance, err := authn.NewAuthnInstance(c)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -65,7 +65,7 @@ func FinishAuthnLogin(c *gin.Context) {
 		common.ErrorStrResp(c, "WebAuthn is not enabled", 403)
 		return
 	}
-	authnInstance, err := authn.NewAuthnInstance(c.Request)
+	authnInstance, err := authn.NewAuthnInstance(c)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -127,7 +127,7 @@ func BeginAuthnRegistration(c *gin.Context) {
 	}
 	user := c.MustGet("user").(*model.User)
 
-	authnInstance, err := authn.NewAuthnInstance(c.Request)
+	authnInstance, err := authn.NewAuthnInstance(c)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 	}
@@ -158,7 +158,7 @@ func FinishAuthnRegistration(c *gin.Context) {
 	user := c.MustGet("user").(*model.User)
 	sessionDataString := c.GetHeader("Session")
 
-	authnInstance, err := authn.NewAuthnInstance(c.Request)
+	authnInstance, err := authn.NewAuthnInstance(c)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return

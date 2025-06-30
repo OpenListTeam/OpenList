@@ -163,7 +163,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			if d.Thumbnail && thumb == "" {
 				thumbPath := stdpath.Join(args.ReqPath, ".thumbnails", name+".webp")
 				thumb = fmt.Sprintf("%s/d%s?sign=%s",
-					common.GetApiUrl(common.GetHttpReq(ctx)),
+					common.GetApiUrl(ctx),
 					utils.EncodePath(thumbPath, true),
 					sign.Sign(thumbPath))
 			}

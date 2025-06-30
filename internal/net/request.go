@@ -171,7 +171,7 @@ func (d *downloader) download() (io.ReadCloser, error) {
 
 	log.Debugf("cfgConcurrency:%d", d.cfg.Concurrency)
 
-	if d.cfg.Concurrency == 1 {
+	if maxPart == 1 {
 		if d.cfg.ConcurrencyLimit != nil {
 			go func() {
 				<-d.ctx.Done()
