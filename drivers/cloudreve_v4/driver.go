@@ -93,6 +93,12 @@ func (d *CloudreveV4) List(ctx context.Context, dir model.Obj, args model.ListAr
 		params["next_page_token"] = r.Pagination.NextToken
 	}
 
+	if d.HideUploading {
+		f = utils.SliceFilter(f, func(src File) bool {
+			return src.Metadata == nil || src.Metadata[MetadataUploadSessionID] == nil
+		})
+	}
+
 	return utils.SliceConvert(f, func(src File) (model.Obj, error) {
 		if d.EnableFolderSize && src.Type == 1 {
 			var ds FolderSummaryResp
@@ -105,7 +111,7 @@ func (d *CloudreveV4) List(ctx context.Context, dir model.Obj, args model.ListAr
 			}
 		}
 		var thumb model.Thumbnail
-		if d.EnableThumb && src.Type == 0 {
+		if d.EnableThumb && src.Type == 0 && (src.Metadata == nil || src.Metadata[MetadataThumbDisabled] == "") {
 			var t FileThumbResp
 			err := d.request(http.MethodGet, "/file/thumb", func(req *resty.Request) {
 				req.SetQueryParam("uri", src.Path)
@@ -192,13 +198,43 @@ func (d *CloudreveV4) Copy(ctx context.Context, srcObj, dstDir model.Obj) error 
 }
 
 func (d *CloudreveV4) Remove(ctx context.Context, obj model.Obj) error {
-	return d.request(http.MethodDelete, "/file", func(req *resty.Request) {
+	var r FileDeleteResp
+	err := d.request(http.MethodDelete, "/file", func(req *resty.Request) {
 		req.SetBody(base.Json{
 			"uris":             []string{obj.GetPath()},
 			"unlink":           false,
 			"skip_soft_delete": true,
 		})
+		req.SetResult(&r)
 	}, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code == 0 {
+		return nil
+	}
+	if r.Code == 40073 && r.Msg == "Lock conflict" && len(r.Data) > 0 {
+		tokens := make([]string, 0, len(r.Data))
+		for _, item := range r.Data {
+			tokens = append(tokens, item.Token)
+		}
+		err = d.request(http.MethodDelete, "/file/lock", func(req *resty.Request) {
+			req.SetBody(base.Json{
+				"tokens": tokens,
+			})
+		}, nil)
+		if err != nil {
+			return err
+		}
+		return d.request(http.MethodDelete, "/file", func(req *resty.Request) {
+			req.SetBody(base.Json{
+				"uris":             []string{obj.GetPath()},
+				"unlink":           false,
+				"skip_soft_delete": true,
+			})
+		}, nil)
+	}
+	return errors.New(r.Msg)
 }
 
 func (d *CloudreveV4) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) error {

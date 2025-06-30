@@ -6,6 +6,11 @@ import (
 	"github.com/OpenListTeam/OpenList/internal/model"
 )
 
+const (
+	MetadataUploadSessionID = "sys:upload_session_id"
+	MetadataThumbDisabled   = "thumb:disabled"
+)
+
 type Object struct {
 	model.Object
 	StoragePolicy StoragePolicy
@@ -82,17 +87,17 @@ type TokenResponse struct {
 }
 
 type File struct {
-	Type          int         `json:"type"` // 0: file, 1: folder
-	ID            string      `json:"id"`
-	Name          string      `json:"name"`
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
-	Size          int64       `json:"size"`
-	Metadata      interface{} `json:"metadata"`
-	Path          string      `json:"path"`
-	Capability    string      `json:"capability"`
-	Owned         bool        `json:"owned"`
-	PrimaryEntity string      `json:"primary_entity"`
+	Type          int            `json:"type"` // 0: file, 1: folder
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	Size          int64          `json:"size"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	Path          string         `json:"path"`
+	Capability    string         `json:"capability"`
+	Owned         bool           `json:"owned"`
+	PrimaryEntity string         `json:"primary_entity"`
 }
 
 type StoragePolicy struct {
@@ -145,6 +150,21 @@ type FileUploadResp struct {
 	CallbackSecret string        `json:"callback_secret,omitempty"` // for S3-like, OneDrive
 	UploadUrls     []string      `json:"upload_urls,omitempty"`     // for not-local
 	Credential     string        `json:"credential,omitempty"`      // for local
+}
+
+type FileDeleteResp struct {
+	Resp
+	Data []struct {
+		Path  string `json:"path"`
+		Token string `json:"token"`
+		// Owner struct {
+		// 	Owner       string `json:"owner"`
+		// 	Application struct {
+		// 		Type string `json:"type"`
+		// 	} `json:"application"`
+		// } `json:"owner"`
+		Type int `json:"type"`
+	} `json:"data,omitempty"`
 }
 
 type FileThumbResp struct {
