@@ -9,8 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/exp/constraints"
-
 	log "github.com/sirupsen/logrus"
 )
 
@@ -193,13 +191,21 @@ func NewClosers(c ...io.Closer) Closers {
 	return Closers{c}
 }
 
-func Min[T constraints.Ordered](a, b T) T {
+type Ordered interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr |
+		~float32 | ~float64 |
+		~string
+}
+
+func Min[T Ordered](a, b T) T {
 	if a < b {
 		return a
 	}
 	return b
 }
-func Max[T constraints.Ordered](a, b T) T {
+
+func Max[T Ordered](a, b T) T {
 	if a < b {
 		return b
 	}
