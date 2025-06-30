@@ -50,14 +50,23 @@ func (d *QuarkOrUC) request(pathname string, method string, callback base.ReqCal
 		d.Cookie = cookie.SetStr(d.Cookie, "__puus", __puus.Value)
 		op.MustSaveDriverStorage(d)
 	}
+
+	if d.UseTransCodingAddress && d.config.Name == "Quark" {
+		__pus := cookie.GetCookie(res.Cookies(), "__pus")
+		if __pus != nil {
+			d.Cookie = cookie.SetStr(d.Cookie, "__pus", __pus.Value)
+			op.MustSaveDriverStorage(d)
+		}
+	}
+
 	if e.Status >= 400 || e.Code != 0 {
 		return nil, errors.New(e.Message)
 	}
 	return res.Body(), nil
 }
 
-func (d *QuarkOrUC) GetFiles(parent string) ([]File, error) {
-	files := make([]File, 0)
+func (d *QuarkOrUC) GetFiles(parent string) ([]model.Obj, error) {
+	files := make([]model.Obj, 0)
 	page := 1
 	size := 100
 	query := map[string]string{
@@ -77,13 +86,70 @@ func (d *QuarkOrUC) GetFiles(parent string) ([]File, error) {
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, resp.Data.List...)
+		for _, file := range resp.Data.List {
+			if d.OnlyListVideoFile {
+				// 开启后 只列出视频文件和文件夹
+				if file.IsDir() || file.Category == 1 {
+					files = append(files, &file)
+				}
+			} else {
+				files = append(files, &file)
+			}
+		}
+
 		if page*size >= resp.Metadata.Total {
 			break
 		}
 		page++
 	}
+
 	return files, nil
+}
+
+func (d *QuarkOrUC) getDownloadLink(file model.Obj) (*model.Link, error) {
+	data := base.Json{
+		"fids": []string{file.GetID()},
+	}
+	var resp DownResp
+	ua := d.conf.ua
+	_, err := d.request("/file/download", http.MethodPost, func(req *resty.Request) {
+		req.SetHeader("User-Agent", ua).
+			SetBody(data)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.Link{
+		URL: resp.Data[0].DownloadUrl,
+		Header: http.Header{
+			"Cookie":     []string{d.Cookie},
+			"Referer":    []string{d.conf.referer},
+			"User-Agent": []string{ua},
+		},
+		Concurrency: 3,
+		PartSize:    10 * utils.MB,
+	}, nil
+}
+
+func (d *QuarkOrUC) getTranscodingLink(file model.Obj) (*model.Link, error) {
+	data := base.Json{
+		"fid":         file.GetID(),
+		"resolutions": "low,normal,high,super,2k,4k",
+		"supports":    "fmp4_av,m3u8,dolby_vision",
+	}
+	var resp TranscodingResp
+	ua := d.conf.ua
+
+	_, err := d.request("/file/v2/play/project", http.MethodPost, func(req *resty.Request) {
+		req.SetHeader("User-Agent", ua).
+			SetBody(data)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.Link{URL: resp.Data.VideoList[0].VideoInfo.URL}, nil
 }
 
 func (d *QuarkOrUC) upPre(file model.FileStreamer, parentId string) (UpPreResp, error) {
