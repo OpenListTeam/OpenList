@@ -57,6 +57,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/drivers/seafile"
 	_ "github.com/OpenListTeam/OpenList/drivers/sftp"
 	_ "github.com/OpenListTeam/OpenList/drivers/smb"
+	_ "github.com/OpenListTeam/OpenList/drivers/strm"
 	_ "github.com/OpenListTeam/OpenList/drivers/teambition"
 	_ "github.com/OpenListTeam/OpenList/drivers/terabox"
 	_ "github.com/OpenListTeam/OpenList/drivers/thunder"
