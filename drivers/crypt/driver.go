@@ -254,28 +254,14 @@ func (d *Crypt) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	if remoteLink.RangeReadCloser == nil && remoteLink.MFile == nil && len(remoteLink.URL) == 0 {
 		return nil, fmt.Errorf("the remote storage driver need to be enhanced to support encrytion")
 	}
+	resultRangeReadCloser := &model.RangeReadCloser{}
+	resultRangeReadCloser.TryAdd(remoteLink.MFile)
+	resultRangeReadCloser.Add(remoteLink.RangeReadCloser)
 	remoteFileSize := remoteFile.GetSize()
-	remoteClosers := utils.EmptyClosers()
 	rangeReaderFunc := func(ctx context.Context, underlyingOffset, underlyingLength int64) (io.ReadCloser, error) {
 		length := underlyingLength
 		if underlyingLength >= 0 && underlyingOffset+underlyingLength >= remoteFileSize {
 			length = -1
-		}
-		rrc := remoteLink.RangeReadCloser
-		if len(remoteLink.URL) > 0 {
-			var converted, err = stream.GetRangeReadCloserFromLink(remoteFileSize, remoteLink)
-			if err != nil {
-				return nil, err
-			}
-			rrc = converted
-		}
-		if rrc != nil {
-			remoteReader, err := rrc.RangeRead(ctx, http_range.Range{Start: underlyingOffset, Length: length})
-			remoteClosers.AddClosers(rrc.GetClosers())
-			if err != nil {
-				return nil, err
-			}
-			return remoteReader, nil
 		}
 		if remoteLink.MFile != nil {
 			_, err := remoteLink.MFile.Seek(underlyingOffset, io.SeekStart)
@@ -283,14 +269,29 @@ func (d *Crypt) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 				return nil, err
 			}
 			//keep reuse same MFile and close at last.
-			remoteClosers.Add(remoteLink.MFile)
 			return io.NopCloser(remoteLink.MFile), nil
 		}
-
+		rrc := remoteLink.RangeReadCloser
+		if rrc == nil && len(remoteLink.URL) > 0 {
+			var err error
+			rrc, err = stream.GetRangeReadCloserFromLink(remoteFileSize, remoteLink)
+			if err != nil {
+				return nil, err
+			}
+			resultRangeReadCloser.Add(rrc)
+			remoteLink.RangeReadCloser = rrc
+		}
+		if rrc != nil {
+			remoteReader, err := rrc.RangeRead(ctx, http_range.Range{Start: underlyingOffset, Length: length})
+			if err != nil {
+				return nil, err
+			}
+			return io.NopCloser(remoteReader), nil
+		}
 		return nil, errs.NotSupport
 
 	}
-	resultRangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
+	resultRangeReadCloser.RangeReader = func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 		readSeeker, err := d.cipher.DecryptDataSeek(ctx, rangeReaderFunc, httpRange.Start, httpRange.Length)
 		if err != nil {
 			return nil, err
@@ -298,14 +299,9 @@ func (d *Crypt) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		return readSeeker, nil
 	}
 
-	resultRangeReadCloser := &model.RangeReadCloser{RangeReader: resultRangeReader, Closers: remoteClosers}
-	resultLink := &model.Link{
+	return &model.Link{
 		RangeReadCloser: resultRangeReadCloser,
-		Expiration:      remoteLink.Expiration,
-	}
-
-	return resultLink, nil
-
+	}, nil
 }
 
 func (d *Crypt) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {

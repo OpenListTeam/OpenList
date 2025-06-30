@@ -28,10 +28,9 @@ type Link struct {
 	URL             string            `json:"url"`    // most common way
 	Header          http.Header       `json:"header"` // needed header (for url)
 	RangeReadCloser RangeReadCloserIF `json:"-"`      // recommended way if can't use URL
-	MFile           File              `json:"-"`      // best for local,smb... file system, which exposes MFile
+	MFile           io.ReadSeeker     `json:"-"`      // best for local,smb... file system, which exposes MFile
 
 	Expiration *time.Duration // local cache expire Duration
-	IPCacheKey bool           `json:"-"` // add ip to cache key
 
 	//for accelerating request, use multi-thread downloading
 	Concurrency int `json:"concurrency"`

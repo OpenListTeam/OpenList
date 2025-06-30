@@ -184,9 +184,6 @@ func (d *MediaTrack) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = tempFile.Close()
-	}()
 	uploader := s3manager.NewUploader(s)
 	if file.GetSize() > s3manager.MaxUploadParts*s3manager.DefaultUploadPartSize {
 		uploader.PartSize = file.GetSize() / (s3manager.MaxUploadParts - 1)

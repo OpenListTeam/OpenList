@@ -62,8 +62,8 @@ func GetArchiveToolAndStream(ctx context.Context, storage driver.Driver, path st
 	}
 	baseName, ext, found := strings.Cut(obj.GetName(), ".")
 	if !found {
-		if l.MFile != nil {
-			_ = l.MFile.Close()
+		if clr, ok := l.MFile.(io.Closer); ok {
+			_ = clr.Close()
 		}
 		if l.RangeReadCloser != nil {
 			_ = l.RangeReadCloser.Close()
@@ -75,8 +75,8 @@ func GetArchiveToolAndStream(ctx context.Context, storage driver.Driver, path st
 		var e error
 		partExt, t, e = tool.GetArchiveTool(stdpath.Ext(obj.GetName()))
 		if e != nil {
-			if l.MFile != nil {
-				_ = l.MFile.Close()
+			if clr, ok := l.MFile.(io.Closer); ok {
+				_ = clr.Close()
 			}
 			if l.RangeReadCloser != nil {
 				_ = l.RangeReadCloser.Close()
@@ -86,8 +86,8 @@ func GetArchiveToolAndStream(ctx context.Context, storage driver.Driver, path st
 	}
 	ss, err := stream.NewSeekableStream(stream.FileStream{Ctx: ctx, Obj: obj}, l)
 	if err != nil {
-		if l.MFile != nil {
-			_ = l.MFile.Close()
+		if clr, ok := l.MFile.(io.Closer); ok {
+			_ = clr.Close()
 		}
 		if l.RangeReadCloser != nil {
 			_ = l.RangeReadCloser.Close()
@@ -109,8 +109,8 @@ func GetArchiveToolAndStream(ctx context.Context, storage driver.Driver, path st
 			}
 			ss, err = stream.NewSeekableStream(stream.FileStream{Ctx: ctx, Obj: o}, l)
 			if err != nil {
-				if l.MFile != nil {
-					_ = l.MFile.Close()
+				if clr, ok := l.MFile.(io.Closer); ok {
+					_ = clr.Close()
 				}
 				if l.RangeReadCloser != nil {
 					_ = l.RangeReadCloser.Close()
@@ -401,9 +401,6 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
 		if link.Link.Expiration != nil {
-			if link.Link.IPCacheKey {
-				key = key + ":" + args.IP
-			}
 			extractCache.Set(key, link, cache.WithEx[*extractLink](*link.Link.Expiration))
 		}
 		return link, nil

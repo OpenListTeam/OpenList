@@ -268,9 +268,6 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errors.Wrapf(err, "failed get link")
 		}
 		if link.Expiration != nil {
-			if link.IPCacheKey {
-				key = key + ":" + args.IP
-			}
 			linkCache.Set(key, link, cache.WithEx[*model.Link](*link.Expiration))
 		}
 		return link, nil

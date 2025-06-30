@@ -18,8 +18,9 @@ import (
 )
 
 type VolumeFile struct {
-	stream.SStreamReadAtSeeker
+	model.File
 	name string
+	ss   model.FileStreamer
 }
 
 func (v *VolumeFile) Name() string {
@@ -27,7 +28,7 @@ func (v *VolumeFile) Name() string {
 }
 
 func (v *VolumeFile) Size() int64 {
-	return v.SStreamReadAtSeeker.GetRawStream().GetSize()
+	return v.ss.GetSize()
 }
 
 func (v *VolumeFile) Mode() fs.FileMode {
@@ -35,7 +36,7 @@ func (v *VolumeFile) Mode() fs.FileMode {
 }
 
 func (v *VolumeFile) ModTime() time.Time {
-	return v.SStreamReadAtSeeker.GetRawStream().ModTime()
+	return v.ss.ModTime()
 }
 
 func (v *VolumeFile) IsDir() bool {
@@ -74,7 +75,7 @@ func makeOpts(ss []*stream.SeekableStream) (string, rardecode.Option, error) {
 		}
 		fileName := "file.rar"
 		fsys := &VolumeFs{parts: map[string]*VolumeFile{
-			fileName: {SStreamReadAtSeeker: reader, name: fileName},
+			fileName: {File: reader, name: fileName},
 		}}
 		return fileName, rardecode.FileSystem(fsys), nil
 	} else {
@@ -85,7 +86,7 @@ func makeOpts(ss []*stream.SeekableStream) (string, rardecode.Option, error) {
 				return "", nil, err
 			}
 			fileName := fmt.Sprintf("file.part%d.rar", i+1)
-			parts[fileName] = &VolumeFile{SStreamReadAtSeeker: reader, name: fileName}
+			parts[fileName] = &VolumeFile{File: reader, name: fileName, ss: s}
 		}
 		return "file.part1.rar", rardecode.FileSystem(&VolumeFs{parts: parts}), nil
 	}

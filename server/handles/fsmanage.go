@@ -97,7 +97,7 @@ func FsMove(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
@@ -111,12 +111,12 @@ func FsMove(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	// Return immediately with task information
 	if len(addedTasks) > 0 {
 		common.SuccessResp(c, gin.H{
 			"message": fmt.Sprintf("Successfully created %d move task(s)", len(addedTasks)),
-			"tasks": getTaskInfos(addedTasks),
+			"tasks":   getTaskInfos(addedTasks),
 		})
 	} else {
 		common.SuccessResp(c, gin.H{
@@ -159,7 +159,7 @@ func FsCopy(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
@@ -173,12 +173,12 @@ func FsCopy(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	// Return immediately with task information
 	if len(addedTasks) > 0 {
 		common.SuccessResp(c, gin.H{
 			"message": fmt.Sprintf("Successfully created %d copy task(s)", len(addedTasks)),
-			"tasks": getTaskInfos(addedTasks),
+			"tasks":   getTaskInfos(addedTasks),
 		})
 	} else {
 		common.SuccessResp(c, gin.H{
@@ -390,14 +390,13 @@ func Link(c *gin.Context) {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	if link.MFile != nil {
-		defer func(ReadSeekCloser io.ReadCloser) {
-			err := ReadSeekCloser.Close()
+	if clr, ok := link.MFile.(io.Closer); ok {
+		defer func(clr io.Closer) {
+			err := clr.Close()
 			if err != nil {
 				log.Errorf("close link data error: %v", err)
 			}
-		}(link.MFile)
+		}(clr)
 	}
 	common.SuccessResp(c, link)
-	return
 }

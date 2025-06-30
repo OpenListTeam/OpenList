@@ -242,7 +242,7 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 			}
 			link.MFile = open
 		} else {
-			link.MFile = model.NewNopMFile(bytes.NewReader(buf.Bytes()))
+			link.MFile = bytes.NewReader(buf.Bytes())
 			//link.Header.Set("Content-Length", strconv.Itoa(buf.Len()))
 		}
 	} else {

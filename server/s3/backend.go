@@ -187,7 +187,11 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		if err != nil {
 			return nil, err
 		}
-		rdr = link.MFile
+		if rdr2, ok := link.MFile.(io.ReadCloser); ok {
+			rdr = rdr2
+		} else {
+			rdr = io.NopCloser(link.MFile)
+		}
 	} else {
 		remoteFileSize := file.GetSize()
 		if length >= 0 && start+length >= remoteFileSize {

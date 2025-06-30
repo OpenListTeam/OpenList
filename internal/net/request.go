@@ -277,6 +277,7 @@ func (d *downloader) interrupt() error {
 		for _, buf := range d.bufs {
 			buf.Close()
 		}
+		d.bufs = nil
 		if d.concurrency > 0 {
 			d.concurrency = -d.concurrency
 		}

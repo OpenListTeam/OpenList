@@ -524,7 +524,6 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 	if err != nil {
 		return nil, fmt.Errorf("failed to cache file: %w", err)
 	}
-	defer tempFile.Close()
 	up(10.0) // 更新进度
 	// 设置并行上传
 	threadG, uploadCtx := errgroup.NewGroupWithContext(ctx, d.uploadThread,

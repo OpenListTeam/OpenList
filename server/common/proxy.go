@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -20,16 +21,21 @@ import (
 
 func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.Obj) error {
 	if link.MFile != nil {
-		defer link.MFile.Close()
+		if clr, ok := link.MFile.(io.Closer); ok {
+			defer clr.Close()
+		}
 		attachHeader(w, file)
 		contentType := link.Header.Get("Content-Type")
 		if contentType != "" {
 			w.Header().Set("Content-Type", contentType)
 		}
 		mFile := link.MFile
-		if _, ok := mFile.(*os.File); !ok {
+		switch file := mFile.(type) {
+		case *os.File:
+		case *bytes.Reader:
+		case model.File:
 			mFile = &stream.RateLimitFile{
-				File:    mFile,
+				File:    file,
 				Limiter: stream.ServerDownloadLimit,
 				Ctx:     r.Context(),
 			}

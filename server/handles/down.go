@@ -87,15 +87,15 @@ func Proxy(c *gin.Context) {
 }
 
 func down(c *gin.Context, link *model.Link) {
-	var err error
-	if link.MFile != nil {
-		defer func(ReadSeekCloser io.ReadCloser) {
-			err := ReadSeekCloser.Close()
+	if clr, ok := link.MFile.(io.Closer); ok {
+		defer func(clr io.Closer) {
+			err := clr.Close()
 			if err != nil {
-				log.Errorf("close data error: %s", err)
+				log.Errorf("close link data error: %v", err)
 			}
-		}(link.MFile)
+		}(clr)
 	}
+	var err error
 	c.Header("Referrer-Policy", "no-referrer")
 	c.Header("Cache-Control", "max-age=0, no-cache, no-store, must-revalidate")
 	if setting.GetBool(conf.ForwardDirectLinkParams) {

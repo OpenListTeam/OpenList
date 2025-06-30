@@ -155,16 +155,11 @@ func Retry(attempts int, sleep time.Duration, f func() error) (err error) {
 type ClosersIF interface {
 	io.Closer
 	Add(closer io.Closer)
-	AddClosers(closers Closers)
-	GetClosers() Closers
+	TryAdd(reader io.Reader)
 }
 
 type Closers struct {
 	closers []io.Closer
-}
-
-func (c *Closers) GetClosers() Closers {
-	return *c
 }
 
 var _ ClosersIF = (*Closers)(nil)
@@ -179,16 +174,16 @@ func (c *Closers) Close() error {
 	return errors.Join(errs...)
 }
 func (c *Closers) Add(closer io.Closer) {
-	c.closers = append(c.closers, closer)
+	if closer != nil {
+		c.closers = append(c.closers, closer)
+	}
+}
+func (c *Closers) TryAdd(reader io.Reader) {
+	if closer, ok := reader.(io.Closer); ok {
+		c.closers = append(c.closers, closer)
+	}
+}
 
-}
-func (c *Closers) AddClosers(closers Closers) {
-	c.closers = append(c.closers, closers.closers...)
-}
-
-func EmptyClosers() Closers {
-	return Closers{[]io.Closer{}}
-}
 func NewClosers(c ...io.Closer) Closers {
 	return Closers{c}
 }

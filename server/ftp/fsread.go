@@ -2,6 +2,7 @@ package ftp
 
 import (
 	"context"
+	"io"
 	fs2 "io/fs"
 	"net/http"
 	"os"
@@ -13,13 +14,13 @@ import (
 	"github.com/OpenListTeam/OpenList/internal/op"
 	"github.com/OpenListTeam/OpenList/internal/stream"
 	"github.com/OpenListTeam/OpenList/server/common"
-	ftpserver "github.com/fclairamb/ftpserverlib"
 	"github.com/pkg/errors"
 )
 
 type FileDownloadProxy struct {
-	ftpserver.FileTransfer
-	reader stream.SStreamReadAtSeeker
+	model.File
+	io.Closer
+	ctx context.Context
 }
 
 func OpenDownload(ctx context.Context, reqPath string, offset int64) (*FileDownloadProxy, error) {
@@ -57,28 +58,29 @@ func OpenDownload(ctx context.Context, reqPath string, offset int64) (*FileDownl
 		_ = ss.Close()
 		return nil, err
 	}
-	return &FileDownloadProxy{reader: reader}, nil
+	return &FileDownloadProxy{File: reader, Closer: ss, ctx: ctx}, nil
 }
 
 func (f *FileDownloadProxy) Read(p []byte) (n int, err error) {
-	n, err = f.reader.Read(p)
+	n, err = f.File.Read(p)
 	if err != nil {
 		return
 	}
-	err = stream.ClientDownloadLimit.WaitN(f.reader.GetRawStream().Ctx, n)
+	err = stream.ClientDownloadLimit.WaitN(f.ctx, n)
+	return
+}
+
+func (f *FileDownloadProxy) ReadAt(p []byte, off int64) (n int, err error) {
+	n, err = f.File.ReadAt(p, off)
+	if err != nil {
+		return
+	}
+	err = stream.ClientDownloadLimit.WaitN(f.ctx, n)
 	return
 }
 
 func (f *FileDownloadProxy) Write(p []byte) (n int, err error) {
 	return 0, errs.NotSupport
-}
-
-func (f *FileDownloadProxy) Seek(offset int64, whence int) (int64, error) {
-	return f.reader.Seek(offset, whence)
-}
-
-func (f *FileDownloadProxy) Close() error {
-	return f.reader.Close()
 }
 
 type OsFileInfoAdapter struct {
