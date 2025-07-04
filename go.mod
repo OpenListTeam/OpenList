@@ -119,7 +119,7 @@ require (
 	github.com/sorairolake/lzip-go v0.3.5 // indirect
 	github.com/taruti/bytepool v0.0.0-20160310082835-5e3a9ea56543 // indirect
 	github.com/ulikunitz/xz v0.5.12 // indirect
-	github.com/yuin/goldmark v1.7.8
+	github.com/yuin/goldmark v1.7.12
 	go4.org v0.0.0-20230225012048-214862532bf5
 	resty.dev/v3 v3.0.0-beta.2 // indirect
 )
