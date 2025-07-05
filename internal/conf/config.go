@@ -94,6 +94,15 @@ type SFTP struct {
 	Listen string `json:"listen" env:"LISTEN"`
 }
 
+type DLNA struct {
+	Enable           bool     `json:"enable" env:"ENABLE"`
+	Listen           string   `json:"listen" env:"LISTEN"`
+	FriendlyName     string   `json:"friendly_name" env:"FRIEDNLY_NAME"`
+	InterfaceNames   []string `json:"interface_names" env:"INTERFACE_NAMES"`
+	AnnounceInterval int      `json:"announce_interval" env:"ANNOUNCE_INTERVAL"`
+	RootDir          string   `json:"root_dir" env:"ROOT_DIR"`
+}
+
 type Config struct {
 	Force                 bool        `json:"force" env:"FORCE"`
 	SiteURL               string      `json:"site_url" env:"SITE_URL"`
@@ -116,6 +125,7 @@ type Config struct {
 	S3                    S3          `json:"s3" envPrefix:"S3_"`
 	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
 	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
+	DLNA                  DLNA        `json:"dlna" envPrefix:"DLNA_"`
 	LastLaunchedVersion   string      `json:"last_launched_version"`
 }
 
@@ -217,6 +227,14 @@ func DefaultConfig() *Config {
 		SFTP: SFTP{
 			Enable: false,
 			Listen: ":5222",
+		},
+		DLNA: DLNA{
+			Enable:           false,
+			Listen:           ":5200",
+			FriendlyName:     "",
+			InterfaceNames:   []string{},
+			AnnounceInterval: 12,
+			RootDir:          "/",
 		},
 		LastLaunchedVersion: "",
 	}

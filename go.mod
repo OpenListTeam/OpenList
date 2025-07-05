@@ -14,6 +14,8 @@ require (
 	github.com/ProtonMail/go-crypto v1.0.0
 	github.com/SheltonZhu/115driver v1.0.34
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
+	github.com/anacrolix/dms v1.7.1
+	github.com/anacrolix/log v0.16.0
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/aws/aws-sdk-go v1.55.7
 	github.com/blevesearch/bleve/v2 v2.4.2
@@ -81,6 +83,7 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.10.0 // indirect
+	github.com/anacrolix/generics v0.0.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.0 // indirect

@@ -157,6 +157,14 @@ the address is defined in config file`,
 				}()
 			}
 		}
+		if conf.Conf.DLNA.Listen != "" && conf.Conf.DLNA.Enable {
+			go func() {
+				err := server.StartDlnaServer()
+				if err != nil {
+					utils.Log.Fatalf("failed to start dlna server: %s", err.Error())
+				}
+			}()
+		}
 		// Wait for interrupt signal to gracefully shutdown the server with
 		// a timeout of 1 second.
 		quit := make(chan os.Signal, 1)
