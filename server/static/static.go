@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+  "github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -31,22 +32,35 @@ func initStatic() {
 }
 
 func initIndex() {
-	indexFile, err := static.Open("index.html")
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			utils.Log.Fatalf("index.html not exist, you may forget to put dist of frontend to public/dist")
-		}
-		utils.Log.Fatalf("failed to read index.html: %v", err)
-	}
-	defer func() {
-		_ = indexFile.Close()
-	}()
-	index, err := io.ReadAll(indexFile)
-	if err != nil {
-		utils.Log.Fatalf("failed to read dist/index.html")
-	}
-	conf.RawIndexHtml = string(index)
 	siteConfig := getSiteConfig()
+	if conf.Conf.DistDir != "" || (conf.Conf.Cdn != "" && (conf.WebVersion == "" || conf.WebVersion == "beta" || conf.WebVersion == "dev")) {
+		// fetch index.html from cdn
+		resp, err := base.RestyClient.R().Get(fmt.Sprintf("%s/index.html", siteConfig.Cdn))
+		if err != nil {
+			utils.Log.Fatalf("failed to fetch index.html from CDN: %v", err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			utils.Log.Fatalf("failed to fetch index.html from CDN, status code: %d", resp.StatusCode())
+		}
+		conf.RawIndexHtml = string(resp.Body())
+	} else {
+		// read index.html from static files system
+		indexFile, err := static.Open("index.html")
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				utils.Log.Fatalf("index.html not exist, you may forget to put dist of frontend to public/dist")
+			}
+			utils.Log.Fatalf("failed to read index.html: %v", err)
+		}
+		defer func() {
+			_ = indexFile.Close()
+		}()
+		index, err := io.ReadAll(indexFile)
+		if err != nil {
+			utils.Log.Fatalf("failed to read dist/index.html")
+		}
+		conf.RawIndexHtml = string(index)
+	}
 	replaceMap := map[string]string{
 		"cdn: undefined":       fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
 		"base_path: undefined": fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
@@ -85,20 +99,22 @@ func UpdateIndex() {
 func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	initStatic()
 	initIndex()
-	folders := []string{"assets", "images", "streamer", "static"}
-	r.Use(func(c *gin.Context) {
-		for i := range folders {
-			if strings.HasPrefix(c.Request.RequestURI, fmt.Sprintf("/%s/", folders[i])) {
-				c.Header("Cache-Control", "public, max-age=15552000")
+	if conf.Conf.Cdn == "" {
+		folders := []string{"assets", "images", "streamer", "static"}
+		r.Use(func(c *gin.Context) {
+			for _, folder := range folders {
+				if strings.HasPrefix(c.Request.RequestURI, fmt.Sprintf("/%s/", folder)) {
+					c.Header("Cache-Control", "public, max-age=15552000")
+				}
 			}
+		})
+		for _, folder := range folders {
+			sub, err := fs.Sub(static, folder)
+			if err != nil {
+				utils.Log.Fatalf("can't find folder: %s", folder)
+			}
+			r.StaticFS(fmt.Sprintf("/%s/", folder), http.FS(sub))
 		}
-	})
-	for i, folder := range folders {
-		sub, err := fs.Sub(static, folder)
-		if err != nil {
-			utils.Log.Fatalf("can't find folder: %s", folder)
-		}
-		r.StaticFS(fmt.Sprintf("/%s/", folders[i]), http.FS(sub))
 	}
 
 	noRoute(func(c *gin.Context) {
