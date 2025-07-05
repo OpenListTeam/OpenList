@@ -1,6 +1,9 @@
 version: "3.3"
 services:
   openlist:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: "ghcr.io/openlistteam/openlist:latest"
     container_name: openlist
     hostname: openlist
