@@ -204,3 +204,11 @@ func PutURL(ctx context.Context, path, dstName, urlStr string) error {
 	}
 	return op.PutURL(ctx, storage, dstDirActualPath, dstName, urlStr)
 }
+
+func Syncer(ctx context.Context, syncerArgs model.SyncerTaskArgs) (task.TaskExtensionInfo, error) {
+	res, err := _syncer(ctx, syncerArgs)
+	if err != nil {
+		log.Errorf("failed sync %s to %s: %+v", syncerArgs.SrcPath, syncerArgs.DstPath, err)
+	}
+	return res, err
+}

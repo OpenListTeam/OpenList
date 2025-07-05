@@ -92,6 +92,7 @@ func Init(e *gin.Engine) {
 
 	_fs(auth.Group("/fs"))
 	_task(auth.Group("/task", middlewares.AuthNotGuest))
+	_syncer(auth.Group("/syncer", middlewares.AuthNotGuest))
 	admin(auth.Group("/admin", middlewares.AuthAdmin))
 	if flags.Debug || flags.Dev {
 		debug(g.Group("/debug"))
@@ -209,4 +210,15 @@ func Cors(r *gin.Engine) {
 func InitS3(e *gin.Engine) {
 	Cors(e)
 	S3Server(e.Group("/"))
+}
+
+func _syncer(g *gin.RouterGroup) {
+	g.GET("/list", handles.ListSyncerTask)
+	g.GET("/get", handles.GetSyncerTask)
+	g.POST("/create", handles.CreateSyncerTask)
+	g.POST("/delete", handles.DeleteSyncerTask)
+	g.POST("/update", handles.UpdateSyncerTask)
+	g.POST("/run", handles.RunSyncer)
+	g.POST("/cancel", handles.CancelSyncer)
+	g.GET("/taskInfo", handles.GetTaskInfo)
 }
