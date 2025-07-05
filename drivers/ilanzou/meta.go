@@ -7,9 +7,10 @@ import (
 
 type Addition struct {
 	driver.RootID
-	Username string `json:"username" type:"string" required:"true"`
-	Password string `json:"password" type:"string" required:"true"`
-	Ip       string `json:"ip" type:"string"`
+	Username       string `json:"username" type:"string" required:"true"`
+	Password       string `json:"password" type:"string" required:"true"`
+	Ip             string `json:"ip" type:"string"`
+	OrderDirection string `json:"order_direction" type:"select" options:"Asc,Desc,Default" required:"true"`
 
 	Token string
 	UUID  string
