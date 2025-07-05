@@ -636,11 +636,10 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				// Update Progress
 				r := io.TeeReader(limitReader, p)
 
-				req, err := http.NewRequest("PUT", uploadPartInfo.UploadUrl, r)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadPartInfo.UploadUrl, r)
 				if err != nil {
 					return err
 				}
-				req = req.WithContext(ctx)
 				req.Header.Set("Content-Type", "application/octet-stream")
 				req.Header.Set("Content-Length", fmt.Sprint(partSize))
 				req.Header.Set("Origin", "https://yun.139.com")
@@ -805,12 +804,10 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			limitReader := io.LimitReader(rateLimited, byteSize)
 			// Update Progress
 			r := io.TeeReader(limitReader, p)
-			req, err := http.NewRequest("POST", resp.Data.UploadResult.RedirectionURL, r)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, resp.Data.UploadResult.RedirectionURL, r)
 			if err != nil {
 				return err
 			}
-
-			req = req.WithContext(ctx)
 			req.Header.Set("Content-Type", "text/plain;name="+unicode(stream.GetName()))
 			req.Header.Set("contentSize", strconv.FormatInt(size, 10))
 			req.Header.Set("range", fmt.Sprintf("bytes=%d-%d", start, start+byteSize-1))

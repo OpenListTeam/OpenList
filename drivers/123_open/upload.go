@@ -2,6 +2,7 @@ package _123_open
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -9,8 +10,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
@@ -79,38 +80,45 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 	size := file.GetSize()
 	chunkSize := createResp.Data.SliceSize
 	uploadNums := (size + chunkSize - 1) / chunkSize
-	threadG, uploadCtx := errgroup.NewGroupWithContext(ctx, d.UploadThread,
+	thread := min(int(uploadNums), d.UploadThread)
+	threadG, uploadCtx := errgroup.NewOrderedGroupWithContext(ctx, thread,
 		retry.Attempts(3),
 		retry.Delay(time.Second),
 		retry.DelayType(retry.BackOffDelay))
 
+	ss, err := stream.NewStreamSectionReader(file, int(chunkSize))
+	if err != nil {
+		return err
+	}
 	for partIndex := int64(0); partIndex < uploadNums; partIndex++ {
 		if utils.IsCanceled(uploadCtx) {
-			return ctx.Err()
+			return uploadCtx.Err()
 		}
 		partIndex := partIndex
 		partNumber := partIndex + 1 // 分片号从1开始
 		offset := partIndex * chunkSize
 		size := min(chunkSize, size-offset)
-		limitedReader, err := file.RangeRead(http_range.Range{
-			Start:  offset,
-			Length: size})
-		if err != nil {
-			return err
-		}
-		limitedReader = driver.NewLimitedUploadStream(ctx, limitedReader)
-
-		threadG.Go(func(ctx context.Context) error {
+		var reader *stream.SectionReader
+		var rateLimitedRd io.Reader
+		threadG.GoWithResult(func(ctx context.Context) error {
+			if reader == nil {
+				var err error
+				reader, err = ss.GetSectionReader(offset, size)
+				if err != nil {
+					return err
+				}
+				rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+			}
+			reader.Seek(0, io.SeekStart)
 			uploadPartUrl, err := d.url(createResp.Data.PreuploadID, partNumber)
 			if err != nil {
 				return err
 			}
 
-			req, err := http.NewRequestWithContext(ctx, "PUT", uploadPartUrl, limitedReader)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadPartUrl, rateLimitedRd)
 			if err != nil {
 				return err
 			}
-			req = req.WithContext(ctx)
 			req.ContentLength = size
 
 			res, err := base.HttpClient.Do(req)
@@ -122,6 +130,8 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 			progress := 10.0 + 85.0*float64(threadG.Success())/float64(uploadNums)
 			up(progress)
 			return nil
+		}, func(err error) {
+			ss.RecycleSectionReader(reader)
 		})
 	}
 

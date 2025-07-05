@@ -6,11 +6,16 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
+	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -69,10 +74,6 @@ func (d *Pan123) completeS3(ctx context.Context, upReq *UploadResp, file model.F
 }
 
 func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.FileStreamer, up driver.UpdateProgress) error {
-	tmpF, err := file.CacheFullInTempFile()
-	if err != nil {
-		return err
-	}
 	// fetch s3 pre signed urls
 	size := file.GetSize()
 	chunkSize := min(size, 16*utils.MB)
@@ -90,73 +91,101 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 		batchSize = 10
 		getS3UploadUrl = d.getS3PreSignedUrls
 	}
+	ss, err := stream.NewStreamSectionReader(file, int(chunkSize))
+	if err != nil {
+		return err
+	}
+
+	thread := min(int(chunkCount), d.UploadThread)
+	threadG, uploadCtx := errgroup.NewOrderedGroupWithContext(ctx, thread,
+		retry.Attempts(3),
+		retry.Delay(time.Second),
+		retry.DelayType(retry.BackOffDelay))
 	for i := 1; i <= chunkCount; i += batchSize {
-		if utils.IsCanceled(ctx) {
-			return ctx.Err()
+		if utils.IsCanceled(uploadCtx) {
+			return uploadCtx.Err()
 		}
 		start := i
 		end := min(i+batchSize, chunkCount+1)
-		s3PreSignedUrls, err := getS3UploadUrl(ctx, upReq, start, end)
+		s3PreSignedUrls, err := getS3UploadUrl(uploadCtx, upReq, start, end)
+		key := fmt.Sprintf("%p", s3PreSignedUrls)
 		if err != nil {
 			return err
 		}
 		// upload each chunk
-		for j := start; j < end; j++ {
-			if utils.IsCanceled(ctx) {
-				return ctx.Err()
+		for cur := start; cur < end; cur++ {
+			if utils.IsCanceled(uploadCtx) {
+				return uploadCtx.Err()
 			}
+			offset := int64(cur-1) * chunkSize
 			curSize := chunkSize
-			if j == chunkCount {
+			if cur == chunkCount {
 				curSize = lastChunkSize
 			}
-			err = d.uploadS3Chunk(ctx, upReq, s3PreSignedUrls, j, end, io.NewSectionReader(tmpF, chunkSize*int64(j-1), curSize), curSize, false, getS3UploadUrl)
-			if err != nil {
-				return err
-			}
-			up(float64(j) * 100 / float64(chunkCount))
+			var reader *stream.SectionReader
+			var rateLimitedRd io.Reader
+			threadG.GoWithResult(func(ctx context.Context) error {
+				if reader == nil {
+					var err error
+					reader, err = ss.GetSectionReader(offset, curSize)
+					if err != nil {
+						return err
+					}
+					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+				}
+				reader.Seek(0, io.SeekStart)
+				uploadUrl := s3PreSignedUrls.Data.PreSignedUrls[strconv.Itoa(cur)]
+				if uploadUrl == "" {
+					return fmt.Errorf("upload url is empty, s3PreSignedUrls: %+v", s3PreSignedUrls)
+				}
+				reader.Seek(0, io.SeekStart)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadUrl, rateLimitedRd)
+				if err != nil {
+					return err
+				}
+				req.ContentLength = curSize
+				//req.Header.Set("Content-Length", strconv.FormatInt(curSize, 10))
+				res, err := base.HttpClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer res.Body.Close()
+				if res.StatusCode == http.StatusForbidden {
+					_, err, _ := uploadG.Do(key, func() (*S3PreSignedURLs, error) {
+						newS3PreSignedUrls, err := getS3UploadUrl(ctx, upReq, cur, end)
+						if err != nil {
+							return nil, err
+						}
+						s3PreSignedUrls.Data.PreSignedUrls = newS3PreSignedUrls.Data.PreSignedUrls
+						return newS3PreSignedUrls, nil
+					})
+					if err != nil {
+						return err
+					}
+					return fmt.Errorf("upload s3 chunk %d failed, status code: %d", cur, res.StatusCode)
+				}
+				if res.StatusCode != http.StatusOK {
+					body, err := io.ReadAll(res.Body)
+					if err != nil {
+						return err
+					}
+					return fmt.Errorf("upload s3 chunk %d failed, status code: %d, body: %s", cur, res.StatusCode, body)
+				}
+				progress := 10.0 + 85.0*float64(threadG.Success())/float64(chunkCount)
+				up(progress)
+				return nil
+			}, func(err error) {
+				ss.RecycleSectionReader(reader)
+			})
+			// err = d.uploadS3Chunk(ctx, upReq, s3PreSignedUrls, j, end, reader, curSize, false, getS3UploadUrl)
 		}
 	}
+	if err := threadG.Wait(); err != nil {
+		return err
+	}
+	defer up(100)
 	// complete s3 upload
 	return d.completeS3(ctx, upReq, file, chunkCount > 1)
 }
 
-func (d *Pan123) uploadS3Chunk(ctx context.Context, upReq *UploadResp, s3PreSignedUrls *S3PreSignedURLs, cur, end int, reader *io.SectionReader, curSize int64, retry bool, getS3UploadUrl func(ctx context.Context, upReq *UploadResp, start int, end int) (*S3PreSignedURLs, error)) error {
-	uploadUrl := s3PreSignedUrls.Data.PreSignedUrls[strconv.Itoa(cur)]
-	if uploadUrl == "" {
-		return fmt.Errorf("upload url is empty, s3PreSignedUrls: %+v", s3PreSignedUrls)
-	}
-	req, err := http.NewRequest("PUT", uploadUrl, driver.NewLimitedUploadStream(ctx, reader))
-	if err != nil {
-		return err
-	}
-	req = req.WithContext(ctx)
-	req.ContentLength = curSize
-	//req.Header.Set("Content-Length", strconv.FormatInt(curSize, 10))
-	res, err := base.HttpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode == http.StatusForbidden {
-		if retry {
-			return fmt.Errorf("upload s3 chunk %d failed, status code: %d", cur, res.StatusCode)
-		}
-		// refresh s3 pre signed urls
-		newS3PreSignedUrls, err := getS3UploadUrl(ctx, upReq, cur, end)
-		if err != nil {
-			return err
-		}
-		s3PreSignedUrls.Data.PreSignedUrls = newS3PreSignedUrls.Data.PreSignedUrls
-		// retry
-		reader.Seek(0, io.SeekStart)
-		return d.uploadS3Chunk(ctx, upReq, s3PreSignedUrls, cur, end, reader, curSize, true, getS3UploadUrl)
-	}
-	if res.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(res.Body)
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("upload s3 chunk %d failed, status code: %d, body: %s", cur, res.StatusCode, body)
-	}
-	return nil
-}
+var uploadG singleflight.Group[*S3PreSignedURLs]
