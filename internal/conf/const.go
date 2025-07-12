@@ -149,7 +149,19 @@ const (
 )
 
 // ContextKey is the type of context keys.
+type ContextKey int
+
 const (
-	NoTaskKey = "no_task"
-	ApiUrlKey = "api_url"
+	_ ContextKey = iota
+
+	NoTaskKey
+	ApiUrlKey
+	UserKey
+	MetaKey
+	MetaPassKey
+	ClientIPKey
+	ProxyHeaderKey
+	RequestHeaderKey
+	UserAgentKey
+	PathKey
 )

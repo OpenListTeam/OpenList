@@ -9,6 +9,7 @@ import (
 
 	"maps"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -26,7 +27,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 		attachHeader(w, file, link.Header)
 		rrf, _ := stream.GetRangeReaderFromLink(file.GetSize(), link)
 		if link.RangeReader == nil {
-			r = r.WithContext(context.WithValue(r.Context(), net.RequestHeaderKey{}, r.Header))
+			r = r.WithContext(context.WithValue(r.Context(), conf.RequestHeaderKey, r.Header))
 		}
 		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), file.GetSize(), &model.RangeReadCloser{
 			RangeReader: rrf,

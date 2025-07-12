@@ -26,6 +26,8 @@ func StoragesLoaded(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	c.Set(conf.ApiUrlKey, common.GetApiUrlFormRequest(c.Request))
+	common.GinWithValue(c,
+		conf.ApiUrlKey, common.GetApiUrlFromRequest(c.Request),
+	)
 	c.Next()
 }

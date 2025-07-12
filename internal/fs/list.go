@@ -3,6 +3,7 @@ package fs
 import (
 	"context"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -12,8 +13,8 @@ import (
 
 // List files
 func list(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error) {
-	meta, _ := ctx.Value("meta").(*model.Meta)
-	user, _ := ctx.Value("user").(*model.User)
+	meta, _ := ctx.Value(conf.MetaKey).(*model.Meta)
+	user, _ := ctx.Value(conf.UserKey).(*model.User)
 	virtualFiles := op.GetStorageVirtualFilesByPath(path)
 	storage, actualPath, err := op.GetStorageAndActualPath(path)
 	if err != nil && len(virtualFiles) == 0 {

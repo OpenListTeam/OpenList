@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 
@@ -11,8 +12,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/gin-gonic/gin"
 	"github.com/OpenListTeam/tache"
+	"github.com/gin-gonic/gin"
 )
 
 type TaskInfo struct {
@@ -69,7 +70,7 @@ func argsContains[T comparable](v T, slice ...T) bool {
 }
 
 func getUserInfo(c *gin.Context) (bool, uint, bool) {
-	if user, ok := c.Value("user").(*model.User); ok {
+	if user, ok := c.Request.Context().Value(conf.UserKey).(*model.User); ok {
 		return user.IsAdmin(), user.ID, true
 	} else {
 		return false, 0, false

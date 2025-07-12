@@ -7,7 +7,6 @@ import (
 	"io"
 	"math/rand"
 	"mime"
-	"net/http"
 	"os"
 	stdpath "path"
 	"path/filepath"
@@ -68,9 +67,7 @@ func (t *ArchiveDownloadTask) RunWithoutPushUploadTask() (*ArchiveContentUploadT
 	if t.srcStorage == nil {
 		t.srcStorage, err = op.GetStorageByMountPath(t.SrcStorageMp)
 	}
-	srcObj, tool, ss, err := op.GetArchiveToolAndStream(t.Ctx(), t.srcStorage, t.SrcObjPath, model.LinkArgs{
-		Header: http.Header{},
-	})
+	srcObj, tool, ss, err := op.GetArchiveToolAndStream(t.Ctx(), t.srcStorage, t.SrcObjPath, model.LinkArgs{})
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +352,7 @@ func archiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args 
 			return nil, err
 		}
 	}
-	taskCreator, _ := ctx.Value("user").(*model.User)
+	taskCreator, _ := ctx.Value(conf.UserKey).(*model.User)
 	tsk := &ArchiveDownloadTask{
 		TaskExtension: task.TaskExtension{
 			Creator: taskCreator,

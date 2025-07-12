@@ -29,14 +29,14 @@ type FileUploadProxy struct {
 }
 
 func uploadAuth(ctx context.Context, path string) error {
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	meta, err := op.GetNearestMeta(stdpath.Dir(path))
 	if err != nil {
 		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			return err
 		}
 	}
-	if !(common.CanAccess(user, meta, path, ctx.Value("meta_pass").(string)) &&
+	if !(common.CanAccess(user, meta, path, ctx.Value(conf.MetaPassKey).(string)) &&
 		((user.CanFTPManage() && user.CanWrite()) || common.CanWrite(meta, stdpath.Dir(path)))) {
 		return errs.PermissionDenied
 	}

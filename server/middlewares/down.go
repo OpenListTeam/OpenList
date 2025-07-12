@@ -18,7 +18,7 @@ import (
 func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		rawPath := parsePath(c.Param("path"))
-		c.Set("path", rawPath)
+		common.GinWithValue(c, conf.PathKey, rawPath)
 		meta, err := op.GetNearestMeta(rawPath)
 		if err != nil {
 			if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
@@ -26,7 +26,7 @@ func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 				return
 			}
 		}
-		c.Set("meta", meta)
+		common.GinWithValue(c, conf.MetaKey, meta)
 		// verify sign
 		if needSign(meta, rawPath) {
 			s := c.Query("sign")

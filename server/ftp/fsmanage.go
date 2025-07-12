@@ -5,6 +5,7 @@ import (
 	"fmt"
 	stdpath "path"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -14,7 +15,7 @@ import (
 )
 
 func Mkdir(ctx context.Context, path string) error {
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err := user.JoinPath(path)
 	if err != nil {
 		return err
@@ -34,7 +35,7 @@ func Mkdir(ctx context.Context, path string) error {
 }
 
 func Remove(ctx context.Context, path string) error {
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	if !user.CanRemove() || !user.CanFTPManage() {
 		return errs.PermissionDenied
 	}
@@ -46,7 +47,7 @@ func Remove(ctx context.Context, path string) error {
 }
 
 func Rename(ctx context.Context, oldPath, newPath string) error {
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	srcPath, err := user.JoinPath(oldPath)
 	if err != nil {
 		return err

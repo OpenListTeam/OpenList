@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -24,24 +25,22 @@ type FileDownloadProxy struct {
 }
 
 func OpenDownload(ctx context.Context, reqPath string, offset int64) (*FileDownloadProxy, error) {
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil {
 		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			return nil, err
 		}
 	}
-	ctx = context.WithValue(ctx, "meta", meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value("meta_pass").(string)) {
+	ctx = context.WithValue(ctx, conf.MetaKey, meta)
+	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
 		return nil, errs.PermissionDenied
 	}
 
 	// directly use proxy
-	header := *(ctx.Value("proxy_header").(*http.Header))
-	link, obj, err := fs.Link(ctx, reqPath, model.LinkArgs{
-		IP:     ctx.Value("client_ip").(string),
-		Header: header,
-	})
+	header, _ := ctx.Value(conf.ProxyHeaderKey).(http.Header)
+	ip, _ := ctx.Value(conf.ClientIPKey).(string)
+	link, obj, err := fs.Link(ctx, reqPath, model.LinkArgs{IP: ip, Header: header})
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +115,7 @@ func (o *OsFileInfoAdapter) Sys() any {
 }
 
 func Stat(ctx context.Context, path string) (os.FileInfo, error) {
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err := user.JoinPath(path)
 	if err != nil {
 		return nil, err
@@ -127,8 +126,8 @@ func Stat(ctx context.Context, path string) (os.FileInfo, error) {
 			return nil, err
 		}
 	}
-	ctx = context.WithValue(ctx, "meta", meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value("meta_pass").(string)) {
+	ctx = context.WithValue(ctx, conf.MetaKey, meta)
+	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
 		return nil, errs.PermissionDenied
 	}
 	obj, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
@@ -139,7 +138,7 @@ func Stat(ctx context.Context, path string) (os.FileInfo, error) {
 }
 
 func List(ctx context.Context, path string) ([]os.FileInfo, error) {
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err := user.JoinPath(path)
 	if err != nil {
 		return nil, err
@@ -150,8 +149,8 @@ func List(ctx context.Context, path string) ([]os.FileInfo, error) {
 			return nil, err
 		}
 	}
-	ctx = context.WithValue(ctx, "meta", meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value("meta_pass").(string)) {
+	ctx = context.WithValue(ctx, conf.MetaKey, meta)
+	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
 		return nil, errs.PermissionDenied
 	}
 	objs, err := fs.List(ctx, reqPath, &fs.ListArgs{})

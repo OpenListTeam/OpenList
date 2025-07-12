@@ -179,7 +179,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			return err
 		}
 		// TODO: run walkFS concurrently
-		err = fs.WalkFS(context.WithValue(ctx, "user", admin), maxDepth, indexPath, fi, walkFn)
+		err = fs.WalkFS(context.WithValue(ctx, conf.UserKey, admin), maxDepth, indexPath, fi, walkFn)
 		if err != nil {
 			return err
 		}

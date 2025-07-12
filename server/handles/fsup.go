@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -42,14 +43,14 @@ func FsStream(c *gin.Context) {
 	}
 	asTask := c.GetHeader("As-Task") == "true"
 	overwrite := c.GetHeader("Overwrite") != "false"
-	user := c.MustGet("user").(*model.User)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	path, err = user.JoinPath(path)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
 		return
 	}
 	if !overwrite {
-		if res, _ := fs.Get(c, path, &fs.GetArgs{NoLog: true}); res != nil {
+		if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
 			common.ErrorStrResp(c, "file exists", 403)
 			return
 		}
@@ -91,9 +92,9 @@ func FsStream(c *gin.Context) {
 	}
 	var t task.TaskExtensionInfo
 	if asTask {
-		t, err = fs.PutAsTask(c, dir, s)
+		t, err = fs.PutAsTask(c.Request.Context(), dir, s)
 	} else {
-		err = fs.PutDirectly(c, dir, s, true)
+		err = fs.PutDirectly(c.Request.Context(), dir, s, true)
 	}
 	if err != nil {
 		common.ErrorResp(c, err, 500)
@@ -123,14 +124,14 @@ func FsForm(c *gin.Context) {
 	}
 	asTask := c.GetHeader("As-Task") == "true"
 	overwrite := c.GetHeader("Overwrite") != "false"
-	user := c.MustGet("user").(*model.User)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	path, err = user.JoinPath(path)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
 		return
 	}
 	if !overwrite {
-		if res, _ := fs.Get(c, path, &fs.GetArgs{NoLog: true}); res != nil {
+		if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
 			common.ErrorStrResp(c, "file exists", 403)
 			return
 		}
@@ -186,9 +187,9 @@ func FsForm(c *gin.Context) {
 		s.Reader = struct {
 			io.Reader
 		}{f}
-		t, err = fs.PutAsTask(c, dir, s)
+		t, err = fs.PutAsTask(c.Request.Context(), dir, s)
 	} else {
-		err = fs.PutDirectly(c, dir, s, true)
+		err = fs.PutDirectly(c.Request.Context(), dir, s, true)
 	}
 	if err != nil {
 		common.ErrorResp(c, err, 500)

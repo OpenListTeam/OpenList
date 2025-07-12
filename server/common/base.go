@@ -10,7 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 )
 
-func GetApiUrlFormRequest(r *http.Request) string {
+func GetApiUrlFromRequest(r *http.Request) string {
 	api := conf.Conf.SiteURL
 	if strings.HasPrefix(api, "http") {
 		return strings.TrimSuffix(api, "/")
@@ -31,9 +31,6 @@ func GetApiUrlFormRequest(r *http.Request) string {
 }
 
 func GetApiUrl(ctx context.Context) string {
-	val := ctx.Value(conf.ApiUrlKey)
-	if api, ok := val.(string); ok {
-		return api
-	}
-	return ""
+	api, _ := ctx.Value(conf.ApiUrlKey).(string)
+	return api
 }

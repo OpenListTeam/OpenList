@@ -16,6 +16,7 @@ import (
 )
 
 func Init(e *gin.Engine) {
+	e.ContextWithFallback = true
 	if !utils.SliceContains([]string{"", "/"}, conf.URL.Path) {
 		e.GET("/", func(c *gin.Context) {
 			c.Redirect(302, conf.URL.Path)

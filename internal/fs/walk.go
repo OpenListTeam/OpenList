@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
@@ -28,7 +29,7 @@ func WalkFS(ctx context.Context, depth int, name string, info model.Obj, walkFn 
 	}
 	meta, _ := op.GetNearestMeta(name)
 	// Read directory names.
-	objs, err := List(context.WithValue(ctx, "meta", meta), name, &ListArgs{})
+	objs, err := List(context.WithValue(ctx, conf.MetaKey, meta), name, &ListArgs{})
 	if err != nil {
 		return walkFnErr
 	}

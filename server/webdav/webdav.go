@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 
@@ -195,7 +196,7 @@ func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) (status 
 		return status, err
 	}
 	ctx := r.Context()
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return 403, err
@@ -223,7 +224,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	}
 	// TODO: check locks for read-only access??
 	ctx := r.Context()
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
@@ -288,7 +289,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	defer release()
 
 	ctx := r.Context()
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return 403, err
@@ -333,7 +334,7 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	// TODO(rost): Support the If-Match, If-None-Match headers? See bradfitz'
 	// comments in http.checkEtag.
 	ctx := r.Context()
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
@@ -385,7 +386,7 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	defer release()
 
 	ctx := r.Context()
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return 403, err
@@ -449,7 +450,7 @@ func (h *Handler) handleCopyMove(w http.ResponseWriter, r *http.Request) (status
 	}
 
 	ctx := r.Context()
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	src, err = user.JoinPath(src)
 	if err != nil {
 		return 403, err
@@ -513,7 +514,7 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 	}
 
 	ctx := r.Context()
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	token, ld, now, created := "", LockDetails{}, time.Now(), false
 	if li == (lockInfo{}) {
 		// An empty lockInfo means to refresh the lock.
@@ -632,8 +633,8 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 	}
 	ctx := r.Context()
 	userAgent := r.Header.Get("User-Agent")
-	ctx = context.WithValue(ctx, "userAgent", userAgent)
-	user := ctx.Value("user").(*model.User)
+	ctx = context.WithValue(ctx, conf.UserAgentKey, userAgent)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return 403, err
@@ -712,7 +713,7 @@ func (h *Handler) handleProppatch(w http.ResponseWriter, r *http.Request) (statu
 	defer release()
 
 	ctx := r.Context()
-	user := ctx.Value("user").(*model.User)
+	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return 403, err

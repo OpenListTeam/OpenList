@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
@@ -87,4 +88,21 @@ func Pluralize(count int, singular, plural string) string {
 		return singular
 	}
 	return plural
+}
+
+func GinWithValue(c *gin.Context, keyAndValue ...any) {
+	c.Request = c.Request.WithContext(
+		ContentWithValue(c.Request.Context(), keyAndValue...),
+	)
+}
+
+func ContentWithValue(ctx context.Context, keyAndValue ...any) context.Context {
+	if len(keyAndValue) < 1 || len(keyAndValue)%2 != 0 {
+		panic("keyAndValue must be an even number of arguments (key, value, ...)")
+	}
+	for len(keyAndValue) > 0 {
+		ctx = context.WithValue(ctx, keyAndValue[0], keyAndValue[1])
+		keyAndValue = keyAndValue[2:]
+	}
+	return ctx
 }

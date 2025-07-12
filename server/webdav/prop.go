@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 )
@@ -391,7 +392,7 @@ func findLastModified(ctx context.Context, ls LockSystem, name string, fi model.
 	return fi.ModTime().UTC().Format(http.TimeFormat), nil
 }
 func findCreationDate(ctx context.Context, ls LockSystem, name string, fi model.Obj) (string, error) {
-	userAgent := ctx.Value("userAgent").(string)
+	userAgent := ctx.Value(conf.UserAgentKey).(string)
 	if strings.Contains(strings.ToLower(userAgent), "microsoft-webdav") {
 		return fi.CreateTime().UTC().Format(http.TimeFormat), nil
 	}

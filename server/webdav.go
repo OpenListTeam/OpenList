@@ -8,6 +8,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/OpenList/v4/server/middlewares"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -44,7 +45,7 @@ func WebDav(dav *gin.RouterGroup) {
 }
 
 func ServeWebDAV(c *gin.Context) {
-	handler.ServeHTTP(c.Writer, c.Request.WithContext(c))
+	handler.ServeHTTP(c.Writer, c.Request)
 }
 
 func WebDAVAuth(c *gin.Context) {
@@ -54,7 +55,7 @@ func WebDAVAuth(c *gin.Context) {
 	count, cok := model.LoginCache.Get(ip)
 	if cok && count >= model.DefaultMaxAuthRetries {
 		if c.Request.Method == "OPTIONS" {
-			c.Set("user", guest)
+			common.GinWithValue(c, conf.UserKey, guest)
 			c.Next()
 			return
 		}
@@ -78,13 +79,13 @@ func WebDAVAuth(c *gin.Context) {
 					c.Abort()
 					return
 				}
-				c.Set("user", admin)
+				common.GinWithValue(c, conf.UserKey, admin)
 				c.Next()
 				return
 			}
 		}
 		if c.Request.Method == "OPTIONS" {
-			c.Set("user", guest)
+			common.GinWithValue(c, conf.UserKey, guest)
 			c.Next()
 			return
 		}
@@ -96,7 +97,7 @@ func WebDAVAuth(c *gin.Context) {
 	user, err := op.GetUserByName(username)
 	if err != nil || user.ValidateRawPassword(password) != nil {
 		if c.Request.Method == "OPTIONS" {
-			c.Set("user", guest)
+			common.GinWithValue(c, conf.UserKey, guest)
 			c.Next()
 			return
 		}
@@ -109,7 +110,7 @@ func WebDAVAuth(c *gin.Context) {
 	model.LoginCache.Del(ip)
 	if user.Disabled || !user.CanWebdavRead() {
 		if c.Request.Method == "OPTIONS" {
-			c.Set("user", guest)
+			common.GinWithValue(c, conf.UserKey, guest)
 			c.Next()
 			return
 		}
@@ -142,6 +143,6 @@ func WebDAVAuth(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	c.Set("user", user)
+	common.GinWithValue(c, conf.UserKey, user)
 	c.Next()
 }

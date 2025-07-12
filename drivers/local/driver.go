@@ -173,19 +173,6 @@ func (d *Local) FileInfoToObj(ctx context.Context, f fs.FileInfo, reqPath string
 	}
 	return &file
 }
-func (d *Local) GetMeta(ctx context.Context, path string) (model.Obj, error) {
-	f, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	file := d.FileInfoToObj(ctx, f, path, path)
-	//h := "123123"
-	//if s, ok := f.(model.SetHash); ok && file.GetHash() == ("","")  {
-	//	s.SetHash(h,"SHA1")
-	//}
-	return file, nil
-
-}
 
 func (d *Local) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = filepath.Join(d.GetRootPath(), path)

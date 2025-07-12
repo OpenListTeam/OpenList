@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"image/png"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -87,7 +88,7 @@ type UserResp struct {
 // CurrentUser get current user by token
 // if token is empty, return guest user
 func CurrentUser(c *gin.Context) {
-	user := c.MustGet("user").(*model.User)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	userResp := UserResp{
 		User: *user,
 	}
@@ -104,7 +105,7 @@ func UpdateCurrent(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	user := c.MustGet("user").(*model.User)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if user.IsGuest() {
 		common.ErrorStrResp(c, "Guest user can not update profile", 403)
 		return
@@ -122,7 +123,7 @@ func UpdateCurrent(c *gin.Context) {
 }
 
 func Generate2FA(c *gin.Context) {
-	user := c.MustGet("user").(*model.User)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if user.IsGuest() {
 		common.ErrorStrResp(c, "Guest user can not generate 2FA code", 403)
 		return
@@ -161,7 +162,7 @@ func Verify2FA(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	user := c.MustGet("user").(*model.User)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if user.IsGuest() {
 		common.ErrorStrResp(c, "Guest user can not generate 2FA code", 403)
 		return

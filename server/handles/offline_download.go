@@ -343,7 +343,7 @@ type AddOfflineDownloadReq struct {
 }
 
 func AddOfflineDownload(c *gin.Context) {
-	user := c.MustGet("user").(*model.User)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if !user.CanAddOfflineDownloadTasks() {
 		common.ErrorStrResp(c, "permission denied", 403)
 		return

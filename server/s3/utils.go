@@ -45,7 +45,7 @@ func getBucketByName(name string) (Bucket, error) {
 func getDirEntries(path string) ([]model.Obj, error) {
 	ctx := context.Background()
 	meta, _ := op.GetNearestMeta(path)
-	fi, err := fs.Get(context.WithValue(ctx, "meta", meta), path, &fs.GetArgs{})
+	fi, err := fs.Get(context.WithValue(ctx, conf.MetaKey, meta), path, &fs.GetArgs{})
 	if errs.IsNotFoundError(err) {
 		return nil, gofakes3.ErrNoSuchKey
 	} else if err != nil {
@@ -56,7 +56,7 @@ func getDirEntries(path string) ([]model.Obj, error) {
 		return nil, gofakes3.ErrNoSuchKey
 	}
 
-	dirEntries, err := fs.List(context.WithValue(ctx, "meta", meta), path, &fs.ListArgs{})
+	dirEntries, err := fs.List(context.WithValue(ctx, conf.MetaKey, meta), path, &fs.ListArgs{})
 	if err != nil {
 		return nil, err
 	}

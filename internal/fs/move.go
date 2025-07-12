@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -586,7 +587,7 @@ func _moveWithValidation(ctx context.Context, srcObjPath, dstDirPath string, val
 		}
 	}
 
-	taskCreator, _ := ctx.Value("user").(*model.User)
+	taskCreator, _ := ctx.Value(conf.UserKey).(*model.User)
 
 	// Create task immediately without any synchronous checks to avoid blocking frontend
 	// All validation and type checking will be done asynchronously in the Run method

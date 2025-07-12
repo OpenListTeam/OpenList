@@ -102,7 +102,7 @@ func _copy(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool
 		}
 	}
 	// not in the same storage
-	taskCreator, _ := ctx.Value("user").(*model.User)
+	taskCreator, _ := ctx.Value(conf.UserKey).(*model.User)
 	t := &CopyTask{
 		TaskExtension: task.TaskExtension{
 			Creator: taskCreator,
