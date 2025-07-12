@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -104,11 +105,8 @@ func (f *FileStream) GetFile() model.File {
 	return nil
 }
 
-const InMemoryBufMaxSize = 10 // Megabytes
-const InMemoryBufMaxSizeBytes = InMemoryBufMaxSize * 1024 * 1024
-
 // RangeRead have to cache all data first since only Reader is provided.
-// also support a peeking RangeRead at very start, but won't buffer more than 10MB data in memory
+// also support a peeking RangeRead at very start, but won't buffer more than conf.MaxBufferLimit data in memory
 func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	if httpRange.Length == -1 {
 		// 参考 internal/net/request.go
@@ -123,7 +121,7 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	if f.peekBuff != nil && size <= int64(f.peekBuff.Len()) {
 		return io.NewSectionReader(f.peekBuff, httpRange.Start, httpRange.Length), nil
 	}
-	if size <= InMemoryBufMaxSizeBytes {
+	if size <= int64(conf.MaxBufferLimit) {
 		bufSize := min(size, f.GetSize())
 		// 使用bytes.Buffer作为io.CopyBuffer的写入对象，CopyBuffer会调用Buffer.ReadFrom
 		// 即使被写入的数据量与Buffer.Cap一致，Buffer也会扩大

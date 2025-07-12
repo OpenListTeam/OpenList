@@ -236,7 +236,7 @@ func (d *Doubao) Put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 
 	// 根据文件大小选择上传方式
 	if file.GetSize() <= 1*utils.MB { // 小于1MB，使用普通模式上传
-		return d.Upload(&uploadConfig, dstDir, file, up, dataType)
+		return d.Upload(ctx, &uploadConfig, dstDir, file, up, dataType)
 	}
 	// 大文件使用分片上传
 	return d.UploadByMultipart(ctx, &uploadConfig, file.GetSize(), dstDir, file, up, dataType)

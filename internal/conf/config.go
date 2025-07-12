@@ -108,6 +108,7 @@ type Config struct {
 	DistDir               string      `json:"dist_dir"`
 	Log                   LogConfig   `json:"log"`
 	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
+	MaxBufferLimit        int         `json:"max_buffer_limit" env:"MAX_BUFFER_LIMIT"`
 	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`
 	MaxConcurrency        int         `json:"max_concurrency" env:"MAX_CONCURRENCY"`
 	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
@@ -154,6 +155,7 @@ func DefaultConfig() *Config {
 			MaxBackups: 30,
 			MaxAge:     28,
 		},
+		MaxBufferLimit:        -1,
 		MaxConnections:        0,
 		MaxConcurrency:        64,
 		TlsInsecureSkipVerify: true,

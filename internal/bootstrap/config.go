@@ -67,6 +67,9 @@ func InitConfig() {
 	if conf.Conf.MaxConcurrency > 0 {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: conf.Conf.MaxConcurrency}
 	}
+	if conf.Conf.MaxBufferLimit < 0 {
+		conf.MaxBufferLimit = 64 * utils.MB
+	}
 	if !conf.Conf.Force {
 		confFromEnv()
 	}
