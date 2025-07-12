@@ -45,6 +45,7 @@ func (t *CopyTask) Run() error {
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
+	
 	var err error
 	if t.srcStorage == nil {
 		t.srcStorage, err = op.GetStorageByMountPath(t.SrcStorageMp)
@@ -55,10 +56,26 @@ func (t *CopyTask) Run() error {
 	if err != nil {
 		return errors.WithMessage(err, "failed get storage")
 	}
-	return copyBetween2Storages(t, t.srcStorage, t.dstStorage, t.SrcObjPath, t.DstDirPath)
+	
+	// Use the task object's memory address as a unique identifier
+	taskID := fmt.Sprintf("%p", t)
+	
+	// Register task to batch tracker
+	copyBatchTracker.RegisterTask(taskID, t.dstStorage, t.DstDirPath)
+	
+	// Execute copy operation
+	err = copyBetween2Storages(t, t.srcStorage, t.dstStorage, t.SrcObjPath, t.DstDirPath)
+	
+	// Mark task completed and automatically refresh cache if needed
+	copyBatchTracker.MarkTaskCompletedWithRefresh(taskID)
+	
+	return err
 }
 
 var CopyTaskManager *tache.Manager[*CopyTask]
+
+// Batch tracker for copy operations
+var copyBatchTracker = NewBatchTracker("copy")
 
 // Copy if in the same storage, call move method
 // if not, add copy task
@@ -75,6 +92,10 @@ func _copy(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool
 	if srcStorage.GetStorage() == dstStorage.GetStorage() {
 		err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath, lazyCache...)
 		if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
+			if err == nil {
+				// Refresh target directory cache after successful same-storage copy
+				op.ClearCache(dstStorage, dstDirActualPath)
+			}
 			return nil, err
 		}
 	}
@@ -98,7 +119,12 @@ func _copy(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool
 				_ = link.Close()
 				return nil, errors.WithMessagef(err, "failed get [%s] stream", srcObjPath)
 			}
-			return nil, op.Put(ctx, dstStorage, dstDirActualPath, ss, nil, false)
+			err = op.Put(ctx, dstStorage, dstDirActualPath, ss, nil, false)
+			if err == nil {
+				// Refresh target directory cache after successful direct file copy
+				op.ClearCache(dstStorage, dstDirActualPath)
+			}
+			return nil, err
 		}
 	}
 	// not in the same storage
@@ -131,6 +157,7 @@ func copyBetween2Storages(t *CopyTask, srcStorage, dstStorage driver.Driver, src
 		if err != nil {
 			return errors.WithMessagef(err, "failed list src [%s] objs", srcObjPath)
 		}
+		
 		for _, obj := range objs {
 			if utils.IsCanceled(t.Ctx()) {
 				return nil
