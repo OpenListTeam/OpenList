@@ -117,6 +117,7 @@ type Config struct {
 	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
 	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
 	LastLaunchedVersion   string      `json:"last_launched_version"`
+	ThumbConcurrency      int         `json:"thumb_concurrency" env:"THUMB_CONCURRENCY"`
 }
 
 func DefaultConfig() *Config {
@@ -219,5 +220,6 @@ func DefaultConfig() *Config {
 			Listen: ":5222",
 		},
 		LastLaunchedVersion: "",
+		ThumbConcurrency:    1000,
 	}
 }

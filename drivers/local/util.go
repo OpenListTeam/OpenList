@@ -2,8 +2,10 @@ package local
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -17,6 +19,8 @@ import (
 	"github.com/disintegration/imaging"
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
+
+var sem *semaphore.Weighted
 
 func isSymlinkDir(f fs.FileInfo, path string) bool {
 	if f.Mode()&os.ModeSymlink == os.ModeSymlink {
@@ -103,7 +107,7 @@ func readDir(dirname string) ([]fs.FileInfo, error) {
 	return list, nil
 }
 
-func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
+func (d *Local) getThumb(ctx context.Context, file model.Obj) (*bytes.Buffer, *string, error) {
 	fullPath := file.GetPath()
 	thumbPrefix := "openlist_thumb_"
 	thumbName := thumbPrefix + utils.GetMD5EncodeStr(fullPath) + ".png"
@@ -117,6 +121,13 @@ func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
 			return nil, &thumbPath, nil
 		}
 	}
+	if sem == nil {
+		sem = semaphore.NewWeighted(int64(conf.Conf.ThumbConcurrency))
+	}
+	if err := sem.Acquire(ctx, 1); err != nil {
+		return nil, nil, err
+	}
+	defer sem.Release(1)
 	var srcBuf *bytes.Buffer
 	if utils.GetFileType(file.GetName()) == conf.VIDEO {
 		videoBuf, err := d.GetSnapshot(fullPath)

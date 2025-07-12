@@ -227,7 +227,7 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		var thumbPath *string
 		err := d.thumbTokenBucket.Do(ctx, func() error {
 			var err error
-			buf, thumbPath, err = d.getThumb(file)
+			buf, thumbPath, err = d.getThumb(ctx, file)
 			return err
 		})
 		if err != nil {
