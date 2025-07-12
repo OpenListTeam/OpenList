@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/maruel/natural"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -68,6 +70,7 @@ func (d *ILanZou) Drop(ctx context.Context) error {
 func (d *ILanZou) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	offset := 1
 	var res []ListItem
+
 	for {
 		var resp ListResp
 		_, err := d.proved("/record/file/list", http.MethodGet, func(req *resty.Request) {
@@ -90,20 +93,19 @@ func (d *ILanZou) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 			break
 		}
 	}
-	return utils.SliceConvert(res, func(f ListItem) (model.Obj, error) {
+
+	result, err := utils.SliceConvert(res, func(f ListItem) (model.Obj, error) {
 		updTime, err := time.ParseInLocation("2006-01-02 15:04:05", f.UpdTime, time.Local)
 		if err != nil {
 			return nil, err
 		}
 		obj := model.Object{
-			ID: strconv.FormatInt(f.FileId, 10),
-			//Path:     "",
+			ID:       strconv.FormatInt(f.FileId, 10),
 			Name:     f.FileName,
 			Size:     f.FileSize * 1024,
 			Modified: updTime,
 			Ctime:    updTime,
 			IsFolder: false,
-			//HashInfo: utils.HashInfo{},
 		}
 		if f.FileType == 2 {
 			obj.IsFolder = true
@@ -113,6 +115,58 @@ func (d *ILanZou) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 		}
 		return &obj, nil
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	if d.OrderDirection != "Default" {
+		var folderObjs, fileObjs []model.Obj
+		var folderNames, fileNames []string
+
+		for _, item := range result {
+			obj := item.(*model.Object)
+			if obj.IsFolder {
+				folderObjs = append(folderObjs, item)
+				folderNames = append(folderNames, obj.Name)
+			} else {
+				fileObjs = append(fileObjs, item)
+				fileNames = append(fileNames, obj.Name)
+			}
+		}
+
+		sort.Sort(natural.StringSlice(folderNames))
+		sort.Sort(natural.StringSlice(fileNames))
+
+		sortedFolders := make([]model.Obj, len(folderNames))
+		sortedFiles := make([]model.Obj, len(fileNames))
+
+		for i, name := range folderNames {
+			for _, item := range folderObjs {
+				if item.(*model.Object).Name == name {
+					sortedFolders[i] = item
+					break
+				}
+			}
+		}
+		for i, name := range fileNames {
+			for _, item := range fileObjs {
+				if item.(*model.Object).Name == name {
+					sortedFiles[i] = item
+					break
+				}
+			}
+		}
+
+		if d.OrderDirection == "Desc" {
+			reverse(sortedFolders)
+			reverse(sortedFiles)
+		}
+
+		sortedResult := append(sortedFolders, sortedFiles...)
+		return sortedResult, nil
+	}
+
+	return result, nil
 }
 
 func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
