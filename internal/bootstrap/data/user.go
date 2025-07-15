@@ -33,7 +33,7 @@ func initUser() {
 				BasePath: "/",
 				Authn:    "[]",
 				// 0(can see hidden) - 7(can remove) & 12(can read archives) - 13(can decompress archives)
-				Permission: 0x30FF,
+				Permission: 0x31FF,
 			}
 			if err := op.CreateUser(admin); err != nil {
 				panic(err)
