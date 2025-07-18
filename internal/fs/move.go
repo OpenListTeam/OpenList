@@ -130,6 +130,12 @@ func (t *MoveTask) Run() error {
 		return errors.WithMessage(err, "failed get storage")
 	}
 
+	// Use the task object's memory address as a unique identifier
+	taskID := fmt.Sprintf("%p", t)
+	
+	// Register task to batch tracker
+	moveBatchTracker.RegisterTask(taskID, t.dstStorage, t.DstDirPath)
+
 	// Phase 1: Async validation (all validation happens in background)
 	t.mu.Lock()
 	t.Status = "validating source and destination"
@@ -138,6 +144,8 @@ func (t *MoveTask) Run() error {
 	// Check if source exists
 	srcObj, err := op.Get(t.Ctx(), t.srcStorage, t.SrcObjPath)
 	if err != nil {
+		// Clean up tracker records if task failed
+		moveBatchTracker.MarkTaskCompletedWithRefresh(taskID)
 		return errors.WithMessagef(err, "source file [%s] not found", stdpath.Base(t.SrcObjPath))
 	}
 
@@ -145,6 +153,8 @@ func (t *MoveTask) Run() error {
 	if t.ValidateExistence {
 		dstFilePath := stdpath.Join(t.DstDirPath, srcObj.GetName())
 		if res, _ := op.Get(t.Ctx(), t.dstStorage, dstFilePath); res != nil {
+			// Clean up tracker records if task failed
+			moveBatchTracker.MarkTaskCompletedWithRefresh(taskID)
 			return errors.Errorf("destination file [%s] already exists", srcObj.GetName())
 		}
 	}
@@ -156,11 +166,16 @@ func (t *MoveTask) Run() error {
 		t.IsRootTask = true
 		t.RootTaskID = t.GetID()
 		t.mu.Unlock()
-		return t.runRootMoveTask()
+		err = t.runRootMoveTask()
+	} else {
+		// Use safe move logic for files
+		err = t.safeMoveOperation(srcObj)
 	}
 
-	// Use safe move logic for files
-	return t.safeMoveOperation(srcObj)
+	// Mark task completed and automatically refresh cache if needed
+	moveBatchTracker.MarkTaskCompletedWithRefresh(taskID)
+
+	return err
 }
 
 func (t *MoveTask) runRootMoveTask() error {
@@ -236,10 +251,14 @@ func (t *MoveTask) runRootMoveTask() error {
 	t.mu.Unlock()
 	t.updateProgress()
 
+	
 	return nil
 }
 
 var MoveTaskManager *tache.Manager[*MoveTask]
+
+// Batch tracker for move operations
+var moveBatchTracker = NewBatchTracker("move")
 
 // GetMoveProgress returns the progress of a move task by task ID
 func GetMoveProgress(taskID string) (*MoveProgress, bool) {
@@ -487,7 +506,7 @@ func moveBetween2Storages(t *MoveTask, srcStorage, dstStorage driver.Driver, src
 				return nil
 			}
 			srcSubObjPath := stdpath.Join(srcObjPath, obj.GetName())
-			MoveTaskManager.Add(&MoveTask{
+			subTask := &MoveTask{
 				TaskExtension: task.TaskExtension{
 					Creator: t.GetCreator(),
 					ApiUrl:  t.ApiUrl,
@@ -498,7 +517,8 @@ func moveBetween2Storages(t *MoveTask, srcStorage, dstStorage driver.Driver, src
 				DstDirPath:   dstObjPath,
 				SrcStorageMp: srcStorage.GetStorage().MountPath,
 				DstStorageMp: dstStorage.GetStorage().MountPath,
-			})
+			}
+			MoveTaskManager.Add(subTask)
 		}
 
 		t.Status = "cleaning up source directory"
@@ -508,6 +528,8 @@ func moveBetween2Storages(t *MoveTask, srcStorage, dstStorage driver.Driver, src
 		} else {
 			t.Status = "completed"
 		}
+		
+				
 		return nil
 	} else {
 		return moveFileBetween2Storages(t, srcStorage, dstStorage, srcObjPath, dstDirPath)
@@ -549,6 +571,7 @@ func moveFileBetween2Storages(tsk *MoveTask, srcStorage, dstStorage driver.Drive
 		return errors.WithMessagef(err, "failed to delete src [%s] file from storage [%s] after successful copy", srcFilePath, srcStorage.GetStorage().MountPath)
 	}
 
+	
 	tsk.SetProgress(100)
 	tsk.Status = "completed"
 	return nil
@@ -583,6 +606,10 @@ func _moveWithValidation(ctx context.Context, srcObjPath, dstDirPath string, val
 	if srcStorage.GetStorage() == dstStorage.GetStorage() {
 		err = op.Move(ctx, srcStorage, srcObjActualPath, dstDirActualPath, lazyCache...)
 		if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
+			if err == nil {
+				// For same-storage moves, refresh cache immediately since no batch tracking is used
+				op.ClearCache(dstStorage, dstDirActualPath)
+			}
 			return nil, err
 		}
 	}
