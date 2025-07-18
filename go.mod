@@ -3,8 +3,8 @@ module github.com/OpenListTeam/OpenList/v4
 go 1.23.4
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.17.0
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.0
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.1
 	github.com/OpenListTeam/go-cache v0.1.0
 	github.com/OpenListTeam/rateg v0.1.0
 	github.com/OpenListTeam/sftpd-openlist v1.0.1
@@ -80,7 +80,7 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.10.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.4.5 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.0 // indirect
@@ -171,7 +171,7 @@ require (
 	github.com/go-sql-driver/mysql v1.7.0 // indirect
 	github.com/go-webauthn/x v0.1.12 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
