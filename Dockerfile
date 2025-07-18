@@ -37,6 +37,8 @@ COPY --chmod=755 entrypoint.sh /entrypoint.sh
 RUN /entrypoint.sh version
 
 ENV PUID=0 PGID=0 UMASK=022 RUN_ARIA2=${INSTALL_ARIA2}
+ENV DATABASE_TYPE=sqlite3 DATABASE_HOST="" DATABASE_PORT=0 DATABASE_NAME="" DATABASE_USER="" DATABASE_PASSWORD=""
+
 VOLUME /opt/openlist/data/
 EXPOSE 5244 5245
 CMD [ "/entrypoint.sh" ]
