@@ -3,6 +3,7 @@ package terabox
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -39,7 +40,7 @@ func (d *Terabox) resetJsToken() error {
 		"Cookie":           d.Cookie,
 		"Accept":           "application/json, text/plain, */*",
 		"Referer":          d.base_url,
-		"User-Agent":       base.UserAgent,
+		"User-Agent":       "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox",
 		"X-Requested-With": "XMLHttpRequest",
 	}).Get(u)
 	if err != nil {
@@ -60,7 +61,7 @@ func (d *Terabox) request(rurl string, method string, callback base.ReqCallback,
 		"Cookie":           d.Cookie,
 		"Accept":           "application/json, text/plain, */*",
 		"Referer":          d.base_url,
-		"User-Agent":       base.UserAgent,
+		"User-Agent":       "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox",
 		"X-Requested-With": "XMLHttpRequest",
 	})
 	req.SetQueryParams(map[string]string{
@@ -76,12 +77,18 @@ func (d *Terabox) request(rurl string, method string, callback base.ReqCallback,
 	if resp != nil {
 		req.SetResult(resp)
 	}
-	res, err := req.Execute(method, d.base_url+rurl)
+
+	full_url := d.base_url + rurl
+	if strings.HasPrefix(rurl, "https://") {
+		full_url = rurl
+	}
+
+	res, err := req.Execute(method, full_url)
 	if err != nil {
 		return nil, err
 	}
 	errno := utils.Json.Get(res.Body(), "errno").ToInt()
-	if errno == 4000023 {
+	if errno == 4000023 || errno == 4500016 {
 		// reget jsToken
 		err = d.resetJsToken()
 		if err != nil {
@@ -127,6 +134,22 @@ func (d *Terabox) post_form(pathname string, params map[string]string, data map[
 			req.SetQueryParams(params)
 		}
 		req.SetFormData(data)
+	}, resp)
+}
+
+func (d *Terabox) post_multipart(
+	pathname string,
+	params map[string]string,
+	fileFieldName string,
+	fileName string,
+	fileReader io.Reader,
+	resp interface{},
+) ([]byte, error) {
+	return d.request(pathname, http.MethodPost, func(req *resty.Request) {
+		if params != nil {
+			req.SetQueryParams(params)
+		}
+		req.SetFileReader(fileFieldName, fileName, fileReader)
 	}, resp)
 }
 
@@ -217,7 +240,7 @@ func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link
 		return nil, fmt.Errorf("fid %s no dlink found, errno: %d", file.GetID(), resp.Errno)
 	}
 
-	res, err := base.NoRedirectClient.R().SetHeader("Cookie", d.Cookie).SetHeader("User-Agent", base.UserAgent).Get(resp.Dlink[0].Dlink)
+	res, err := base.NoRedirectClient.R().SetHeader("Cookie", d.Cookie).SetHeader("User-Agent", "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox").Get(resp.Dlink[0].Dlink)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +248,7 @@ func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link
 	return &model.Link{
 		URL: u,
 		Header: http.Header{
-			"User-Agent": []string{base.UserAgent},
+			"User-Agent": []string{"terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox"},
 		},
 	}, nil
 }
@@ -244,7 +267,7 @@ func (d *Terabox) linkCrack(file model.Obj, args model.LinkArgs) (*model.Link, e
 	return &model.Link{
 		URL: resp.Info[0].Dlink,
 		Header: http.Header{
-			"User-Agent": []string{base.UserAgent},
+			"User-Agent": []string{"terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox"},
 		},
 	}, nil
 }

@@ -131,7 +131,7 @@ func (d *Terabox) Remove(ctx context.Context, obj model.Obj) error {
 func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	resp, err := base.RestyClient.R().
 		SetContext(ctx).
-		Get("https://" + d.url_domain_prefix + "-data.terabox.com/rest/2.0/pcs/file?method=locateupload")
+		Get("https://d.terabox.com/rest/2.0/pcs/file?method=locateupload")
 	if err != nil {
 		return err
 	}
@@ -187,10 +187,6 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 		"method":     "upload",
 		"path":       path,
 		"uploadid":   precreateResp.Uploadid,
-		"app_id":     "250528",
-		"web":        "1",
-		"channel":    "dubox",
-		"clienttype": "0",
 	}
 
 	streamSize := stream.GetSize()
@@ -225,16 +221,29 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 
 		u := "https://" + locateupload_resp.Host + "/rest/2.0/pcs/superfile2"
 		params["partseq"] = strconv.Itoa(partseq)
-		res, err := base.RestyClient.R().
-			SetContext(ctx).
-			SetQueryParams(params).
-			SetFileReader("file", stream.GetName(), driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData))).
-			SetHeader("Cookie", d.Cookie).
-			Post(u)
+		retry_cnt := 0
+		log.Debugf("%+v", params)
+	retry:
+		fileReader := driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData))
+		res, err := d.post_multipart(u, params, "file", stream.GetName(), fileReader, nil)
+
+		log.Debugln(string(res))
 		if err != nil {
 			return err
 		}
-		log.Debugln(res.String())
+
+		rspmd5 := utils.Json.Get(res, "md5").ToString()
+
+		if uploadBlockList[partseq] != rspmd5 {
+			log.Debugf("retry cnt:%d, our MD5:%s, server:%s", retry_cnt, uploadBlockList[partseq], rspmd5)
+			if retry_cnt < 5 {
+				retry_cnt++
+				goto retry
+			}
+
+			return err
+		}
+
 		if count > 0 {
 			up(float64(partseq) * 100 / float64(count))
 		}
