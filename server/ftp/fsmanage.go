@@ -67,7 +67,7 @@ func Rename(ctx context.Context, oldPath, newPath string) error {
 		if !user.CanFTPManage() || !user.CanMove() || (srcBase != dstBase && !user.CanRename()) {
 			return errs.PermissionDenied
 		}
-		if err = fs.Move(ctx, srcPath, dstDir); err != nil {
+		if _, err = fs.Move(ctx, srcPath, dstDir); err != nil {
 			if srcBase != dstBase {
 				return err
 			}

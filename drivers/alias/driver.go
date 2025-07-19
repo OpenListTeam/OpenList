@@ -193,7 +193,8 @@ func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	}
 	if len(srcPath) == len(dstPath) {
 		for i := range srcPath {
-			err = errors.Join(err, fs.Move(ctx, *srcPath[i], *dstPath[i]))
+			_, e := fs.Move(ctx, *srcPath[i], *dstPath[i])
+			err = errors.Join(err, e)
 		}
 		return err
 	} else {

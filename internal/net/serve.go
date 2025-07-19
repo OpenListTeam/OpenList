@@ -6,10 +6,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"mime"
 	"mime/multipart"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,11 +72,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 	contentTypes, haveType := w.Header()["Content-Type"]
 	var contentType string
 	if !haveType {
-		contentType = mime.TypeByExtension(filepath.Ext(name))
-		if contentType == "" {
-			// most modern application can handle the default contentType
-			contentType = "application/octet-stream"
-		}
+		contentType = utils.GetMimeType(name)
 		w.Header().Set("Content-Type", contentType)
 	} else if len(contentTypes) > 0 {
 		contentType = contentTypes[0]

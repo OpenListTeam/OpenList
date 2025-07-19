@@ -14,7 +14,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
-	"path/filepath"
+	stdpath "path"
 	"sort"
 	"strconv"
 	"strings"
@@ -353,7 +353,7 @@ func (d *Doubao) getUploadConfig(upConfig *UploadConfig, dataType string, file m
 				"ServiceId":     d.UploadToken.Alice[dataType].ServiceID,
 				"NeedFallback":  "true",
 				"FileSize":      strconv.FormatInt(file.GetSize(), 10),
-				"FileExtension": filepath.Ext(file.GetName()),
+				"FileExtension": stdpath.Ext(file.GetName()),
 				"s":             randomString(),
 			}
 		}

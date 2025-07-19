@@ -2,7 +2,9 @@ package tool
 
 import (
 	"context"
+
 	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 
 	"net/url"
 	stdpath "path"
@@ -126,6 +128,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	t := &DownloadTask{
 		TaskExtension: task.TaskExtension{
 			Creator: taskCreator,
+			ApiUrl:  common.GetApiUrl(ctx),
 		},
 		Url:          args.URL,
 		DstDirPath:   args.DstDirPath,

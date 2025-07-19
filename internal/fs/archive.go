@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"mime"
 	"os"
 	stdpath "path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +19,9 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
+	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -58,6 +59,8 @@ func (t *ArchiveDownloadTask) Run() error {
 	if err != nil {
 		return err
 	}
+	uploadTask.groupID = stdpath.Join(uploadTask.DstStorageMp, uploadTask.DstActualPath)
+	task_group.TransferCoordinator.AddTask(uploadTask.groupID, nil)
 	ArchiveContentUploadTaskManager.Add(uploadTask)
 	return nil
 }
@@ -66,6 +69,9 @@ func (t *ArchiveDownloadTask) RunWithoutPushUploadTask() (*ArchiveContentUploadT
 	var err error
 	if t.srcStorage == nil {
 		t.srcStorage, err = op.GetStorageByMountPath(t.SrcStorageMp)
+		if err != nil {
+			return nil, err
+		}
 	}
 	srcObj, tool, ss, err := op.GetArchiveToolAndStream(t.Ctx(), t.srcStorage, t.SrcObjPath, model.LinkArgs{})
 	if err != nil {
@@ -117,13 +123,14 @@ func (t *ArchiveDownloadTask) RunWithoutPushUploadTask() (*ArchiveContentUploadT
 	uploadTask := &ArchiveContentUploadTask{
 		TaskExtension: task.TaskExtension{
 			Creator: t.GetCreator(),
+			ApiUrl:  t.ApiUrl,
 		},
-		ObjName:      baseName,
-		InPlace:      !t.PutIntoNewDir,
-		FilePath:     dir,
-		DstDirPath:   t.DstDirPath,
-		dstStorage:   t.dstStorage,
-		DstStorageMp: t.DstStorageMp,
+		ObjName:       baseName,
+		InPlace:       !t.PutIntoNewDir,
+		FilePath:      dir,
+		DstActualPath: t.DstDirPath,
+		dstStorage:    t.dstStorage,
+		DstStorageMp:  t.DstStorageMp,
 	}
 	return uploadTask, nil
 }
@@ -132,18 +139,19 @@ var ArchiveDownloadTaskManager *tache.Manager[*ArchiveDownloadTask]
 
 type ArchiveContentUploadTask struct {
 	task.TaskExtension
-	status       string
-	ObjName      string
-	InPlace      bool
-	FilePath     string
-	DstDirPath   string
-	dstStorage   driver.Driver
-	DstStorageMp string
-	finalized    bool
+	status        string
+	ObjName       string
+	InPlace       bool
+	FilePath      string
+	DstActualPath string
+	dstStorage    driver.Driver
+	DstStorageMp  string
+	finalized     bool
+	groupID       string
 }
 
 func (t *ArchiveContentUploadTask) GetName() string {
-	return fmt.Sprintf("upload %s to [%s](%s)", t.ObjName, t.DstStorageMp, t.DstDirPath)
+	return fmt.Sprintf("upload %s to [%s](%s)", t.ObjName, t.DstStorageMp, t.DstActualPath)
 }
 
 func (t *ArchiveContentUploadTask) GetStatus() string {
@@ -163,10 +171,31 @@ func (t *ArchiveContentUploadTask) Run() error {
 	})
 }
 
-func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTsk *ArchiveContentUploadTask) error) error {
+func (t *ArchiveContentUploadTask) OnSucceeded() {
+	task_group.TransferCoordinator.Done(t.groupID, true)
+}
+
+func (t *ArchiveContentUploadTask) OnFailed() {
+	task_group.TransferCoordinator.Done(t.groupID, false)
+}
+
+func (t *ArchiveContentUploadTask) SetRetry(retry int, maxRetry int) {
+	t.TaskExtension.SetRetry(retry, maxRetry)
+	if retry == 0 &&
+		(len(t.groupID) == 0 || // 重启恢复
+			(t.GetErr() == nil && t.GetState() != tache.StatePending)) { // 手动重试
+		t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
+		task_group.TransferCoordinator.AddTask(t.groupID, nil)
+	}
+}
+
+func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTask *ArchiveContentUploadTask) error) error {
 	var err error
 	if t.dstStorage == nil {
 		t.dstStorage, err = op.GetStorageByMountPath(t.DstStorageMp)
+		if err != nil {
+			return err
+		}
 	}
 	info, err := os.Stat(t.FilePath)
 	if err != nil {
@@ -174,10 +203,10 @@ func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTsk *Archi
 	}
 	if info.IsDir() {
 		t.status = "src object is dir, listing objs"
-		nextDstPath := t.DstDirPath
+		nextDstActualPath := t.DstActualPath
 		if !t.InPlace {
-			nextDstPath = stdpath.Join(nextDstPath, t.ObjName)
-			err = op.MakeDir(t.Ctx(), t.dstStorage, nextDstPath)
+			nextDstActualPath = stdpath.Join(nextDstActualPath, t.ObjName)
+			err = op.MakeDir(t.Ctx(), t.dstStorage, nextDstActualPath)
 			if err != nil {
 				return err
 			}
@@ -185,6 +214,9 @@ func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTsk *Archi
 		entries, err := os.ReadDir(t.FilePath)
 		if err != nil {
 			return err
+		}
+		if !t.InPlace && len(t.groupID) > 0 {
+			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToRefresh(nextDstActualPath))
 		}
 		var es error
 		for _, entry := range entries {
@@ -198,16 +230,21 @@ func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTsk *Archi
 				es = stderrors.Join(es, err)
 				continue
 			}
+			if len(t.groupID) > 0 {
+				task_group.TransferCoordinator.AddTask(t.groupID, nil)
+			}
 			err = f(&ArchiveContentUploadTask{
 				TaskExtension: task.TaskExtension{
 					Creator: t.GetCreator(),
+					ApiUrl:  t.ApiUrl,
 				},
-				ObjName:      entry.Name(),
-				InPlace:      false,
-				FilePath:     nextFilePath,
-				DstDirPath:   nextDstPath,
-				dstStorage:   t.dstStorage,
-				DstStorageMp: t.DstStorageMp,
+				ObjName:       entry.Name(),
+				InPlace:       false,
+				FilePath:      nextFilePath,
+				DstActualPath: nextDstActualPath,
+				dstStorage:    t.dstStorage,
+				DstStorageMp:  t.DstStorageMp,
+				groupID:       t.groupID,
 			})
 			if err != nil {
 				es = stderrors.Join(es, err)
@@ -228,13 +265,13 @@ func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTsk *Archi
 				Size:     info.Size(),
 				Modified: time.Now(),
 			},
-			Mimetype:     mime.TypeByExtension(filepath.Ext(t.ObjName)),
+			Mimetype:     utils.GetMimeType(stdpath.Ext(t.ObjName)),
 			WebPutAsTask: true,
 			Reader:       file,
 		}
 		fs.Closers.Add(file)
 		t.status = "uploading"
-		err = op.Put(t.Ctx(), t.dstStorage, t.DstDirPath, fs, t.SetProgress, true)
+		err = op.Put(t.Ctx(), t.dstStorage, t.DstActualPath, fs, t.SetProgress, true)
 		if err != nil {
 			return err
 		}
@@ -271,8 +308,9 @@ func moveToTempPath(path, prefix string) (string, error) {
 
 func genTempFileName(prefix string) (string, error) {
 	retry := 0
+	t := time.Now().UnixMilli()
 	for retry < 10000 {
-		newPath := stdpath.Join(conf.Conf.TempDir, prefix+strconv.FormatUint(uint64(rand.Uint32()), 10))
+		newPath := filepath.Join(conf.Conf.TempDir, prefix+fmt.Sprintf("%x-%x", t, rand.Uint32()))
 		if _, err := os.Stat(newPath); err != nil {
 			if os.IsNotExist(err) {
 				return newPath, nil
@@ -356,6 +394,7 @@ func archiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args 
 	tsk := &ArchiveDownloadTask{
 		TaskExtension: task.TaskExtension{
 			Creator: taskCreator,
+			ApiUrl:  common.GetApiUrl(ctx),
 		},
 		ArchiveDecompressArgs: args,
 		srcStorage:            srcStorage,

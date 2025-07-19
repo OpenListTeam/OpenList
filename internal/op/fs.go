@@ -103,6 +103,10 @@ func ClearCache(storage driver.Driver, path string) {
 	listCache.Del(Key(storage, path))
 }
 
+func ClearCacheNonRecursive(storage driver.Driver, path string) {
+	listCache.Del(Key(storage, path))
+}
+
 func Key(storage driver.Driver, path string) string {
 	return stdpath.Join(storage.GetStorage().MountPath, utils.FixAndCleanPath(path))
 }
