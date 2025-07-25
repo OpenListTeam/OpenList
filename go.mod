@@ -71,7 +71,7 @@ require (
 	golang.org/x/oauth2 v0.30.0
 	golang.org/x/time v0.12.0
 	google.golang.org/appengine v1.6.8
-	gopkg.in/ldap.v3 v3.1.0
+	gopkg.in/ldap.v3 v3.4.11
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/driver/sqlite v1.5.6
