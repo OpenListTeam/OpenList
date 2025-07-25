@@ -24,6 +24,8 @@ type Addition struct {
 	UploadThread int `json:"UploadThread" type:"number" default:"3" help:"the threads of upload"`
 
 	driver.RootID
+
+	apiinstance map[string]*ApiInfo // qps与账号绑定，一个账号一个实例；不导出
 }
 
 var config = driver.Config{
