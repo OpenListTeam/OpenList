@@ -60,6 +60,8 @@ github.com/OpenListTeam/times v0.1.0 h1:qknxw+qj5CYKgXAwydA102UEpPcpU8TYNGRmwRyP
 github.com/OpenListTeam/times v0.1.0/go.mod h1:Jx7qen5NCYzKk2w14YuvU48YYMcPa1P9a+EJePC15Pc=
 github.com/OpenListTeam/wopan-sdk-go v0.1.5 h1:iKKcVzIqBgtGDbn0QbdWrCazSGxXFmYFyrnFBG+U8dI=
 github.com/OpenListTeam/wopan-sdk-go v0.1.5/go.mod h1:otynv0CgSNUClPpUgZ44qCZGcMRe0dc83Pkk65xAunI=
+github.com/OpenListTeam/wopan-sdk-go v0.2.2 h1:B91gBp4P/KwVxTAwZ8gYr+QrC6S/G/9OD9aNtFulEG0=
+github.com/OpenListTeam/wopan-sdk-go v0.2.2/go.mod h1:AkF/ynk4lbOnMeAyEEJK7R0Ryz3NBMPZCMOepjeYwSw=
 github.com/ProtonMail/go-crypto v1.0.0 h1:LRuvITjQWX+WIfr930YHG2HNfjR1uOfyf5vE0kC2U78=
 github.com/ProtonMail/go-crypto v1.0.0/go.mod h1:EjAoLdwvbIOoOQr3ihjnSoLZRtE8azugULFRteWMNc0=
 github.com/ProtonMail/go-crypto v1.3.0 h1:ILq8+Sf5If5DCpHQp4PbZdS1J7HDFRXz/+xKBiRGFrw=
@@ -1151,6 +1153,8 @@ lukechampine.com/blake3 v1.1.7/go.mod h1:tkKEOtDkNtklkXtLNEOGNq5tcV90tJiA1vAA12R
 nullprogram.com/x/optparse v1.0.0/go.mod h1:KdyPE+Igbe0jQUrVfMqDMeJQIJZEuyV7pjYmp6pbG50=
 resty.dev/v3 v3.0.0-beta.2 h1:xu4mGAdbCLuc3kbk7eddWfWm4JfhwDtdapwss5nCjnQ=
 resty.dev/v3 v3.0.0-beta.2/go.mod h1:OgkqiPvTDtOuV4MGZuUDhwOpkY8enjOsjjMzeOHefy4=
+resty.dev/v3 v3.0.0-beta.3 h1:3kEwzEgCnnS6Ob4Emlk94t+I/gClyoah7SnNi67lt+E=
+resty.dev/v3 v3.0.0-beta.3/go.mod h1:OgkqiPvTDtOuV4MGZuUDhwOpkY8enjOsjjMzeOHefy4=
 rsc.io/binaryregexp v0.2.0/go.mod h1:qTv7/COck+e2FymRvadv62gMdZztPaShugOCi3I+8D8=
 rsc.io/quote/v3 v3.1.0/go.mod h1:yEA65RcK8LyAZtP9Kv3t0HmxON59tX3rD+tICJqUlj0=
 rsc.io/sampler v1.3.0/go.mod h1:T1hPZKmBbMNahiBKFy5HrXp6adAjACjK9JXDnKaTXpA=
