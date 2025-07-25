@@ -48,7 +48,7 @@ require (
 	github.com/maruel/natural v1.1.1
 	github.com/meilisearch/meilisearch-go v0.27.2
 	github.com/mholt/archives v0.1.3
-	github.com/natefinch/lumberjack v2.0.0+incompatible
+	github.com/natefinch/lumberjack v2.2.1+incompatible
 	github.com/ncw/swift/v2 v2.0.4
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.9
