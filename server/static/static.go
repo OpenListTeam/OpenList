@@ -43,9 +43,9 @@ func replaceStrings(content string, replacements map[string]string) string {
 
 func initIndex(siteConfig SiteConfig) {
 	utils.Log.Debug("Initializing index.html...")
-	// dist_dir is empty and cdn is not empty add web_version is empty or beta or dev
-	if conf.Conf.DistDir == "" && conf.Conf.Cdn != "" && (conf.WebVersion == "" || conf.WebVersion == "beta" || conf.WebVersion == "dev") {
-		utils.Log.Infof("Fetching index.html from CDN: %s/index.html...", conf.Conf.Cdn)
+	// dist_dir is empty and cdn is not empty add version is empty or beta or dev
+	if conf.Conf.DistDir == "" && conf.Conf.Cdn != "" && (conf.Version == "" || conf.Version == "beta" || conf.Version == "dev") {
+		utils.Log.Infof("Fetching index.html from CDN: %s/index.html...", siteConfig.Cdn)
 		resp, err := base.RestyClient.R().
 			SetHeader("Accept", "text/html").
 			Get(fmt.Sprintf("%s/index.html", siteConfig.Cdn))

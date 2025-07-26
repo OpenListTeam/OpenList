@@ -6,11 +6,11 @@ import (
 )
 
 var (
-	BuiltAt    string
-	GitAuthor  string
-	GitCommit  string
+	BuiltAt    string = "unknown"
+	GitAuthor  string = "unknown"
+	GitCommit  string = "unknown"
 	Version    string = "dev"
-	WebVersion string
+	WebVersion string = "rolling"
 )
 
 var (

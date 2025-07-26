@@ -1,6 +1,7 @@
 package data
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 
@@ -92,9 +93,10 @@ func InitialSettings() []model.SettingItem {
 	} else {
 		token = random.Token()
 	}
+	siteVersion := fmt.Sprintf("%s (Commit: %s) - Frontend: %s - Build at: %s", conf.Version, conf.GitCommit, conf.WebVersion, conf.BuiltAt)
 	initialSettingItems := []model.SettingItem{
 		// site settings
-		{Key: conf.VERSION, Value: conf.Version, Type: conf.TypeString, Group: model.SITE, Flag: model.READONLY},
+		{Key: conf.VERSION, Value: siteVersion, Type: conf.TypeString, Group: model.SITE, Flag: model.READONLY},
 		//{Key: conf.ApiUrl, Value: "", Type: conf.TypeString, Group: model.SITE},
 		//{Key: conf.BasePath, Value: "", Type: conf.TypeString, Group: model.SITE},
 		{Key: conf.SiteTitle, Value: "OpenList", Type: conf.TypeString, Group: model.SITE},

@@ -1,7 +1,7 @@
 set -e
 appName="openlist"
 builtAt="$(date +'%F %T %z')"
-gitAuthor="The OpenList Projects Contributors <noreply@openlist.team>"
+gitAuthor="OpenListTeam <noreply@openlist.team>"
 gitCommit=$(git log --pretty=format:"%h" -1)
 
 githubAuthArgs=""
@@ -17,10 +17,10 @@ fi
 
 if [ "$1" = "dev" ]; then
   version="dev"
-  webVersion="dev"
+  webVersion="rolling"
 elif [ "$1" = "beta" ]; then
   version="beta"
-  webVersion="dev"
+  webVersion="rolling"
 else
   git tag -d beta || true
   # Always true if there's no tag
@@ -45,26 +45,17 @@ ldflags="\
 -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=$webVersion' \
 "
 
-FetchWebDev() {
-  pre_release_tag=$(eval "curl -fsSL --max-time 2 $githubAuthArgs https://api.github.com/repos/OpenListTeam/OpenList-Frontend/releases" | jq -r 'map(select(.prerelease)) | first | .tag_name')
-  if [ -z "$pre_release_tag" ] || [ "$pre_release_tag" == "null" ]; then
-    # fall back to latest release
-    pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/OpenListTeam/OpenList-Frontend/releases/latest\"")
-  else
-    pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/OpenListTeam/OpenList-Frontend/releases/tags/$pre_release_tag\"")
-  fi
+FetchWebRolling() {
+  pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/OpenListTeam/OpenList-Frontend/releases/tags/rolling\"")
   pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[].browser_download_url')
   
-  if [ "$useLite" = true ]; then
-    pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist-lite" | grep "\.tar\.gz$")
-  else
-    pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$")
-  fi
-  
-  curl -fsSL "$pre_release_tar_url" -o web-dist-dev.tar.gz
+  # There is no lite for rolling
+  pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$")
+
+  curl -fsSL "$pre_release_tar_url" -o dist.tar.gz
   rm -rf public/dist && mkdir -p public/dist
-  tar -zxvf web-dist-dev.tar.gz -C public/dist
-  rm -rf web-dist-dev.tar.gz
+  tar -zxvf dist.tar.gz -C public/dist
+  rm -rf dist.tar.gz
 }
 
 FetchWebRelease() {
@@ -590,7 +581,7 @@ for arg in "$@"; do
 done
 
 if [ "$buildType" = "dev" ]; then
-  FetchWebDev
+  FetchWebRolling
   if [ "$dockerType" = "docker" ]; then
     BuildDocker
   elif [ "$dockerType" = "docker-multiplatform" ]; then
@@ -602,7 +593,7 @@ if [ "$buildType" = "dev" ]; then
   fi
 elif [ "$buildType" = "release" -o "$buildType" = "beta" ]; then
   if [ "$buildType" = "beta" ]; then
-    FetchWebDev
+    FetchWebRolling
   else
     FetchWebRelease
   fi
