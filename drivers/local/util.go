@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +20,8 @@ import (
 )
 
 func isSymlinkDir(f fs.FileInfo, path string) bool {
-	if f.Mode()&os.ModeSymlink == os.ModeSymlink {
+	if f.Mode()&os.ModeSymlink == os.ModeSymlink ||
+		(runtime.GOOS == "windows" && f.Mode()&os.ModeIrregular == os.ModeIrregular) { // os.ModeIrregular is Junction bit in Windows
 		dst, err := os.Readlink(filepath.Join(path, f.Name()))
 		if err != nil {
 			return false
