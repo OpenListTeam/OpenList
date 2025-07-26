@@ -3,6 +3,7 @@ package quark_uc_tv
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -96,7 +97,7 @@ func (d *QuarkUCTV) List(ctx context.Context, dir model.Obj, args model.ListArgs
 	pageSize := int64(100)
 	for {
 		var filesData FilesData
-		_, err := d.request(ctx, "/file", "GET", func(req *resty.Request) {
+		_, err := d.request(ctx, "/file", http.MethodGet, func(req *resty.Request) {
 			req.SetQueryParams(map[string]string{
 				"method":     "list",
 				"parent_fid": dir.GetID(),

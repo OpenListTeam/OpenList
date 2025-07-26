@@ -31,13 +31,13 @@ func (c *customTokenSource) Token() (*oauth2.Token, error) {
 	v.Set("client_id", c.config.ClientID)
 	v.Set("client_secret", c.config.ClientSecret)
 
-	req, err := http.NewRequest("POST", c.config.TokenURL, strings.NewReader(v.Encode()))
+	req, err := http.NewRequestWithContext(c.ctx, http.MethodPost, c.config.TokenURL, strings.NewReader(v.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req.WithContext(c.ctx))
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

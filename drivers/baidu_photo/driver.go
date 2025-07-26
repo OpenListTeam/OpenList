@@ -262,11 +262,12 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 
 	// 计算需要的数据
 	streamSize := stream.GetSize()
-	count := int(streamSize / DEFAULT)
+	count := 1
+	if streamSize > DEFAULT {
+		count = int((streamSize + DEFAULT - 1) / DEFAULT)
+	}
 	lastBlockSize := streamSize % DEFAULT
-	if lastBlockSize > 0 {
-		count++
-	} else {
+	if lastBlockSize == 0 {
 		lastBlockSize = DEFAULT
 	}
 

@@ -203,11 +203,12 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 
 	streamSize := stream.GetSize()
 	sliceSize := d.getSliceSize(streamSize)
-	count := int(streamSize / sliceSize)
+	count := 1
+	if streamSize > sliceSize {
+		count = int((streamSize + sliceSize - 1) / sliceSize)
+	}
 	lastBlockSize := streamSize % sliceSize
-	if lastBlockSize > 0 {
-		count++
-	} else {
+	if lastBlockSize == 0 {
 		lastBlockSize = sliceSize
 	}
 
