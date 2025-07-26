@@ -42,7 +42,7 @@ require (
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/ipfs/go-ipfs-api v0.7.0
 	github.com/itsHenry35/gofakes3 v0.0.8
-	github.com/jlaffaye/ftp v0.2.1-0.20240918233326-1b970516f5d3
+	github.com/jlaffaye/ftp v0.2.1-0.20250613130855-a423bc5cc9f2
 	github.com/json-iterator/go v1.1.12
 	github.com/kdomanski/iso9660 v0.4.0
 	github.com/maruel/natural v1.1.1
@@ -92,9 +92,9 @@ require (
 	github.com/minio/xxml v0.0.3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/otiai10/mint v1.6.3 // indirect
-	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 	github.com/shirou/gopsutil/v4 v4.25.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 )
 
 require (
