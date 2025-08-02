@@ -84,16 +84,20 @@ func (d *Strm) list(ctx context.Context, dst, sub string, args *fs.ListArgs) ([]
 	}
 
 	var validObjs []model.Obj
+	var downloadObjs []model.Obj
 	for _, obj := range objs {
 		if !obj.IsDir() {
 			ext := strings.ToLower(utils.Ext(obj.GetName()))
 			if _, ok := supportSuffix[ext]; !ok {
-				continue
+				if _, ok := downloadSuffix[ext]; ok {
+					downloadObjs = append(downloadObjs, obj)
+					continue
+				}
 			}
 		}
 		validObjs = append(validObjs, obj)
 	}
-	return utils.SliceConvert(validObjs, func(obj model.Obj) (model.Obj, error) {
+	var validObjsResult, validObjsResultErr = utils.SliceConvert(validObjs, func(obj model.Obj) (model.Obj, error) {
 		name := obj.GetName()
 		size := int64(0)
 		if !obj.IsDir() {
@@ -124,6 +128,42 @@ func (d *Strm) list(ctx context.Context, dst, sub string, args *fs.ListArgs) ([]
 			},
 		}, nil
 	})
+
+	var downloadObjsResult, downloadObjsResultErr = utils.SliceConvert(downloadObjs, func(obj model.Obj) (model.Obj, error) {
+		name := obj.GetName()
+		size := int64(0)
+		if !obj.IsDir() {
+			file := stdpath.Join(reqPath, obj.GetName())
+			size = int64(len(d.getLink(ctx, file)))
+		}
+		objRes := model.Object{
+			Name:     name,
+			Size:     size,
+			Modified: obj.ModTime(),
+			IsFolder: obj.IsDir(),
+			Path:     stdpath.Join(reqPath, obj.GetName()),
+		}
+		thumb, ok := model.GetThumb(obj)
+		if !ok {
+			return &objRes, nil
+		}
+		return &model.ObjThumb{
+			Object: objRes,
+			Thumbnail: model.Thumbnail{
+				Thumbnail: thumb,
+			},
+		}, nil
+	})
+
+	// Merge results and errors
+	if validObjsResultErr != nil || downloadObjsResultErr != nil {
+		return nil, utils.MergeErrors(validObjsResultErr, downloadObjsResultErr)
+	}
+	validObjs = append(validObjsResult, downloadObjsResult...)
+	if len(validObjs) == 0 {
+		return nil, fmt.Errorf("no valid objects found in %s", reqPath)
+	}
+	return validObjs, nil
 }
 
 func (d *Strm) getLink(ctx context.Context, path string) string {

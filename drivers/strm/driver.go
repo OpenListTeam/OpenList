@@ -60,7 +60,17 @@ func (d *Strm) Init(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	
+	if d.DownloadFileTypes != "" {
+        downloadTypes := strings.Split(d.DownloadFileTypes, ",")
+        for _, ext := range downloadTypes {
+            ext = strings.ToLower(strings.TrimSpace(ext))
+            if ext != "" {
+                downloadSuffix[ext] = struct{}{}
+            }
+        }
+    }
+    return nil
 }
 
 func (d *Strm) Drop(ctx context.Context) error {
