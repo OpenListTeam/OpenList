@@ -505,11 +505,12 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		retry.Delay(time.Second),
 		retry.DelayType(retry.BackOffDelay))
 
-	count := int(size / sliceSize)
+	count := 1
+	if size > sliceSize {
+		count = int((size + sliceSize - 1) / sliceSize)
+	}
 	lastPartSize := size % sliceSize
-	if lastPartSize > 0 {
-		count++
-	} else {
+	if lastPartSize == 0 {
 		lastPartSize = sliceSize
 	}
 	fileMd5 := utils.MD5.NewFunc()
@@ -620,11 +621,12 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 		cache = tmpF
 	}
 	sliceSize := partSize(size)
-	count := int(size / sliceSize)
+	count := 1
+	if size > sliceSize {
+		count = int((size + sliceSize - 1) / sliceSize)
+	}
 	lastSliceSize := size % sliceSize
-	if lastSliceSize > 0 {
-		count++
-	} else {
+	if lastSliceSize == 0 {
 		lastSliceSize = sliceSize
 	}
 

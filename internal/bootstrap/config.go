@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/caarlos0/env/v9"
+	"github.com/shirou/gopsutil/v4/mem"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -79,6 +80,17 @@ func InitConfig() {
 	if conf.Conf.MaxConcurrency > 0 {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: conf.Conf.MaxConcurrency}
 	}
+	if conf.Conf.MaxBufferLimit < 0 {
+		m, _ := mem.VirtualMemory()
+		if m != nil {
+			maxBufferLimit := int(min(float64(m.Total)*0.05, float64(m.Available)*0.1))
+			maxBufferLimit = max(maxBufferLimit, 4*utils.MB)
+			conf.MaxBufferLimit = maxBufferLimit
+		} else {
+			conf.MaxBufferLimit = 16 * utils.MB
+		}
+	}
+	log.Infof("max buffer limit: %d", conf.MaxBufferLimit)
 	if !conf.Conf.Force {
 		confFromEnv()
 	}

@@ -114,7 +114,7 @@ func (c *client) post(path string, data url.Values) (*http.Response, error) {
 	u := c.url.JoinPath(path)
 	u.User = nil // remove userinfo for requests
 
-	req, err := http.NewRequest("POST", u.String(), bytes.NewReader([]byte(data.Encode())))
+	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader([]byte(data.Encode())))
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +162,7 @@ func (c *client) AddFromLink(link string, savePath string, id string) error {
 
 	u := c.url.JoinPath("/api/v2/torrents/add")
 	u.User = nil // remove userinfo for requests
-	req, err := http.NewRequest("POST", u.String(), buf)
+	req, err := http.NewRequest(http.MethodPost, u.String(), buf)
 	if err != nil {
 		return err
 	}

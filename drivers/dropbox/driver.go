@@ -192,12 +192,11 @@ func (d *Dropbox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 
 		url := d.contentBase + "/2/files/upload_session/append_v2"
 		reader := driver.NewLimitedUploadStream(ctx, io.LimitReader(stream, PartSize))
-		req, err := http.NewRequest(http.MethodPost, url, reader)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reader)
 		if err != nil {
 			log.Errorf("failed to update file when append to upload session, err: %+v", err)
 			return err
 		}
-		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.Header.Set("Authorization", "Bearer "+d.AccessToken)
 

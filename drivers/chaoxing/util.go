@@ -167,7 +167,7 @@ func (d *ChaoXing) Login() (string, error) {
 		return "", err
 	}
 	// Create the request
-	req, err := http.NewRequest("POST", "https://passport2.chaoxing.com/fanyalogin", body)
+	req, err := http.NewRequest(http.MethodPost, "https://passport2.chaoxing.com/fanyalogin", body)
 	if err != nil {
 		return "", err
 	}

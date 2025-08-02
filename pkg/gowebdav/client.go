@@ -383,7 +383,7 @@ func (c *Client) Link(path string) (string, http.Header, error) {
 
 // ReadStream reads the stream for a given path
 func (c *Client) ReadStream(path string, callback func(rq *http.Request)) (io.ReadCloser, http.Header, error) {
-	rs, err := c.req("GET", path, nil, callback)
+	rs, err := c.req(http.MethodGet, path, nil, callback)
 	if err != nil {
 		return nil, nil, newPathErrorErr("ReadStream", path, err)
 	}
@@ -405,7 +405,7 @@ func (c *Client) ReadStream(path string, callback func(rq *http.Request)) (io.Re
 // this function will emulate the behavior by skipping `offset` bytes and limiting the result
 // to `length`.
 func (c *Client) ReadStreamRange(path string, offset, length int64) (io.ReadCloser, error) {
-	rs, err := c.req("GET", path, nil, func(r *http.Request) {
+	rs, err := c.req(http.MethodGet, path, nil, func(r *http.Request) {
 		r.Header.Add("Range", fmt.Sprintf("bytes=%v-%v", offset, offset+length-1))
 	})
 	if err != nil {
