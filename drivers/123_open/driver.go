@@ -30,6 +30,34 @@ func (d *Open123) Init(ctx context.Context) error {
 		d.UploadThread = 3
 	}
 
+	qps := map[string]int{}
+	if d.RefreshToken == "" {
+		qps = idQPSLimit
+	} else {
+		qps = appQPSLimit
+
+	}
+	d.apiinstance = map[string]*ApiInfo{
+		accessTokenAPI:       InitApiInfo(baseURL+accessTokenAPI, qps[accessTokenAPI]),
+		refreshTokenAPI:      InitApiInfo(baseURL+refreshTokenAPI, qps[refreshTokenAPI]),
+		userInfoAPI:          InitApiInfo(baseURL+userInfoAPI, qps[userInfoAPI]),
+		fileListAPI:          InitApiInfo(baseURL+fileListAPI, qps[fileListAPI]),
+		downloadInfoAPI:      InitApiInfo(baseURL+downloadInfoAPI, qps[downloadInfoAPI]),
+		mkdirAPI:             InitApiInfo(baseURL+mkdirAPI, qps[mkdirAPI]),
+		moveAPI:              InitApiInfo(baseURL+moveAPI, qps[moveAPI]),
+		renameAPI:            InitApiInfo(baseURL+renameAPI, qps[renameAPI]),
+		trashAPI:             InitApiInfo(baseURL+trashAPI, qps[trashAPI]),
+		preupCreateAPI:       InitApiInfo(baseURL+preupCreateAPI, qps[preupCreateAPI]),
+		sliceUploadAPI:       InitApiInfo(sliceUploadAPI, qps[sliceUploadAPI]),
+		uploadCompleteAPI:    InitApiInfo(baseURL+uploadCompleteAPI, qps[uploadCompleteAPI]),
+		uploadURLAPI:         InitApiInfo(uploadURLAPI, qps[uploadURLAPI]),
+		singleUploadAPI:      InitApiInfo(singleUploadAPI, qps[singleUploadAPI]),
+		preupCreateV1API:     InitApiInfo(baseURL+preupCreateV1API, qps[preupCreateV1API]),
+		getUploadURLAPI:      InitApiInfo(baseURL+getUploadURLAPI, qps[getUploadURLAPI]),
+		uploadCompleteV1API:  InitApiInfo(baseURL+uploadCompleteV1API, qps[uploadCompleteV1API]),
+		uploadAsyncResultAPI: InitApiInfo(baseURL+uploadAsyncResultAPI, qps[uploadAsyncResultAPI]),
+	}
+
 	return nil
 }
 
