@@ -20,3 +20,11 @@ var supportSuffix = map[string]struct{}{
 	"wma":  {},
 	"alac": {},
 }
+
+var downloadSuffix = map[string]struct{}{
+	// subtitles
+	"ass": {},
+	"srt": {},
+	"vtt": {},
+	"sub": {},
+}
