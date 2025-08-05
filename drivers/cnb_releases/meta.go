@@ -15,7 +15,7 @@ type Addition struct {
 var config = driver.Config{
 	Name:              "CNB Releases",
 	LocalSort:         true,
-	DefaultRoot:       "",
+	DefaultRoot:       "/",
 	NoUpload:          true,
 	NoOverwriteUpload: true,
 }

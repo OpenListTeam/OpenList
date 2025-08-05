@@ -102,10 +102,14 @@ func (d *CnbReleases) List(ctx context.Context, dir model.Obj, args model.ListAr
 		// }
 
 		// get release info by release id
+		releaseID := dir.GetID()
+		if releaseID == "" {
+			return nil, errs.ObjectNotFound
+		}
 		var resp Release
 		err := d.Request(http.MethodGet, "/{repo}/-/releases/{release_id}", func(req *resty.Request) {
 			req.SetPathParam("repo", d.Repo)
-			req.SetPathParam("release_id", dir.GetID())
+			req.SetPathParam("release_id", releaseID)
 		}, &resp)
 		if err != nil {
 			return nil, err
