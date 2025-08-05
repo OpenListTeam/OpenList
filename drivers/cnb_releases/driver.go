@@ -77,9 +77,13 @@ func (d *CnbReleases) List(ctx context.Context, dir model.Obj, args model.ListAr
 		}
 
 		return utils.SliceConvert(resp, func(src Release) (model.Obj, error) {
+			name := src.Name
+			if d.UseTagName {
+				name = src.TagName
+			}
 			return &model.Object{
 				ID:       src.ID,
-				Name:     src.Name,
+				Name:     name,
 				Size:     d.sumAssetsSize(src.Assets),
 				Ctime:    src.CreatedAt,
 				Modified: src.UpdatedAt,
