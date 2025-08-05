@@ -11,6 +11,9 @@ import (
 // do others that not defined in Driver interface
 
 func (d *CnbReleases) Request(method string, path string, callback base.ReqCallback, resp any) error {
+	if d.ref != nil {
+		return d.ref.Request(method, path, callback, resp)
+	}
 	url := "https://api.cnb.cool" + path
 	req := base.RestyClient.R()
 	req.SetHeader("Accept", "application/json")

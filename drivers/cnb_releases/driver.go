@@ -2,6 +2,7 @@ package cnb_releases
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -14,6 +15,7 @@ import (
 type CnbReleases struct {
 	model.Storage
 	Addition
+	ref *CnbReleases
 }
 
 func (d *CnbReleases) Config() driver.Config {
@@ -30,7 +32,17 @@ func (d *CnbReleases) Init(ctx context.Context) error {
 	return nil
 }
 
+func (d *CnbReleases) InitReference(storage driver.Driver) error {
+	refStorage, ok := storage.(*CnbReleases)
+	if ok {
+		d.ref = refStorage
+		return nil
+	}
+	return fmt.Errorf("ref: storage is not CnbReleases")
+}
+
 func (d *CnbReleases) Drop(ctx context.Context) error {
+	d.ref = nil
 	return nil
 }
 
