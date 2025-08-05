@@ -48,34 +48,65 @@ func (d *CnbReleases) Drop(ctx context.Context) error {
 
 func (d *CnbReleases) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	if dir.GetPath() == "/" {
-		// get all tags for root dir
-		var resp TagList
-		err := d.Request(http.MethodGet, "/{repo}/-/git/tags", func(req *resty.Request) {
+		// // get all tags for root dir
+		// var resp TagList
+		// err := d.Request(http.MethodGet, "/{repo}/-/git/tags", func(req *resty.Request) {
+		// 	req.SetPathParam("repo", d.Repo)
+		// }, &resp)
+		// if err != nil {
+		// 	return nil, err
+		// }
+
+		// return utils.SliceConvert(resp, func(src Tag) (model.Obj, error) {
+		// 	return &model.Object{
+		// 		ID:       src.Target,
+		// 		Name:     src.Name,
+		// 		Modified: src.Commit.Commit.Committer.Date,
+		// 		IsFolder: src.TargetType == "tag",
+		// 	}, nil
+		// })
+
+		// get all releases for root dir
+		var resp ReleaseList
+
+		err := d.Request(http.MethodGet, "/{repo}/-/releases", func(req *resty.Request) {
 			req.SetPathParam("repo", d.Repo)
 		}, &resp)
 		if err != nil {
 			return nil, err
 		}
 
-		return utils.SliceConvert(resp, func(src Tag) (model.Obj, error) {
+		return utils.SliceConvert(resp, func(src Release) (model.Obj, error) {
 			return &model.Object{
-				ID:       src.Target,
+				ID:       src.ID,
 				Name:     src.Name,
-				Modified: src.Commit.Commit.Committer.Date,
-				IsFolder: src.TargetType == "tag",
+				Size:     d.sumAssetsSize(src.Assets),
+				Ctime:    src.CreatedAt,
+				Modified: src.UpdatedAt,
+				IsFolder: true,
 			}, nil
 		})
 	} else {
-		// get release info by tag name
+		// // get release info by tag name
+		// var resp Release
+		// err := d.Request(http.MethodGet, "/{repo}/-/releases/tags/{tag}", func(req *resty.Request) {
+		// 	req.SetPathParam("repo", d.Repo)
+		// 	req.SetPathParam("tag", dir.GetName())
+		// }, &resp)
+		// if err != nil {
+		// 	return nil, err
+		// }
+
+		// get release info by release id
 		var resp Release
-		err := d.Request(http.MethodGet, "/{repo}/-/releases/tags/{tag}", func(req *resty.Request) {
+		err := d.Request(http.MethodGet, "/{repo}/-/releases/{release_id}", func(req *resty.Request) {
 			req.SetPathParam("repo", d.Repo)
-			req.SetPathParam("tag", dir.GetName())
+			req.SetPathParam("release_id", dir.GetID())
 		}, &resp)
 		if err != nil {
 			return nil, err
 		}
-		// return assets plane
+
 		return utils.SliceConvert(resp.Assets, func(src ReleaseAsset) (model.Obj, error) {
 			return &model.Object{
 				ID:       src.ID,

@@ -41,3 +41,11 @@ func (d *CnbReleases) Request(method string, path string, callback base.ReqCallb
 
 	return nil
 }
+
+func (d *CnbReleases) sumAssetsSize(assets []ReleaseAsset) int64 {
+	var size int64
+	for _, asset := range assets {
+		size += asset.Size
+	}
+	return size
+}
