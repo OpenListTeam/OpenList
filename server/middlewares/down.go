@@ -15,10 +15,15 @@ import (
 	"github.com/pkg/errors"
 )
 
+func PathParse(c *gin.Context) {
+	rawPath := parsePath(c.Param("path"))
+	common.GinWithValue(c, conf.PathKey, rawPath)
+	c.Next()
+}
+
 func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 	return func(c *gin.Context) {
-		rawPath := parsePath(c.Param("path"))
-		common.GinWithValue(c, conf.PathKey, rawPath)
+		rawPath := c.Request.Context().Value(conf.PathKey).(string)
 		meta, err := op.GetNearestMeta(rawPath)
 		if err != nil {
 			if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
