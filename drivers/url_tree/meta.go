@@ -10,7 +10,7 @@ type Addition struct {
 	// driver.RootPath
 	// driver.RootID
 	// define other
-	UrlStructure string `json:"url_structure" type:"text" required:"true" default:"https://cdn.oplist.org/gh/OpenListTeam/OpenList/README.md\nhttps://cdn.oplist.org/gh/OpenListTeam/OpenList/README_cn.md\nfolder:\n  CONTRIBUTING.md:1635:https://cdn.oplist.org/gh/OpenListTeam/OpenList/CONTRIBUTING.md\n  CODE_OF_CONDUCT.md:2093:https://cdn.oplist.org/gh/OpenListTeam/OpenList/CODE_OF_CONDUCT.md" help:"structure:FolderName:\n  [FileName:][FileSize:][Modified:]Url"`
+	UrlStructure string `json:"url_structure" type:"text" required:"true" default:"https://raw.githubusercontent.com/OpenListTeam/OpenList/main/README.md\nhttps://raw.githubusercontent.com/OpenListTeam/OpenList/main/README_cn.md\nfolder:\n  CONTRIBUTING.md:1635:https://raw.githubusercontent.com/OpenListTeam/OpenList/main/CONTRIBUTING.md\n  CODE_OF_CONDUCT.md:2093:https://raw.githubusercontent.com/OpenListTeam/OpenList/main/CODE_OF_CONDUCT.md" help:"structure:FolderName:\n  [FileName:][FileSize:][Modified:]Url"`
 	HeadSize     bool   `json:"head_size" type:"bool" default:"false" help:"Use head method to get file size, but it may be failed."`
 	Writable     bool   `json:"writable" type:"bool" default:"false"`
 }

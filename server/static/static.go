@@ -116,10 +116,10 @@ func UpdateIndex() {
 	mainColor := setting.GetStr(conf.MainColor)
 	utils.Log.Debug("Applying replacements for default pages...")
 	replaceMap1 := map[string]string{
-		"https://cdn.oplist.org/gh/OpenListTeam/Logo@main/logo.svg": favicon,
-		"https://cdn.oplist.org/gh/OpenListTeam/Logo@main/logo.png": logo,
-		"Loading...":            title,
-		"main_color: undefined": fmt.Sprintf("main_color: '%s'", mainColor),
+		"https://res.oplist.org/logo/logo.svg": favicon,
+		"https://res.oplist.org/logo/logo.png": logo,
+		"Loading...":                           title,
+		"main_color: undefined":                fmt.Sprintf("main_color: '%s'", mainColor),
 	}
 	conf.ManageHtml = replaceStrings(conf.RawIndexHtml, replaceMap1)
 	utils.Log.Debug("Applying replacements for manage pages...")
