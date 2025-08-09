@@ -6,7 +6,6 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.2
 	github.com/OpenListTeam/go-cache v0.1.0
-	github.com/OpenListTeam/rateg v0.1.0
 	github.com/OpenListTeam/sftpd-openlist v1.0.1
 	github.com/OpenListTeam/tache v0.2.0
 	github.com/OpenListTeam/times v0.1.0
@@ -55,6 +54,7 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/rclone/rclone v1.70.3
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d
+	github.com/shirou/gopsutil/v4 v4.25.5
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/cobra v1.9.1
@@ -92,7 +92,6 @@ require (
 	github.com/minio/xxml v0.0.3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/otiai10/mint v1.6.3 // indirect
-	github.com/shirou/gopsutil/v4 v4.25.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 )

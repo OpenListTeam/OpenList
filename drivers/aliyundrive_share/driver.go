@@ -2,7 +2,6 @@ package aliyundrive_share
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/rateg"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -25,8 +23,7 @@ type AliyundriveShare struct {
 	DriveId     string
 	cron        *cron.Cron
 
-	limitList func(ctx context.Context, dir model.Obj) ([]model.Obj, error)
-	limitLink func(ctx context.Context, file model.Obj) (*model.Link, error)
+	limiter *limiter
 }
 
 func (d *AliyundriveShare) Config() driver.Config {
@@ -38,28 +35,25 @@ func (d *AliyundriveShare) GetAddition() driver.Additional {
 }
 
 func (d *AliyundriveShare) Init(ctx context.Context) error {
-	err := d.refreshToken()
+	d.limiter = getLimiter()
+	err := d.refreshToken(ctx)
 	if err != nil {
+		d.limiter.free()
+		d.limiter = nil
 		return err
 	}
-	err = d.getShareToken()
+	err = d.getShareToken(ctx)
 	if err != nil {
+		d.limiter.free()
+		d.limiter = nil
 		return err
 	}
 	d.cron = cron.NewCron(time.Hour * 2)
 	d.cron.Do(func() {
-		err := d.refreshToken()
+		err := d.refreshToken(ctx)
 		if err != nil {
 			log.Errorf("%+v", err)
 		}
-	})
-	d.limitList = rateg.LimitFnCtx(d.list, rateg.LimitFnOption{
-		Limit:  4,
-		Bucket: 1,
-	})
-	d.limitLink = rateg.LimitFnCtx(d.link, rateg.LimitFnOption{
-		Limit:  1,
-		Bucket: 1,
 	})
 	return nil
 }
@@ -68,19 +62,14 @@ func (d *AliyundriveShare) Drop(ctx context.Context) error {
 	if d.cron != nil {
 		d.cron.Stop()
 	}
+	d.limiter.free()
+	d.limiter = nil
 	d.DriveId = ""
 	return nil
 }
 
 func (d *AliyundriveShare) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	if d.limitList == nil {
-		return nil, fmt.Errorf("driver not init")
-	}
-	return d.limitList(ctx, dir)
-}
-
-func (d *AliyundriveShare) list(ctx context.Context, dir model.Obj) ([]model.Obj, error) {
-	files, err := d.getFiles(dir.GetID())
+	files, err := d.getFiles(ctx, dir.GetID())
 	if err != nil {
 		return nil, err
 	}
@@ -90,13 +79,6 @@ func (d *AliyundriveShare) list(ctx context.Context, dir model.Obj) ([]model.Obj
 }
 
 func (d *AliyundriveShare) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	if d.limitLink == nil {
-		return nil, fmt.Errorf("driver not init")
-	}
-	return d.limitLink(ctx, file)
-}
-
-func (d *AliyundriveShare) link(ctx context.Context, file model.Obj) (*model.Link, error) {
 	data := base.Json{
 		"drive_id": d.DriveId,
 		"file_id":  file.GetID(),
@@ -105,7 +87,7 @@ func (d *AliyundriveShare) link(ctx context.Context, file model.Obj) (*model.Lin
 		"share_id":   d.ShareId,
 	}
 	var resp ShareLinkResp
-	_, err := d.request("https://api.alipan.com/v2/file/get_share_link_download_url", http.MethodPost, func(req *resty.Request) {
+	_, err := d.request(ctx, limiterLink, "https://api.alipan.com/v2/file/get_share_link_download_url", http.MethodPost, func(req *resty.Request) {
 		req.SetHeader(CanaryHeaderKey, CanaryHeaderValue).SetBody(data).SetResult(&resp)
 	})
 	if err != nil {
@@ -135,7 +117,7 @@ func (d *AliyundriveShare) Other(ctx context.Context, args model.OtherArgs) (int
 	default:
 		return nil, errs.NotSupport
 	}
-	_, err := d.request(url, http.MethodPost, func(req *resty.Request) {
+	_, err := d.request(ctx, limiterOther, url, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data).SetResult(&resp)
 	})
 	if err != nil {

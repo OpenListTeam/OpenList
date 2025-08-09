@@ -1,6 +1,7 @@
 package aliyundrive_share
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -15,11 +16,15 @@ const (
 	CanaryHeaderValue = "client=web,app=share,version=v2.3.1"
 )
 
-func (d *AliyundriveShare) refreshToken() error {
+func (d *AliyundriveShare) refreshToken(ctx context.Context) error {
+	err := d.wait(ctx, limiterOther)
+	if err != nil {
+		return err
+	}
 	url := "https://auth.alipan.com/v2/account/token"
 	var resp base.TokenResp
 	var e ErrorResp
-	_, err := base.RestyClient.R().
+	_, err = base.RestyClient.R().
 		SetBody(base.Json{"refresh_token": d.RefreshToken, "grant_type": "refresh_token"}).
 		SetResult(&resp).
 		SetError(&e).
@@ -36,7 +41,11 @@ func (d *AliyundriveShare) refreshToken() error {
 }
 
 // do others that not defined in Driver interface
-func (d *AliyundriveShare) getShareToken() error {
+func (d *AliyundriveShare) getShareToken(ctx context.Context) error {
+	err := d.wait(ctx, limiterOther)
+	if err != nil {
+		return err
+	}
 	data := base.Json{
 		"share_id": d.ShareId,
 	}
@@ -45,7 +54,7 @@ func (d *AliyundriveShare) getShareToken() error {
 	}
 	var e ErrorResp
 	var resp ShareTokenResp
-	_, err := base.RestyClient.R().
+	_, err = base.RestyClient.R().
 		SetResult(&resp).SetError(&e).SetBody(data).
 		Post("https://api.alipan.com/v2/share_link/get_share_token")
 	if err != nil {
@@ -58,7 +67,7 @@ func (d *AliyundriveShare) getShareToken() error {
 	return nil
 }
 
-func (d *AliyundriveShare) request(url, method string, callback base.ReqCallback) ([]byte, error) {
+func (d *AliyundriveShare) request(ctx context.Context, limitTy limiterType, url, method string, callback base.ReqCallback) ([]byte, error) {
 	var e ErrorResp
 	req := base.RestyClient.R().
 		SetError(&e).
@@ -71,6 +80,10 @@ func (d *AliyundriveShare) request(url, method string, callback base.ReqCallback
 	} else {
 		req.SetBody("{}")
 	}
+	err := d.wait(ctx, limitTy)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := req.Execute(method, url)
 	if err != nil {
 		return nil, err
@@ -78,14 +91,14 @@ func (d *AliyundriveShare) request(url, method string, callback base.ReqCallback
 	if e.Code != "" {
 		if e.Code == "AccessTokenInvalid" || e.Code == "ShareLinkTokenInvalid" {
 			if e.Code == "AccessTokenInvalid" {
-				err = d.refreshToken()
+				err = d.refreshToken(ctx)
 			} else {
-				err = d.getShareToken()
+				err = d.getShareToken(ctx)
 			}
 			if err != nil {
 				return nil, err
 			}
-			return d.request(url, method, callback)
+			return d.request(ctx, limitTy, url, method, callback)
 		} else {
 			return nil, errors.New(e.Code + ": " + e.Message)
 		}
@@ -93,7 +106,7 @@ func (d *AliyundriveShare) request(url, method string, callback base.ReqCallback
 	return resp.Body(), nil
 }
 
-func (d *AliyundriveShare) getFiles(fileId string) ([]File, error) {
+func (d *AliyundriveShare) getFiles(ctx context.Context, fileId string) ([]File, error) {
 	files := make([]File, 0)
 	data := base.Json{
 		"image_thumbnail_process": "image/resize,w_160/format,jpeg",
@@ -110,6 +123,10 @@ func (d *AliyundriveShare) getFiles(fileId string) ([]File, error) {
 		if data["marker"] == "first" {
 			data["marker"] = ""
 		}
+		err := d.wait(ctx, limiterList)
+		if err != nil {
+			return nil, err
+		}
 		var e ErrorResp
 		var resp ListResp
 		res, err := base.RestyClient.R().
@@ -123,11 +140,11 @@ func (d *AliyundriveShare) getFiles(fileId string) ([]File, error) {
 		log.Debugf("aliyundrive share get files: %s", res.String())
 		if e.Code != "" {
 			if e.Code == "AccessTokenInvalid" || e.Code == "ShareLinkTokenInvalid" {
-				err = d.getShareToken()
+				err = d.getShareToken(ctx)
 				if err != nil {
 					return nil, err
 				}
-				return d.getFiles(fileId)
+				return d.getFiles(ctx, fileId)
 			}
 			return nil, errors.New(e.Message)
 		}
