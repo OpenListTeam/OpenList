@@ -449,10 +449,11 @@ func (d *Doubao) uploadNode(uploadConfig *UploadConfig, dir model.Obj, file mode
 
 // Upload 普通上传实现
 func (d *Doubao) Upload(ctx context.Context, config *UploadConfig, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, dataType string) (model.Obj, error) {
-	ss, err := stream.NewStreamSectionReader(file, int(file.GetSize()))
+	ss, err := stream.NewStreamSectionReader(file, int(file.GetSize()), &up)
 	if err != nil {
 		return nil, err
 	}
+
 	reader, err := ss.GetSectionReader(0, file.GetSize())
 	if err != nil {
 		return nil, err
@@ -503,7 +504,7 @@ func (d *Doubao) Upload(ctx context.Context, config *UploadConfig, dstDir model.
 		}
 		return nil
 	})
-	ss.RecycleSectionReader(reader)
+	ss.FreeSectionReader(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -542,15 +543,15 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 	if config.InnerUploadAddress.AdvanceOption.SliceSize > 0 {
 		chunkSize = int64(config.InnerUploadAddress.AdvanceOption.SliceSize)
 	}
+	ss, err := stream.NewStreamSectionReader(file, int(chunkSize), &up)
+	if err != nil {
+		return nil, err
+	}
+
 	totalParts := (fileSize + chunkSize - 1) / chunkSize
 	// 创建分片信息组
 	parts := make([]UploadPart, totalParts)
 
-	// 用 stream.NewStreamSectionReader 替代缓存临时文件
-	ss, err := stream.NewStreamSectionReader(file, int(chunkSize))
-	if err != nil {
-		return nil, err
-	}
 	up(10.0) // 更新进度
 	// 设置并行上传
 	thread := min(int(totalParts), d.uploadThread)
@@ -641,7 +642,7 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 				return nil
 			},
 			After: func(err error) {
-				ss.RecycleSectionReader(reader)
+				ss.FreeSectionReader(reader)
 			},
 		})
 	}

@@ -86,13 +86,14 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 
 	fileSize := stream.GetSize()
 	chunkSize := calPartSize(fileSize)
-	partNum := (stream.GetSize() + chunkSize - 1) / chunkSize
-	parts := make([]oss.UploadPart, partNum)
-	offset := int64(0)
-	ss, err := streamPkg.NewStreamSectionReader(stream, int(chunkSize))
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(chunkSize), &up)
 	if err != nil {
 		return err
 	}
+
+	partNum := (stream.GetSize() + chunkSize - 1) / chunkSize
+	parts := make([]oss.UploadPart, partNum)
+	offset := int64(0)
 	for i := int64(1); i <= partNum; i++ {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -119,7 +120,7 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second))
-		ss.RecycleSectionReader(rd)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}

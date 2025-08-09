@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -313,24 +314,32 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 	reqPath, err := d.getReqPath(ctx, dstDir, true)
 	if err == nil {
 		if len(reqPath) == 1 {
-			return fs.PutDirectly(ctx, *reqPath[0], &stream.FileStream{
+			storage, reqActualPath, err := op.GetStorageAndActualPath(*reqPath[0])
+			if err != nil {
+				return err
+			}
+			return op.Put(ctx, storage, reqActualPath, &stream.FileStream{
 				Obj:          s,
 				Mimetype:     s.GetMimetype(),
 				WebPutAsTask: s.NeedStore(),
 				Reader:       s,
-			})
+			}, up)
 		} else {
-			file, err := s.CacheFullInTempFile()
+			end := 100 / float64(len(reqPath)+1)
+			cacheProgress := model.UpdateProgressWithRange(up, 0, end)
+			file, err := s.CacheFullAndWriter(cacheProgress, nil)
 			if err != nil {
 				return err
 			}
-			for _, path := range reqPath {
+			up = model.UpdateProgressWithRange(up, end, 100)
+			for i, path := range reqPath {
 				err = errors.Join(err, fs.PutDirectly(ctx, *path, &stream.FileStream{
 					Obj:          s,
 					Mimetype:     s.GetMimetype(),
 					WebPutAsTask: s.NeedStore(),
 					Reader:       file,
 				}))
+				up(float64(i+1) / float64(len(reqPath)) * 100)
 				_, e := file.Seek(0, io.SeekStart)
 				if e != nil {
 					return errors.Join(err, e)

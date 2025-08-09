@@ -53,11 +53,12 @@ func (g *Group) Go(do func(ctx context.Context) error) {
 }
 
 type Lifecycle struct {
-	// Before在OrderedGroup是线程安全的
+	// Before在OrderedGroup是线程安全的。
+	// 只会被调用一次
 	Before func(ctx context.Context) error
 	// 如果Before返回err就不调用Do
 	Do func(ctx context.Context) error
-	// 最后调用After
+	// 最后调用一次After
 	After func(err error)
 }
 

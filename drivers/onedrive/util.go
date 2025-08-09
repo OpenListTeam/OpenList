@@ -238,13 +238,14 @@ func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.Fil
 	if err != nil {
 		return err
 	}
-	uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
-	var finish int64 = 0
 	DEFAULT := d.ChunkSize * 1024 * 1024
-	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT))
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT), &up)
 	if err != nil {
 		return err
 	}
+
+	uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
+	var finish int64 = 0
 	for finish < stream.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -285,7 +286,7 @@ func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.Fil
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
 		)
-		ss.RecycleSectionReader(rd)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}

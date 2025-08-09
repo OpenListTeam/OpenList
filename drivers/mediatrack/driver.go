@@ -180,7 +180,9 @@ func (d *MediaTrack) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 	if err != nil {
 		return err
 	}
-	tempFile, err := file.CacheFullInTempFile()
+	cacheProgress := model.UpdateProgressWithRange(up, 0, 50)
+	up = model.UpdateProgressWithRange(up, 50, 100)
+	tempFile, err := file.CacheFullAndWriter(cacheProgress, nil)
 	if err != nil {
 		return err
 	}

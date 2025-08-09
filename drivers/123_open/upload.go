@@ -46,6 +46,12 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 	uploadDomain := createResp.Data.Servers[0]
 	size := file.GetSize()
 	chunkSize := createResp.Data.SliceSize
+
+	ss, err := stream.NewStreamSectionReader(file, int(chunkSize), &up)
+	if err != nil {
+		return err
+	}
+
 	uploadNums := (size + chunkSize - 1) / chunkSize
 	thread := min(int(uploadNums), d.UploadThread)
 	threadG, uploadCtx := errgroup.NewOrderedGroupWithContext(ctx, thread,
@@ -53,10 +59,6 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		retry.Delay(time.Second),
 		retry.DelayType(retry.BackOffDelay))
 
-	ss, err := stream.NewStreamSectionReader(file, int(chunkSize))
-	if err != nil {
-		return err
-	}
 	for partIndex := range uploadNums {
 		if utils.IsCanceled(uploadCtx) {
 			break
@@ -157,7 +159,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				return nil
 			},
 			After: func(err error) {
-				ss.RecycleSectionReader(reader)
+				ss.FreeSectionReader(reader)
 			},
 		})
 	}

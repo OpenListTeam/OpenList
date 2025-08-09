@@ -69,7 +69,7 @@ func putAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) 
 		return nil, errors.WithStack(errs.UploadNotSupported)
 	}
 	if file.NeedStore() {
-		_, err := file.CacheFullInTempFile()
+		_, err := file.CacheFullAndWriter(nil, nil)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to create temp file")
 		}

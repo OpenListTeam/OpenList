@@ -162,7 +162,7 @@ func (d *GoogleDrive) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 				SetBody(driver.NewLimitedUploadStream(ctx, stream))
 		}, nil)
 	} else {
-		err = d.chunkUpload(ctx, stream, putUrl)
+		err = d.chunkUpload(ctx, stream, putUrl, up)
 	}
 	return err
 }

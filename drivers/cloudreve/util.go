@@ -237,15 +237,16 @@ func (d *Cloudreve) upLocal(ctx context.Context, stream model.FileStreamer, u Up
 }
 
 func (d *Cloudreve) upRemote(ctx context.Context, stream model.FileStreamer, u UploadInfo, up driver.UpdateProgress) error {
+	DEFAULT := int64(u.ChunkSize)
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT), &up)
+	if err != nil {
+		return err
+	}
+
 	uploadUrl := u.UploadURLs[0]
 	credential := u.Credential
 	var finish int64 = 0
 	var chunk int = 0
-	DEFAULT := int64(u.ChunkSize)
-	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT))
-	if err != nil {
-		return err
-	}
 	for finish < stream.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -294,7 +295,7 @@ func (d *Cloudreve) upRemote(ctx context.Context, stream model.FileStreamer, u U
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
 		)
-		ss.RecycleSectionReader(rd)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}
@@ -306,13 +307,14 @@ func (d *Cloudreve) upRemote(ctx context.Context, stream model.FileStreamer, u U
 }
 
 func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u UploadInfo, up driver.UpdateProgress) error {
-	uploadUrl := u.UploadURLs[0]
-	var finish int64 = 0
 	DEFAULT := int64(u.ChunkSize)
-	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT))
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT), &up)
 	if err != nil {
 		return err
 	}
+
+	uploadUrl := u.UploadURLs[0]
+	var finish int64 = 0
 	for finish < stream.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -353,7 +355,7 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
 		)
-		ss.RecycleSectionReader(rd)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}
@@ -367,14 +369,15 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 }
 
 func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u UploadInfo, up driver.UpdateProgress) error {
-	var finish int64 = 0
-	var chunk int = 0
-	var etags []string
 	DEFAULT := int64(u.ChunkSize)
-	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT))
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT), &up)
 	if err != nil {
 		return err
 	}
+
+	var finish int64 = 0
+	var chunk int = 0
+	var etags []string
 	for finish < stream.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -415,7 +418,7 @@ func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u Uploa
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
 		)
-		ss.RecycleSectionReader(rd)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}

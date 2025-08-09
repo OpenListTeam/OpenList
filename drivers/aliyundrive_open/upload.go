@@ -191,9 +191,9 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 
 		hash := stream.GetHash().GetHash(utils.SHA1)
 		if len(hash) != utils.SHA1.Width {
-			cacheFileProgress := model.UpdateProgressWithRange(up, 0, 50)
+			cacheProgress := model.UpdateProgressWithRange(up, 0, 50)
 			up = model.UpdateProgressWithRange(up, 50, 100)
-			_, hash, err = streamPkg.CacheFullInTempFileAndHash(stream, cacheFileProgress, utils.SHA1)
+			_, hash, err = streamPkg.CacheFullAndHash(stream, cacheProgress, utils.SHA1)
 			if err != nil {
 				return nil, err
 			}
@@ -218,14 +218,13 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 	if !createResp.RapidUpload {
 		// 2. normal upload
 		log.Debugf("[aliyundive_open] normal upload")
-
-		preTime := time.Now()
-		var offset, length int64 = 0, partSize
-		//var length
-		ss, err := streamPkg.NewStreamSectionReader(stream, int(partSize))
+		ss, err := streamPkg.NewStreamSectionReader(stream, int(partSize), &up)
 		if err != nil {
 			return nil, err
 		}
+
+		preTime := time.Now()
+		var offset, length int64 = 0, partSize
 		for i := 0; i < len(createResp.PartInfoList); i++ {
 			if utils.IsCanceled(ctx) {
 				return nil, ctx.Err()
@@ -253,7 +252,7 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 				retry.Attempts(3),
 				retry.DelayType(retry.BackOffDelay),
 				retry.Delay(time.Second))
-			ss.RecycleSectionReader(rd)
+			ss.FreeSectionReader(rd)
 			if err != nil {
 				return nil, err
 			}
