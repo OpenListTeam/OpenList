@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -234,7 +235,9 @@ func (d *CnbReleases) Put(ctx context.Context, dstDir model.Obj, file model.File
 	}()
 
 	// use net/http to upload file
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resp.UploadURL, pr)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(resp.ExpiresInSec+1)*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctxWithTimeout, http.MethodPost, resp.UploadURL, pr)
 	if err != nil {
 		return err
 	}
