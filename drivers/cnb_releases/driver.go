@@ -120,14 +120,17 @@ func (d *CnbReleases) List(ctx context.Context, dir model.Obj, args model.ListAr
 		}
 
 		return utils.SliceConvert(resp.Assets, func(src ReleaseAsset) (model.Obj, error) {
-			return &model.Object{
-				ID:       src.ID,
-				Path:     src.Path, // for Link only
-				Name:     src.Name,
-				Size:     src.Size,
-				Ctime:    src.CreatedAt,
-				Modified: src.UpdatedAt,
-				IsFolder: false,
+			return &Object{
+				Object: model.Object{
+					ID:       src.ID,
+					Path:     src.Path,
+					Name:     src.Name,
+					Size:     src.Size,
+					Ctime:    src.CreatedAt,
+					Modified: src.UpdatedAt,
+					IsFolder: false,
+				},
+				ParentID: dir.GetID(),
 			}, nil
 		})
 	}
@@ -160,8 +163,21 @@ func (d *CnbReleases) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 }
 
 func (d *CnbReleases) Remove(ctx context.Context, obj model.Obj) error {
-	// TODO remove obj, optional
-	return errs.NotImplement
+	if obj.IsDir() {
+		return d.Request(http.MethodDelete, "/{repo}/-/releases/{release_id}", func(req *resty.Request) {
+			req.SetPathParam("repo", d.Repo)
+			req.SetPathParam("release_id", obj.GetID())
+		}, nil)
+	}
+	if o, ok := obj.(*Object); ok {
+		return d.Request(http.MethodDelete, "/{repo}/-/releases/{release_id}/assets/{asset_id}", func(req *resty.Request) {
+			req.SetPathParam("repo", d.Repo)
+			req.SetPathParam("release_id", o.ParentID)
+			req.SetPathParam("asset_id", obj.GetID())
+		}, nil)
+	} else {
+		return fmt.Errorf("unable to get release ID")
+	}
 }
 
 func (d *CnbReleases) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) error {

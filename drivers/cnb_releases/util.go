@@ -35,7 +35,7 @@ func (d *CnbReleases) Request(method string, path string, callback base.ReqCallb
 	if err != nil {
 		return err
 	}
-	if res.StatusCode() != http.StatusOK && res.StatusCode() != http.StatusCreated {
+	if res.StatusCode() != http.StatusOK && res.StatusCode() != http.StatusCreated && res.StatusCode() != http.StatusNoContent {
 		return fmt.Errorf("failed to request %s, status code: %d, message: %s", url, res.StatusCode(), res.String())
 	}
 

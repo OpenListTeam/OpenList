@@ -1,6 +1,15 @@
 package cnb_releases
 
-import "time"
+import (
+	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+)
+
+type Object struct {
+	model.Object
+	ParentID string // parentID is used to store the parent directory ID for the object
+}
 
 type TagList []Tag
 type Tag struct {
