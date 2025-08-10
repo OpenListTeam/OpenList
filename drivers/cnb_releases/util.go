@@ -3,6 +3,8 @@ package cnb_releases
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	log "github.com/sirupsen/logrus"
@@ -14,7 +16,12 @@ func (d *CnbReleases) Request(method string, path string, callback base.ReqCallb
 	if d.ref != nil {
 		return d.ref.Request(method, path, callback, resp)
 	}
-	url := "https://api.cnb.cool" + path
+	var url string
+	if strings.HasPrefix(path, "http") {
+		url = path
+	} else {
+		url = "https://api.cnb.cool" + path
+	}
 	req := base.RestyClient.R()
 	req.SetHeader("Accept", "application/json")
 	req.SetAuthScheme("Bearer")
@@ -28,7 +35,7 @@ func (d *CnbReleases) Request(method string, path string, callback base.ReqCallb
 	if err != nil {
 		return err
 	}
-	if res.StatusCode() != 200 {
+	if res.StatusCode() != http.StatusOK && res.StatusCode() != http.StatusCreated {
 		return fmt.Errorf("failed to request %s, status code: %d, message: %s", url, res.StatusCode(), res.String())
 	}
 

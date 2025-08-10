@@ -1,10 +1,13 @@
 package cnb_releases
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -160,9 +163,56 @@ func (d *CnbReleases) Remove(ctx context.Context, obj model.Obj) error {
 	return errs.NotImplement
 }
 
-func (d *CnbReleases) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	// TODO upload file, optional
-	return nil, errs.NotImplement
+func (d *CnbReleases) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) error {
+	// 1. get upload info
+	var resp ReleaseAssetUploadURL
+	err := d.Request(http.MethodPost, "/{repo}/-/releases/{release_id}/asset-upload-url", func(req *resty.Request) {
+		req.SetPathParam("repo", d.Repo)
+		req.SetPathParam("release_id", dstDir.GetID())
+		req.SetBody(base.Json{
+			"asset_name": file.GetName(),
+			"overwrite":  true,
+			"size":       file.GetSize(),
+		})
+	}, &resp)
+	if err != nil {
+		return err
+	}
+
+	// 2. upload file
+	// use multipart to create form file
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	fw, err := w.CreateFormFile("file", file.GetName())
+	if err != nil {
+		return err
+	}
+	_, err = utils.CopyWithBuffer(fw, file)
+	if err != nil {
+		return err
+	}
+	err = w.Close()
+	if err != nil {
+		return err
+	}
+	// use net/http to upload file
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resp.UploadURL, &b)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("User-Agent", base.UserAgent)
+	httpResp, err := base.HttpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("upload file failed: %s", httpResp.Status)
+	}
+
+	// 3. verify upload
+	return d.Request(http.MethodPost, resp.VerifyURL, nil, nil)
 }
 
 func (d *CnbReleases) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {

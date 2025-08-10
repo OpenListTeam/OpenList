@@ -13,11 +13,9 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:              "CNB Releases",
-	LocalSort:         true,
-	DefaultRoot:       "/",
-	NoUpload:          true,
-	NoOverwriteUpload: true,
+	Name:        "CNB Releases",
+	LocalSort:   true,
+	DefaultRoot: "/",
 }
 
 func init() {

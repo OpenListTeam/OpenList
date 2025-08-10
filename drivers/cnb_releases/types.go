@@ -82,3 +82,9 @@ type ReleaseAsset struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 	Uploader    UserInfo  `json:"uploader"`
 }
+
+type ReleaseAssetUploadURL struct {
+	UploadURL    string `json:"upload_url"`
+	ExpiresInSec int    `json:"expires_in_sec"`
+	VerifyURL    string `json:"verify_url"`
+}
