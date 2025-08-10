@@ -162,9 +162,17 @@ func (d *CnbReleases) Move(ctx context.Context, srcObj, dstDir model.Obj) (model
 	return nil, errs.NotImplement
 }
 
-func (d *CnbReleases) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	// TODO rename obj, optional
-	return nil, errs.NotImplement
+func (d *CnbReleases) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
+	if srcObj.IsDir() && !d.UseTagName {
+		return d.Request(http.MethodPatch, "/{repo}/-/releases/{release_id}", func(req *resty.Request) {
+			req.SetPathParam("repo", d.Repo)
+			req.SetPathParam("release_id", srcObj.GetID())
+			req.SetFormData(map[string]string{
+				"name": newName,
+			})
+		}, nil)
+	}
+	return errs.NotImplement
 }
 
 func (d *CnbReleases) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
