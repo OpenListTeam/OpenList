@@ -7,9 +7,9 @@ import (
 
 type Addition struct {
 	driver.RootPath
-	Repo       string `json:"repo" type:"string" required:"false"`
-	Token      string `json:"token" type:"string" required:"false"`
-	UseTagName bool   `json:"use_tag_name" type:"bool" required:"false" help:"Use tag name instead of release name"`
+	Repo       string `json:"repo" type:"string" required:"true"`
+	Token      string `json:"token" type:"string" required:"true"`
+	UseTagName bool   `json:"use_tag_name" type:"bool" default:"false" help:"Use tag name instead of release name"`
 }
 
 var config = driver.Config{
