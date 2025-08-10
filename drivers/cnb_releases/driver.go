@@ -142,9 +142,19 @@ func (d *CnbReleases) Link(ctx context.Context, file model.Obj, args model.LinkA
 	}, nil
 }
 
-func (d *CnbReleases) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	// TODO create folder, optional
-	return nil, errs.NotImplement
+func (d *CnbReleases) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+	if parentDir.GetPath() == "/" {
+		// create a new release
+		return d.Request(http.MethodPost, "/{repo}/-/releases", func(req *resty.Request) {
+			req.SetPathParam("repo", d.Repo)
+			req.SetBody(base.Json{
+				"name":             dirName,
+				"tag_name":         dirName,
+				"target_commitish": "main",
+			})
+		}, nil)
+	}
+	return errs.NotImplement
 }
 
 func (d *CnbReleases) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
