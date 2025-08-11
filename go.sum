@@ -39,16 +39,12 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/Max-Sum/base32768 v0.0.0-20230304063302-18e6ce5945fd h1:nzE1YQBdx1bq9IlZinHa+HVffy+NmVRoKr+wHN8fpLE=
 github.com/Max-Sum/base32768 v0.0.0-20230304063302-18e6ce5945fd/go.mod h1:C8yoIfvESpM3GD07OCHU7fqI7lhwyZ2Td1rbNbTAhnc=
-github.com/OpenListTeam/115-sdk-go v0.2.1 h1:tzRUqdktS3h4o69+CXRDVwL0jYN7ccuX8TZWmLxkBGo=
-github.com/OpenListTeam/115-sdk-go v0.2.1/go.mod h1:cfvitk2lwe6036iNi2h+iNxwxWDifKZsSvNtrur5BqU=
 github.com/OpenListTeam/115-sdk-go v0.2.2 h1:JCrGHqQjBX3laOA6Hw4CuBovSg7g+FC5s0LEAYsRciU=
 github.com/OpenListTeam/115-sdk-go v0.2.2/go.mod h1:cfvitk2lwe6036iNi2h+iNxwxWDifKZsSvNtrur5BqU=
 github.com/OpenListTeam/go-cache v0.1.0 h1:eV2+FCP+rt+E4OCJqLUW7wGccWZNJMV0NNkh+uChbAI=
 github.com/OpenListTeam/go-cache v0.1.0/go.mod h1:AHWjKhNK3LE4rorVdKyEALDHoeMnP8SjiNyfVlB+Pz4=
 github.com/OpenListTeam/gsync v0.1.0 h1:ywzGybOvA3lW8K1BUjKZ2IUlT2FSlzPO4DOazfYXjcs=
 github.com/OpenListTeam/gsync v0.1.0/go.mod h1:h/Rvv9aX/6CdW/7B8di3xK3xNV8dUg45Fehrd/ksZ9s=
-github.com/OpenListTeam/rateg v0.1.0 h1:AvYuUjwfBcE+aMSPyJ2MduNIKSoX6f/IVFBwRolMnzE=
-github.com/OpenListTeam/rateg v0.1.0/go.mod h1:JbrgJJlwEjVMV/0qHK0QUhdFNQMz4TvJf8aZNT43bkY=
 github.com/OpenListTeam/sftpd-openlist v1.0.1 h1:j4S3iPFOpnXCUKRPS7uCT4mF2VCl34GyqvH6lqwnkUU=
 github.com/OpenListTeam/sftpd-openlist v1.0.1/go.mod h1:uO/wKnbvbdq3rBLmClMTZXuCnw7XW4wlAq4dZe91a40=
 github.com/OpenListTeam/tache v0.2.0 h1:Q4MjuyECn0CZCf1ZF91JaVaZTaps1mOTAm8bFj8sr9Q=
