@@ -98,12 +98,15 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 		}
 		_, err := cache.Seek(0, io.SeekStart)
 		if err == nil {
-			var reader io.Reader = f
+			reader := f.Reader
 			if up != nil {
 				cacheProgress := model.UpdateProgressWithRange(*up, 0, 50)
 				*up = model.UpdateProgressWithRange(*up, 50, 100)
 				reader = &ReaderUpdatingProgress{
-					Reader:         f,
+					Reader: &SimpleReaderWithSize{
+						Reader: reader,
+						Size:   f.GetSize(),
+					},
 					UpdateProgress: cacheProgress,
 				}
 			}
@@ -118,12 +121,15 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 		return cache, nil
 	}
 
-	var reader io.Reader = f
+	reader := f.Reader
 	if up != nil {
 		cacheProgress := model.UpdateProgressWithRange(*up, 0, 50)
 		*up = model.UpdateProgressWithRange(*up, 50, 100)
 		reader = &ReaderUpdatingProgress{
-			Reader:         f,
+			Reader: &SimpleReaderWithSize{
+				Reader: reader,
+				Size:   f.GetSize(),
+			},
 			UpdateProgress: cacheProgress,
 		}
 	}
