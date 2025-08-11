@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestBytes_ReadAt(t *testing.T) {
+func TestReader_ReadAt(t *testing.T) {
 	type args struct {
 		p   []byte
 		off int64
