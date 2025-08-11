@@ -321,7 +321,7 @@ func (d *Pan115) UploadByMultipart(ctx context.Context, params *driver115.Upload
 		err       error
 	)
 
-	tmpF, err := s.CacheFullInTempFile()
+	tmpF, err := s.CacheFullAndWriter(&up, nil)
 	if err != nil {
 		return nil, err
 	}

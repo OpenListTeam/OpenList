@@ -25,7 +25,7 @@ var PrivacyReg []*regexp.Regexp
 var (
 	// StoragesLoaded loaded success if empty
 	StoragesLoaded = false
-	MaxBufferLimit int
+	MaxBufferLimit = 16 * 1024 * 1024
 )
 var (
 	RawIndexHtml string

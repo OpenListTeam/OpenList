@@ -438,19 +438,18 @@ func (d *PikPak) UploadByOSS(ctx context.Context, params *S3Params, s model.File
 }
 
 func (d *PikPak) UploadByMultipart(ctx context.Context, params *S3Params, fileSize int64, s model.FileStreamer, up driver.UpdateProgress) error {
+	tmpF, err := s.CacheFullAndWriter(&up, nil)
+	if err != nil {
+		return err
+	}
+
 	var (
 		chunks    []oss.FileChunk
 		parts     []oss.UploadPart
 		imur      oss.InitiateMultipartUploadResult
 		ossClient *oss.Client
 		bucket    *oss.Bucket
-		err       error
 	)
-
-	tmpF, err := s.CacheFullInTempFile()
-	if err != nil {
-		return err
-	}
 
 	if ossClient, err = oss.New(params.Endpoint, params.AccessKeyID, params.AccessKeySecret); err != nil {
 		return err

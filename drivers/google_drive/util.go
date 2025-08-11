@@ -254,13 +254,14 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 	return res, nil
 }
 
-func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, url string) error {
+func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, url string, up driver.UpdateProgress) error {
 	var defaultChunkSize = d.ChunkSize * 1024 * 1024
-	var offset int64 = 0
-	ss, err := stream.NewStreamSectionReader(file, int(defaultChunkSize))
+	ss, err := stream.NewStreamSectionReader(file, int(defaultChunkSize), &up)
 	if err != nil {
 		return err
 	}
+
+	var offset int64 = 0
 	url += "?includeItemsFromAllDrives=true&supportsAllDrives=true"
 	for offset < file.GetSize() {
 		if utils.IsCanceled(ctx) {
@@ -300,12 +301,13 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 				}
 				return fmt.Errorf("%s: %v", e.Error.Message, e.Error.Errors)
 			}
+			up(float64(offset+chunkSize) / float64(file.GetSize()) * 100)
 			return nil
 		},
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second))
-		ss.RecycleSectionReader(reader)
+		ss.FreeSectionReader(reader)
 		if err != nil {
 			return err
 		}

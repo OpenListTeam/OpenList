@@ -401,7 +401,6 @@ func (d *Crypt) Put(ctx context.Context, dstDir model.Obj, streamer model.FileSt
 		},
 		Reader:            wrappedIn,
 		Mimetype:          "application/octet-stream",
-		WebPutAsTask:      streamer.NeedStore(),
 		ForceStreamUpload: true,
 		Exist:             streamer.GetExist(),
 	}

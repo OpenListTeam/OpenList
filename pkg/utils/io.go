@@ -194,32 +194,32 @@ type SyncClosersIF interface {
 
 type SyncClosers struct {
 	closers []io.Closer
-	ref     atomic.Int32
+	ref     int32
 }
 
 var _ SyncClosersIF = (*SyncClosers)(nil)
 
 func (c *SyncClosers) AcquireReference() bool {
-	ref := c.ref.Add(1)
+	ref := atomic.AddInt32(&c.ref, 1)
 	if ref > 0 {
 		// log.Debugf("SyncClosers.AcquireReference %p,ref=%d\n", c, ref)
 		return true
 	}
-	c.ref.Store(math.MinInt16)
+	atomic.StoreInt32(&c.ref, math.MinInt16)
 	return false
 }
 
 func (c *SyncClosers) Close() error {
-	ref := c.ref.Add(-1)
+	ref := atomic.AddInt32(&c.ref, -1)
 	if ref < -1 {
-		c.ref.Store(math.MinInt16)
+		atomic.StoreInt32(&c.ref, math.MinInt16)
 		return nil
 	}
 	// log.Debugf("SyncClosers.Close %p,ref=%d\n", c, ref+1)
 	if ref > 0 {
 		return nil
 	}
-	c.ref.Store(math.MinInt16)
+	atomic.StoreInt32(&c.ref, math.MinInt16)
 
 	var errs []error
 	for _, closer := range c.closers {
@@ -234,7 +234,7 @@ func (c *SyncClosers) Close() error {
 
 func (c *SyncClosers) Add(closer io.Closer) {
 	if closer != nil {
-		if c.ref.Load() < 0 {
+		if atomic.LoadInt32(&c.ref) < 0 {
 			panic("Not reusable")
 		}
 		c.closers = append(c.closers, closer)
@@ -243,7 +243,7 @@ func (c *SyncClosers) Add(closer io.Closer) {
 
 func (c *SyncClosers) AddIfCloser(a any) {
 	if closer, ok := a.(io.Closer); ok {
-		if c.ref.Load() < 0 {
+		if atomic.LoadInt32(&c.ref) < 0 {
 			panic("Not reusable")
 		}
 		c.closers = append(c.closers, closer)

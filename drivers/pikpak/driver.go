@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	hash_extend "github.com/OpenListTeam/OpenList/v4/pkg/utils/hash"
 	"github.com/go-resty/resty/v2"
@@ -212,15 +213,11 @@ func (d *PikPak) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *PikPak) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	hi := stream.GetHash()
-	sha1Str := hi.GetHash(hash_extend.GCID)
-	if len(sha1Str) < hash_extend.GCID.Width {
-		tFile, err := stream.CacheFullInTempFile()
-		if err != nil {
-			return err
-		}
+	sha1Str := stream.GetHash().GetHash(hash_extend.GCID)
 
-		sha1Str, err = utils.HashFile(hash_extend.GCID, tFile, stream.GetSize())
+	if len(sha1Str) < hash_extend.GCID.Width {
+		var err error
+		_, sha1Str, err = streamPkg.CacheFullAndHash(stream, &up, hash_extend.GCID, stream.GetSize())
 		if err != nil {
 			return err
 		}

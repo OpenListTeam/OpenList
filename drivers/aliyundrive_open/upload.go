@@ -50,10 +50,10 @@ func calPartSize(fileSize int64) int64 {
 	return partSize
 }
 
-func (d *AliyundriveOpen) getUploadUrl(count int, fileId, uploadId string) ([]PartInfo, error) {
+func (d *AliyundriveOpen) getUploadUrl(ctx context.Context, count int, fileId, uploadId string) ([]PartInfo, error) {
 	partInfoList := makePartInfos(count)
 	var resp CreateResp
-	_, err := d.request("/adrive/v1.0/openFile/getUploadUrl", http.MethodPost, func(req *resty.Request) {
+	_, err := d.request(ctx, limiterOther, "/adrive/v1.0/openFile/getUploadUrl", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(base.Json{
 			"drive_id":       d.DriveId,
 			"file_id":        fileId,
@@ -84,10 +84,10 @@ func (d *AliyundriveOpen) uploadPart(ctx context.Context, r io.Reader, partInfo 
 	return nil
 }
 
-func (d *AliyundriveOpen) completeUpload(fileId, uploadId string) (model.Obj, error) {
+func (d *AliyundriveOpen) completeUpload(ctx context.Context, fileId, uploadId string) (model.Obj, error) {
 	// 3. complete
 	var newFile File
-	_, err := d.request("/adrive/v1.0/openFile/complete", http.MethodPost, func(req *resty.Request) {
+	_, err := d.request(ctx, limiterOther, "/adrive/v1.0/openFile/complete", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(base.Json{
 			"drive_id":  d.DriveId,
 			"file_id":   fileId,
@@ -180,7 +180,7 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 		createData["pre_hash"] = hash
 	}
 	var createResp CreateResp
-	_, err, e := d.requestReturnErrResp("/adrive/v1.0/openFile/create", http.MethodPost, func(req *resty.Request) {
+	_, err, e := d.requestReturnErrResp(ctx, limiterOther, "/adrive/v1.0/openFile/create", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(createData).SetResult(&createResp)
 	})
 	if err != nil {
@@ -191,9 +191,7 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 
 		hash := stream.GetHash().GetHash(utils.SHA1)
 		if len(hash) != utils.SHA1.Width {
-			cacheFileProgress := model.UpdateProgressWithRange(up, 0, 50)
-			up = model.UpdateProgressWithRange(up, 50, 100)
-			_, hash, err = streamPkg.CacheFullInTempFileAndHash(stream, cacheFileProgress, utils.SHA1)
+			_, hash, err = streamPkg.CacheFullAndHash(stream, &up, utils.SHA1)
 			if err != nil {
 				return nil, err
 			}
@@ -207,7 +205,7 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 		if err != nil {
 			return nil, fmt.Errorf("cal proof code error: %s", err.Error())
 		}
-		_, err = d.request("/adrive/v1.0/openFile/create", http.MethodPost, func(req *resty.Request) {
+		_, err = d.request(ctx, limiterOther, "/adrive/v1.0/openFile/create", http.MethodPost, func(req *resty.Request) {
 			req.SetBody(createData).SetResult(&createResp)
 		})
 		if err != nil {
@@ -218,21 +216,20 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 	if !createResp.RapidUpload {
 		// 2. normal upload
 		log.Debugf("[aliyundive_open] normal upload")
-
-		preTime := time.Now()
-		var offset, length int64 = 0, partSize
-		//var length
-		ss, err := streamPkg.NewStreamSectionReader(stream, int(partSize))
+		ss, err := streamPkg.NewStreamSectionReader(stream, int(partSize), &up)
 		if err != nil {
 			return nil, err
 		}
+
+		preTime := time.Now()
+		var offset, length int64 = 0, partSize
 		for i := 0; i < len(createResp.PartInfoList); i++ {
 			if utils.IsCanceled(ctx) {
 				return nil, ctx.Err()
 			}
 			// refresh upload url if 50 minutes passed
 			if time.Since(preTime) > 50*time.Minute {
-				createResp.PartInfoList, err = d.getUploadUrl(count, createResp.FileId, createResp.UploadId)
+				createResp.PartInfoList, err = d.getUploadUrl(ctx, count, createResp.FileId, createResp.UploadId)
 				if err != nil {
 					return nil, err
 				}
@@ -253,7 +250,7 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 				retry.Attempts(3),
 				retry.DelayType(retry.BackOffDelay),
 				retry.Delay(time.Second))
-			ss.RecycleSectionReader(rd)
+			ss.FreeSectionReader(rd)
 			if err != nil {
 				return nil, err
 			}
@@ -266,5 +263,5 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 
 	log.Debugf("[aliyundrive_open] create file success, resp: %+v", createResp)
 	// 3. complete
-	return d.completeUpload(createResp.FileId, createResp.UploadId)
+	return d.completeUpload(ctx, createResp.FileId, createResp.UploadId)
 }

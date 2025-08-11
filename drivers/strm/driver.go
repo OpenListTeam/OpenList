@@ -173,8 +173,9 @@ func (d *Strm) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 		}, nil
 	}
 
-	// 没有修改link的字段，可直接返回
-	return link, nil
+	resultLink := *link
+	resultLink.SyncClosers = utils.NewSyncClosers(link)
+	return &resultLink, nil
 }
 
 var _ driver.Driver = (*Strm)(nil)

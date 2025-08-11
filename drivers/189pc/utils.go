@@ -500,7 +500,8 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 	if err != nil {
 		return nil, err
 	}
-	ss, err := stream.NewStreamSectionReader(file, int(sliceSize))
+
+	ss, err := stream.NewStreamSectionReader(file, int(sliceSize), &up)
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +582,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 				return nil
 			},
 			After: func(err error) {
-				ss.RecycleSectionReader(reader)
+				ss.FreeSectionReader(reader)
 			},
 		},
 		)
@@ -857,9 +858,7 @@ func (y *Cloud189PC) GetMultiUploadUrls(ctx context.Context, isFamily bool, uplo
 
 // 旧版本上传，家庭云不支持覆盖
 func (y *Cloud189PC) OldUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool) (model.Obj, error) {
-	cacheFileProgress := model.UpdateProgressWithRange(up, 0, 50)
-	up = model.UpdateProgressWithRange(up, 50, 100)
-	tempFile, fileMd5, err := stream.CacheFullInTempFileAndHash(file, cacheFileProgress, utils.MD5)
+	tempFile, fileMd5, err := stream.CacheFullAndHash(file, &up, utils.MD5)
 	if err != nil {
 		return nil, err
 	}

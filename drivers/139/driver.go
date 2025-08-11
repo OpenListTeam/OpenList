@@ -522,9 +522,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		var err error
 		fullHash := stream.GetHash().GetHash(utils.SHA256)
 		if len(fullHash) != utils.SHA256.Width {
-			cacheFileProgress := model.UpdateProgressWithRange(up, 0, 50)
-			up = model.UpdateProgressWithRange(up, 50, 100)
-			_, fullHash, err = streamPkg.CacheFullInTempFileAndHash(stream, cacheFileProgress, utils.SHA256)
+			_, fullHash, err = streamPkg.CacheFullAndHash(stream, &up, utils.SHA256)
 			if err != nil {
 				return err
 			}

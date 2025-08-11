@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	stdpath "path"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -160,25 +162,18 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 					sign.Sign(reqPath)),
 			}, nil
 		}
+
+		resultLink := *link
+		resultLink.SyncClosers = utils.NewSyncClosers(link)
 		if args.Redirect {
-			return link, nil
+			return &resultLink, nil
 		}
 
-		resultLink := &model.Link{
-			URL:           link.URL,
-			Header:        link.Header,
-			RangeReader:   link.RangeReader,
-			MFile:         link.MFile,
-			Concurrency:   link.Concurrency,
-			PartSize:      link.PartSize,
-			ContentLength: link.ContentLength,
-			SyncClosers:   utils.NewSyncClosers(link),
-		}
 		if resultLink.ContentLength == 0 {
 			resultLink.ContentLength = fi.GetSize()
 		}
 		if resultLink.MFile != nil {
-			return resultLink, nil
+			return &resultLink, nil
 		}
 		if d.DownloadConcurrency > 0 {
 			resultLink.Concurrency = d.DownloadConcurrency
@@ -186,7 +181,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		if d.DownloadPartSize > 0 {
 			resultLink.PartSize = d.DownloadPartSize * utils.KB
 		}
-		return resultLink, nil
+		return &resultLink, nil
 	}
 	return nil, errs.ObjectNotFound
 }
@@ -313,24 +308,29 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 	reqPath, err := d.getReqPath(ctx, dstDir, true)
 	if err == nil {
 		if len(reqPath) == 1 {
-			return fs.PutDirectly(ctx, *reqPath[0], &stream.FileStream{
-				Obj:          s,
-				Mimetype:     s.GetMimetype(),
-				WebPutAsTask: s.NeedStore(),
-				Reader:       s,
-			})
-		} else {
-			file, err := s.CacheFullInTempFile()
+			storage, reqActualPath, err := op.GetStorageAndActualPath(*reqPath[0])
 			if err != nil {
 				return err
 			}
-			for _, path := range reqPath {
+			return op.Put(ctx, storage, reqActualPath, &stream.FileStream{
+				Obj:      s,
+				Mimetype: s.GetMimetype(),
+				Reader:   s,
+			}, up)
+		} else {
+			file, err := s.CacheFullAndWriter(nil, nil)
+			if err != nil {
+				return err
+			}
+			count := float64(len(reqPath) + 1)
+			up(100 / count)
+			for i, path := range reqPath {
 				err = errors.Join(err, fs.PutDirectly(ctx, *path, &stream.FileStream{
-					Obj:          s,
-					Mimetype:     s.GetMimetype(),
-					WebPutAsTask: s.NeedStore(),
-					Reader:       file,
+					Obj:      s,
+					Mimetype: s.GetMimetype(),
+					Reader:   file,
 				}))
+				up(float64(i+2) / float64(count) * 100)
 				_, e := file.Seek(0, io.SeekStart)
 				if e != nil {
 					return errors.Join(err, e)
@@ -402,10 +402,24 @@ func (d *Alias) Extract(ctx context.Context, obj model.Obj, args model.ArchiveIn
 		return nil, errs.ObjectNotFound
 	}
 	for _, dst := range dsts {
-		link, err := d.extract(ctx, dst, sub, args)
-		if err == nil {
-			return link, nil
+		reqPath := stdpath.Join(dst, sub)
+		link, err := d.extract(ctx, reqPath, args)
+		if err != nil {
+			continue
 		}
+		if link == nil {
+			return &model.Link{
+				URL: fmt.Sprintf("%s/ap%s?inner=%s&pass=%s&sign=%s",
+					common.GetApiUrl(ctx),
+					utils.EncodePath(reqPath, true),
+					utils.EncodePath(args.InnerPath, true),
+					url.QueryEscape(args.Password),
+					sign.SignArchive(reqPath)),
+			}, nil
+		}
+		resultLink := *link
+		resultLink.SyncClosers = utils.NewSyncClosers(link)
+		return &resultLink, nil
 	}
 	return nil, errs.NotImplement
 }

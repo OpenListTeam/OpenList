@@ -91,7 +91,7 @@ func InitConfig() {
 	} else {
 		conf.MaxBufferLimit = conf.Conf.MaxBufferLimit * utils.MB
 	}
-	log.Infof("max buffer limit: %d", conf.MaxBufferLimit)
+	log.Infof("max buffer limit: %dMB", conf.MaxBufferLimit/utils.MB)
 	if !conf.Conf.Force {
 		confFromEnv()
 	}

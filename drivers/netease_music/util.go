@@ -223,7 +223,7 @@ func (d *NeteaseMusic) removeSongObj(file model.Obj) error {
 }
 
 func (d *NeteaseMusic) putSongStream(ctx context.Context, stream model.FileStreamer, up driver.UpdateProgress) error {
-	tmp, err := stream.CacheFullInTempFile()
+	tmp, err := stream.CacheFullAndWriter(&up, nil)
 	if err != nil {
 		return err
 	}
