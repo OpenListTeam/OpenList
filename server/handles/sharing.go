@@ -203,7 +203,7 @@ func SharingDown(c *gin.Context) {
 		} else if !s.Verify(pwd) {
 			err = errs.WrongShareCode
 		} else if len(s.Files) != 1 && path == "/" {
-			err = errors.New("cannot extract sharing root")
+			err = errors.New("cannot get sharing root link")
 		}
 	}
 	if dealError(c, err) {
