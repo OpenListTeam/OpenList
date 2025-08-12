@@ -297,11 +297,10 @@ func (d *AliDrive) Put(ctx context.Context, dstDir model.Obj, streamer model.Fil
 		if d.InternalUpload {
 			url = partInfo.InternalUploadUrl
 		}
-		req, err := http.NewRequest("PUT", url, io.LimitReader(rateLimited, DEFAULT))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, io.LimitReader(rateLimited, DEFAULT))
 		if err != nil {
 			return err
 		}
-		req = req.WithContext(ctx)
 		res, err := base.HttpClient.Do(req)
 		if err != nil {
 			return err

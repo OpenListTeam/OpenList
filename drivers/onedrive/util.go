@@ -1,7 +1,6 @@
 package onedrive
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,7 +14,9 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
 	jsoniter "github.com/json-iterator/go"
 )
@@ -230,18 +231,21 @@ func toAPIMetadata(stream model.FileStreamer) Metadata {
 
 func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	url := d.GetMetaUrl(false, stdpath.Join(dstDir.GetPath(), stream.GetName())) + "/createUploadSession"
-	metadata := map[string]interface{}{"item": toAPIMetadata(stream)}
+	metadata := map[string]any{"item": toAPIMetadata(stream)}
 	res, err := d.Request(url, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(metadata).SetContext(ctx)
 	}, nil)
 	if err != nil {
 		return err
 	}
+	DEFAULT := d.ChunkSize * 1024 * 1024
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT), &up)
+	if err != nil {
+		return err
+	}
+
 	uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
 	var finish int64 = 0
-	DEFAULT := d.ChunkSize * 1024 * 1024
-	retryCount := 0
-	maxRetries := 3
 	for finish < stream.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -249,45 +253,45 @@ func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.Fil
 		left := stream.GetSize() - finish
 		byteSize := min(left, DEFAULT)
 		utils.Log.Debugf("[Onedrive] upload range: %d-%d/%d", finish, finish+byteSize-1, stream.GetSize())
-		byteData := make([]byte, byteSize)
-		n, err := io.ReadFull(stream, byteData)
-		utils.Log.Debug(err, n)
+		rd, err := ss.GetSectionReader(finish, byteSize)
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequest("PUT", uploadUrl, driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData)))
+		err = retry.Do(
+			func() error {
+				rd.Seek(0, io.SeekStart)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadUrl, driver.NewLimitedUploadStream(ctx, rd))
+				if err != nil {
+					return err
+				}
+				req.ContentLength = byteSize
+				req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
+				res, err := base.HttpClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer res.Body.Close()
+				// https://learn.microsoft.com/zh-cn/onedrive/developer/rest-api/api/driveitem_createuploadsession
+				switch {
+				case res.StatusCode >= 500 && res.StatusCode <= 504:
+					return fmt.Errorf("server error: %d", res.StatusCode)
+				case res.StatusCode != 201 && res.StatusCode != 202 && res.StatusCode != 200:
+					data, _ := io.ReadAll(res.Body)
+					return errors.New(string(data))
+				default:
+					return nil
+				}
+			},
+			retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second),
+		)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}
-		req = req.WithContext(ctx)
-		req.ContentLength = byteSize
-		// req.Header.Set("Content-Length", strconv.Itoa(int(byteSize)))
-		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
-		res, err := base.HttpClient.Do(req)
-		if err != nil {
-			return err
-		}
-		// https://learn.microsoft.com/zh-cn/onedrive/developer/rest-api/api/driveitem_createuploadsession
-		switch {
-		case res.StatusCode >= 500 && res.StatusCode <= 504:
-			retryCount++
-			if retryCount > maxRetries {
-				res.Body.Close()
-				return fmt.Errorf("upload failed after %d retries due to server errors, error %d", maxRetries, res.StatusCode)
-			}
-			backoff := time.Duration(1<<retryCount) * time.Second
-			utils.Log.Warnf("[Onedrive] server errors %d while uploading, retrying after %v...", res.StatusCode, backoff)
-			time.Sleep(backoff)
-		case res.StatusCode != 201 && res.StatusCode != 202 && res.StatusCode != 200:
-			data, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			return errors.New(string(data))
-		default:
-			res.Body.Close()
-			retryCount = 0
-			finish += byteSize
-			up(float64(finish) * 100 / float64(stream.GetSize()))
-		}
+		finish += byteSize
+		up(float64(finish) * 100 / float64(stream.GetSize()))
 	}
 	return nil
 }

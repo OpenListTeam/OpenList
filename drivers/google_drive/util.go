@@ -5,17 +5,20 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/avast/retry-go"
+
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	"github.com/golang-jwt/jwt/v4"
@@ -251,28 +254,60 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 	return res, nil
 }
 
-func (d *GoogleDrive) chunkUpload(ctx context.Context, stream model.FileStreamer, url string) error {
+func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, url string, up driver.UpdateProgress) error {
 	var defaultChunkSize = d.ChunkSize * 1024 * 1024
+	ss, err := stream.NewStreamSectionReader(file, int(defaultChunkSize), &up)
+	if err != nil {
+		return err
+	}
+
 	var offset int64 = 0
-	for offset < stream.GetSize() {
+	url += "?includeItemsFromAllDrives=true&supportsAllDrives=true"
+	for offset < file.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
 		}
-		chunkSize := stream.GetSize() - offset
-		if chunkSize > defaultChunkSize {
-			chunkSize = defaultChunkSize
-		}
-		reader, err := stream.RangeRead(http_range.Range{Start: offset, Length: chunkSize})
+		chunkSize := min(file.GetSize()-offset, defaultChunkSize)
+		reader, err := ss.GetSectionReader(offset, chunkSize)
 		if err != nil {
 			return err
 		}
-		reader = driver.NewLimitedUploadStream(ctx, reader)
-		_, err = d.request(url, http.MethodPut, func(req *resty.Request) {
-			req.SetHeaders(map[string]string{
-				"Content-Length": strconv.FormatInt(chunkSize, 10),
-				"Content-Range":  fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, stream.GetSize()),
-			}).SetBody(reader).SetContext(ctx)
-		}, nil)
+		limitedReader := driver.NewLimitedUploadStream(ctx, reader)
+		err = retry.Do(func() error {
+			reader.Seek(0, io.SeekStart)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, limitedReader)
+			if err != nil {
+				return err
+			}
+			req.Header = map[string][]string{
+				"Authorization":  {"Bearer " + d.AccessToken},
+				"Content-Length": {strconv.FormatInt(chunkSize, 10)},
+				"Content-Range":  {fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, file.GetSize())},
+			}
+			res, err := base.HttpClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer res.Body.Close()
+			bytes, _ := io.ReadAll(res.Body)
+			var e Error
+			utils.Json.Unmarshal(bytes, &e)
+			if e.Error.Code != 0 {
+				if e.Error.Code == 401 {
+					err = d.refreshToken()
+					if err != nil {
+						return err
+					}
+				}
+				return fmt.Errorf("%s: %v", e.Error.Message, e.Error.Errors)
+			}
+			up(float64(offset+chunkSize) / float64(file.GetSize()) * 100)
+			return nil
+		},
+			retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second))
+		ss.FreeSectionReader(reader)
 		if err != nil {
 			return err
 		}

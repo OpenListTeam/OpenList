@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -472,7 +473,7 @@ func (y *Cloud189PC) refreshSession() (err error) {
 // 无法上传大小为0的文件
 func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool) (model.Obj, error) {
 	size := file.GetSize()
-	sliceSize := partSize(size)
+	sliceSize := min(size, partSize(size))
 
 	params := Params{
 		"parentFolderId": dstDir.GetID(),
@@ -500,64 +501,99 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		return nil, err
 	}
 
-	threadG, upCtx := errgroup.NewGroupWithContext(ctx, y.uploadThread,
+	ss, err := stream.NewStreamSectionReader(file, int(sliceSize), &up)
+	if err != nil {
+		return nil, err
+	}
+
+	threadG, upCtx := errgroup.NewOrderedGroupWithContext(ctx, y.uploadThread,
 		retry.Attempts(3),
 		retry.Delay(time.Second),
 		retry.DelayType(retry.BackOffDelay))
 
-	count := int(size / sliceSize)
+	count := 1
+	if size > sliceSize {
+		count = int((size + sliceSize - 1) / sliceSize)
+	}
 	lastPartSize := size % sliceSize
-	if lastPartSize > 0 {
-		count++
-	} else {
+	if lastPartSize == 0 {
 		lastPartSize = sliceSize
 	}
-	fileMd5 := utils.MD5.NewFunc()
-	silceMd5 := utils.MD5.NewFunc()
+
 	silceMd5Hexs := make([]string, 0, count)
-	teeReader := io.TeeReader(file, io.MultiWriter(fileMd5, silceMd5))
-	byteSize := sliceSize
+	silceMd5 := utils.MD5.NewFunc()
+	var writers io.Writer = silceMd5
+
+	fileMd5Hex := file.GetHash().GetHash(utils.MD5)
+	var fileMd5 hash.Hash
+	if len(fileMd5Hex) != utils.MD5.Width {
+		fileMd5 = utils.MD5.NewFunc()
+		writers = io.MultiWriter(silceMd5, fileMd5)
+	}
 	for i := 1; i <= count; i++ {
 		if utils.IsCanceled(upCtx) {
 			break
 		}
+		offset := int64((i)-1) * sliceSize
+		size := sliceSize
 		if i == count {
-			byteSize = lastPartSize
+			size = lastPartSize
 		}
-		byteData := make([]byte, byteSize)
-		// 读取块
-		silceMd5.Reset()
-		if _, err := io.ReadFull(teeReader, byteData); err != io.EOF && err != nil {
-			return nil, err
-		}
+		partInfo := ""
+		var reader *stream.SectionReader
+		var rateLimitedRd io.Reader
+		threadG.GoWithLifecycle(errgroup.Lifecycle{
+			Before: func(ctx context.Context) error {
+				if reader == nil {
+					var err error
+					reader, err = ss.GetSectionReader(offset, size)
+					if err != nil {
+						return err
+					}
+					silceMd5.Reset()
+					w, err := utils.CopyWithBuffer(writers, reader)
+					if w != size {
+						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", size, w, err)
+					}
+					// 计算块md5并进行hex和base64编码
+					md5Bytes := silceMd5.Sum(nil)
+					silceMd5Hexs = append(silceMd5Hexs, strings.ToUpper(hex.EncodeToString(md5Bytes)))
+					partInfo = fmt.Sprintf("%d-%s", i, base64.StdEncoding.EncodeToString(md5Bytes))
 
-		// 计算块md5并进行hex和base64编码
-		md5Bytes := silceMd5.Sum(nil)
-		silceMd5Hexs = append(silceMd5Hexs, strings.ToUpper(hex.EncodeToString(md5Bytes)))
-		partInfo := fmt.Sprintf("%d-%s", i, base64.StdEncoding.EncodeToString(md5Bytes))
+					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+				}
+				return nil
+			},
+			Do: func(ctx context.Context) error {
+				reader.Seek(0, io.SeekStart)
+				uploadUrls, err := y.GetMultiUploadUrls(ctx, isFamily, initMultiUpload.Data.UploadFileID, partInfo)
+				if err != nil {
+					return err
+				}
 
-		threadG.Go(func(ctx context.Context) error {
-			uploadUrls, err := y.GetMultiUploadUrls(ctx, isFamily, initMultiUpload.Data.UploadFileID, partInfo)
-			if err != nil {
-				return err
-			}
-
-			// step.4 上传切片
-			uploadUrl := uploadUrls[0]
-			_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false,
-				driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData)), isFamily)
-			if err != nil {
-				return err
-			}
-			up(float64(threadG.Success()) * 100 / float64(count))
-			return nil
-		})
+				// step.4 上传切片
+				uploadUrl := uploadUrls[0]
+				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false,
+					driver.NewLimitedUploadStream(ctx, rateLimitedRd), isFamily)
+				if err != nil {
+					return err
+				}
+				up(float64(threadG.Success()) * 100 / float64(count))
+				return nil
+			},
+			After: func(err error) {
+				ss.FreeSectionReader(reader)
+			},
+		},
+		)
 	}
 	if err = threadG.Wait(); err != nil {
 		return nil, err
 	}
 
-	fileMd5Hex := strings.ToUpper(hex.EncodeToString(fileMd5.Sum(nil)))
+	if fileMd5 != nil {
+		fileMd5Hex = strings.ToUpper(hex.EncodeToString(fileMd5.Sum(nil)))
+	}
 	sliceMd5Hex := fileMd5Hex
 	if file.GetSize() > sliceSize {
 		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(silceMd5Hexs, "\n")))
@@ -620,11 +656,12 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 		cache = tmpF
 	}
 	sliceSize := partSize(size)
-	count := int(size / sliceSize)
+	count := 1
+	if size > sliceSize {
+		count = int((size + sliceSize - 1) / sliceSize)
+	}
 	lastSliceSize := size % sliceSize
-	if lastSliceSize > 0 {
-		count++
-	} else {
+	if lastSliceSize == 0 {
 		lastSliceSize = sliceSize
 	}
 
@@ -738,7 +775,8 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 				}
 
 				// step.4 上传切片
-				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false, io.NewSectionReader(cache, offset, byteSize), isFamily)
+				rateLimitedRd := driver.NewLimitedUploadStream(ctx, io.NewSectionReader(cache, offset, byteSize))
+				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false, rateLimitedRd, isFamily)
 				if err != nil {
 					return err
 				}
@@ -820,9 +858,7 @@ func (y *Cloud189PC) GetMultiUploadUrls(ctx context.Context, isFamily bool, uplo
 
 // 旧版本上传，家庭云不支持覆盖
 func (y *Cloud189PC) OldUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool) (model.Obj, error) {
-	cacheFileProgress := model.UpdateProgressWithRange(up, 0, 50)
-	up = model.UpdateProgressWithRange(up, 50, 100)
-	tempFile, fileMd5, err := stream.CacheFullInTempFileAndHash(file, cacheFileProgress, utils.MD5)
+	tempFile, fileMd5, err := stream.CacheFullAndHash(file, &up, utils.MD5)
 	if err != nil {
 		return nil, err
 	}

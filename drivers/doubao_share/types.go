@@ -79,11 +79,11 @@ type ShareInfo struct {
 		RiskReviewStatus    int    `json:"risk_review_status"`
 		ConversationID      string `json:"conversation_id"`
 		ParentID            string `json:"parent_id"`
-		CreateTime          int    `json:"create_time"`
-		UpdateTime          int    `json:"update_time"`
+		CreateTime          int64  `json:"create_time"`
+		UpdateTime          int64  `json:"update_time"`
 	} `json:"first_node"`
 	NodeCount      int    `json:"node_count"`
-	CreateTime     int    `json:"create_time"`
+	CreateTime     int64  `json:"create_time"`
 	Channel        string `json:"channel"`
 	InfluencerType int    `json:"influencer_type"`
 }
@@ -111,8 +111,8 @@ type FilePath []struct {
 	RiskReviewStatus    int    `json:"risk_review_status"`
 	ConversationID      string `json:"conversation_id"`
 	ParentID            string `json:"parent_id"`
-	CreateTime          int    `json:"create_time"`
-	UpdateTime          int    `json:"update_time"`
+	CreateTime          int64  `json:"create_time"`
+	UpdateTime          int64  `json:"update_time"`
 }
 
 type GetFileUrlResp struct {

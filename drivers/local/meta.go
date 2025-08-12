@@ -7,6 +7,7 @@ import (
 
 type Addition struct {
 	driver.RootPath
+	DirectorySize    bool   `json:"directory_size" default:"false" help:"This might impact host performance"`
 	Thumbnail        bool   `json:"thumbnail" required:"true" help:"enable thumbnail"`
 	ThumbCacheFolder string `json:"thumb_cache_folder"`
 	ThumbConcurrency string `json:"thumb_concurrency" default:"16" required:"false" help:"Number of concurrent thumbnail generation goroutines. This controls how many thumbnails can be generated in parallel."`
@@ -27,6 +28,8 @@ var config = driver.Config{
 
 func init() {
 	op.RegisterDriver(func() driver.Driver {
-		return &Local{}
+		return &Local{
+			directoryMap: DirectoryMap{},
+		}
 	})
 }

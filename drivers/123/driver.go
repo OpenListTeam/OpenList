@@ -64,14 +64,6 @@ func (d *Pan123) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 
 func (d *Pan123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if f, ok := file.(File); ok {
-		//var resp DownResp
-		var headers map[string]string
-		if !utils.IsLocalIPAddr(args.IP) {
-			headers = map[string]string{
-				//"X-Real-IP":       "1.1.1.1",
-				"X-Forwarded-For": args.IP,
-			}
-		}
 		data := base.Json{
 			"driveId":   0,
 			"etag":      f.Etag,
@@ -83,25 +75,27 @@ func (d *Pan123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		}
 		resp, err := d.Request(DownloadInfo, http.MethodPost, func(req *resty.Request) {
 
-			req.SetBody(data).SetHeaders(headers)
+			req.SetBody(data)
 		}, nil)
 		if err != nil {
 			return nil, err
 		}
 		downloadUrl := utils.Json.Get(resp, "data", "DownloadUrl").ToString()
-		u, err := url.Parse(downloadUrl)
+		ou, err := url.Parse(downloadUrl)
 		if err != nil {
 			return nil, err
 		}
-		nu := u.Query().Get("params")
+		u_ := ou.String()
+		nu := ou.Query().Get("params")
 		if nu != "" {
 			du, _ := base64.StdEncoding.DecodeString(nu)
-			u, err = url.Parse(string(du))
+			u, err := url.Parse(string(du))
 			if err != nil {
 				return nil, err
 			}
+			u_ = u.String()
 		}
-		u_ := u.String()
+
 		log.Debug("download url: ", u_)
 		res, err := base.NoRedirectClient.R().SetHeader("Referer", "https://www.123pan.com/").Get(u_)
 		if err != nil {
@@ -118,7 +112,7 @@ func (d *Pan123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 			link.URL = utils.Json.Get(res.Body(), "data", "redirect_url").ToString()
 		}
 		link.Header = http.Header{
-			"Referer": []string{"https://www.123pan.com/"},
+			"Referer": []string{fmt.Sprintf("%s://%s/", ou.Scheme, ou.Host)},
 		}
 		return &link, nil
 	} else {
@@ -188,9 +182,7 @@ func (d *Pan123) Put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 	etag := file.GetHash().GetHash(utils.MD5)
 	var err error
 	if len(etag) < utils.MD5.Width {
-		cacheFileProgress := model.UpdateProgressWithRange(up, 0, 50)
-		up = model.UpdateProgressWithRange(up, 50, 100)
-		_, etag, err = stream.CacheFullInTempFileAndHash(file, cacheFileProgress, utils.MD5)
+		_, etag, err = stream.CacheFullAndHash(file, &up, utils.MD5)
 		if err != nil {
 			return err
 		}

@@ -3,13 +3,17 @@ package strm
 import (
 	"context"
 	"errors"
+	"fmt"
+	stdpath "path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 )
 
 type Strm struct {
@@ -18,6 +22,9 @@ type Strm struct {
 	pathMap     map[string][]string
 	autoFlatten bool
 	oneKey      string
+
+	supportSuffix  map[string]struct{}
+	downloadSuffix map[string]struct{}
 }
 
 func (d *Strm) Config() driver.Config {
@@ -51,12 +58,24 @@ func (d *Strm) Init(ctx context.Context) error {
 		d.autoFlatten = false
 	}
 
+	d.supportSuffix = supportSuffix()
 	if d.FilterFileTypes != "" {
 		types := strings.Split(d.FilterFileTypes, ",")
 		for _, ext := range types {
 			ext = strings.ToLower(strings.TrimSpace(ext))
 			if ext != "" {
-				supportSuffix[ext] = struct{}{}
+				d.supportSuffix[ext] = struct{}{}
+			}
+		}
+	}
+
+	d.downloadSuffix = downloadSuffix()
+	if d.DownloadFileTypes != "" {
+		downloadTypes := strings.Split(d.DownloadFileTypes, ",")
+		for _, ext := range downloadTypes {
+			ext = strings.ToLower(strings.TrimSpace(ext))
+			if ext != "" {
+				d.downloadSuffix[ext] = struct{}{}
 			}
 		}
 	}
@@ -65,6 +84,8 @@ func (d *Strm) Init(ctx context.Context) error {
 
 func (d *Strm) Drop(ctx context.Context) error {
 	d.pathMap = nil
+	d.downloadSuffix = nil
+	d.supportSuffix = nil
 	return nil
 }
 
@@ -82,10 +103,25 @@ func (d *Strm) Get(ctx context.Context, path string) (model.Obj, error) {
 		return nil, errs.ObjectNotFound
 	}
 	for _, dst := range dsts {
-		obj, err := d.get(ctx, path, dst, sub)
-		if err == nil {
-			return obj, nil
+		reqPath := stdpath.Join(dst, sub)
+		obj, err := fs.Get(ctx, reqPath, &fs.GetArgs{NoLog: true})
+		if err != nil {
+			continue
 		}
+		// fs.Get 没报错，说明不是strm生成的路径，需要直接返回
+		size := int64(0)
+		if !obj.IsDir() {
+			size = obj.GetSize()
+			path = reqPath //把路径设置为真实的，供Link直接读取
+		}
+		return &model.Object{
+			Path:     path,
+			Name:     obj.GetName(),
+			Size:     size,
+			Modified: obj.ModTime(),
+			IsFolder: obj.IsDir(),
+			HashInfo: obj.GetHash(),
+		}, nil
 	}
 	return nil, errs.ObjectNotFound
 }
@@ -112,34 +148,34 @@ func (d *Strm) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 }
 
 func (d *Strm) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	link := d.getLink(ctx, file.GetPath())
-	return &model.Link{
-		MFile: strings.NewReader(link),
-	}, nil
-}
+	if file.GetID() == "strm" {
+		link := d.getLink(ctx, file.GetPath())
+		return &model.Link{
+			MFile: strings.NewReader(link),
+		}, nil
+	}
+	// ftp,s3
+	if common.GetApiUrl(ctx) == "" {
+		args.Redirect = false
+	}
+	reqPath := file.GetPath()
+	link, _, err := d.link(ctx, reqPath, args)
+	if err != nil {
+		return nil, err
+	}
 
-func (d *Strm) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	return errors.New("strm Driver cannot make dir")
-}
+	if link == nil {
+		return &model.Link{
+			URL: fmt.Sprintf("%s/p%s?sign=%s",
+				common.GetApiUrl(ctx),
+				utils.EncodePath(reqPath, true),
+				sign.Sign(reqPath)),
+		}, nil
+	}
 
-func (d *Strm) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	return errors.New("strm Driver cannot move file")
-}
-
-func (d *Strm) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	return errors.New("strm Driver cannot rename file")
-}
-
-func (d *Strm) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	return errors.New("strm Driver cannot copy file")
-}
-
-func (d *Strm) Remove(ctx context.Context, obj model.Obj) error {
-	return errors.New("strm Driver cannot remove file")
-}
-
-func (d *Strm) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
-	return errors.New("strm Driver cannot put file")
+	resultLink := *link
+	resultLink.SyncClosers = utils.NewSyncClosers(link)
+	return &resultLink, nil
 }
 
 var _ driver.Driver = (*Strm)(nil)

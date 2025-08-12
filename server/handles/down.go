@@ -6,7 +6,6 @@ import (
 	"fmt"
 	stdpath "path"
 	"strconv"
-	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -14,7 +13,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
-	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
@@ -58,15 +56,9 @@ func Proxy(c *gin.Context) {
 		return
 	}
 	if canProxy(storage, filename) {
-		downProxyUrl := storage.GetStorage().DownProxyUrl
-		if downProxyUrl != "" {
-			_, ok := c.GetQuery("d")
-			if !ok {
-				URL := fmt.Sprintf("%s%s?sign=%s",
-					strings.Split(downProxyUrl, "\n")[0],
-					utils.EncodePath(rawPath, true),
-					sign.Sign(rawPath))
-				c.Redirect(302, URL)
+		if _, ok := c.GetQuery("d"); !ok {
+			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath); url != "" {
+				c.Redirect(302, url)
 				return
 			}
 		}
@@ -119,7 +111,7 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 		}
 	}
 	if proxyRange {
-		common.ProxyRange(c, link, file.GetSize())
+		link = common.ProxyRange(c, link, file.GetSize())
 	}
 	Writer := &common.WrittenResponseWriter{ResponseWriter: c.Writer}
 
@@ -172,7 +164,7 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 // 4. proxy_types
 // solution: text_file + shouldProxy()
 func canProxy(storage driver.Driver, filename string) bool {
-	if storage.Config().MustProxy() || storage.GetStorage().WebProxy || storage.GetStorage().WebdavProxy() {
+	if storage.Config().MustProxy() || storage.GetStorage().WebProxy || storage.GetStorage().WebdavProxyURL() {
 		return true
 	}
 	if utils.SliceContains(conf.SlicesMap[conf.ProxyTypes], utils.Ext(filename)) {

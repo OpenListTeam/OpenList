@@ -31,6 +31,7 @@ func init() {
 			config: driver.Config{
 				Name:        "ILanZou",
 				DefaultRoot: "0",
+				LocalSort:   true,
 			},
 			conf: Conf{
 				base:       "https://api.ilanzou.com",
@@ -48,6 +49,7 @@ func init() {
 			config: driver.Config{
 				Name:        "FeijiPan",
 				DefaultRoot: "0",
+				LocalSort:   true,
 			},
 			conf: Conf{
 				base:       "https://api.feijipan.com",

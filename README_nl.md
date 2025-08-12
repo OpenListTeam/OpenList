@@ -106,8 +106,9 @@ Dank u voor uw ondersteuning en begrip
 
 ## Documentatie
 
-- 📘 [Documentatie & Installatiegids](https://docs.oplist.org)
-- 📚 [Back-up documentatiesite](https://docs.openlist.team)
+- 📘 [Global Site](https://doc.oplist.org)
+- 📚 [Backup Site](https://doc.openlist.team)
+- 🌏 [CN Site](https://doc.oplist.org.cn)
 
 ## Demo
 

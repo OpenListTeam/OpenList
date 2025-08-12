@@ -1,11 +1,14 @@
 package handles
 
 import (
+	"strings"
+	
 	_115 "github.com/OpenListTeam/OpenList/v4/drivers/115"
 	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
 	"github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
+	"github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
@@ -285,6 +288,50 @@ func SetThunder(c *gin.Context) {
 	common.SuccessResp(c, "ok")
 }
 
+type SetThunderXReq struct {
+	TempDir string `json:"temp_dir" form:"temp_dir"`
+}
+
+func SetThunderX(c *gin.Context) {
+	var req SetThunderXReq
+	if err := c.ShouldBind(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	if req.TempDir != "" {
+		storage, _, err := op.GetStorageAndActualPath(req.TempDir)
+		if err != nil {
+			common.ErrorStrResp(c, "storage does not exists", 400)
+			return
+		}
+		if storage.Config().CheckStatus && storage.GetStorage().Status != op.WORK {
+			common.ErrorStrResp(c, "storage not init: "+storage.GetStorage().Status, 400)
+			return
+		}
+		if _, ok := storage.(*thunderx.ThunderX); !ok {
+			common.ErrorStrResp(c, "unsupported storage driver for offline download, only ThunderX is supported", 400)
+			return
+		}
+	}
+	items := []model.SettingItem{
+		{Key: conf.ThunderXTempDir, Value: req.TempDir, Type: conf.TypeString, Group: model.OFFLINE_DOWNLOAD, Flag: model.PRIVATE},
+	}
+	if err := op.SaveSettingItems(items); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	_tool, err := tool.Tools.Get("ThunderX")
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	if _, err := _tool.Init(); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c, "ok")
+}
+
 type SetThunderBrowserReq struct {
 	TempDir string `json:"temp_dir" form:"temp_dir"`
 }
@@ -361,8 +408,14 @@ func AddOfflineDownload(c *gin.Context) {
 	}
 	var tasks []task.TaskExtensionInfo
 	for _, url := range req.Urls {
+		// Filter out empty lines and whitespace-only strings
+		trimmedUrl := strings.TrimSpace(url)
+		if trimmedUrl == "" {
+			continue
+		}
+		
 		t, err := tool.AddURL(c, &tool.AddURLArgs{
-			URL:          url,
+			URL:          trimmedUrl,
 			DstDirPath:   reqPath,
 			Tool:         req.Tool,
 			DeletePolicy: tool.DeletePolicy(req.DeletePolicy),

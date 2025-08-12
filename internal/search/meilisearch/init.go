@@ -3,6 +3,7 @@ package meilisearch
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -18,13 +19,18 @@ var config = searcher.Config{
 
 func init() {
 	searcher.RegisterSearcher(config, func() (searcher.Searcher, error) {
+		indexUid := conf.Conf.Meilisearch.Index
+		if len(indexUid) == 0 {
+			return nil, errors.New("index is blank")
+		}
 		m := Meilisearch{
-			Client: meilisearch.NewClient(meilisearch.ClientConfig{
-				Host:   conf.Conf.Meilisearch.Host,
-				APIKey: conf.Conf.Meilisearch.APIKey,
-			}),
-			IndexUid:             conf.Conf.Meilisearch.IndexPrefix + "openlist",
-			FilterableAttributes: []string{"parent", "is_dir", "name"},
+			Client: meilisearch.New(
+				conf.Conf.Meilisearch.Host,
+				meilisearch.WithAPIKey(conf.Conf.Meilisearch.APIKey),
+			),
+			IndexUid: indexUid,
+			FilterableAttributes: []string{"parent", "is_dir", "name",
+				"parent_hash", "parent_path_hashes"},
 			SearchableAttributes: []string{"name"},
 		}
 
@@ -40,7 +46,7 @@ func init() {
 				if err != nil {
 					return nil, err
 				}
-				forTask, err := m.Client.WaitForTask(task.TaskUID)
+				forTask, err := m.Client.WaitForTask(task.TaskUID, time.Second)
 				if err != nil {
 					return nil, err
 				}

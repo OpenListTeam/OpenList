@@ -131,6 +131,23 @@ func (d *Open115) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	}, nil
 }
 
+func (d *Open115) GetObjInfo(ctx context.Context, path string) (model.Obj, error) {
+	if err := d.WaitLimit(ctx); err != nil {
+		return nil, err
+	}
+	resp, err := d.client.GetFolderInfoByPath(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return &Obj{
+		Fid:  resp.FileID,
+		Fn:   resp.FileName,
+		Fc:   resp.FileCategory,
+		Sha1: resp.Sha1,
+		Pc:   resp.PickCode,
+	}, nil
+}
+
 func (d *Open115) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	if err := d.WaitLimit(ctx); err != nil {
 		return nil, err
@@ -222,9 +239,7 @@ func (d *Open115) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 	}
 	sha1 := file.GetHash().GetHash(utils.SHA1)
 	if len(sha1) != utils.SHA1.Width {
-		cacheFileProgress := model.UpdateProgressWithRange(up, 0, 50)
-		up = model.UpdateProgressWithRange(up, 50, 100)
-		_, sha1, err = stream.CacheFullInTempFileAndHash(file, cacheFileProgress, utils.SHA1)
+		_, sha1, err = stream.CacheFullAndHash(file, &up, utils.SHA1)
 		if err != nil {
 			return err
 		}

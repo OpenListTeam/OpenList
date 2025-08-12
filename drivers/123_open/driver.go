@@ -2,7 +2,9 @@ package _123_open
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -95,6 +97,22 @@ func (d *Open123) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 }
 
 func (d *Open123) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
+	// 尝试使用上传+MD5秒传功能实现复制
+	// 1. 创建文件
+	// parentFileID 父目录id，上传到根目录时填写 0
+	parentFileId, err := strconv.ParseInt(dstDir.GetID(), 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse parentFileID error: %v", err)
+	}
+	etag := srcObj.(File).Etag
+	createResp, err := d.create(parentFileId, srcObj.GetName(), etag, srcObj.GetSize(), 2, false)
+	if err != nil {
+		return err
+	}
+	// 是否秒传
+	if createResp.Data.Reuse {
+		return nil
+	}
 	return errs.NotSupport
 }
 
@@ -104,27 +122,64 @@ func (d *Open123) Remove(ctx context.Context, obj model.Obj) error {
 	return d.trash(fileId)
 }
 
-func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) error {
+func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
+	// 1. 创建文件
+	// parentFileID 父目录id，上传到根目录时填写 0
 	parentFileId, err := strconv.ParseInt(dstDir.GetID(), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse parentFileID error: %v", err)
+	}
+	// etag 文件md5
 	etag := file.GetHash().GetHash(utils.MD5)
-
 	if len(etag) < utils.MD5.Width {
-		cacheFileProgress := model.UpdateProgressWithRange(up, 0, 50)
-		up = model.UpdateProgressWithRange(up, 50, 100)
-		_, etag, err = stream.CacheFullInTempFileAndHash(file, cacheFileProgress, utils.MD5)
+		_, etag, err = stream.CacheFullAndHash(file, &up, utils.MD5)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	createResp, err := d.create(parentFileId, file.GetName(), etag, file.GetSize(), 2, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	// 是否秒传
 	if createResp.Data.Reuse {
-		return nil
+		// 秒传成功才会返回正确的 FileID，否则为 0
+		if createResp.Data.FileID != 0 {
+			return File{
+				FileName: file.GetName(),
+				Size:     file.GetSize(),
+				FileId:   createResp.Data.FileID,
+				Type:     2,
+				Etag:     etag,
+			}, nil
+		}
 	}
 
-	return d.Upload(ctx, file, createResp, up)
+	// 2. 上传分片
+	err = d.Upload(ctx, file, createResp, up)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. 上传完毕
+	for range 60 {
+		uploadCompleteResp, err := d.complete(createResp.Data.PreuploadID)
+		// 返回错误代码未知，如：20103，文档也没有具体说
+		if err == nil && uploadCompleteResp.Data.Completed && uploadCompleteResp.Data.FileID != 0 {
+			up(100)
+			return File{
+				FileName: file.GetName(),
+				Size:     file.GetSize(),
+				FileId:   uploadCompleteResp.Data.FileID,
+				Type:     2,
+				Etag:     etag,
+			}, nil
+		}
+		// 若接口返回的completed为 false 时，则需间隔1秒继续轮询此接口，获取上传最终结果。
+		time.Sleep(time.Second)
+	}
+	return nil, fmt.Errorf("upload complete timeout")
 }
 
 var _ driver.Driver = (*Open123)(nil)
+var _ driver.PutResult = (*Open123)(nil)

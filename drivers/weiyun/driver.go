@@ -317,7 +317,7 @@ func (d *WeiYun) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	if folder, ok = dstDir.(*Folder); !ok {
 		return nil, errs.NotSupport
 	}
-	file, err := stream.CacheFullInTempFile()
+	file, err := stream.CacheFullAndWriter(&up, nil)
 	if err != nil {
 		return nil, err
 	}

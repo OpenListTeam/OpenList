@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	stdpath "path"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -78,10 +80,18 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		return nil, errs.ObjectNotFound
 	}
 	for _, dst := range dsts {
-		obj, err := d.get(ctx, path, dst, sub)
-		if err == nil {
-			return obj, nil
+		obj, err := fs.Get(ctx, stdpath.Join(dst, sub), &fs.GetArgs{NoLog: true})
+		if err != nil {
+			continue
 		}
+		return &model.Object{
+			Path:     path,
+			Name:     obj.GetName(),
+			Size:     obj.GetSize(),
+			Modified: obj.ModTime(),
+			IsFolder: obj.IsDir(),
+			HashInfo: obj.GetHash(),
+		}, nil
 	}
 	return nil, errs.ObjectNotFound
 }
@@ -99,7 +109,27 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	var objs []model.Obj
 	fsArgs := &fs.ListArgs{NoLog: true, Refresh: args.Refresh}
 	for _, dst := range dsts {
-		tmp, err := d.list(ctx, dst, sub, fsArgs)
+		tmp, err := fs.List(ctx, stdpath.Join(dst, sub), fsArgs)
+		if err == nil {
+			tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
+				thumb, ok := model.GetThumb(obj)
+				objRes := model.Object{
+					Name:     obj.GetName(),
+					Size:     obj.GetSize(),
+					Modified: obj.ModTime(),
+					IsFolder: obj.IsDir(),
+				}
+				if !ok {
+					return &objRes, nil
+				}
+				return &model.ObjThumb{
+					Object: objRes,
+					Thumbnail: model.Thumbnail{
+						Thumbnail: thumb,
+					},
+				}, nil
+			})
+		}
 		if err == nil {
 			objs = append(objs, tmp...)
 		}
@@ -113,44 +143,45 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	if !ok {
 		return nil, errs.ObjectNotFound
 	}
+	// proxy || ftp,s3
+	if common.GetApiUrl(ctx) == "" {
+		args.Redirect = false
+	}
 	for _, dst := range dsts {
 		reqPath := stdpath.Join(dst, sub)
-		link, file, err := d.link(ctx, reqPath, args)
+		link, fi, err := d.link(ctx, reqPath, args)
 		if err != nil {
 			continue
 		}
-		var resultLink *model.Link
-		if link != nil {
-			resultLink = &model.Link{
-				URL:         link.URL,
-				Header:      link.Header,
-				RangeReader: link.RangeReader,
-				SyncClosers: utils.NewSyncClosers(link),
-			}
-			if link.MFile != nil {
-				resultLink.RangeReader = &model.FileRangeReader{
-					RangeReaderIF: stream.GetRangeReaderFromMFile(file.GetSize(), link.MFile),
-				}
-			}
-
-		} else {
-			resultLink = &model.Link{
+		if link == nil {
+			// 重定向且需要通过代理
+			return &model.Link{
 				URL: fmt.Sprintf("%s/p%s?sign=%s",
 					common.GetApiUrl(ctx),
 					utils.EncodePath(reqPath, true),
 					sign.Sign(reqPath)),
-			}
+			}, nil
+		}
 
+		resultLink := *link
+		resultLink.SyncClosers = utils.NewSyncClosers(link)
+		if args.Redirect {
+			return &resultLink, nil
 		}
-		if !args.Redirect {
-			if d.DownloadConcurrency > 0 {
-				resultLink.Concurrency = d.DownloadConcurrency
-			}
-			if d.DownloadPartSize > 0 {
-				resultLink.PartSize = d.DownloadPartSize * utils.KB
-			}
+
+		if resultLink.ContentLength == 0 {
+			resultLink.ContentLength = fi.GetSize()
 		}
-		return resultLink, nil
+		if resultLink.MFile != nil {
+			return &resultLink, nil
+		}
+		if d.DownloadConcurrency > 0 {
+			resultLink.Concurrency = d.DownloadConcurrency
+		}
+		if d.DownloadPartSize > 0 {
+			resultLink.PartSize = d.DownloadPartSize * utils.KB
+		}
+		return &resultLink, nil
 	}
 	return nil, errs.ObjectNotFound
 }
@@ -192,7 +223,8 @@ func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	}
 	if len(srcPath) == len(dstPath) {
 		for i := range srcPath {
-			err = errors.Join(err, fs.Move(ctx, *srcPath[i], *dstPath[i]))
+			_, e := fs.Move(ctx, *srcPath[i], *dstPath[i])
+			err = errors.Join(err, e)
 		}
 		return err
 	} else {
@@ -276,24 +308,29 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 	reqPath, err := d.getReqPath(ctx, dstDir, true)
 	if err == nil {
 		if len(reqPath) == 1 {
-			return fs.PutDirectly(ctx, *reqPath[0], &stream.FileStream{
-				Obj:          s,
-				Mimetype:     s.GetMimetype(),
-				WebPutAsTask: s.NeedStore(),
-				Reader:       s,
-			})
-		} else {
-			file, err := s.CacheFullInTempFile()
+			storage, reqActualPath, err := op.GetStorageAndActualPath(*reqPath[0])
 			if err != nil {
 				return err
 			}
-			for _, path := range reqPath {
+			return op.Put(ctx, storage, reqActualPath, &stream.FileStream{
+				Obj:      s,
+				Mimetype: s.GetMimetype(),
+				Reader:   s,
+			}, up)
+		} else {
+			file, err := s.CacheFullAndWriter(nil, nil)
+			if err != nil {
+				return err
+			}
+			count := float64(len(reqPath) + 1)
+			up(100 / count)
+			for i, path := range reqPath {
 				err = errors.Join(err, fs.PutDirectly(ctx, *path, &stream.FileStream{
-					Obj:          s,
-					Mimetype:     s.GetMimetype(),
-					WebPutAsTask: s.NeedStore(),
-					Reader:       file,
+					Obj:      s,
+					Mimetype: s.GetMimetype(),
+					Reader:   file,
 				}))
+				up(float64(i+2) / float64(count) * 100)
 				_, e := file.Seek(0, io.SeekStart)
 				if e != nil {
 					return errors.Join(err, e)
@@ -365,10 +402,24 @@ func (d *Alias) Extract(ctx context.Context, obj model.Obj, args model.ArchiveIn
 		return nil, errs.ObjectNotFound
 	}
 	for _, dst := range dsts {
-		link, err := d.extract(ctx, dst, sub, args)
-		if err == nil {
-			return link, nil
+		reqPath := stdpath.Join(dst, sub)
+		link, err := d.extract(ctx, reqPath, args)
+		if err != nil {
+			continue
 		}
+		if link == nil {
+			return &model.Link{
+				URL: fmt.Sprintf("%s/ap%s?inner=%s&pass=%s&sign=%s",
+					common.GetApiUrl(ctx),
+					utils.EncodePath(reqPath, true),
+					utils.EncodePath(args.InnerPath, true),
+					url.QueryEscape(args.Password),
+					sign.SignArchive(reqPath)),
+			}, nil
+		}
+		resultLink := *link
+		resultLink.SyncClosers = utils.NewSyncClosers(link)
+		return &resultLink, nil
 	}
 	return nil, errs.NotImplement
 }

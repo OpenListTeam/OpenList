@@ -106,8 +106,9 @@ Thank you for your support and understanding of the OpenList project.
 
 ## Document
 
-- 📘 [Docs & Install Guide](https://docs.oplist.org)
-- 📚 [Backup Docs Site](https://docs.openlist.team)
+- 📘 [Global Site](https://doc.oplist.org)
+- 📚 [Backup Site](https://doc.openlist.team)
+- 🌏 [CN Site](https://doc.oplist.org.cn)
 
 ## Demo
 

@@ -24,7 +24,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 )
@@ -233,46 +232,49 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	if err != nil {
 		return http.StatusNotFound, err
 	}
-	if r.Method == http.MethodHead {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.GetSize()))
-		return http.StatusOK, nil
-	}
 	if fi.IsDir() {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Type", "httpd/unix-directory")
+			w.Header().Set("Content-Length", "0")
+			return http.StatusOK, nil
+		}
 		return http.StatusMethodNotAllowed, nil
 	}
 	// Let ServeContent determine the Content-Type header.
 	storage, _ := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
-	downProxyUrl := storage.GetStorage().DownProxyUrl
-	if storage.GetStorage().WebdavNative() || (storage.GetStorage().WebdavProxy() && downProxyUrl == "") {
-		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{Header: r.Header})
-		if err != nil {
-			return http.StatusInternalServerError, err
-		}
-		defer link.Close()
-		if storage.GetStorage().ProxyRange {
-			common.ProxyRange(ctx, link, fi.GetSize())
-		}
-		err = common.Proxy(w, r, link, fi)
-		if err != nil {
-			if statusCode, ok := errors.Unwrap(err).(net.ErrorHttpStatusCode); ok {
-				return int(statusCode), err
-			}
-			return http.StatusInternalServerError, fmt.Errorf("webdav proxy error: %+v", err)
-		}
-	} else if storage.GetStorage().WebdavProxy() && downProxyUrl != "" {
-		u := fmt.Sprintf("%s%s?sign=%s",
-			strings.Split(downProxyUrl, "\n")[0],
-			utils.EncodePath(reqPath, true),
-			sign.Sign(reqPath))
-		w.Header().Set("Cache-Control", "max-age=0, no-cache, no-store, must-revalidate")
-		http.Redirect(w, r, u, http.StatusFound)
-	} else {
+	if storage.GetStorage().Webdav302() {
 		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{IP: utils.ClientIP(r), Header: r.Header, Redirect: true})
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
 		defer link.Close()
 		http.Redirect(w, r, link.URL, http.StatusFound)
+		return 0, nil
+	}
+
+	if storage.GetStorage().WebdavProxyURL() {
+		if url := common.GenerateDownProxyURL(storage.GetStorage(), reqPath); url != "" {
+			w.Header().Set("Cache-Control", "max-age=0, no-cache, no-store, must-revalidate")
+			http.Redirect(w, r, url, http.StatusFound)
+			return 0, nil
+		}
+	}
+
+	link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{Header: r.Header})
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	defer link.Close()
+
+	if storage.GetStorage().ProxyRange {
+		link = common.ProxyRange(ctx, link, fi.GetSize())
+	}
+	err = common.Proxy(w, r, link, fi)
+	if err != nil {
+		if statusCode, ok := errors.Unwrap(err).(net.ErrorHttpStatusCode); ok {
+			return int(statusCode), err
+		}
+		return http.StatusInternalServerError, fmt.Errorf("webdav proxy error: %+v", err)
 	}
 	return 0, nil
 }

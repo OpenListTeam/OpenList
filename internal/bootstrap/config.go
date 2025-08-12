@@ -12,19 +12,32 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/caarlos0/env/v9"
+	"github.com/shirou/gopsutil/v4/mem"
 	log "github.com/sirupsen/logrus"
 )
 
-func InitConfig() {
+// Program working directory
+func PWD() string {
 	if flags.ForceBinDir {
-		if !filepath.IsAbs(flags.DataDir) {
-			ex, err := os.Executable()
-			if err != nil {
-				utils.Log.Fatal(err)
-			}
-			exPath := filepath.Dir(ex)
-			flags.DataDir = filepath.Join(exPath, flags.DataDir)
+		ex, err := os.Executable()
+		if err != nil {
+			log.Fatal(err)
 		}
+		pwd := filepath.Dir(ex)
+		return pwd
+	}
+	d, err := os.Getwd()
+	if err != nil {
+		d = "."
+	}
+	return d
+}
+
+func InitConfig() {
+	pwd := PWD()
+	dataDir := flags.DataDir
+	if !filepath.IsAbs(dataDir) {
+		flags.DataDir = filepath.Join(pwd, flags.DataDir)
 	}
 	configPath := filepath.Join(flags.DataDir, "config.json")
 	log.Infof("reading config file: %s", configPath)
@@ -34,7 +47,7 @@ func InitConfig() {
 		if err != nil {
 			log.Fatalf("failed to create config file: %+v", err)
 		}
-		conf.Conf = conf.DefaultConfig()
+		conf.Conf = conf.DefaultConfig(dataDir)
 		LastLaunchedVersion = conf.Version
 		conf.Conf.LastLaunchedVersion = conf.Version
 		if !utils.WriteJsonToFile(configPath, conf.Conf) {
@@ -45,7 +58,7 @@ func InitConfig() {
 		if err != nil {
 			log.Fatalf("reading config file error: %+v", err)
 		}
-		conf.Conf = conf.DefaultConfig()
+		conf.Conf = conf.DefaultConfig(dataDir)
 		err = utils.Json.Unmarshal(configBytes, conf.Conf)
 		if err != nil {
 			log.Fatalf("load config error: %+v", err)
@@ -67,16 +80,36 @@ func InitConfig() {
 	if conf.Conf.MaxConcurrency > 0 {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: conf.Conf.MaxConcurrency}
 	}
+	if conf.Conf.MaxBufferLimit < 0 {
+		m, _ := mem.VirtualMemory()
+		if m != nil {
+			conf.MaxBufferLimit = max(int(float64(m.Total)*0.05), 4*utils.MB)
+			conf.MaxBufferLimit -= conf.MaxBufferLimit % utils.MB
+		} else {
+			conf.MaxBufferLimit = 16 * utils.MB
+		}
+	} else {
+		conf.MaxBufferLimit = conf.Conf.MaxBufferLimit * utils.MB
+	}
+	log.Infof("max buffer limit: %dMB", conf.MaxBufferLimit/utils.MB)
 	if !conf.Conf.Force {
 		confFromEnv()
 	}
+	if len(conf.Conf.Log.Filter.Filters) == 0 {
+		conf.Conf.Log.Filter.Enable = false
+	}
 	// convert abs path
-	if !filepath.IsAbs(conf.Conf.TempDir) {
-		absPath, err := filepath.Abs(conf.Conf.TempDir)
-		if err != nil {
-			log.Fatalf("get abs path error: %+v", err)
+	convertAbsPath := func(path *string) {
+		if !filepath.IsAbs(*path) {
+			*path = filepath.Join(pwd, *path)
 		}
-		conf.Conf.TempDir = absPath
+	}
+	convertAbsPath(&conf.Conf.TempDir)
+	convertAbsPath(&conf.Conf.BleveDir)
+	convertAbsPath(&conf.Conf.Log.Name)
+	convertAbsPath(&conf.Conf.Database.DBFile)
+	if conf.Conf.DistDir != "" {
+		convertAbsPath(&conf.Conf.DistDir)
 	}
 	err := os.MkdirAll(conf.Conf.TempDir, 0o777)
 	if err != nil {

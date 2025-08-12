@@ -1,19 +1,20 @@
 package stream
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"sync"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/sirupsen/logrus"
 	"go4.org/readerutil"
 )
 
@@ -26,13 +27,19 @@ type FileStream struct {
 	ForceStreamUpload bool
 	Exist             model.Obj //the file existed in the destination, we can reuse some info since we wil overwrite it
 	utils.Closers
-	tmpFile  *os.File //if present, tmpFile has full content, it will be deleted at last
-	peekBuff *bytes.Reader
+
+	tmpFile   model.File //if present, tmpFile has full content, it will be deleted at last
+	peekBuff  *buffer.Reader
+	size      int64
+	oriReader io.Reader // the original reader, used for caching
 }
 
 func (f *FileStream) GetSize() int64 {
-	if f.tmpFile != nil {
-		info, err := f.tmpFile.Stat()
+	if f.size > 0 {
+		return f.size
+	}
+	if file, ok := f.tmpFile.(*os.File); ok {
+		info, err := file.Stat()
 		if err == nil {
 			return info.Size()
 		}
@@ -59,13 +66,17 @@ func (f *FileStream) Close() error {
 	if errors.Is(err1, os.ErrClosed) {
 		err1 = nil
 	}
-	if f.tmpFile != nil {
-		err2 = os.RemoveAll(f.tmpFile.Name())
+	if file, ok := f.tmpFile.(*os.File); ok {
+		err2 = os.RemoveAll(file.Name())
 		if err2 != nil {
-			err2 = errs.NewErr(err2, "failed to remove tmpFile [%s]", f.tmpFile.Name())
+			err2 = errs.NewErr(err2, "failed to remove tmpFile [%s]", file.Name())
 		} else {
 			f.tmpFile = nil
 		}
+	}
+	if f.peekBuff != nil {
+		f.peekBuff.Reset()
+		f.peekBuff = nil
 	}
 
 	return errors.Join(err1, err2)
@@ -78,20 +89,55 @@ func (f *FileStream) SetExist(obj model.Obj) {
 	f.Exist = obj
 }
 
-// CacheFullInTempFile save all data into tmpFile. Not recommended since it wears disk,
-// and can't start upload until the file is written. It's not thread-safe!
-func (f *FileStream) CacheFullInTempFile() (model.File, error) {
-	if file := f.GetFile(); file != nil {
-		return file, nil
+// CacheFullAndWriter save all data into tmpFile or memory.
+// It's not thread-safe!
+func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writer) (model.File, error) {
+	if cache := f.GetFile(); cache != nil {
+		if writer == nil {
+			return cache, nil
+		}
+		_, err := cache.Seek(0, io.SeekStart)
+		if err == nil {
+			reader := f.Reader
+			if up != nil {
+				cacheProgress := model.UpdateProgressWithRange(*up, 0, 50)
+				*up = model.UpdateProgressWithRange(*up, 50, 100)
+				reader = &ReaderUpdatingProgress{
+					Reader: &SimpleReaderWithSize{
+						Reader: reader,
+						Size:   f.GetSize(),
+					},
+					UpdateProgress: cacheProgress,
+				}
+			}
+			_, err = utils.CopyWithBuffer(writer, reader)
+			if err == nil {
+				_, err = cache.Seek(0, io.SeekStart)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		return cache, nil
 	}
-	tmpF, err := utils.CreateTempFile(f.Reader, f.GetSize())
-	if err != nil {
-		return nil, err
+
+	reader := f.Reader
+	if up != nil {
+		cacheProgress := model.UpdateProgressWithRange(*up, 0, 50)
+		*up = model.UpdateProgressWithRange(*up, 50, 100)
+		reader = &ReaderUpdatingProgress{
+			Reader: &SimpleReaderWithSize{
+				Reader: reader,
+				Size:   f.GetSize(),
+			},
+			UpdateProgress: cacheProgress,
+		}
 	}
-	f.Add(tmpF)
-	f.tmpFile = tmpF
-	f.Reader = tmpF
-	return tmpF, nil
+	if writer != nil {
+		reader = io.TeeReader(reader, writer)
+	}
+	f.Reader = reader
+	return f.cache(f.GetSize())
 }
 
 func (f *FileStream) GetFile() model.File {
@@ -104,47 +150,69 @@ func (f *FileStream) GetFile() model.File {
 	return nil
 }
 
-const InMemoryBufMaxSize = 10 // Megabytes
-const InMemoryBufMaxSizeBytes = InMemoryBufMaxSize * 1024 * 1024
-
 // RangeRead have to cache all data first since only Reader is provided.
-// also support a peeking RangeRead at very start, but won't buffer more than 10MB data in memory
+// It's not thread-safe!
 func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	if httpRange.Length < 0 || httpRange.Start+httpRange.Length > f.GetSize() {
 		httpRange.Length = f.GetSize() - httpRange.Start
 	}
-	var cache io.ReaderAt = f.GetFile()
-	if cache != nil {
-		return io.NewSectionReader(cache, httpRange.Start, httpRange.Length), nil
+	if f.GetFile() != nil {
+		return io.NewSectionReader(f.GetFile(), httpRange.Start, httpRange.Length), nil
 	}
 
 	size := httpRange.Start + httpRange.Length
 	if f.peekBuff != nil && size <= int64(f.peekBuff.Len()) {
 		return io.NewSectionReader(f.peekBuff, httpRange.Start, httpRange.Length), nil
 	}
-	if size <= InMemoryBufMaxSizeBytes {
-		bufSize := min(size, f.GetSize())
-		// 使用bytes.Buffer作为io.CopyBuffer的写入对象，CopyBuffer会调用Buffer.ReadFrom
-		// 即使被写入的数据量与Buffer.Cap一致，Buffer也会扩大
-		buf := make([]byte, bufSize)
-		n, err := io.ReadFull(f.Reader, buf)
-		if err != nil {
-			return nil, err
-		}
-		if n != int(bufSize) {
-			return nil, fmt.Errorf("stream RangeRead did not get all data in peek, expect =%d ,actual =%d", bufSize, n)
-		}
-		f.peekBuff = bytes.NewReader(buf)
-		f.Reader = io.MultiReader(f.peekBuff, f.Reader)
-		cache = f.peekBuff
-	} else {
-		var err error
-		cache, err = f.CacheFullInTempFile()
-		if err != nil {
-			return nil, err
-		}
+
+	cache, err := f.cache(size)
+	if err != nil {
+		return nil, err
 	}
+
 	return io.NewSectionReader(cache, httpRange.Start, httpRange.Length), nil
+}
+
+// *旧笔记
+// 使用bytes.Buffer作为io.CopyBuffer的写入对象，CopyBuffer会调用Buffer.ReadFrom
+// 即使被写入的数据量与Buffer.Cap一致，Buffer也会扩大
+
+func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
+	if maxCacheSize > int64(conf.MaxBufferLimit) {
+		tmpF, err := utils.CreateTempFile(f.Reader, f.GetSize())
+		if err != nil {
+			return nil, err
+		}
+		f.Add(tmpF)
+		f.tmpFile = tmpF
+		f.Reader = tmpF
+		return tmpF, nil
+	}
+
+	if f.peekBuff == nil {
+		f.peekBuff = &buffer.Reader{}
+		f.oriReader = f.Reader
+	}
+	bufSize := maxCacheSize - int64(f.peekBuff.Len())
+	buf := make([]byte, bufSize)
+	n, err := io.ReadFull(f.oriReader, buf)
+	if bufSize != int64(n) {
+		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", bufSize, n, err)
+	}
+	f.peekBuff.Append(buf)
+	if int64(f.peekBuff.Len()) >= f.GetSize() {
+		f.Reader = f.peekBuff
+		f.oriReader = nil
+	} else {
+		f.Reader = io.MultiReader(f.peekBuff, f.oriReader)
+	}
+	return f.peekBuff, nil
+}
+
+func (f *FileStream) SetTmpFile(file model.File) {
+	f.AddIfCloser(file)
+	f.tmpFile = file
+	f.Reader = file
 }
 
 var _ model.FileStreamer = (*SeekableStream)(nil)
@@ -174,21 +242,24 @@ func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error
 	}
 
 	if link != nil {
-		rr, err := GetRangeReaderFromLink(fs.GetSize(), link)
+		size := link.ContentLength
+		if size <= 0 {
+			size = fs.GetSize()
+		}
+		rr, err := GetRangeReaderFromLink(size, link)
 		if err != nil {
 			return nil, err
-		}
-		if _, ok := rr.(*model.FileRangeReader); ok {
-			fs.Reader, err = rr.RangeRead(fs.Ctx, http_range.Range{Length: -1})
-			if err != nil {
-				return nil, err
-			}
-			fs.Add(link)
-			return &SeekableStream{FileStream: fs}, nil
 		}
 		rrc := &model.RangeReadCloser{
 			RangeReader: rr,
 		}
+		if _, ok := rr.(*model.FileRangeReader); ok {
+			fs.Reader, err = rrc.RangeRead(fs.Ctx, http_range.Range{Length: -1})
+			if err != nil {
+				return nil, err
+			}
+		}
+		fs.size = size
 		fs.Add(link)
 		fs.Add(rrc)
 		return &SeekableStream{FileStream: fs, rangeReadCloser: rrc}, nil
@@ -196,13 +267,9 @@ func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error
 	return nil, fmt.Errorf("illegal seekableStream")
 }
 
-//func (ss *SeekableStream) Peek(length int) {
-//
-//}
-
 // RangeRead is not thread-safe, pls use it in single thread only.
 func (ss *SeekableStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
-	if ss.tmpFile == nil && ss.rangeReadCloser != nil {
+	if ss.GetFile() == nil && ss.rangeReadCloser != nil {
 		rc, err := ss.rangeReadCloser.RangeRead(ss.Ctx, httpRange)
 		if err != nil {
 			return nil, err
@@ -212,47 +279,37 @@ func (ss *SeekableStream) RangeRead(httpRange http_range.Range) (io.Reader, erro
 	return ss.FileStream.RangeRead(httpRange)
 }
 
-//func (f *FileStream) GetReader() io.Reader {
-//	return f.Reader
-//}
-
 // only provide Reader as full stream when it's demanded. in rapid-upload, we can skip this to save memory
 func (ss *SeekableStream) Read(p []byte) (n int, err error) {
+	if err := ss.generateReader(); err != nil {
+		return 0, err
+	}
+	return ss.FileStream.Read(p)
+}
+
+func (ss *SeekableStream) generateReader() error {
 	if ss.Reader == nil {
 		if ss.rangeReadCloser == nil {
-			return 0, fmt.Errorf("illegal seekableStream")
+			return fmt.Errorf("illegal seekableStream")
 		}
 		rc, err := ss.rangeReadCloser.RangeRead(ss.Ctx, http_range.Range{Length: -1})
 		if err != nil {
-			return 0, nil
+			return err
 		}
 		ss.Reader = rc
 	}
-	return ss.Reader.Read(p)
+	return nil
 }
 
-func (ss *SeekableStream) CacheFullInTempFile() (model.File, error) {
-	if file := ss.GetFile(); file != nil {
-		return file, nil
-	}
-	tmpF, err := utils.CreateTempFile(ss, ss.GetSize())
-	if err != nil {
+func (ss *SeekableStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writer) (model.File, error) {
+	if err := ss.generateReader(); err != nil {
 		return nil, err
 	}
-	ss.Add(tmpF)
-	ss.tmpFile = tmpF
-	ss.Reader = tmpF
-	return tmpF, nil
-}
-
-func (f *FileStream) SetTmpFile(r *os.File) {
-	f.Add(r)
-	f.tmpFile = r
-	f.Reader = r
+	return ss.FileStream.CacheFullAndWriter(up, writer)
 }
 
 type ReaderWithSize interface {
-	io.ReadCloser
+	io.Reader
 	GetSize() int64
 }
 
@@ -286,73 +343,55 @@ func (r *ReaderUpdatingProgress) Read(p []byte) (n int, err error) {
 }
 
 func (r *ReaderUpdatingProgress) Close() error {
-	return r.Reader.Close()
-}
-
-type readerCur struct {
-	reader io.Reader
-	cur    int64
+	if c, ok := r.Reader.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 type RangeReadReadAtSeeker struct {
 	ss        *SeekableStream
 	masterOff int64
-	readers   []*readerCur
+	readerMap sync.Map
 	headCache *headCache
 }
 
 type headCache struct {
-	*readerCur
-	bufs [][]byte
+	reader io.Reader
+	bufs   [][]byte
 }
 
-func (c *headCache) read(p []byte) (n int, err error) {
-	pL := len(p)
-	logrus.Debugf("headCache read_%d", pL)
-	if c.cur < int64(pL) {
-		bufL := int64(pL) - c.cur
-		buf := make([]byte, bufL)
-		lr := io.LimitReader(c.reader, bufL)
-		off := 0
-		for c.cur < int64(pL) {
-			n, err = lr.Read(buf[off:])
-			off += n
-			c.cur += int64(n)
-			if err == io.EOF && off == int(bufL) {
-				err = nil
-			}
-			if err != nil {
-				break
-			}
+func (c *headCache) head(p []byte) (int, error) {
+	n := 0
+	for _, buf := range c.bufs {
+		n += copy(p[n:], buf)
+		if n == len(p) {
+			return n, nil
 		}
+	}
+	nn, err := io.ReadFull(c.reader, p[n:])
+	if nn > 0 {
+		buf := make([]byte, nn)
+		copy(buf, p[n:])
 		c.bufs = append(c.bufs, buf)
-	}
-	n = 0
-	if c.cur >= int64(pL) {
-		for i := 0; n < pL; i++ {
-			buf := c.bufs[i]
-			r := len(buf)
-			if n+r > pL {
-				r = pL - n
-			}
-			n += copy(p[n:], buf[:r])
+		n += nn
+		if err == io.ErrUnexpectedEOF {
+			err = io.EOF
 		}
 	}
-	return
+	return n, err
 }
+
 func (r *headCache) Close() error {
-	for i := range r.bufs {
-		r.bufs[i] = nil
-	}
+	clear(r.bufs)
 	r.bufs = nil
 	return nil
 }
 
 func (r *RangeReadReadAtSeeker) InitHeadCache() {
 	if r.ss.GetFile() == nil && r.masterOff == 0 {
-		reader := r.readers[0]
-		r.readers = r.readers[1:]
-		r.headCache = &headCache{readerCur: reader}
+		value, _ := r.readerMap.LoadAndDelete(int64(0))
+		r.headCache = &headCache{reader: value.(io.Reader)}
 		r.ss.Closers.Add(r.headCache)
 	}
 }
@@ -378,8 +417,7 @@ func NewReadAtSeeker(ss *SeekableStream, offset int64, forceRange ...bool) (mode
 			return nil, err
 		}
 	} else {
-		rc := &readerCur{reader: ss, cur: offset}
-		r.readers = append(r.readers, rc)
+		r.readerMap.Store(int64(offset), ss)
 	}
 	return r, nil
 }
@@ -396,107 +434,93 @@ func NewMultiReaderAt(ss []*SeekableStream) (readerutil.SizeReaderAt, error) {
 	return readerutil.NewMultiReaderAt(readers...), nil
 }
 
-func (r *RangeReadReadAtSeeker) getReaderAtOffset(off int64) (*readerCur, error) {
-	var rc *readerCur
-	for _, reader := range r.readers {
-		if reader.cur == -1 {
-			continue
+func (r *RangeReadReadAtSeeker) getReaderAtOffset(off int64) (io.Reader, error) {
+	var rr io.Reader
+	var cur int64 = -1
+	r.readerMap.Range(func(key, value any) bool {
+		k := key.(int64)
+		if off == k {
+			cur = k
+			rr = value.(io.Reader)
+			return false
 		}
-		if reader.cur == off {
-			// logrus.Debugf("getReaderAtOffset match_%d", off)
-			return reader, nil
+		if off > k && off-k <= 4*utils.MB && (rr == nil || k < cur) {
+			rr = value.(io.Reader)
+			cur = k
 		}
-		if reader.cur > 0 && off >= reader.cur && (rc == nil || reader.cur < rc.cur) {
-			rc = reader
-		}
+		return true
+	})
+	if cur >= 0 {
+		r.readerMap.Delete(int64(cur))
 	}
-	if rc != nil && off-rc.cur <= utils.MB {
-		n, err := utils.CopyWithBufferN(io.Discard, rc.reader, off-rc.cur)
-		rc.cur += n
-		if err == io.EOF && rc.cur == off {
-			err = nil
-		}
-		if err == nil {
-			logrus.Debugf("getReaderAtOffset old_%d", off)
-			return rc, nil
-		}
-		rc.cur = -1
+	if off == int64(cur) {
+		// logrus.Debugf("getReaderAtOffset match_%d", off)
+		return rr, nil
 	}
-	logrus.Debugf("getReaderAtOffset new_%d", off)
 
-	// Range请求不能超过文件大小，有些云盘处理不了就会返回整个文件
-	reader, err := r.ss.RangeRead(http_range.Range{Start: off, Length: r.ss.GetSize() - off})
+	if rr != nil {
+		n, _ := utils.CopyWithBufferN(io.Discard, rr, off-cur)
+		cur += n
+		if cur == off {
+			// logrus.Debugf("getReaderAtOffset old_%d", off)
+			return rr, nil
+		}
+	}
+	// logrus.Debugf("getReaderAtOffset new_%d", off)
+
+	reader, err := r.ss.RangeRead(http_range.Range{Start: off, Length: -1})
 	if err != nil {
 		return nil, err
 	}
-	rc = &readerCur{reader: reader, cur: off}
-	r.readers = append(r.readers, rc)
-	return rc, nil
+	return reader, nil
 }
 
-func (r *RangeReadReadAtSeeker) ReadAt(p []byte, off int64) (int, error) {
-	if off == 0 && r.headCache != nil {
-		return r.headCache.read(p)
+func (r *RangeReadReadAtSeeker) ReadAt(p []byte, off int64) (n int, err error) {
+	if off < 0 || off >= r.ss.GetSize() {
+		return 0, io.EOF
 	}
-	rc, err := r.getReaderAtOffset(off)
+	if off == 0 && r.headCache != nil {
+		return r.headCache.head(p)
+	}
+	var rr io.Reader
+	rr, err = r.getReaderAtOffset(off)
 	if err != nil {
 		return 0, err
 	}
-	n, num := 0, 0
-	for num < len(p) {
-		n, err = rc.reader.Read(p[num:])
-		rc.cur += int64(n)
-		num += n
-		if err == nil {
-			continue
+	n, err = io.ReadFull(rr, p)
+	if n > 0 {
+		off += int64(n)
+		switch err {
+		case nil:
+			r.readerMap.Store(int64(off), rr)
+		case io.ErrUnexpectedEOF:
+			err = io.EOF
 		}
-		if err == io.EOF {
-			// io.EOF是reader读取完了
-			rc.cur = -1
-			// yeka/zip包 没有处理EOF，我们要兼容
-			// https://github.com/yeka/zip/blob/03d6312748a9d6e0bc0c9a7275385c09f06d9c14/reader.go#L433
-			if num == len(p) {
-				err = nil
-			}
-		}
-		break
 	}
-	return num, err
+	return n, err
 }
 
 func (r *RangeReadReadAtSeeker) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	case io.SeekStart:
 	case io.SeekCurrent:
-		if offset == 0 {
-			return r.masterOff, nil
-		}
 		offset += r.masterOff
 	case io.SeekEnd:
 		offset += r.ss.GetSize()
 	default:
-		return 0, errs.NotSupport
+		return 0, errors.New("Seek: invalid whence")
 	}
-	if offset < 0 {
-		return r.masterOff, errors.New("invalid seek: negative position")
-	}
-	if offset > r.ss.GetSize() {
-		offset = r.ss.GetSize()
+	if offset < 0 || offset > r.ss.GetSize() {
+		return 0, errors.New("Seek: invalid offset")
 	}
 	r.masterOff = offset
 	return offset, nil
 }
 
 func (r *RangeReadReadAtSeeker) Read(p []byte) (n int, err error) {
-	if r.masterOff == 0 && r.headCache != nil {
-		return r.headCache.read(p)
+	n, err = r.ReadAt(p, r.masterOff)
+	if n > 0 {
+		r.masterOff += int64(n)
 	}
-	rc, err := r.getReaderAtOffset(r.masterOff)
-	if err != nil {
-		return 0, err
-	}
-	n, err = rc.reader.Read(p)
-	rc.cur += int64(n)
-	r.masterOff += int64(n)
 	return n, err
 }

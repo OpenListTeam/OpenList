@@ -12,31 +12,40 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.Obj) error {
 	if link.MFile != nil {
-		attachHeader(w, file, link.Header)
+		attachHeader(w, file, link)
 		http.ServeContent(w, r, file.GetName(), file.ModTime(), link.MFile)
 		return nil
 	}
 
 	if link.Concurrency > 0 || link.PartSize > 0 {
-		attachHeader(w, file, link.Header)
-		rrf, _ := stream.GetRangeReaderFromLink(file.GetSize(), link)
+		attachHeader(w, file, link)
+		size := link.ContentLength
+		if size <= 0 {
+			size = file.GetSize()
+		}
+		rrf, _ := stream.GetRangeReaderFromLink(size, link)
 		if link.RangeReader == nil {
 			r = r.WithContext(context.WithValue(r.Context(), conf.RequestHeaderKey, r.Header))
 		}
-		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), file.GetSize(), &model.RangeReadCloser{
+		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), size, &model.RangeReadCloser{
 			RangeReader: rrf,
 		})
 	}
 
 	if link.RangeReader != nil {
-		attachHeader(w, file, link.Header)
-		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), file.GetSize(), &model.RangeReadCloser{
+		attachHeader(w, file, link)
+		size := link.ContentLength
+		if size <= 0 {
+			size = file.GetSize()
+		}
+		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), size, &model.RangeReadCloser{
 			RangeReader: link.RangeReader,
 		})
 	}
@@ -61,17 +70,23 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 	})
 	return err
 }
-func attachHeader(w http.ResponseWriter, file model.Obj, header http.Header) {
+func attachHeader(w http.ResponseWriter, file model.Obj, link *model.Link) {
 	fileName := file.GetName()
 	w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(fileName))
 	w.Header().Set("Content-Type", utils.GetMimeType(fileName))
-	w.Header().Set("Etag", GetEtag(file))
-	contentType := header.Get("Content-Type")
+	size := link.ContentLength
+	if size <= 0 {
+		size = file.GetSize()
+	}
+	w.Header().Set("Etag", GetEtag(file, size))
+	contentType := link.Header.Get("Content-Type")
 	if len(contentType) > 0 {
 		w.Header().Set("Content-Type", contentType)
+	} else {
+		w.Header().Set("Content-Type", utils.GetMimeType(fileName))
 	}
 }
-func GetEtag(file model.Obj) string {
+func GetEtag(file model.Obj, size int64) string {
 	hash := ""
 	for _, v := range file.GetHash().Export() {
 		if v > hash {
@@ -82,20 +97,23 @@ func GetEtag(file model.Obj) string {
 		return fmt.Sprintf(`"%s"`, hash)
 	}
 	// 参考nginx
-	return fmt.Sprintf(`"%x-%x"`, file.ModTime().Unix(), file.GetSize())
+	return fmt.Sprintf(`"%x-%x"`, file.ModTime().Unix(), size)
 }
 
-func ProxyRange(ctx context.Context, link *model.Link, size int64) {
-	if link.MFile != nil {
-		return
-	}
-	if link.RangeReader == nil && !strings.HasPrefix(link.URL, GetApiUrl(ctx)+"/") {
-		rrf, err := stream.GetRangeReaderFromLink(size, link)
-		if err != nil {
-			return
+func ProxyRange(ctx context.Context, link *model.Link, size int64) *model.Link {
+	if link.MFile == nil && link.RangeReader == nil && !strings.HasPrefix(link.URL, GetApiUrl(ctx)+"/") {
+		if link.ContentLength > 0 {
+			size = link.ContentLength
 		}
-		link.RangeReader = rrf
+		rrf, err := stream.GetRangeReaderFromLink(size, link)
+		if err == nil {
+			return &model.Link{
+				RangeReader:   rrf,
+				ContentLength: size,
+			}
+		}
 	}
+	return link
 }
 
 type InterceptResponseWriter struct {
@@ -122,4 +140,19 @@ func (ww *WrittenResponseWriter) Write(p []byte) (int, error) {
 
 func (ww *WrittenResponseWriter) IsWritten() bool {
 	return ww.written
+}
+
+func GenerateDownProxyURL(storage *model.Storage, reqPath string) string {
+	if storage.DownProxyURL == "" {
+		return ""
+	}
+	query := ""
+	if !storage.DisableProxySign {
+		query = "?sign=" + sign.Sign(reqPath)
+	}
+	return fmt.Sprintf("%s%s%s",
+		strings.Split(storage.DownProxyURL, "\n")[0],
+		utils.EncodePath(reqPath, true),
+		query,
+	)
 }

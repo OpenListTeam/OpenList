@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -72,7 +73,7 @@ func (d *Misskey) getFiles(dir model.Obj) ([]model.Obj, error) {
 	} else {
 		body = map[string]string{}
 	}
-	err := d.request("/files", "POST", setBody(body), &files)
+	err := d.request("/files", http.MethodPost, setBody(body), &files)
 	if err != nil {
 		return []model.Obj{}, err
 	}
@@ -89,7 +90,7 @@ func (d *Misskey) getFolders(dir model.Obj) ([]model.Obj, error) {
 	} else {
 		body = map[string]string{}
 	}
-	err := d.request("/folders", "POST", setBody(body), &folders)
+	err := d.request("/folders", http.MethodPost, setBody(body), &folders)
 	if err != nil {
 		return []model.Obj{}, err
 	}
@@ -106,7 +107,7 @@ func (d *Misskey) list(dir model.Obj) ([]model.Obj, error) {
 
 func (d *Misskey) link(file model.Obj) (*model.Link, error) {
 	var mFile MFile
-	err := d.request("/files/show", "POST", setBody(map[string]string{"fileId": file.GetID()}), &mFile)
+	err := d.request("/files/show", http.MethodPost, setBody(map[string]string{"fileId": file.GetID()}), &mFile)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +118,7 @@ func (d *Misskey) link(file model.Obj) (*model.Link, error) {
 
 func (d *Misskey) makeDir(parentDir model.Obj, dirName string) (model.Obj, error) {
 	var folder MFolder
-	err := d.request("/folders/create", "POST", setBody(map[string]interface{}{"parentId": handleFolderId(parentDir), "name": dirName}), &folder)
+	err := d.request("/folders/create", http.MethodPost, setBody(map[string]interface{}{"parentId": handleFolderId(parentDir), "name": dirName}), &folder)
 	if err != nil {
 		return nil, err
 	}
@@ -127,11 +128,11 @@ func (d *Misskey) makeDir(parentDir model.Obj, dirName string) (model.Obj, error
 func (d *Misskey) move(srcObj, dstDir model.Obj) (model.Obj, error) {
 	if srcObj.IsDir() {
 		var folder MFolder
-		err := d.request("/folders/update", "POST", setBody(map[string]interface{}{"folderId": srcObj.GetID(), "parentId": handleFolderId(dstDir)}), &folder)
+		err := d.request("/folders/update", http.MethodPost, setBody(map[string]interface{}{"folderId": srcObj.GetID(), "parentId": handleFolderId(dstDir)}), &folder)
 		return mFolder2Object(folder), err
 	} else {
 		var file MFile
-		err := d.request("/files/update", "POST", setBody(map[string]interface{}{"fileId": srcObj.GetID(), "folderId": handleFolderId(dstDir)}), &file)
+		err := d.request("/files/update", http.MethodPost, setBody(map[string]interface{}{"fileId": srcObj.GetID(), "folderId": handleFolderId(dstDir)}), &file)
 		return mFile2Object(file), err
 	}
 }
@@ -139,11 +140,11 @@ func (d *Misskey) move(srcObj, dstDir model.Obj) (model.Obj, error) {
 func (d *Misskey) rename(srcObj model.Obj, newName string) (model.Obj, error) {
 	if srcObj.IsDir() {
 		var folder MFolder
-		err := d.request("/folders/update", "POST", setBody(map[string]string{"folderId": srcObj.GetID(), "name": newName}), &folder)
+		err := d.request("/folders/update", http.MethodPost, setBody(map[string]string{"folderId": srcObj.GetID(), "name": newName}), &folder)
 		return mFolder2Object(folder), err
 	} else {
 		var file MFile
-		err := d.request("/files/update", "POST", setBody(map[string]string{"fileId": srcObj.GetID(), "name": newName}), &file)
+		err := d.request("/files/update", http.MethodPost, setBody(map[string]string{"fileId": srcObj.GetID(), "name": newName}), &file)
 		return mFile2Object(file), err
 	}
 }
@@ -171,7 +172,7 @@ func (d *Misskey) copy(srcObj, dstDir model.Obj) (model.Obj, error) {
 		if err != nil {
 			return nil, err
 		}
-		err = d.request("/files/upload-from-url", "POST", setBody(map[string]interface{}{"url": url.URL, "folderId": handleFolderId(dstDir)}), &file)
+		err = d.request("/files/upload-from-url", http.MethodPost, setBody(map[string]interface{}{"url": url.URL, "folderId": handleFolderId(dstDir)}), &file)
 		if err != nil {
 			return nil, err
 		}
@@ -181,10 +182,10 @@ func (d *Misskey) copy(srcObj, dstDir model.Obj) (model.Obj, error) {
 
 func (d *Misskey) remove(obj model.Obj) error {
 	if obj.IsDir() {
-		err := d.request("/folders/delete", "POST", setBody(map[string]string{"folderId": obj.GetID()}), nil)
+		err := d.request("/folders/delete", http.MethodPost, setBody(map[string]string{"folderId": obj.GetID()}), nil)
 		return err
 	} else {
-		err := d.request("/files/delete", "POST", setBody(map[string]string{"fileId": obj.GetID()}), nil)
+		err := d.request("/files/delete", http.MethodPost, setBody(map[string]string{"fileId": obj.GetID()}), nil)
 		return err
 	}
 }

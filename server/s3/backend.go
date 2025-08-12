@@ -171,7 +171,10 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		}
 	}()
 
-	size := file.GetSize()
+	size := link.ContentLength
+	if size <= 0 {
+		size = file.GetSize()
+	}
 	rnge, err := rangeRequest.Range(size)
 	if err != nil {
 		return nil, err

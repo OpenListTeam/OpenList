@@ -4,6 +4,8 @@ Copyright © 2022 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -24,10 +26,11 @@ var AdminCmd = &cobra.Command{
 		if err != nil {
 			utils.Log.Errorf("failed get admin user: %+v", err)
 		} else {
-			utils.Log.Infof("Admin user's username: %s", admin.Username)
-			utils.Log.Infof("The password can only be output at the first startup, and then stored as a hash value, which cannot be reversed")
-			utils.Log.Infof("You can reset the password with a random string by running [openlist admin random]")
-			utils.Log.Infof("You can also set a new password by running [openlist admin set NEW_PASSWORD]")
+			utils.Log.Infof("get admin user from CLI")
+			fmt.Println("Admin user's username:", admin.Username)
+			fmt.Println("The password can only be output at the first startup, and then stored as a hash value, which cannot be reversed")
+			fmt.Println("You can reset the password with a random string by running [openlist admin random]")
+			fmt.Println("You can also set a new password by running [openlist admin set NEW_PASSWORD]")
 		}
 	},
 }
@@ -36,6 +39,7 @@ var RandomPasswordCmd = &cobra.Command{
 	Use:   "random",
 	Short: "Reset admin user's password to a random string",
 	Run: func(cmd *cobra.Command, args []string) {
+		utils.Log.Infof("reset admin user's password to a random string from CLI")
 		newPwd := random.String(8)
 		setAdminPassword(newPwd)
 	},
@@ -44,12 +48,12 @@ var RandomPasswordCmd = &cobra.Command{
 var SetPasswordCmd = &cobra.Command{
 	Use:   "set",
 	Short: "Set admin user's password",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			utils.Log.Errorf("Please enter the new password")
-			return
+			return fmt.Errorf("Please enter the new password")
 		}
 		setAdminPassword(args[0])
+		return nil
 	},
 }
 
@@ -60,7 +64,8 @@ var ShowTokenCmd = &cobra.Command{
 		Init()
 		defer Release()
 		token := setting.GetStr(conf.Token)
-		utils.Log.Infof("Admin token: %s", token)
+		utils.Log.Infof("show admin token from CLI")
+		fmt.Println("Admin token:", token)
 	},
 }
 
@@ -77,9 +82,10 @@ func setAdminPassword(pwd string) {
 		utils.Log.Errorf("failed update admin user: %+v", err)
 		return
 	}
-	utils.Log.Infof("admin user has been updated:")
-	utils.Log.Infof("username: %s", admin.Username)
-	utils.Log.Infof("password: %s", pwd)
+	utils.Log.Infof("admin user has been update from CLI")
+	fmt.Println("admin user has been updated:")
+	fmt.Println("username:", admin.Username)
+	fmt.Println("password:", pwd)
 	DelAdminCacheOnline()
 }
 

@@ -18,8 +18,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cookie"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
 	jsoniter "github.com/json-iterator/go"
 )
@@ -235,13 +237,16 @@ func (d *Cloudreve) upLocal(ctx context.Context, stream model.FileStreamer, u Up
 }
 
 func (d *Cloudreve) upRemote(ctx context.Context, stream model.FileStreamer, u UploadInfo, up driver.UpdateProgress) error {
+	DEFAULT := int64(u.ChunkSize)
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT), &up)
+	if err != nil {
+		return err
+	}
+
 	uploadUrl := u.UploadURLs[0]
 	credential := u.Credential
 	var finish int64 = 0
 	var chunk int = 0
-	DEFAULT := int64(u.ChunkSize)
-	retryCount := 0
-	maxRetries := 3
 	for finish < stream.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -249,69 +254,67 @@ func (d *Cloudreve) upRemote(ctx context.Context, stream model.FileStreamer, u U
 		left := stream.GetSize() - finish
 		byteSize := min(left, DEFAULT)
 		utils.Log.Debugf("[Cloudreve-Remote] upload range: %d-%d/%d", finish, finish+byteSize-1, stream.GetSize())
-		byteData := make([]byte, byteSize)
-		n, err := io.ReadFull(stream, byteData)
-		utils.Log.Debug(err, n)
+		rd, err := ss.GetSectionReader(finish, byteSize)
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequest("POST", uploadUrl+"?chunk="+strconv.Itoa(chunk),
-			driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData)))
+		err = retry.Do(
+			func() error {
+				rd.Seek(0, io.SeekStart)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadUrl+"?chunk="+strconv.Itoa(chunk),
+					driver.NewLimitedUploadStream(ctx, rd))
+				if err != nil {
+					return err
+				}
+				req.ContentLength = byteSize
+				req.Header.Set("Authorization", fmt.Sprint(credential))
+				req.Header.Set("User-Agent", d.getUA())
+				res, err := base.HttpClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer res.Body.Close()
+				if res.StatusCode != 200 {
+					return fmt.Errorf("server error: %d", res.StatusCode)
+				}
+				body, err := io.ReadAll(res.Body)
+				if err != nil {
+					return err
+				}
+				var up Resp
+				err = json.Unmarshal(body, &up)
+				if err != nil {
+					return err
+				}
+				if up.Code != 0 {
+					return errors.New(up.Msg)
+				}
+				return nil
+			},
+			retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second),
+		)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}
-		req = req.WithContext(ctx)
-		req.ContentLength = byteSize
-		// req.Header.Set("Content-Length", strconv.Itoa(int(byteSize)))
-		req.Header.Set("Authorization", fmt.Sprint(credential))
-		req.Header.Set("User-Agent", d.getUA())
-		err = func() error {
-			res, err := base.HttpClient.Do(req)
-			if err != nil {
-				return err
-			}
-			defer res.Body.Close()
-			if res.StatusCode != 200 {
-				return errors.New(res.Status)
-			}
-			body, err := io.ReadAll(res.Body)
-			if err != nil {
-				return err
-			}
-			var up Resp
-			err = json.Unmarshal(body, &up)
-			if err != nil {
-				return err
-			}
-			if up.Code != 0 {
-				return errors.New(up.Msg)
-			}
-			return nil
-		}()
-		if err == nil {
-			retryCount = 0
-			finish += byteSize
-			up(float64(finish) * 100 / float64(stream.GetSize()))
-			chunk++
-		} else {
-			retryCount++
-			if retryCount > maxRetries {
-				return fmt.Errorf("upload failed after %d retries due to server errors, error: %s", maxRetries, err)
-			}
-			backoff := time.Duration(1<<retryCount) * time.Second
-			utils.Log.Warnf("[Cloudreve-Remote] server errors while uploading, retrying after %v...", backoff)
-			time.Sleep(backoff)
-		}
+		finish += byteSize
+		up(float64(finish) * 100 / float64(stream.GetSize()))
+		chunk++
 	}
 	return nil
 }
 
 func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u UploadInfo, up driver.UpdateProgress) error {
+	DEFAULT := int64(u.ChunkSize)
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT), &up)
+	if err != nil {
+		return err
+	}
+
 	uploadUrl := u.UploadURLs[0]
 	var finish int64 = 0
-	DEFAULT := int64(u.ChunkSize)
-	retryCount := 0
-	maxRetries := 3
 	for finish < stream.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -319,46 +322,45 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 		left := stream.GetSize() - finish
 		byteSize := min(left, DEFAULT)
 		utils.Log.Debugf("[Cloudreve-OneDrive] upload range: %d-%d/%d", finish, finish+byteSize-1, stream.GetSize())
-		byteData := make([]byte, byteSize)
-		n, err := io.ReadFull(stream, byteData)
-		utils.Log.Debug(err, n)
+		rd, err := ss.GetSectionReader(finish, byteSize)
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequest("PUT", uploadUrl, driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData)))
+		err = retry.Do(
+			func() error {
+				rd.Seek(0, io.SeekStart)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadUrl, driver.NewLimitedUploadStream(ctx, rd))
+				if err != nil {
+					return err
+				}
+				req.ContentLength = byteSize
+				req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
+				req.Header.Set("User-Agent", d.getUA())
+				res, err := base.HttpClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer res.Body.Close()
+				// https://learn.microsoft.com/zh-cn/onedrive/developer/rest-api/api/driveitem_createuploadsession
+				switch {
+				case res.StatusCode >= 500 && res.StatusCode <= 504:
+					return fmt.Errorf("server error: %d", res.StatusCode)
+				case res.StatusCode != 201 && res.StatusCode != 202 && res.StatusCode != 200:
+					data, _ := io.ReadAll(res.Body)
+					return errors.New(string(data))
+				default:
+					return nil
+				}
+			}, retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second),
+		)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}
-		req = req.WithContext(ctx)
-		req.ContentLength = byteSize
-		// req.Header.Set("Content-Length", strconv.Itoa(int(byteSize)))
-		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
-		req.Header.Set("User-Agent", d.getUA())
-		res, err := base.HttpClient.Do(req)
-		if err != nil {
-			return err
-		}
-		// https://learn.microsoft.com/zh-cn/onedrive/developer/rest-api/api/driveitem_createuploadsession
-		switch {
-		case res.StatusCode >= 500 && res.StatusCode <= 504:
-			retryCount++
-			if retryCount > maxRetries {
-				res.Body.Close()
-				return fmt.Errorf("upload failed after %d retries due to server errors, error %d", maxRetries, res.StatusCode)
-			}
-			backoff := time.Duration(1<<retryCount) * time.Second
-			utils.Log.Warnf("[Cloudreve-OneDrive] server errors %d while uploading, retrying after %v...", res.StatusCode, backoff)
-			time.Sleep(backoff)
-		case res.StatusCode != 201 && res.StatusCode != 202 && res.StatusCode != 200:
-			data, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			return errors.New(string(data))
-		default:
-			res.Body.Close()
-			retryCount = 0
-			finish += byteSize
-			up(float64(finish) * 100 / float64(stream.GetSize()))
-		}
+		finish += byteSize
+		up(float64(finish) * 100 / float64(stream.GetSize()))
 	}
 	// 上传成功发送回调请求
 	return d.request(http.MethodPost, "/callback/onedrive/finish/"+u.SessionID, func(req *resty.Request) {
@@ -367,12 +369,15 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 }
 
 func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u UploadInfo, up driver.UpdateProgress) error {
+	DEFAULT := int64(u.ChunkSize)
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(DEFAULT), &up)
+	if err != nil {
+		return err
+	}
+
 	var finish int64 = 0
 	var chunk int = 0
 	var etags []string
-	DEFAULT := int64(u.ChunkSize)
-	retryCount := 0
-	maxRetries := 3
 	for finish < stream.GetSize() {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -380,45 +385,47 @@ func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u Uploa
 		left := stream.GetSize() - finish
 		byteSize := min(left, DEFAULT)
 		utils.Log.Debugf("[Cloudreve-S3] upload range: %d-%d/%d", finish, finish+byteSize-1, stream.GetSize())
-		byteData := make([]byte, byteSize)
-		n, err := io.ReadFull(stream, byteData)
-		utils.Log.Debug(err, n)
+		rd, err := ss.GetSectionReader(finish, byteSize)
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequest("PUT", u.UploadURLs[chunk],
-			driver.NewLimitedUploadStream(ctx, bytes.NewBuffer(byteData)))
+		err = retry.Do(
+			func() error {
+				rd.Seek(0, io.SeekStart)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPut, u.UploadURLs[chunk],
+					driver.NewLimitedUploadStream(ctx, rd))
+				if err != nil {
+					return err
+				}
+				req.ContentLength = byteSize
+				req.Header.Set("User-Agent", d.getUA())
+				res, err := base.HttpClient.Do(req)
+				if err != nil {
+					return err
+				}
+				etag := res.Header.Get("ETag")
+				res.Body.Close()
+				switch {
+				case res.StatusCode != 200:
+					return fmt.Errorf("server error: %d", res.StatusCode)
+				case etag == "":
+					return errors.New("failed to get ETag from header")
+				default:
+					etags = append(etags, etag)
+					return nil
+				}
+			}, retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second),
+		)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}
-		req = req.WithContext(ctx)
-		req.ContentLength = byteSize
-		res, err := base.HttpClient.Do(req)
-		if err != nil {
-			return err
-		}
-		etag := res.Header.Get("ETag")
-		res.Body.Close()
-		switch {
-		case res.StatusCode != 200:
-			retryCount++
-			if retryCount > maxRetries {
-				return fmt.Errorf("upload failed after %d retries due to server errors, error %d", maxRetries, res.StatusCode)
-			}
-			backoff := time.Duration(1<<retryCount) * time.Second
-			utils.Log.Warnf("[Cloudreve-S3] server errors %d while uploading, retrying after %v...", res.StatusCode, backoff)
-			time.Sleep(backoff)
-		case etag == "":
-			return errors.New("failed to get ETag from header")
-		default:
-			retryCount = 0
-			etags = append(etags, etag)
-			finish += byteSize
-			up(float64(finish) * 100 / float64(stream.GetSize()))
-			chunk++
-		}
+		finish += byteSize
+		up(float64(finish) * 100 / float64(stream.GetSize()))
+		chunk++
 	}
-
 	// s3LikeFinishUpload
 	// https://github.com/cloudreve/frontend/blob/b485bf297974cbe4834d2e8e744ae7b7e5b2ad39/src/component/Uploader/core/api/index.ts#L204-L252
 	bodyBuilder := &strings.Builder{}
@@ -431,8 +438,8 @@ func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u Uploa
 		))
 	}
 	bodyBuilder.WriteString("</CompleteMultipartUpload>")
-	req, err := http.NewRequest(
-		"POST",
+	req, err := http.NewRequestWithContext(ctx,
+		http.MethodPost,
 		u.CompleteURL,
 		strings.NewReader(bodyBuilder.String()),
 	)

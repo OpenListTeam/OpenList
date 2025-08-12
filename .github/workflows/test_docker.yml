@@ -20,7 +20,7 @@ env:
   IMAGE_NAME_DOCKERHUB: openlist
   REGISTRY: ghcr.io
   ARTIFACT_NAME: 'binaries_docker_release'
-  RELEASE_PLATFORMS: 'linux/amd64,linux/arm64,linux/arm/v7,linux/386,linux/arm/v6,linux/s390x,linux/ppc64le,linux/riscv64'
+  RELEASE_PLATFORMS: 'linux/amd64,linux/arm64,linux/arm/v7,linux/386,linux/arm/v6,linux/ppc64le,linux/riscv64,linux/loong64' ### Temporarily disable Docker builds for linux/s390x architectures for unknown reasons.
   IMAGE_PUSH: ${{ github.event_name == 'push' }}
   IMAGE_TAGS_BETA: |
     type=ref,event=pr
@@ -55,6 +55,7 @@ jobs:
         run: bash build.sh beta docker-multiplatform
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -77,15 +78,19 @@ jobs:
         image: ["latest", "ffmpeg", "aria2", "aio"]
         include:
           - image: "latest"
+            base_image_tag: "base"
             build_arg: ""
             tag_favor: ""
           - image: "ffmpeg"
+            base_image_tag: "ffmpeg"
             build_arg: INSTALL_FFMPEG=true
             tag_favor: "suffix=-ffmpeg,onlatest=true"
           - image: "aria2"
+            base_image_tag: "aria2"
             build_arg: INSTALL_ARIA2=true
             tag_favor: "suffix=-aria2,onlatest=true"
           - image: "aio"
+            base_image_tag: "aio"
             build_arg: |
               INSTALL_FFMPEG=true
               INSTALL_ARIA2=true
@@ -137,7 +142,9 @@ jobs:
           context: .
           file: Dockerfile.ci
           push: ${{ env.IMAGE_PUSH == 'true' }}
-          build-args: ${{ matrix.build_arg }}
+          build-args: |
+            BASE_IMAGE_TAG=${{ matrix.base_image_tag }}
+            ${{ matrix.build_arg }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ env.RELEASE_PLATFORMS }}

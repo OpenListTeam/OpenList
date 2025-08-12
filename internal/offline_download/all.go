@@ -9,5 +9,6 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/internal/offline_download/qbit"
 	_ "github.com/OpenListTeam/OpenList/v4/internal/offline_download/thunder"
 	_ "github.com/OpenListTeam/OpenList/v4/internal/offline_download/thunder_browser"
+	_ "github.com/OpenListTeam/OpenList/v4/internal/offline_download/thunderx"
 	_ "github.com/OpenListTeam/OpenList/v4/internal/offline_download/transmission"
 )

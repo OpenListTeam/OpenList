@@ -179,7 +179,7 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 	}
 
 	// upload chunks
-	tempFile, err := stream.CacheFullInTempFile()
+	tempFile, err := stream.CacheFullAndWriter(&up, nil)
 	if err != nil {
 		return err
 	}

@@ -70,14 +70,6 @@ func (d *Pan123Share) List(ctx context.Context, dir model.Obj, args model.ListAr
 func (d *Pan123Share) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	// TODO return link of file, required
 	if f, ok := file.(File); ok {
-		//var resp DownResp
-		var headers map[string]string
-		if !utils.IsLocalIPAddr(args.IP) {
-			headers = map[string]string{
-				//"X-Real-IP":       "1.1.1.1",
-				"X-Forwarded-For": args.IP,
-			}
-		}
 		data := base.Json{
 			"shareKey":  d.ShareKey,
 			"SharePwd":  d.SharePwd,
@@ -87,25 +79,27 @@ func (d *Pan123Share) Link(ctx context.Context, file model.Obj, args model.LinkA
 			"size":      f.Size,
 		}
 		resp, err := d.request(DownloadInfo, http.MethodPost, func(req *resty.Request) {
-			req.SetBody(data).SetHeaders(headers)
+			req.SetBody(data)
 		}, nil)
 		if err != nil {
 			return nil, err
 		}
 		downloadUrl := utils.Json.Get(resp, "data", "DownloadURL").ToString()
-		u, err := url.Parse(downloadUrl)
+		ou, err := url.Parse(downloadUrl)
 		if err != nil {
 			return nil, err
 		}
-		nu := u.Query().Get("params")
+		u_ := ou.String()
+		nu := ou.Query().Get("params")
 		if nu != "" {
 			du, _ := base64.StdEncoding.DecodeString(nu)
-			u, err = url.Parse(string(du))
+			u, err := url.Parse(string(du))
 			if err != nil {
 				return nil, err
 			}
+			u_ = u.String()
 		}
-		u_ := u.String()
+
 		log.Debug("download url: ", u_)
 		res, err := base.NoRedirectClient.R().SetHeader("Referer", "https://www.123pan.com/").Get(u_)
 		if err != nil {
@@ -122,7 +116,7 @@ func (d *Pan123Share) Link(ctx context.Context, file model.Obj, args model.LinkA
 			link.URL = utils.Json.Get(res.Body(), "data", "redirect_url").ToString()
 		}
 		link.Header = http.Header{
-			"Referer": []string{"https://www.123pan.com/"},
+			"Referer": []string{fmt.Sprintf("%s://%s/", ou.Scheme, ou.Host)},
 		}
 		return &link, nil
 	}

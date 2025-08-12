@@ -43,7 +43,7 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if srcDir == dstDir {
 		err = fs.Rename(ctx, src, dstName)
 	} else {
-		err = fs.Move(ctx, src, dstDir)
+		_, err = fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}

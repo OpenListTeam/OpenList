@@ -19,7 +19,7 @@ body:
         - label: |
             I confirm my description is clear, polite, helps developers quickly locate the issue, and complies with community rules.
         - label: |
-            I have read the [OpenList documentation](https://docs.oplist.org).
+            I have read the [OpenList documentation](https://doc.oplist.org).
         - label: |
             I confirm there are no duplicate issues or discussions.
         - label: |

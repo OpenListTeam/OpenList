@@ -106,8 +106,9 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
 
 ## 文档
 
-- 📘 [文档与安装指南](https://docs.oplist.org)
-- 📚 [备用文档站点](https://docs.openlist.team)
+- 🌏 [国内站点](https://doc.oplist.org.cn)
+- 📘 [海外站点](https://doc.oplist.org)
+- 📚 [备用站点](https://doc.openlist.team)
 
 ## 演示
 

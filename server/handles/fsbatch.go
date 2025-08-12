@@ -124,7 +124,7 @@ func FsRecursiveMove(c *gin.Context) {
 	var count = 0
 	for i, fileName := range movingFileNames {
 		// move
-		err := fs.Move(c.Request.Context(), fileName, dstDir, len(movingFileNames) > i+1)
+		_, err := fs.Move(c.Request.Context(), fileName, dstDir, len(movingFileNames) > i+1)
 		if err != nil {
 			common.ErrorResp(c, err, 500)
 			return
@@ -172,6 +172,11 @@ func FsBatchRename(c *gin.Context) {
 	for _, renameObject := range req.RenameObjects {
 		if renameObject.SrcName == "" || renameObject.NewName == "" {
 			continue
+		}
+		err = checkRelativePath(renameObject.NewName)
+		if err != nil {
+			common.ErrorResp(c, err, 403)
+			return
 		}
 		filePath := fmt.Sprintf("%s/%s", reqPath, renameObject.SrcName)
 		if err := fs.Rename(c.Request.Context(), filePath, renameObject.NewName); err != nil {
@@ -228,10 +233,14 @@ func FsRegexRename(c *gin.Context) {
 	}
 
 	for _, file := range files {
-
 		if srcRegexp.MatchString(file.GetName()) {
-			filePath := fmt.Sprintf("%s/%s", reqPath, file.GetName())
 			newFileName := srcRegexp.ReplaceAllString(file.GetName(), req.NewNameRegex)
+			err := checkRelativePath(newFileName)
+			if err != nil {
+				common.ErrorResp(c, err, 403)
+				return
+			}
+			filePath := fmt.Sprintf("%s/%s", reqPath, file.GetName())
 			if err := fs.Rename(c.Request.Context(), filePath, newFileName); err != nil {
 				common.ErrorResp(c, err, 500)
 				return

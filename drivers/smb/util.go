@@ -28,8 +28,8 @@ func (d *SMB) getLastConnTime() time.Time {
 }
 
 func (d *SMB) initFS() error {
-	err, _, _ := singleflight.ErrorGroup.Do(fmt.Sprintf("SMB.initFS:%p", d), func() (error, error) {
-		return d._initFS(), nil
+	_, err, _ := singleflight.AnyGroup.Do(fmt.Sprintf("SMB.initFS:%p", d), func() (any, error) {
+		return nil, d._initFS()
 	})
 	return err
 }

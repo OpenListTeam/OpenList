@@ -16,7 +16,7 @@ var RootCmd = &cobra.Command{
 	Short: "A file list program that supports multiple storage.",
 	Long: `A file list program that supports multiple storage,
 built with love by OpenListTeam.
-Complete documentation is available at https://docs.openlist.team/`,
+Complete documentation is available at https://doc.oplist.org/`,
 }
 
 func Execute() {

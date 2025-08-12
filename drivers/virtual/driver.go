@@ -54,10 +54,6 @@ func (f DummyMFile) ReadAt(p []byte, off int64) (n int, err error) {
 	return f.Reader.Read(p)
 }
 
-func (f DummyMFile) Close() error {
-	return nil
-}
-
 func (DummyMFile) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }

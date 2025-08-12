@@ -2,12 +2,13 @@ package http
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
@@ -48,18 +49,12 @@ func (s SimpleHttp) Status(task *tool.DownloadTask) (*tool.Status, error) {
 }
 
 func (s SimpleHttp) Run(task *tool.DownloadTask) error {
-	u := task.Url
-	// parse url
-	_u, err := url.Parse(u)
-	if err != nil {
-		return err
-	}
 	streamPut := task.DeletePolicy == tool.UploadDownloadStream
 	method := http.MethodGet
 	if streamPut {
 		method = http.MethodHead
 	}
-	req, err := http.NewRequestWithContext(task.Ctx(), method, u, nil)
+	req, err := http.NewRequestWithContext(task.Ctx(), method, task.Url, nil)
 	if err != nil {
 		return err
 	}
@@ -74,14 +69,13 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("http status code %d", resp.StatusCode)
 	}
-	// If Path is empty, use Hostname; otherwise, filePath euqals TempDir which causes os.Create to fail
-	urlPath := _u.Path
-	if urlPath == "" {
-		urlPath = strings.ReplaceAll(_u.Host, ".", "_")
+	filename, err := parseFilenameFromContentDisposition(resp.Header.Get("Content-Disposition"))
+	if err != nil {
+		filename = path.Base(resp.Request.URL.Path)
 	}
-	filename := path.Base(urlPath)
-	if n, err := parseFilenameFromContentDisposition(resp.Header.Get("Content-Disposition")); err == nil {
-		filename = n
+	filename = strings.Trim(filename, "/")
+	if len(filename) == 0 {
+		filename = fmt.Sprintf("%s-%d-%x", strings.ReplaceAll(req.URL.Host, ".", "_"), time.Now().UnixMilli(), rand.Uint32())
 	}
 	fileSize := resp.ContentLength
 	if streamPut {

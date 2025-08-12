@@ -14,7 +14,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
-	"path/filepath"
+	stdpath "path"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +24,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/avast/retry-go"
@@ -353,7 +354,7 @@ func (d *Doubao) getUploadConfig(upConfig *UploadConfig, dataType string, file m
 				"ServiceId":     d.UploadToken.Alice[dataType].ServiceID,
 				"NeedFallback":  "true",
 				"FileSize":      strconv.FormatInt(file.GetSize(), 10),
-				"FileExtension": filepath.Ext(file.GetName()),
+				"FileExtension": stdpath.Ext(file.GetName()),
 				"s":             randomString(),
 			}
 		}
@@ -447,39 +448,65 @@ func (d *Doubao) uploadNode(uploadConfig *UploadConfig, dir model.Obj, file mode
 }
 
 // Upload 普通上传实现
-func (d *Doubao) Upload(config *UploadConfig, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, dataType string) (model.Obj, error) {
-	data, err := io.ReadAll(file)
+func (d *Doubao) Upload(ctx context.Context, config *UploadConfig, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, dataType string) (model.Obj, error) {
+	ss, err := stream.NewStreamSectionReader(file, int(file.GetSize()), &up)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := ss.GetSectionReader(0, file.GetSize())
 	if err != nil {
 		return nil, err
 	}
 
 	// 计算CRC32
 	crc32Hash := crc32.NewIEEE()
-	crc32Hash.Write(data)
+	w, err := utils.CopyWithBuffer(crc32Hash, reader)
+	if w != file.GetSize() {
+		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", file.GetSize(), w, err)
+	}
 	crc32Value := hex.EncodeToString(crc32Hash.Sum(nil))
 
 	// 构建请求路径
 	uploadNode := config.InnerUploadAddress.UploadNodes[0]
 	storeInfo := uploadNode.StoreInfos[0]
 	uploadUrl := fmt.Sprintf("https://%s/upload/v1/%s", uploadNode.UploadHost, storeInfo.StoreURI)
-
-	uploadResp := UploadResp{}
-
-	if _, err = d.uploadRequest(uploadUrl, http.MethodPost, storeInfo, func(req *resty.Request) {
-		req.SetHeaders(map[string]string{
-			"Content-Type":        "application/octet-stream",
-			"Content-Crc32":       crc32Value,
-			"Content-Length":      fmt.Sprintf("%d", len(data)),
-			"Content-Disposition": fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI)),
-		})
-
-		req.SetBody(data)
-	}, &uploadResp); err != nil {
+	rateLimitedRd := driver.NewLimitedUploadStream(ctx, reader)
+	err = d._retryOperation("Upload", func() error {
+		reader.Seek(0, io.SeekStart)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadUrl, rateLimitedRd)
+		if err != nil {
+			return err
+		}
+		req.Header = map[string][]string{
+			"Referer":             {BaseURL + "/"},
+			"Origin":              {BaseURL},
+			"User-Agent":          {UserAgent},
+			"X-Storage-U":         {d.UserId},
+			"Authorization":       {storeInfo.Auth},
+			"Content-Type":        {"application/octet-stream"},
+			"Content-Crc32":       {crc32Value},
+			"Content-Length":      {fmt.Sprintf("%d", file.GetSize())},
+			"Content-Disposition": {fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI))},
+		}
+		res, err := base.HttpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+		bytes, _ := io.ReadAll(res.Body)
+		resp := UploadResp{}
+		utils.Json.Unmarshal(bytes, &resp)
+		if resp.Code != 2000 {
+			return fmt.Errorf("upload part failed: %s", resp.Message)
+		} else if resp.Data.Crc32 != crc32Value {
+			return fmt.Errorf("upload part failed: crc32 mismatch, expected %s, got %s", crc32Value, resp.Data.Crc32)
+		}
+		return nil
+	})
+	ss.FreeSectionReader(reader)
+	if err != nil {
 		return nil, err
-	}
-
-	if uploadResp.Code != 2000 {
-		return nil, fmt.Errorf("upload failed: %s", uploadResp.Message)
 	}
 
 	uploadNodeResp, err := d.uploadNode(config, dstDir, file, dataType)
@@ -516,68 +543,107 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 	if config.InnerUploadAddress.AdvanceOption.SliceSize > 0 {
 		chunkSize = int64(config.InnerUploadAddress.AdvanceOption.SliceSize)
 	}
+	ss, err := stream.NewStreamSectionReader(file, int(chunkSize), &up)
+	if err != nil {
+		return nil, err
+	}
+
 	totalParts := (fileSize + chunkSize - 1) / chunkSize
 	// 创建分片信息组
 	parts := make([]UploadPart, totalParts)
-	// 缓存文件
-	tempFile, err := file.CacheFullInTempFile()
-	if err != nil {
-		return nil, fmt.Errorf("failed to cache file: %w", err)
-	}
+
 	up(10.0) // 更新进度
 	// 设置并行上传
-	threadG, uploadCtx := errgroup.NewGroupWithContext(ctx, d.uploadThread,
-		retry.Attempts(1),
+	thread := min(int(totalParts), d.uploadThread)
+	threadG, uploadCtx := errgroup.NewOrderedGroupWithContext(ctx, thread,
+		retry.Attempts(MaxRetryAttempts),
 		retry.Delay(time.Second),
-		retry.DelayType(retry.BackOffDelay))
+		retry.DelayType(retry.BackOffDelay),
+		retry.MaxJitter(200*time.Millisecond),
+	)
 
 	var partsMutex sync.Mutex
 	// 并行上传所有分片
-	for partIndex := int64(0); partIndex < totalParts; partIndex++ {
+	hash := crc32.NewIEEE()
+	for partIndex := range totalParts {
 		if utils.IsCanceled(uploadCtx) {
 			break
 		}
-		partIndex := partIndex
 		partNumber := partIndex + 1 // 分片编号从1开始
 
-		threadG.Go(func(ctx context.Context) error {
-			// 计算此分片的大小和偏移
-			offset := partIndex * chunkSize
-			size := chunkSize
-			if partIndex == totalParts-1 {
-				size = fileSize - offset
-			}
-
-			limitedReader := driver.NewLimitedUploadStream(ctx, io.NewSectionReader(tempFile, offset, size))
-			// 读取数据到内存
-			data, err := io.ReadAll(limitedReader)
-			if err != nil {
-				return fmt.Errorf("failed to read part %d: %w", partNumber, err)
-			}
-			// 计算CRC32
-			crc32Value := calculateCRC32(data)
-			// 使用_retryOperation上传分片
-			var uploadPart UploadPart
-			if err = d._retryOperation(fmt.Sprintf("Upload part %d", partNumber), func() error {
-				var err error
-				uploadPart, err = d.uploadPart(config, uploadUrl, uploadID, partNumber, data, crc32Value)
-				return err
-			}); err != nil {
-				return fmt.Errorf("part %d upload failed: %w", partNumber, err)
-			}
-			// 记录成功上传的分片
-			partsMutex.Lock()
-			parts[partIndex] = UploadPart{
-				PartNumber: strconv.FormatInt(partNumber, 10),
-				Etag:       uploadPart.Etag,
-				Crc32:      crc32Value,
-			}
-			partsMutex.Unlock()
-			// 更新进度
-			progress := 10.0 + 90.0*float64(threadG.Success()+1)/float64(totalParts)
-			up(math.Min(progress, 95.0))
-
-			return nil
+		// 计算此分片的大小和偏移
+		offset := partIndex * chunkSize
+		size := chunkSize
+		if partIndex == totalParts-1 {
+			size = fileSize - offset
+		}
+		var reader *stream.SectionReader
+		var rateLimitedRd io.Reader
+		crc32Value := ""
+		threadG.GoWithLifecycle(errgroup.Lifecycle{
+			Before: func(ctx context.Context) error {
+				if reader == nil {
+					var err error
+					reader, err = ss.GetSectionReader(offset, size)
+					if err != nil {
+						return err
+					}
+					hash.Reset()
+					w, err := utils.CopyWithBuffer(hash, reader)
+					if w != size {
+						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", size, w, err)
+					}
+					crc32Value = hex.EncodeToString(hash.Sum(nil))
+					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+				}
+				return nil
+			},
+			Do: func(ctx context.Context) error {
+				reader.Seek(0, io.SeekStart)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s?uploadid=%s&part_number=%d&phase=transfer", uploadUrl, uploadID, partNumber), rateLimitedRd)
+				if err != nil {
+					return err
+				}
+				req.Header = map[string][]string{
+					"Referer":             {BaseURL + "/"},
+					"Origin":              {BaseURL},
+					"User-Agent":          {UserAgent},
+					"X-Storage-U":         {d.UserId},
+					"Authorization":       {storeInfo.Auth},
+					"Content-Type":        {"application/octet-stream"},
+					"Content-Crc32":       {crc32Value},
+					"Content-Length":      {fmt.Sprintf("%d", size)},
+					"Content-Disposition": {fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI))},
+				}
+				res, err := base.HttpClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer res.Body.Close()
+				bytes, _ := io.ReadAll(res.Body)
+				uploadResp := UploadResp{}
+				utils.Json.Unmarshal(bytes, &uploadResp)
+				if uploadResp.Code != 2000 {
+					return fmt.Errorf("upload part failed: %s", uploadResp.Message)
+				} else if uploadResp.Data.Crc32 != crc32Value {
+					return fmt.Errorf("upload part failed: crc32 mismatch, expected %s, got %s", crc32Value, uploadResp.Data.Crc32)
+				}
+				// 记录成功上传的分片
+				partsMutex.Lock()
+				parts[partIndex] = UploadPart{
+					PartNumber: strconv.FormatInt(partNumber, 10),
+					Etag:       uploadResp.Data.Etag,
+					Crc32:      crc32Value,
+				}
+				partsMutex.Unlock()
+				// 更新进度
+				progress := 10.0 + 90.0*float64(threadG.Success()+1)/float64(totalParts)
+				up(math.Min(progress, 95.0))
+				return nil
+			},
+			After: func(err error) {
+				ss.FreeSectionReader(reader)
+			},
 		})
 	}
 
@@ -680,42 +746,6 @@ func (d *Doubao) initMultipartUpload(config *UploadConfig, uploadUrl string, sto
 	return uploadResp.Data.UploadId, nil
 }
 
-// 分片上传实现
-func (d *Doubao) uploadPart(config *UploadConfig, uploadUrl, uploadID string, partNumber int64, data []byte, crc32Value string) (resp UploadPart, err error) {
-	uploadResp := UploadResp{}
-	storeInfo := config.InnerUploadAddress.UploadNodes[0].StoreInfos[0]
-
-	_, err = d.uploadRequest(uploadUrl, http.MethodPost, storeInfo, func(req *resty.Request) {
-		req.SetHeaders(map[string]string{
-			"Content-Type":        "application/octet-stream",
-			"Content-Crc32":       crc32Value,
-			"Content-Length":      fmt.Sprintf("%d", len(data)),
-			"Content-Disposition": fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI)),
-		})
-
-		req.SetQueryParams(map[string]string{
-			"uploadid":    uploadID,
-			"part_number": strconv.FormatInt(partNumber, 10),
-			"phase":       "transfer",
-		})
-
-		req.SetBody(data)
-		req.SetContentLength(true)
-	}, &uploadResp)
-
-	if err != nil {
-		return resp, err
-	}
-
-	if uploadResp.Code != 2000 {
-		return resp, fmt.Errorf("upload part failed: %s", uploadResp.Message)
-	} else if uploadResp.Data.Crc32 != crc32Value {
-		return resp, fmt.Errorf("upload part failed: crc32 mismatch, expected %s, got %s", crc32Value, uploadResp.Data.Crc32)
-	}
-
-	return uploadResp.Data, nil
-}
-
 // 完成分片上传
 func (d *Doubao) completeMultipartUpload(config *UploadConfig, uploadUrl, uploadID string, parts []UploadPart) error {
 	uploadResp := UploadResp{}
@@ -782,13 +812,6 @@ func (d *Doubao) commitMultipartUpload(uploadConfig *UploadConfig) error {
 	}
 
 	return nil
-}
-
-// 计算CRC32
-func calculateCRC32(data []byte) string {
-	hash := crc32.NewIEEE()
-	hash.Write(data)
-	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // _retryOperation 操作重试

@@ -1,3 +1,3 @@
 package singleflight
 
-var ErrorGroup Group[error]
+var AnyGroup Group[any]

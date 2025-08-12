@@ -5,17 +5,19 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
-	"github.com/skip2/go-qrcode"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/skip2/go-qrcode"
+
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 
 	"github.com/go-resty/resty/v2"
@@ -311,11 +313,14 @@ func (y *Cloud189TV) RapidUpload(ctx context.Context, dstDir model.Obj, stream m
 
 // 旧版本上传，家庭云不支持覆盖
 func (y *Cloud189TV) OldUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool) (model.Obj, error) {
-	tempFile, err := file.CacheFullInTempFile()
-	if err != nil {
-		return nil, err
+	fileMd5 := file.GetHash().GetHash(utils.MD5)
+	var tempFile = file.GetFile()
+	var err error
+	if len(fileMd5) != utils.MD5.Width {
+		tempFile, fileMd5, err = stream.CacheFullAndHash(file, &up, utils.MD5)
+	} else if tempFile == nil {
+		tempFile, err = file.CacheFullAndWriter(&up, nil)
 	}
-	fileMd5, err := utils.HashFile(utils.MD5, tempFile)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +350,7 @@ func (y *Cloud189TV) OldUpload(ctx context.Context, dstDir model.Obj, file model
 			header["Edrive-UploadFileId"] = fmt.Sprint(status.UploadFileId)
 		}
 
-		_, err := y.put(ctx, status.FileUploadUrl, header, true, io.NopCloser(tempFile), isFamily)
+		_, err := y.put(ctx, status.FileUploadUrl, header, true, tempFile, isFamily)
 		if err, ok := err.(*RespErr); ok && err.Code != "InputStreamReadError" {
 			return nil, err
 		}

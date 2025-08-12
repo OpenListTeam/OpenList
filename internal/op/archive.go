@@ -371,16 +371,21 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return link.Link, link.Obj, nil
 	}
 
-	var forget utils.CloseFunc
+	var forget any
+	var linkM *extractLink
 	fn := func() (*extractLink, error) {
 		link, err := driverExtract(ctx, storage, path, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
+		if link.MFile != nil && forget != nil {
+			linkM = link
+			return nil, errLinkMFileCache
+		}
 		if link.Link.Expiration != nil {
 			extractCache.Set(key, link, cache.WithEx[*extractLink](*link.Link.Expiration))
 		}
-		link.Add(forget)
+		link.AddIfCloser(forget)
 		return link, nil
 	}
 
@@ -392,13 +397,13 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return link.Link, link.Obj, nil
 	}
 
-	forget = func() error {
+	forget = utils.CloseFunc(func() error {
 		if forget != nil {
 			forget = nil
 			linkG.Forget(key)
 		}
 		return nil
-	}
+	})
 	link, err, _ := extractG.Do(key, fn)
 	if err == nil && !link.AcquireReference() {
 		link, err, _ = extractG.Do(key, fn)
@@ -406,11 +411,18 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 			link.AcquireReference()
 		}
 	}
+	if err == errLinkMFileCache {
+		if linkM != nil {
+			return linkM.Link, linkM.Obj, nil
+		}
+		forget = nil
+		link, err = fn()
+	}
 
 	if err != nil {
 		return nil, nil, err
 	}
-	return link.Link, link.Obj, err
+	return link.Link, link.Obj, nil
 }
 
 func driverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*extractLink, error) {
@@ -489,18 +501,18 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		var newObjs []model.Obj
 		newObjs, err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
 		if err == nil {
-			if newObjs != nil && len(newObjs) > 0 {
+			if len(newObjs) > 0 {
 				for _, newObj := range newObjs {
 					addCacheObj(storage, dstDirPath, model.WrapObjName(newObj))
 				}
 			} else if !utils.IsBool(lazyCache...) {
-				ClearCache(storage, dstDirPath)
+				DeleteCache(storage, dstDirPath)
 			}
 		}
 	case driver.ArchiveDecompress:
 		err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
 		if err == nil && !utils.IsBool(lazyCache...) {
-			ClearCache(storage, dstDirPath)
+			DeleteCache(storage, dstDirPath)
 		}
 	default:
 		return errs.NotImplement

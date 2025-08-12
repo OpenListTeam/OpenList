@@ -19,11 +19,20 @@ type Group struct {
 
 	wg  sync.WaitGroup
 	sem chan token
+
+	startChan chan token
 }
 
 func NewGroupWithContext(ctx context.Context, limit int, retryOpts ...retry.Option) (*Group, context.Context) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	return (&Group{cancel: cancel, ctx: ctx, opts: append(retryOpts, retry.Context(ctx))}).SetLimit(limit), ctx
+}
+
+// OrderedGroup
+func NewOrderedGroupWithContext(ctx context.Context, limit int, retryOpts ...retry.Option) (*Group, context.Context) {
+	group, ctx := NewGroupWithContext(ctx, limit, retryOpts...)
+	group.startChan = make(chan token, 1)
+	return group, ctx
 }
 
 func (g *Group) done() {
@@ -39,18 +48,63 @@ func (g *Group) Wait() error {
 	return context.Cause(g.ctx)
 }
 
-func (g *Group) Go(f func(ctx context.Context) error) {
+func (g *Group) Go(do func(ctx context.Context) error) {
+	g.GoWithLifecycle(Lifecycle{Do: do})
+}
+
+type Lifecycle struct {
+	// Before在OrderedGroup是线程安全的。
+	// 只会被调用一次
+	Before func(ctx context.Context) error
+	// 如果Before返回err就不调用Do
+	Do func(ctx context.Context) error
+	// 最后调用一次After
+	After func(err error)
+}
+
+func (g *Group) GoWithLifecycle(lifecycle Lifecycle) {
+	if g.startChan != nil {
+		select {
+		case <-g.ctx.Done():
+			return
+		case g.startChan <- token{}:
+		}
+	}
+
 	if g.sem != nil {
-		g.sem <- token{}
+		select {
+		case <-g.ctx.Done():
+			return
+		case g.sem <- token{}:
+		}
 	}
 
 	g.wg.Add(1)
 	go func() {
 		defer g.done()
-		if err := retry.Do(func() error { return f(g.ctx) }, g.opts...); err != nil {
-			g.cancel(err)
+		var err error
+		if lifecycle.Before != nil {
+			err = lifecycle.Before(g.ctx)
+		}
+		if err == nil {
+			if g.startChan != nil {
+				<-g.startChan
+			}
+			err = retry.Do(func() error { return lifecycle.Do(g.ctx) }, g.opts...)
+		}
+		if lifecycle.After != nil {
+			lifecycle.After(err)
+		}
+		if err != nil {
+			select {
+			case <-g.ctx.Done():
+				return
+			default:
+				g.cancel(err)
+			}
 		}
 	}()
+
 }
 
 func (g *Group) TryGo(f func(ctx context.Context) error) bool {

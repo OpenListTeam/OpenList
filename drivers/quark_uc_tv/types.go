@@ -92,7 +92,32 @@ type FilesData struct {
 	} `json:"data"`
 }
 
-type FileLink struct {
+type StreamingFileLink struct {
+	CommonRsp
+	Data struct {
+		DefaultResolution string `json:"default_resolution"`
+		LastPlayTime      int    `json:"last_play_time"`
+		VideoInfo         []struct {
+			Resolution  string  `json:"resolution"`
+			Accessable  int     `json:"accessable"`
+			TransStatus string  `json:"trans_status"`
+			Duration    int     `json:"duration,omitempty"`
+			Size        int64   `json:"size,omitempty"`
+			Format      string  `json:"format,omitempty"`
+			Width       int     `json:"width,omitempty"`
+			Height      int     `json:"height,omitempty"`
+			URL         string  `json:"url,omitempty"`
+			Bitrate     float64 `json:"bitrate,omitempty"`
+			DolbyVision struct {
+				Profile int `json:"profile"`
+				Level   int `json:"level"`
+			} `json:"dolby_vision,omitempty"`
+		} `json:"video_info"`
+		AudioInfo []interface{} `json:"audio_info"`
+	} `json:"data"`
+}
+
+type DownloadFileLink struct {
 	CommonRsp
 	Data struct {
 		Fid         string `json:"fid"`

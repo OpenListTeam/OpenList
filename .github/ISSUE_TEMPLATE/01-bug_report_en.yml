@@ -25,11 +25,11 @@ body:
         - label: |
             I confirm my description is clear, polite, helps developers quickly locate the issue, and complies with community rules.
         - label: |
-            I have read the [OpenList documentation](https://docs.oplist.org).
+            I have read the [OpenList documentation](https://doc.oplist.org).
         - label: |
             I confirm there are no duplicate issues or discussions.
         - label: |
-            I confirm this is an `OpenList` issue, not caused by other reasons (such as [network](https://docs.oplist.org/faq/howto.html#tls-handshake-timeout-read-connection-reset-by-peer-dns-lookup-failed-connect-connection-refused-client-timeout-exceeded-while-awaiting-headers-no-such-host), dependencies, or operation).
+            I confirm this is an `OpenList` issue, not caused by other reasons (such as [network](https://doc.oplist.org/faq/howto#tls-handshake-timeout-read-connection-reset-by-peer-dns-lookup-failed-connect-connection-refused-client-timeout-exceeded-while-awaiting-headers-no-such-host-1), dependencies, or operation).
         - label: |
             I believe this issue must be handled by `OpenList` and not by a third party.
         - label: |
@@ -72,7 +72,7 @@ body:
     attributes:
       label: Logs (optional)
       description: |
-        Please copy and paste any relevant log output or screenshots. (You may mask sensitive fields)
+        Please copy and paste any relevant log output or screenshots. (You may mask sensitive fields) [Guide](https://doc.oplist.org/faq/howto#how-to-quickly-locate-bugs)
   - type: textarea
     id: reproduction
     attributes:

@@ -20,6 +20,7 @@ type Addition struct {
 var config = driver.Config{
 	Name:        "Cloudreve",
 	DefaultRoot: "/",
+	LocalSort:   true,
 }
 
 func init() {

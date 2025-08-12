@@ -19,7 +19,7 @@ body:
         - label: |
             我确认我的描述清晰，语法礼貌，能帮助开发者快速定位问题，并符合社区规则。
         - label: |
-            我已确认阅读了[OpenList文档](https://docs.oplist.org)。
+            我已确认阅读了[OpenList文档](https://doc.oplist.org)。
         - label: |
             我已确认没有重复的问题或讨论。
         - label: |

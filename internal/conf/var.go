@@ -6,11 +6,11 @@ import (
 )
 
 var (
-	BuiltAt    string
-	GitAuthor  string
-	GitCommit  string
+	BuiltAt    string = "unknown"
+	GitAuthor  string = "unknown"
+	GitCommit  string = "unknown"
 	Version    string = "dev"
-	WebVersion string
+	WebVersion string = "rolling"
 )
 
 var (
@@ -25,6 +25,7 @@ var PrivacyReg []*regexp.Regexp
 var (
 	// StoragesLoaded loaded success if empty
 	StoragesLoaded = false
+	MaxBufferLimit = 16 * 1024 * 1024
 )
 var (
 	RawIndexHtml string

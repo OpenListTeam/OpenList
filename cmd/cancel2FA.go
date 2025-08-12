@@ -4,6 +4,8 @@ Copyright © 2022 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/spf13/cobra"
@@ -24,7 +26,8 @@ var Cancel2FACmd = &cobra.Command{
 			if err != nil {
 				utils.Log.Errorf("failed to cancel 2FA: %+v", err)
 			} else {
-				utils.Log.Info("2FA canceled")
+				utils.Log.Infof("2FA is canceled from CLI")
+				fmt.Println("2FA canceled")
 				DelAdminCacheOnline()
 			}
 		}

@@ -106,8 +106,9 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 
 ## ドキュメント
 
-- 📘 [ドキュメント・インストールガイド](https://docs.oplist.org)
-- 📚 [バックアップドキュメントサイト](https://docs.openlist.team)
+- 📘 [グローバルサイト](https://doc.oplist.org)
+- 📚 [バックアップサイト](https://doc.openlist.team)
+- 🌏 [CNサイト](https://doc.oplist.org.cn)
 
 ## デモ
 

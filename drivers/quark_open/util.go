@@ -8,13 +8,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
-	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/google/uuid"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -244,11 +245,8 @@ func (d *QuarkOpen) generateProofCode(file model.FileStreamer, proofSeed string,
 	// 读取数据
 	buf := make([]byte, length)
 	n, err := io.ReadFull(reader, buf)
-	if errors.Is(err, io.ErrUnexpectedEOF) {
-		return "", fmt.Errorf("can't read data, expected=%d, got=%d", length, n)
-	}
-	if err != nil {
-		return "", fmt.Errorf("failed to read data: %w", err)
+	if n != int(length) {
+		return "", fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
 	}
 
 	// Base64编码

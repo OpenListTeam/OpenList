@@ -149,7 +149,12 @@ func (d *QuarkOrUC) getTranscodingLink(file model.Obj) (*model.Link, error) {
 		return nil, err
 	}
 
-	return &model.Link{URL: resp.Data.VideoList[0].VideoInfo.URL}, nil
+	return &model.Link{
+		URL:           resp.Data.VideoList[0].VideoInfo.URL,
+		ContentLength: resp.Data.VideoList[0].VideoInfo.Size,
+		Concurrency:   3,
+		PartSize:      10 * utils.MB,
+	}, nil
 }
 
 func (d *QuarkOrUC) upPre(file model.FileStreamer, parentId string) (UpPreResp, error) {

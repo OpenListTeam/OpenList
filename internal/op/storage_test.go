@@ -19,7 +19,7 @@ func init() {
 	if err != nil {
 		panic("failed to connect database")
 	}
-	conf.Conf = conf.DefaultConfig()
+	conf.Conf = conf.DefaultConfig("data")
 	db.Init(dB)
 }
 

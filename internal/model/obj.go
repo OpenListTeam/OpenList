@@ -2,7 +2,6 @@ package model
 
 import (
 	"io"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -40,16 +39,17 @@ type FileStreamer interface {
 	utils.ClosersIF
 	Obj
 	GetMimetype() string
-	//SetReader(io.Reader)
 	NeedStore() bool
 	IsForceStreamUpload() bool
 	GetExist() Obj
 	SetExist(Obj)
-	//for a non-seekable Stream, RangeRead supports peeking some data, and CacheFullInTempFile still works
+	// for a non-seekable Stream, RangeRead supports peeking some data, and CacheFullAndWriter still works
 	RangeRead(http_range.Range) (io.Reader, error)
-	//for a non-seekable Stream, if Read is called, this function won't work
-	CacheFullInTempFile() (File, error)
-	SetTmpFile(r *os.File)
+	// for a non-seekable Stream, if Read is called, this function won't work.
+	// caches the full Stream and writes it to writer (if provided, even if the stream is already cached).
+	CacheFullAndWriter(up *UpdateProgress, writer io.Writer) (File, error)
+	SetTmpFile(file File)
+	// if the Stream is not a File and is not cached, returns nil.
 	GetFile() File
 }
 

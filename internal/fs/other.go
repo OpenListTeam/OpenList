@@ -3,9 +3,10 @@ package fs
 import (
 	"context"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/pkg/errors"
 )
 
@@ -15,21 +16,6 @@ func makeDir(ctx context.Context, path string, lazyCache ...bool) error {
 		return errors.WithMessage(err, "failed get storage")
 	}
 	return op.MakeDir(ctx, storage, actualPath, lazyCache...)
-}
-
-func move(ctx context.Context, srcPath, dstDirPath string, lazyCache ...bool) error {
-	srcStorage, srcActualPath, err := op.GetStorageAndActualPath(srcPath)
-	if err != nil {
-		return errors.WithMessage(err, "failed get src storage")
-	}
-	dstStorage, dstDirActualPath, err := op.GetStorageAndActualPath(dstDirPath)
-	if err != nil {
-		return errors.WithMessage(err, "failed get dst storage")
-	}
-	if srcStorage.GetStorage() != dstStorage.GetStorage() {
-		return errors.WithStack(errs.MoveBetweenTwoStorages)
-	}
-	return op.Move(ctx, srcStorage, srcActualPath, dstDirActualPath, lazyCache...)
 }
 
 func rename(ctx context.Context, srcPath, dstName string, lazyCache ...bool) error {
@@ -55,4 +41,19 @@ func other(ctx context.Context, args model.FsOtherArgs) (interface{}, error) {
 	}
 	args.Path = actualPath
 	return op.Other(ctx, storage, args)
+}
+
+type TaskData struct {
+	task.TaskExtension
+	Status        string        `json:"-"` //don't save status to save space
+	SrcActualPath string        `json:"src_path"`
+	DstActualPath string        `json:"dst_path"`
+	SrcStorage    driver.Driver `json:"-"`
+	DstStorage    driver.Driver `json:"-"`
+	SrcStorageMp  string        `json:"src_storage_mp"`
+	DstStorageMp  string        `json:"dst_storage_mp"`
+}
+
+func (t *TaskData) GetStatus() string {
+	return t.Status
 }

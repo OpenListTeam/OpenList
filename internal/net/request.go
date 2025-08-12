@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 
@@ -22,7 +23,7 @@ import (
 
 // DefaultDownloadPartSize is the default range of bytes to get at a time when
 // using Download().
-const DefaultDownloadPartSize = utils.MB * 10
+const DefaultDownloadPartSize = utils.MB * 8
 
 // DefaultDownloadConcurrency is the default number of goroutines to spin up
 // when using Download().
@@ -83,6 +84,9 @@ func (d Downloader) Download(ctx context.Context, p *HttpRequestParams) (readClo
 	}
 	if impl.cfg.PartSize == 0 {
 		impl.cfg.PartSize = DefaultDownloadPartSize
+	}
+	if conf.MaxBufferLimit > 0 && impl.cfg.PartSize > conf.MaxBufferLimit {
+		impl.cfg.PartSize = conf.MaxBufferLimit
 	}
 	if impl.cfg.HttpClient == nil {
 		impl.cfg.HttpClient = DefaultHttpRequestFunc
@@ -159,17 +163,13 @@ func (d *downloader) download() (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	maxPart := int(d.params.Range.Length / int64(d.cfg.PartSize))
-	if d.params.Range.Length%int64(d.cfg.PartSize) > 0 {
-		maxPart++
+	maxPart := 1
+	if d.params.Range.Length > int64(d.cfg.PartSize) {
+		maxPart = int((d.params.Range.Length + int64(d.cfg.PartSize) - 1) / int64(d.cfg.PartSize))
 	}
 	if maxPart < d.cfg.Concurrency {
 		d.cfg.Concurrency = maxPart
 	}
-	if d.params.Range.Length == 0 {
-		d.cfg.Concurrency = 1
-	}
-
 	log.Debugf("cfgConcurrency:%d", d.cfg.Concurrency)
 
 	if maxPart == 1 {

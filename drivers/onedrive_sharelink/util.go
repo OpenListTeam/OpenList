@@ -1,6 +1,7 @@
 package onedrive_sharelink
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -131,7 +132,7 @@ func getAttrValue(n *html.Node, key string) string {
 }
 
 // getHeaders constructs and returns the necessary HTTP headers for accessing the OneDrive share link
-func (d *OnedriveSharelink) getHeaders() (http.Header, error) {
+func (d *OnedriveSharelink) getHeaders(ctx context.Context) (http.Header, error) {
 	header := http.Header{}
 	header.Set("User-Agent", base.UserAgent)
 	header.Set("accept-language", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
@@ -142,7 +143,7 @@ func (d *OnedriveSharelink) getHeaders() (http.Header, error) {
 	if d.ShareLinkPassword == "" {
 		// Create a no-redirect client
 		clientNoDirect := NewNoRedirectCLient()
-		req, err := http.NewRequest("GET", d.ShareLinkURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.ShareLinkURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -180,9 +181,9 @@ func (d *OnedriveSharelink) getHeaders() (http.Header, error) {
 }
 
 // getFiles retrieves the files from the OneDrive share link at the specified path
-func (d *OnedriveSharelink) getFiles(path string) ([]Item, error) {
+func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, error) {
 	clientNoDirect := NewNoRedirectCLient()
-	req, err := http.NewRequest("GET", d.ShareLinkURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.ShareLinkURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -221,11 +222,11 @@ func (d *OnedriveSharelink) getFiles(path string) ([]Item, error) {
 		// Get redirectUrl
 		answer, err := clientNoDirect.Do(req)
 		if err != nil {
-			d.Headers, err = d.getHeaders()
+			d.Headers, err = d.getHeaders(ctx)
 			if err != nil {
 				return nil, err
 			}
-			return d.getFiles(path)
+			return d.getFiles(ctx, path)
 		}
 		defer answer.Body.Close()
 		re := regexp.MustCompile(`templateUrl":"(.*?)"`)
@@ -290,7 +291,7 @@ func (d *OnedriveSharelink) getFiles(path string) ([]Item, error) {
 
 	client := &http.Client{}
 	postUrl := strings.Join(redirectSplitURL[:len(redirectSplitURL)-3], "/") + "/_api/v2.1/graphql"
-	req, err = http.NewRequest("POST", postUrl, strings.NewReader(graphqlVar))
+	req, err = http.NewRequest(http.MethodPost, postUrl, strings.NewReader(graphqlVar))
 	if err != nil {
 		return nil, err
 	}
@@ -298,11 +299,11 @@ func (d *OnedriveSharelink) getFiles(path string) ([]Item, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		d.Headers, err = d.getHeaders()
+		d.Headers, err = d.getHeaders(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return d.getFiles(path)
+		return d.getFiles(ctx, path)
 	}
 	defer resp.Body.Close()
 	var graphqlReq GraphQLRequest
@@ -323,31 +324,31 @@ func (d *OnedriveSharelink) getFiles(path string) ([]Item, error) {
 
 		graphqlReqNEW := GraphQLNEWRequest{}
 		postUrl = strings.Join(redirectSplitURL[:len(redirectSplitURL)-3], "/") + "/_api/web/GetListUsingPath(DecodedUrl=@a1)/RenderListDataAsStream" + nextHref
-		req, _ = http.NewRequest("POST", postUrl, strings.NewReader(renderListDataAsStreamVar))
+		req, _ = http.NewRequest(http.MethodPost, postUrl, strings.NewReader(renderListDataAsStreamVar))
 		req.Header = tempHeader
 
 		resp, err := client.Do(req)
 		if err != nil {
-			d.Headers, err = d.getHeaders()
+			d.Headers, err = d.getHeaders(ctx)
 			if err != nil {
 				return nil, err
 			}
-			return d.getFiles(path)
+			return d.getFiles(ctx, path)
 		}
 		defer resp.Body.Close()
 		json.NewDecoder(resp.Body).Decode(&graphqlReqNEW)
 		for graphqlReqNEW.ListData.NextHref != "" {
 			graphqlReqNEW = GraphQLNEWRequest{}
 			postUrl = strings.Join(redirectSplitURL[:len(redirectSplitURL)-3], "/") + "/_api/web/GetListUsingPath(DecodedUrl=@a1)/RenderListDataAsStream" + nextHref
-			req, _ = http.NewRequest("POST", postUrl, strings.NewReader(renderListDataAsStreamVar))
+			req, _ = http.NewRequest(http.MethodPost, postUrl, strings.NewReader(renderListDataAsStreamVar))
 			req.Header = tempHeader
 			resp, err := client.Do(req)
 			if err != nil {
-				d.Headers, err = d.getHeaders()
+				d.Headers, err = d.getHeaders(ctx)
 				if err != nil {
 					return nil, err
 				}
-				return d.getFiles(path)
+				return d.getFiles(ctx, path)
 			}
 			defer resp.Body.Close()
 			json.NewDecoder(resp.Body).Decode(&graphqlReqNEW)

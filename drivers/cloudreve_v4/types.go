@@ -47,7 +47,13 @@ type BasicConfigResp struct {
 
 type SiteLoginConfigResp struct {
 	LoginCaptcha bool `json:"login_captcha"`
-	Authn        bool `json:"authn"`
+	// RegCaptcha bool `json:"reg_captcha"`
+	// ForgetCaptcha bool `json:"forget_captcha"`
+	// RegisterEnabled bool `json:"register_enabled"`
+	// TosURL string `json:"tos_url"`
+	// PrivacyPolicyURL string `json:"privacy_policy_url"`
+	// SsoDisplayName string `json:"sso_display_name"`
+	// OidcDisplayName string `json:"oidc_display_name"`
 }
 
 type PrepareLoginResp struct {

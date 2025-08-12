@@ -2,7 +2,10 @@ package tool
 
 import (
 	"context"
+	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
+
 	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 
 	"net/url"
 	stdpath "path"
@@ -11,7 +14,7 @@ import (
 	_115 "github.com/OpenListTeam/OpenList/v4/drivers/115"
 	"github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder"
-	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
+	"github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -120,12 +123,19 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 		default:
 			tempDir = filepath.Join(setting.GetStr(conf.ThunderBrowserTempDir), uid)
 		}
+	case "ThunderX":
+		if _, ok := storage.(*thunderx.ThunderX); ok {
+			tempDir = args.DstDirPath
+		} else {
+			tempDir = filepath.Join(setting.GetStr(conf.ThunderXTempDir), uid)
+		}
 	}
 
 	taskCreator, _ := ctx.Value(conf.UserKey).(*model.User) // taskCreator is nil when convert failed
 	t := &DownloadTask{
 		TaskExtension: task.TaskExtension{
 			Creator: taskCreator,
+			ApiUrl:  common.GetApiUrl(ctx),
 		},
 		Url:          args.URL,
 		DstDirPath:   args.DstDirPath,

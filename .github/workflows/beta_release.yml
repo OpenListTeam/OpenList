@@ -61,7 +61,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: "!(*musl*|*windows-arm64*|*android*|*freebsd*)" # xgo
+          - target: "!(*musl*|*windows-arm64*|*windows7-*|*android*|*freebsd*)" # xgo and loongarch
             hash: "md5"
           - target: "linux-!(arm*)-musl*" #musl-not-arm
             hash: "md5-linux-musl"
@@ -69,6 +69,8 @@ jobs:
             hash: "md5-linux-musl-arm"
           - target: "windows-arm64" #win-arm64
             hash: "md5-windows-arm64"
+          - target: "windows7-*" #win7
+            hash: "md5-windows7"
           - target: "android-*" #android
             hash: "md5-android"
           - target: "freebsd-*" #freebsd
@@ -85,27 +87,29 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.24.5"
 
       - name: Setup web
         run: bash build.sh dev web
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Build
-        uses: OpenListTeam/cgo-actions@v1.1.2
+        uses: OpenListTeam/cgo-actions@v1.2.2
         with:
           targets: ${{ matrix.target }}
           musl-target-format: $os-$musl-$arch
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           out-dir: build
           output: openlist-$target$ext
           musl-base-url: "https://github.com/OpenListTeam/musl-compilers/releases/latest/download/"
           x-flags: |
             github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at
-            github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=OpenList
+            github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>
             github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
             github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
-            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=dev
+            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
 
       - name: Compress
         run: |

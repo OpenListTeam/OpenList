@@ -25,11 +25,11 @@ body:
         - label: |
             我确认我的描述清晰，语法礼貌，能帮助开发者快速定位问题，并符合社区规则。
         - label: |
-            我已确认阅读了[OpenList文档](https://docs.oplist.org)。
+            我已确认阅读了[OpenList文档](https://doc.oplist.org)。
         - label: |
             我已确认没有重复的问题或讨论。
         - label: |
-            我已确认是`OpenList`的问题，而不是其他原因（例如 [网络](https://docs.oplist.org/zh/faq/howto.html#tls-handshake-timeout-read-connection-reset-by-peer-dns-lookup-failed-connect-connection-refused-client-timeout-exceeded-while-awaiting-headers-no-such-host) ，`依赖`或`操作`）。
+            我已确认是`OpenList`的问题，而不是其他原因（例如 [网络](https://doc.oplist.org/faq/howto#tls-handshake-timeout-read-connection-reset-by-peer-dns-lookup-failed-connect-connection-refused-client-timeout-exceeded-while-awaiting-headers-no-such-host-1) ，`依赖`或`操作`）。
         - label: |
             我认为此问题必须由`OpenList`处理，而非第三方。
         - label: |
@@ -72,7 +72,7 @@ body:
     attributes:
       label: 日志（可选）
       description: |
-        请复制粘贴错误日志，或者截图。(可隐藏隐私字段)
+        请复制粘贴错误日志，或者截图。(可隐藏隐私字段) [查看方法](https://doc.oplist.org/faq/howto#%E5%A6%82%E4%BD%95%E5%BF%AB%E9%80%9F%E5%AE%9A%E4%BD%8Dbug)
   - type: textarea
     id: reproduction
     attributes:

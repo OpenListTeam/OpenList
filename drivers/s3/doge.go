@@ -38,7 +38,7 @@ func getCredentials(AccessKey, SecretKey string) (rst Credentials, err error) {
 	sign := hex.EncodeToString(hmacObj.Sum(nil))
 	Authorization := "TOKEN " + AccessKey + ":" + sign
 
-	req, err := http.NewRequest("POST", "https://api.dogecloud.com"+apiPath, strings.NewReader(string(reqBody)))
+	req, err := http.NewRequest(http.MethodPost, "https://api.dogecloud.com"+apiPath, strings.NewReader(string(reqBody)))
 	if err != nil {
 		return rst, err
 	}
