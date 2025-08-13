@@ -127,7 +127,7 @@ type RefreshTokenResp struct {
 type UserInfoResp struct {
 	BaseResp
 	Data struct {
-		UID            int64  `json:"uid"`
+		UID            uint64 `json:"uid"`
 		Username       string `json:"username"`
 		DisplayName    string `json:"displayName"`
 		HeadImage      string `json:"headImage"`

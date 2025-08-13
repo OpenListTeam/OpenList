@@ -24,7 +24,9 @@ type Addition struct {
 	UploadThread int `json:"UploadThread" type:"number" default:"3" help:"the threads of upload"`
 
 	//  使用直链
-	UseDirectLink bool `json:"UseDirectLink" type:"boolean" default:"false" help:"use direct link when download file"`
+	DirectLink              bool   `json:"DirectLink" type:"boolean" default:"false" required:"false" help:"use direct link when download file"`
+	DirectLinkPrivateKey    string `json:"DirectLinkPrivateKey" required:"false" help:"private key for direct link, if URL authentication is enabled"`
+	DirectLinkValidDuration int64  `json:"DirectLinkValidDuration" type:"number" default:"30" required:"false" help:"minutes, if URL authentication is enabled"`
 
 	driver.RootID
 }

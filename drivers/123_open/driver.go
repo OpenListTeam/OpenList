@@ -69,12 +69,37 @@ func (d *Open123) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 func (d *Open123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	fileId, _ := strconv.ParseInt(file.GetID(), 10, 64)
 
-	if d.UseDirectLink {
+	if d.DirectLink {
 		res, err := d.getDirectLink(fileId)
 		if err != nil {
 			return nil, err
 		}
-		return &model.Link{URL: res.Data.URL}, nil
+
+		if d.DirectLinkPrivateKey == "" {
+			duration := 365 * 24 * time.Hour // 缓存1年
+			return &model.Link{
+				URL:        res.Data.URL,
+				Expiration: &duration,
+			}, nil
+		}
+
+		u, err := d.getUserInfo()
+		if err != nil {
+			return nil, err
+		}
+
+		duration := time.Duration(d.DirectLinkValidDuration) * time.Minute
+
+		newURL, err := d.SignURL(res.Data.URL, d.DirectLinkPrivateKey,
+			u.Data.UID, duration)
+		if err != nil {
+			return nil, err
+		}
+
+		return &model.Link{
+			URL:        newURL,
+			Expiration: &duration,
+		}, nil
 	}
 
 	res, err := d.getDownloadInfo(fileId)
