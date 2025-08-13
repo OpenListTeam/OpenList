@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/go-resty/resty/v2"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -118,20 +119,29 @@ func (d *Open123) flushAccessToken() error {
 }
 
 func (d *Open123) SignURL(originURL, privateKey string, uid uint64, validDuration time.Duration) (newURL string, err error) {
-	var (
-		ts     = time.Now().Add(validDuration).Unix() // 有效时间戳
-		rInt   = rand.Int()                           // 随机正整数
-		objURL *url.URL
-	)
-	objURL, err = url.Parse(originURL)
+	// 生成Unix时间戳
+	ts := time.Now().Add(validDuration).Unix()
+
+	// 生成随机数（建议使用UUID，不能包含中划线（-））
+	rand := strings.ReplaceAll(uuid.New().String(), "-", "")
+
+	// 解析URL
+	objURL, err := url.Parse(originURL)
 	if err != nil {
 		return "", err
 	}
-	authKey := fmt.Sprintf("%d-%d-%d-%x", ts, rInt, uid, md5.Sum([]byte(fmt.Sprintf("%s-%d-%d-%d-%s",
-		objURL.Path, ts, rInt, uid, privateKey))))
+
+	// 待签名字符串，格式：path-timestamp-rand-uid-privateKey
+	unsignedStr := fmt.Sprintf("%s-%d-%s-%d-%s", objURL.Path, ts, rand, uid, privateKey)
+	md5Hash := md5.Sum([]byte(unsignedStr))
+	// 生成鉴权参数，格式：timestamp-rand-uid-md5hash
+	authKey := fmt.Sprintf("%d-%s-%d-%x", ts, rand, uid, md5Hash)
+
+	// 添加鉴权参数到URL查询参数
 	v := objURL.Query()
 	v.Add("auth_key", authKey)
 	objURL.RawQuery = v.Encode()
+
 	return objURL.String(), nil
 }
 
