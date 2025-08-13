@@ -163,7 +163,7 @@ func (d *Open123) getDownloadInfo(fileId int64) (*DownloadInfoResp, error) {
 func (d *Open123) getDirectLink(fileId int64) (*DirectLinkResp, error) {
 	var resp DirectLinkResp
 
-	_, err := d.Request(DownloadInfo, http.MethodGet, func(req *resty.Request) {
+	_, err := d.Request(DirectLink, http.MethodGet, func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
 			"fileId": strconv.FormatInt(fileId, 10),
 		})
