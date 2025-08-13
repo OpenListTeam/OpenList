@@ -23,6 +23,9 @@ type Addition struct {
 	//  上传线程数
 	UploadThread int `json:"UploadThread" type:"number" default:"3" help:"the threads of upload"`
 
+	//  使用直链
+	UseDirectLink bool `json:"UseDirectLink" type:"boolean" default:"false" help:"use direct link when download file"`
+
 	driver.RootID
 }
 

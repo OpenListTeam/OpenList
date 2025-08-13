@@ -21,6 +21,7 @@ var ( //不同情况下获取的AccessTokenQPS限制不同 如下模块化易于
 	UserInfo       = InitApiInfo(Api+"/api/v1/user/info", 1)
 	FileList       = InitApiInfo(Api+"/api/v2/file/list", 3)
 	DownloadInfo   = InitApiInfo(Api+"/api/v1/file/download_info", 0)
+	DirectLink     = InitApiInfo(Api+"/api/v1/direct-link/url", 0)
 	Mkdir          = InitApiInfo(Api+"/upload/v1/file/mkdir", 2)
 	Move           = InitApiInfo(Api+"/api/v1/file/move", 1)
 	Rename         = InitApiInfo(Api+"/api/v1/file/name", 1)
@@ -146,6 +147,21 @@ func (d *Open123) getFiles(parentFileId int64, limit int, lastFileId int64) (*Fi
 
 func (d *Open123) getDownloadInfo(fileId int64) (*DownloadInfoResp, error) {
 	var resp DownloadInfoResp
+
+	_, err := d.Request(DownloadInfo, http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(map[string]string{
+			"fileId": strconv.FormatInt(fileId, 10),
+		})
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+func (d *Open123) getDirectLink(fileId int64) (*DirectLinkResp, error) {
+	var resp DirectLinkResp
 
 	_, err := d.Request(DownloadInfo, http.MethodGet, func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{

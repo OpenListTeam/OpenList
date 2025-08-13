@@ -158,6 +158,13 @@ type DownloadInfoResp struct {
 	} `json:"data"`
 }
 
+type DirectLinkResp struct {
+	BaseResp
+	Data struct {
+		URL string `json:"url"`
+	} `json:"data"`
+}
+
 // 创建文件V2返回
 type UploadCreateResp struct {
 	BaseResp
