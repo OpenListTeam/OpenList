@@ -120,6 +120,7 @@ type Config struct {
 	Log                   LogConfig   `json:"log" envPrefix:"LOG_"`
 	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
 	MaxBufferLimit        int         `json:"max_buffer_limitMB" env:"MAX_BUFFER_LIMIT_MB"`
+	FastRamRelease        bool        `json:"fast_ram_release" env:"FAST_RAM_RELEASE"`
 	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`
 	MaxConcurrency        int         `json:"max_concurrency" env:"MAX_CONCURRENCY"`
 	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`

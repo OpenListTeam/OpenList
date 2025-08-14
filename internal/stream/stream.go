@@ -15,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/edsrzf/mmap-go"
 	"go4.org/readerutil"
 )
 
@@ -60,8 +61,12 @@ func (f *FileStream) IsForceStreamUpload() bool {
 }
 
 func (f *FileStream) Close() error {
-	var err1, err2 error
+	if f.peekBuff != nil {
+		f.peekBuff.Reset()
+		f.peekBuff = nil
+	}
 
+	var err1, err2 error
 	err1 = f.Closers.Close()
 	if errors.Is(err1, os.ErrClosed) {
 		err1 = nil
@@ -73,10 +78,6 @@ func (f *FileStream) Close() error {
 		} else {
 			f.tmpFile = nil
 		}
-	}
-	if f.peekBuff != nil {
-		f.peekBuff.Reset()
-		f.peekBuff = nil
 	}
 
 	return errors.Join(err1, err2)
@@ -194,7 +195,17 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 		f.oriReader = f.Reader
 	}
 	bufSize := maxCacheSize - int64(f.peekBuff.Len())
-	buf := make([]byte, bufSize)
+	var buf []byte
+	if conf.Conf.FastRamRelease && bufSize > 4*utils.MB {
+		m, err := mmap.MapRegion(nil, int(bufSize), mmap.COPY, mmap.ANON, 0)
+		if err == nil {
+			f.Add(utils.CloseFunc(m.Unmap))
+			buf = m
+		}
+	}
+	if buf == nil {
+		buf = make([]byte, bufSize)
+	}
 	n, err := io.ReadFull(f.oriReader, buf)
 	if bufSize != int64(n) {
 		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", bufSize, n, err)
