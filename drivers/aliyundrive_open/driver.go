@@ -83,6 +83,22 @@ func (d *AliyundriveOpen) GetRoot(ctx context.Context) (model.Obj, error) {
 	}, nil
 }
 
+func (d *AliyundriveOpen) Get(ctx context.Context, path string) (model.Obj, error) {
+	var resp File
+	_, err := d.request(ctx, limiterLink, "/adrive/v1.0/openFile/get_by_path", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"drive_id":  d.DriveId,
+			"file_path": path,
+		}).SetResult(&resp)
+	})
+	if err != nil {
+		return nil, err
+	}
+	obj := fileToObj(resp)
+	obj.Path = path
+	return obj, nil
+}
+
 func (d *AliyundriveOpen) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	files, err := d.getFiles(ctx, dir.GetID())
 	if err != nil {
