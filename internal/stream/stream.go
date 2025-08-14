@@ -15,7 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/edsrzf/mmap-go"
+	"github.com/rclone/rclone/lib/mmap"
 	"go4.org/readerutil"
 )
 
@@ -197,9 +197,11 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	bufSize := maxCacheSize - int64(f.peekBuff.Len())
 	var buf []byte
 	if conf.Conf.FastRamRelease && bufSize > 4*utils.MB {
-		m, err := mmap.MapRegion(nil, int(bufSize), mmap.COPY, mmap.ANON, 0)
+		m, err := mmap.Alloc(int(bufSize))
 		if err == nil {
-			f.Add(utils.CloseFunc(m.Unmap))
+			f.Add(utils.CloseFunc(func() error {
+				return mmap.Free(m)
+			}))
 			buf = m
 		}
 	}

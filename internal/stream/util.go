@@ -15,7 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/edsrzf/mmap-go"
+	"github.com/rclone/rclone/lib/mmap"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -175,11 +175,11 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 	if conf.Conf.FastRamRelease && maxBufferSize > 4*utils.MB {
 		bufPool = &pool[[]byte]{
 			new: func() []byte {
-				var buf []byte
-				m, err := mmap.MapRegion(nil, int(maxBufferSize), mmap.COPY, mmap.ANON, 0)
+				buf, err := mmap.Alloc(maxBufferSize)
 				if err == nil {
-					file.Add(utils.CloseFunc(m.Unmap))
-					buf = m
+					file.Add(utils.CloseFunc(func() error {
+						return mmap.Free(buf)
+					}))
 				} else {
 					buf = make([]byte, maxBufferSize)
 				}
