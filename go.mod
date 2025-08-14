@@ -27,7 +27,6 @@ require (
 	github.com/disintegration/imaging v1.6.2
 	github.com/dlclark/regexp2 v1.11.5
 	github.com/dustinxie/ecc v0.0.0-20210511000915-959544187564
-	github.com/edsrzf/mmap-go v1.2.0
 	github.com/fclairamb/ftpserverlib v0.26.1-0.20250709223522-4a925d79caf6
 	github.com/foxxorcat/mopan-sdk-go v0.1.6
 	github.com/foxxorcat/weiyun-sdk-go v0.1.3
