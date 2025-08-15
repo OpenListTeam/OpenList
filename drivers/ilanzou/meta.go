@@ -29,9 +29,10 @@ func init() {
 	op.RegisterDriver(func() driver.Driver {
 		return &ILanZou{
 			config: driver.Config{
-				Name:        "ILanZou",
-				DefaultRoot: "0",
-				LocalSort:   true,
+				Name:              "ILanZou",
+				DefaultRoot:       "0",
+				LocalSort:         true,
+				NoOverwriteUpload: true,
 			},
 			conf: Conf{
 				base:       "https://api.ilanzou.com",
@@ -47,9 +48,10 @@ func init() {
 	op.RegisterDriver(func() driver.Driver {
 		return &ILanZou{
 			config: driver.Config{
-				Name:        "FeijiPan",
-				DefaultRoot: "0",
-				LocalSort:   true,
+				Name:              "FeijiPan",
+				DefaultRoot:       "0",
+				LocalSort:         true,
+				NoOverwriteUpload: true,
 			},
 			conf: Conf{
 				base:       "https://api.feijipan.com",
