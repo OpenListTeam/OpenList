@@ -14,7 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Setup SSH
         run: |
@@ -23,7 +23,16 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan gitee.com >> ~/.ssh/known_hosts
 
-      - name: Push to Gitee
+      - name: Create single commit and push
         run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          # Create a new branch
+          git checkout --orphan new-main
+          git add .
+          git commit -m "Sync from GitHub: $(date)"
+
+          # Add Gitee remote and force push
           git remote add gitee ${{ vars.GITEE_REPO_URL }}
-          git push --force gitee main:main
+          git push --force gitee new-main:main
