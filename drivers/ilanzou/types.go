@@ -43,6 +43,18 @@ type Part struct {
 	ETag       string `json:"etag"`
 }
 
+type UploadTokenRapidResp struct {
+	Msg     string `json:"msg"`
+	Code    int    `json:"code"`
+	UpToken string `json:"upToken"`
+	Map     struct {
+		FileIconID int    `json:"fileIconId"`
+		FileName   string `json:"fileName"`
+		FileIcon   string `json:"fileIcon"`
+		FileID     int64  `json:"fileId"`
+	} `json:"map"`
+}
+
 type UploadResultResp struct {
 	Msg  string `json:"msg"`
 	Code int    `json:"code"`
