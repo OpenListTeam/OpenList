@@ -67,9 +67,16 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		partNumber := partIndex + 1 // 分片号从1开始
 		offset := partIndex * chunkSize
 		size := min(chunkSize, size-offset)
-		var reader *stream.SectionReader
+		var (
+			reader *stream.SectionReader
+			head   *bytes.Reader
+			tail   *bytes.Reader
+		)
 		var rateLimitedRd io.Reader
 		sliceMD5 := ""
+		// 表单
+		b := &bytes.Buffer{}
+		w := multipart.NewWriter(b)
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {
 				if reader == nil {
@@ -84,46 +91,44 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 					if err != nil {
 						return err
 					}
-					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+
+					// 添加表单字段
+					err = w.WriteField("preuploadID", createResp.Data.PreuploadID)
+					if err != nil {
+						return err
+					}
+					err = w.WriteField("sliceNo", strconv.FormatInt(partNumber, 10))
+					if err != nil {
+						return err
+					}
+					err = w.WriteField("sliceMD5", sliceMD5)
+					if err != nil {
+						return err
+					}
+					// 写入文件内容
+					_, err = w.CreateFormFile("slice", fmt.Sprintf("%s.part%d", file.GetName(), partNumber))
+					if err != nil {
+						return err
+					}
+					headLen := b.Len()
+					err = w.Close()
+					if err != nil {
+						return err
+					}
+					head = bytes.NewReader(b.Bytes()[:headLen])
+					tail = bytes.NewReader(b.Bytes()[headLen:])
+					rateLimitedRd = driver.NewLimitedUploadStream(ctx, io.MultiReader(head, reader, tail))
 				}
 				return nil
 			},
 			Do: func(ctx context.Context) error {
 				// 重置分片reader位置，因为HashReader、上一次失败已经读取到分片EOF
+				head.Seek(0, io.SeekStart)
 				reader.Seek(0, io.SeekStart)
-
-				// 创建表单数据
-				var b bytes.Buffer
-				w := multipart.NewWriter(&b)
-				// 添加表单字段
-				err = w.WriteField("preuploadID", createResp.Data.PreuploadID)
-				if err != nil {
-					return err
-				}
-				err = w.WriteField("sliceNo", strconv.FormatInt(partNumber, 10))
-				if err != nil {
-					return err
-				}
-				err = w.WriteField("sliceMD5", sliceMD5)
-				if err != nil {
-					return err
-				}
-				// 写入文件内容
-				fw, err := w.CreateFormFile("slice", fmt.Sprintf("%s.part%d", file.GetName(), partNumber))
-				if err != nil {
-					return err
-				}
-				_, err = utils.CopyWithBuffer(fw, rateLimitedRd)
-				if err != nil {
-					return err
-				}
-				err = w.Close()
-				if err != nil {
-					return err
-				}
+				tail.Seek(0, io.SeekStart)
 
 				// 创建请求并设置header
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadDomain+"/upload/v2/file/slice", &b)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadDomain+"/upload/v2/file/slice", rateLimitedRd)
 				if err != nil {
 					return err
 				}
