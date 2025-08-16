@@ -171,7 +171,7 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 		}
 		return ss, nil
 	}
-	if conf.MinMmapAllocSize > 0 && maxBufferSize > conf.MinMmapAllocSize {
+	if conf.MmapThreshold > 0 && maxBufferSize >= conf.MmapThreshold {
 		ss.bufPool = &pool.Pool[[]byte]{
 			New: func() []byte {
 				buf, err := mmap.Alloc(maxBufferSize)

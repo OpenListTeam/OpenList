@@ -668,7 +668,7 @@ func NewBuf(ctx context.Context, maxSize int) *Buf {
 		size:       maxSize,
 		readSignal: make(chan struct{}, 1),
 	}
-	if conf.MinMmapAllocSize > 0 && maxSize > conf.MinMmapAllocSize {
+	if conf.MmapThreshold > 0 && maxSize >= conf.MmapThreshold {
 		m, err := mmap.Alloc(maxSize)
 		if err == nil {
 			br.buf = m

@@ -196,7 +196,7 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	}
 	bufSize := maxCacheSize - int64(f.peekBuff.Len())
 	var buf []byte
-	if conf.MinMmapAllocSize > 0 && bufSize > int64(conf.MinMmapAllocSize) {
+	if conf.MmapThreshold > 0 && bufSize >= int64(conf.MmapThreshold) {
 		m, err := mmap.Alloc(int(bufSize))
 		if err == nil {
 			f.Add(utils.CloseFunc(func() error {
