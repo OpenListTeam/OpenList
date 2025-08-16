@@ -4,7 +4,7 @@ import "sync"
 
 type Pool[T any] struct {
 	New    func() T
-	MaxCap uint8
+	MaxCap int
 
 	cache []T
 	mu    sync.Mutex
