@@ -712,7 +712,11 @@ func (br *Buf) Read(p []byte) (int, error) {
 			return 0, io.ErrClosedPipe
 		}
 
-		if br.offW <= br.offR {
+		if br.offW < br.offR {
+			br.rw.Unlock()
+			return 0, io.ErrUnexpectedEOF
+		}
+		if br.offW == br.offR {
 			br.readPending = true
 			br.rw.Unlock()
 			select {
