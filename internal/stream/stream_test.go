@@ -13,7 +13,7 @@ import (
 )
 
 func TestFileStream_RangeRead(t *testing.T) {
-	conf.Conf = &conf.Config{}
+	conf.MaxBufferLimit = 16 * 1024 * 1024
 	type args struct {
 		httpRange http_range.Range
 	}
@@ -73,7 +73,7 @@ func TestFileStream_RangeRead(t *testing.T) {
 			}
 		})
 	}
-	t.Run("after check", func(t *testing.T) {
+	t.Run("after", func(t *testing.T) {
 		if f.GetFile() == nil {
 			t.Error("not cached")
 		}

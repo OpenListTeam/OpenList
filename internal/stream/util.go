@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/pool"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/rclone/rclone/lib/mmap"
 	log "github.com/sirupsen/logrus"
@@ -154,7 +154,7 @@ func CacheFullAndHash(stream model.FileStreamer, up *model.UpdateProgress, hashT
 type StreamSectionReader struct {
 	file    model.FileStreamer
 	off     int64
-	bufPool *pool[[]byte]
+	bufPool *pool.Pool[[]byte]
 }
 
 func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *model.UpdateProgress) (*StreamSectionReader, error) {
@@ -171,10 +171,9 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 		}
 		return ss, nil
 	}
-	var bufPool *pool[[]byte]
-	if conf.Conf.FastRamRelease && maxBufferSize > 4*utils.MB {
-		bufPool = &pool[[]byte]{
-			new: func() []byte {
+	if conf.MmapThreshold > 0 && maxBufferSize > conf.MmapThreshold {
+		ss.bufPool = &pool.Pool[[]byte]{
+			New: func() []byte {
 				buf, err := mmap.Alloc(maxBufferSize)
 				if err == nil {
 					file.Add(utils.CloseFunc(func() error {
@@ -185,22 +184,19 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 				}
 				return buf
 			},
-			maxCap: 8,
 		}
 	} else {
-		bufPool = &pool[[]byte]{
-			new: func() []byte {
+		ss.bufPool = &pool.Pool[[]byte]{
+			New: func() []byte {
 				return make([]byte, maxBufferSize)
 			},
-			maxCap: 8,
 		}
 	}
 
 	file.Add(utils.CloseFunc(func() error {
-		bufPool.Reset()
+		ss.bufPool.Reset()
 		return nil
 	}))
-	ss.bufPool = bufPool
 	return ss, nil
 }
 
@@ -238,37 +234,4 @@ func (ss *StreamSectionReader) FreeSectionReader(sr *SectionReader) {
 type SectionReader struct {
 	io.ReadSeeker
 	buf []byte
-}
-
-type pool[T any] struct {
-	pool   []T
-	mu     sync.Mutex
-	new    func() T
-	maxCap uint8
-}
-
-func (p *pool[T]) Get() T {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.pool) == 0 {
-		return p.new()
-	}
-	item := p.pool[len(p.pool)-1]
-	p.pool = p.pool[:len(p.pool)-1]
-	return item
-}
-
-func (p *pool[T]) Put(item T) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.maxCap == 0 || len(p.pool) < int(p.maxCap) {
-		p.pool = append(p.pool, item)
-	}
-}
-
-func (p *pool[T]) Reset() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	clear(p.pool)
-	p.pool = nil
 }

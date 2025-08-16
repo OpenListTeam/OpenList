@@ -91,6 +91,9 @@ func InitConfig() {
 	} else {
 		conf.MaxBufferLimit = conf.Conf.MaxBufferLimit * utils.MB
 	}
+	if conf.Conf.MmapThreshold > 0 {
+		conf.MmapThreshold = conf.Conf.MmapThreshold * utils.MB
+	}
 	log.Infof("max buffer limit: %dMB", conf.MaxBufferLimit/utils.MB)
 	if !conf.Conf.Force {
 		confFromEnv()
