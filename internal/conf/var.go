@@ -25,8 +25,10 @@ var PrivacyReg []*regexp.Regexp
 var (
 	// StoragesLoaded loaded success if empty
 	StoragesLoaded = false
+	// 单个Buffer最大限制
 	MaxBufferLimit = 0
-	MmapThreshold  = 0
+	// 超过该阈值的Buffer将使用 mmap 分配，可主动释放内存
+	MinMmapAllocSize = 0
 )
 var (
 	RawIndexHtml string
