@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"time"
@@ -186,23 +187,24 @@ func (d *CnbReleases) Put(ctx context.Context, dstDir model.Obj, file model.File
 	// use multipart to create form file
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	fw, err := w.CreateFormFile("file", file.GetName())
+	_, err = w.CreateFormFile("file", file.GetName())
 	if err != nil {
 		return err
 	}
-	_, err = utils.CopyWithBuffer(fw, file)
-	if err != nil {
-		return err
-	}
+	headSize := b.Len()
 	err = w.Close()
 	if err != nil {
 		return err
 	}
 
+	head := bytes.NewReader(b.Bytes()[:headSize])
+	tail := bytes.NewReader(b.Bytes()[headSize:])
+	rateLimitedRd := driver.NewLimitedUploadStream(ctx, io.MultiReader(head, file, tail))
+
 	// use net/http to upload file
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(resp.ExpiresInSec+1)*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctxWithTimeout, http.MethodPost, resp.UploadURL, &b)
+	req, err := http.NewRequestWithContext(ctxWithTimeout, http.MethodPost, resp.UploadURL, rateLimitedRd)
 	if err != nil {
 		return err
 	}
