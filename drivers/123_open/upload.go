@@ -71,7 +71,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		var rateLimitedRd io.Reader
 		sliceMD5 := ""
 		// 表单
-		b := bytes.NewBuffer(make([]byte, 0, 1130))
+		b := bytes.NewBuffer(make([]byte, 0, 2048))
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {
 				if reader == nil {
