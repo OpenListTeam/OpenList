@@ -9,6 +9,6 @@ services:
     user: '0:0'
     environment:
       - UMASK=022
-      - TZ=UTC
+      - TZ=Asia/Shanghai
     container_name: openlist
     image: 'openlistteam/openlist:latest'
