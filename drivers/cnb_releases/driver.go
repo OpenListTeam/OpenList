@@ -1,9 +1,9 @@
 package cnb_releases
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"time"
@@ -184,62 +184,25 @@ func (d *CnbReleases) Put(ctx context.Context, dstDir model.Obj, file model.File
 
 	// 2. upload file
 	// use multipart to create form file
-	// var b bytes.Buffer
-	// w := multipart.NewWriter(&b)
-	// fw, err := w.CreateFormFile("file", file.GetName())
-	// if err != nil {
-	// 	return err
-	// }
-	// _, err = utils.CopyWithBuffer(fw, file)
-	// if err != nil {
-	// 	return err
-	// }
-	// err = w.Close()
-	// if err != nil {
-	// 	return err
-	// }
-
-	// use io.Pipe to stream file upload
-	pr, pw := io.Pipe()
-	w := multipart.NewWriter(pw)
-	errChan := make(chan error, 1)
-	go func() {
-		defer pw.Close()
-		defer w.Close()
-
-		// Create form file field
-		fw, err := w.CreateFormFile("file", file.GetName())
-		if err != nil {
-			errChan <- err
-			pw.CloseWithError(err)
-			return
-		}
-
-		// Copy file content with progress tracking
-		if up != nil {
-			// Create progress wrapper
-			uprd := &driver.ReaderUpdatingProgress{
-				Reader:         file,
-				UpdateProgress: up,
-			}
-			_, err = utils.CopyWithBuffer(fw, uprd)
-		} else {
-			_, err = utils.CopyWithBuffer(fw, file)
-		}
-
-		if err != nil {
-			errChan <- err
-			pw.CloseWithError(err)
-			return
-		}
-
-		errChan <- nil
-	}()
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	fw, err := w.CreateFormFile("file", file.GetName())
+	if err != nil {
+		return err
+	}
+	_, err = utils.CopyWithBuffer(fw, file)
+	if err != nil {
+		return err
+	}
+	err = w.Close()
+	if err != nil {
+		return err
+	}
 
 	// use net/http to upload file
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(resp.ExpiresInSec+1)*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctxWithTimeout, http.MethodPost, resp.UploadURL, pr)
+	req, err := http.NewRequestWithContext(ctxWithTimeout, http.MethodPost, resp.UploadURL, &b)
 	if err != nil {
 		return err
 	}
