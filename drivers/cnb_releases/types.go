@@ -8,10 +8,11 @@ import (
 
 type Object struct {
 	model.Object
-	ParentID string // parentID is used to store the parent directory ID for the object
+	ParentID string
 }
 
 type TagList []Tag
+
 type Tag struct {
 	Commit struct {
 		Author    UserInfo       `json:"author"`
