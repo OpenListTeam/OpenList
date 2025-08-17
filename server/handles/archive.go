@@ -298,7 +298,7 @@ func ArchiveDown(c *gin.Context) {
 	filename := stdpath.Base(innerPath)
 	storage, err := fs.GetStorage(archiveRawPath, &fs.GetStoragesArgs{})
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		common.ErrorPage(c, err, 500)
 		return
 	}
 	if common.ShouldProxy(storage, filename) {
@@ -318,7 +318,7 @@ func ArchiveDown(c *gin.Context) {
 			InnerPath: innerPath,
 		})
 		if err != nil {
-			common.ErrorResp(c, err, 500)
+			common.ErrorPage(c, err, 500)
 			return
 		}
 		redirect(c, link)
@@ -332,7 +332,7 @@ func ArchiveProxy(c *gin.Context) {
 	filename := stdpath.Base(innerPath)
 	storage, err := fs.GetStorage(archiveRawPath, &fs.GetStoragesArgs{})
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		common.ErrorPage(c, err, 500)
 		return
 	}
 	if canProxy(storage, filename) {
@@ -348,7 +348,7 @@ func ArchiveProxy(c *gin.Context) {
 			InnerPath: innerPath,
 		})
 		if err != nil {
-			common.ErrorResp(c, err, 500)
+			common.ErrorPage(c, err, 500)
 			return
 		}
 		proxy(c, link, file, storage.GetStorage().ProxyRange)
@@ -373,7 +373,7 @@ func ArchiveInternalExtract(c *gin.Context) {
 		InnerPath: innerPath,
 	})
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		common.ErrorPage(c, err, 500)
 		return
 	}
 	defer func() {
