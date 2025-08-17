@@ -116,12 +116,16 @@ func (d *CnbReleases) Link(ctx context.Context, file model.Obj, args model.LinkA
 func (d *CnbReleases) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
 	if parentDir.GetPath() == "/" {
 		// create a new release
+		branch := d.DefaultBranch
+		if branch == "" {
+			branch = "main" // fallback to "main" if not set
+		}
 		return d.Request(http.MethodPost, "/{repo}/-/releases", func(req *resty.Request) {
 			req.SetPathParam("repo", d.Repo)
 			req.SetBody(base.Json{
 				"name":             dirName,
 				"tag_name":         dirName,
-				"target_commitish": "main",
+				"target_commitish": branch,
 			})
 		}, nil)
 	}
