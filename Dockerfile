@@ -20,8 +20,9 @@ ARG GID=1001
 
 WORKDIR /opt/openlist/
 
-RUN adduser -u ${UID} -g ${GID} -h /opt/openlist/data -D -s /bin/sh ${USER} \
-    && chown -R ${UID}:${GID} /opt 
+RUN addgroup -g ${GID} ${USER} && \
+    adduser -D -u ${UID} -G ${USER} ${USER} && \
+    mkdir -p /opt/openlist/data
 
 COPY --chmod=755 --chown=${UID}:${GID} /build/${TARGETPLATFORM}/openlist ./
 COPY --chmod=755 --chown=${UID}:${GID} entrypoint.sh /entrypoint.sh
