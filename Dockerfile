@@ -24,7 +24,7 @@ RUN addgroup -g ${GID} ${USER} && \
     adduser -D -u ${UID} -G ${USER} ${USER} && \
     mkdir -p /opt/openlist/data
 
-COPY --chmod=755 --chown=${UID}:${GID} /build/${TARGETPLATFORM}/openlist ./
+COPY --from=builder --chmod=755 --chown=${UID}:${GID} /app/bin/openlist ./
 COPY --chmod=755 --chown=${UID}:${GID} entrypoint.sh /entrypoint.sh
 
 USER ${USER}
