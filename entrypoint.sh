@@ -25,6 +25,5 @@ else
       rm -rf "$ARIA2_DIR"
     fi
   fi
-  
-  exec runsvdir /opt/service/start
+  exec ./openlist server --no-prefix
 fi
