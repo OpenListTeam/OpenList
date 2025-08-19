@@ -1,72 +1,72 @@
 package template
 
-// DegooLoginRequest 对应 Python 脚本中登录请求的 JSON Body
+// DegooLoginRequest corresponds to the JSON body for the login request in the Python script.
 type DegooLoginRequest struct {
-	GenerateToken bool   `json:"GenerateToken"`
-	Username      string `json:"Username"`
-	Password      string `json:"Password"`
+	GenerateToken bool `json:"GenerateToken"`
+	Username string `json:"Username"`
+	Password string `json:"Password"`
 }
 
-// DegooLoginResponse 对应 login() 成功后的响应
+// DegooLoginResponse corresponds to the successful response from a login() call.
 type DegooLoginResponse struct {
-	Token        string `json:"Token"`
+	Token string `json:"Token"`
 	RefreshToken string `json:"RefreshToken"`
 }
 
-// DegooAccessTokenRequest 对应刷新令牌请求的 JSON Body
+// DegooAccessTokenRequest corresponds to the JSON body for a token refresh request.
 type DegooAccessTokenRequest struct {
 	RefreshToken string `json:"RefreshToken"`
 }
 
-// DegooAccessTokenResponse 对应刷新令牌响应
+// DegooAccessTokenResponse corresponds to the response for a token refresh.
 type DegooAccessTokenResponse struct {
 	AccessToken string `json:"AccessToken"`
 }
 
-// DegooFileItem 对应 Python 脚本中 Degoo 文件的属性
+// DegooFileItem corresponds to the properties of a Degoo file in the Python script.
 type DegooFileItem struct {
-	ID                 string `json:"ID"`
-	ParentID           string `json:"ParentID"`
-	Name               string `json:"Name"`
-	Category           int    `json:"Category"`
-	Size               int64  `json:"Size"`
-	URL                string `json:"URL"`
-	OptimizedURL       string `json:"OptimizedURL"`
-	CreationTime       string `json:"CreationTime"`
+	ID string `json:"ID"`
+	ParentID string `json:"ParentID"`
+	Name string `json:"Name"`
+	Category int `json:"Category"`
+	Size int64 `json:"Size"`
+	URL string `json:"URL"`
+	OptimizedURL string `json:"OptimizedURL"`
+	CreationTime string `json:"CreationTime"`
 	LastModificationTime string `json:"LastModificationTime"`
-	LastUploadTime       string `json:"LastUploadTime"`
-	MetadataID         string `json:"MetadataID"`
-	DeviceID           string `json:"DeviceID"`
-	FilePath           string `json:"FilePath"`
-	IsInRecycleBin     bool   `json:"IsInRecycleBin"`
+	LastUploadTime string `json:"LastUploadTime"`
+	MetadataID string `json:"MetadataID"`
+	DeviceID string `json:"DeviceID"`
+	FilePath string `json:"FilePath"`
+	IsInRecycleBin bool `json:"IsInRecycleBin"`
 }
 
-// DegooGraphqlResponse 对应所有 GraphQL API 的通用响应结构
+// DegooGraphqlResponse corresponds to the common response structure for all GraphQL APIs.
 type DegooGraphqlResponse struct {
-	Data   json.RawMessage          `json:"data"`
+	Data json.RawMessage `json:"data"`
 	Errors []map[string]interface{} `json:"errors"`
 }
 
-// DegooGetChildren5Data 对应 getFileChildren5 的 Data 字段
+// DegooGetChildren5Data corresponds to the 'Data' field for getFileChildren5.
 type DegooGetChildren5Data struct {
 	GetFileChildren5 struct {
-		Items     []DegooFileItem `json:"Items"`
-		NextToken string          `json:"NextToken"`
+		Items []DegooFileItem `json:"Items"`
+		NextToken string `json:"NextToken"`
 	} `json:"getFileChildren5"`
 }
 
-// DegooGetOverlay4Data 对应 getOverlay4 的 Data 字段
+// DegooGetOverlay4Data corresponds to the 'Data' field for getOverlay4.
 type DegooGetOverlay4Data struct {
 	GetOverlay4 DegooFileItem `json:"getOverlay4"`
 }
 
-// DegooFileRenameInfo 对应 setRenameFile 的 FileRenames 字段
+// DegooFileRenameInfo corresponds to the 'FileRenames' field for setRenameFile.
 type DegooFileRenameInfo struct {
-	ID      string `json:"ID"`
+	ID string `json:"ID"`
 	NewName string `json:"NewName"`
 }
 
-// DegooFileIDs 对应 setMoveFile 的 FileIDs 字段
+// DegooFileIDs corresponds to the 'FileIDs' field for setMoveFile.
 type DegooFileIDs struct {
 	FileIDs []string `json:"FileIDs"`
 }
