@@ -92,7 +92,32 @@ func humanReadableTimes(creation, modification, upload string) (cTime, mTime, uT
 	}
 	return cTime, mTime, uTime
 }
+	// 将字符串时间戳转换为可读格式 "2006-01-02 15:04:05"
+	format := "2006-01-02 15:04:05"
+	cTime = parseTimestampToReadable(creation, format)
+	mTime = parseTimestampToReadable(modification, format)
+	uTime = parseTimestampToReadable(upload, format)
+	return cTime, mTime, uTime
+}
 
+// parseTimestampToReadable 辅助函数，将字符串时间戳转换为可读格式
+func parseTimestampToReadable(ts string, format string) string {
+	if ts == "" {
+		return ""
+	}
+	// 支持秒和毫秒时间戳
+	var tInt int64
+	_, err := fmt.Sscanf(ts, "%d", &tInt)
+	if err != nil {
+		return ""
+	}
+	// 判断是否为毫秒级时间戳
+	if len(ts) > 10 {
+		tInt = tInt / 1000
+	}
+	t := time.Unix(tInt, 0)
+	return t.Format(format)
+}
 // checkSum calculates the specific SHA1-based checksum required by the Degoo upload API.
 func checkSum(filePath string) (string, error) {
 	file, err := os.Open(filePath)
