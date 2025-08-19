@@ -13,7 +13,7 @@ type Addition struct {
 	ClientSecret    string `json:"client_secret" required:"false" help:"Keep it empty if you don't have one"`
 	AccessToken     string
 	RefreshToken    string `json:"refresh_token" required:"true"`
-	RootNamespaceId string
+	RootNamespaceId string `json:"RootNamespaceId" required:"false"`
 }
 
 var config = driver.Config{

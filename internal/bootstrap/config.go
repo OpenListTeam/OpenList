@@ -77,6 +77,10 @@ func InitConfig() {
 			log.Fatalf("update config struct error: %+v", err)
 		}
 	}
+	if !conf.Conf.Force {
+		confFromEnv()
+	}
+
 	if conf.Conf.MaxConcurrency > 0 {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: conf.Conf.MaxConcurrency}
 	}
@@ -92,25 +96,31 @@ func InitConfig() {
 		conf.MaxBufferLimit = conf.Conf.MaxBufferLimit * utils.MB
 	}
 	log.Infof("max buffer limit: %dMB", conf.MaxBufferLimit/utils.MB)
-	if !conf.Conf.Force {
-		confFromEnv()
+	if conf.Conf.MmapThreshold > 0 {
+		conf.MmapThreshold = conf.Conf.MmapThreshold * utils.MB
+	} else {
+		conf.MmapThreshold = 0
 	}
+	log.Infof("mmap threshold: %dMB", conf.Conf.MmapThreshold)
+
 	if len(conf.Conf.Log.Filter.Filters) == 0 {
 		conf.Conf.Log.Filter.Enable = false
 	}
 	// convert abs path
 	convertAbsPath := func(path *string) {
-		if !filepath.IsAbs(*path) {
+		if *path != "" && !filepath.IsAbs(*path) {
 			*path = filepath.Join(pwd, *path)
 		}
 	}
+	convertAbsPath(&conf.Conf.Database.DBFile)
+	convertAbsPath(&conf.Conf.Scheme.CertFile)
+	convertAbsPath(&conf.Conf.Scheme.KeyFile)
+	convertAbsPath(&conf.Conf.Scheme.UnixFile)
+	convertAbsPath(&conf.Conf.Log.Name)
 	convertAbsPath(&conf.Conf.TempDir)
 	convertAbsPath(&conf.Conf.BleveDir)
-	convertAbsPath(&conf.Conf.Log.Name)
-	convertAbsPath(&conf.Conf.Database.DBFile)
-	if conf.Conf.DistDir != "" {
-		convertAbsPath(&conf.Conf.DistDir)
-	}
+	convertAbsPath(&conf.Conf.DistDir)
+
 	err := os.MkdirAll(conf.Conf.TempDir, 0o777)
 	if err != nil {
 		log.Fatalf("create temp dir error: %+v", err)

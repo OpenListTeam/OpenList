@@ -1,7 +1,6 @@
 package net
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/rclone/rclone/lib/mmap"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/aws/aws-sdk-go/aws/awsutil"
@@ -255,7 +255,10 @@ func (d *downloader) sendChunkTask(newConcurrency bool) error {
 				finalSize += firstSize - minSize
 			}
 		}
-		buf.Reset(int(finalSize))
+		err := buf.Reset(int(finalSize))
+		if err != nil {
+			return err
+		}
 		ch := chunk{
 			start: d.pos,
 			size:  finalSize,
@@ -645,11 +648,13 @@ func (mr MultiReadCloser) Close() error {
 }
 
 type Buf struct {
-	buffer *bytes.Buffer
-	size   int //expected size
-	ctx    context.Context
-	off    int
-	rw     sync.Mutex
+	size int //expected size
+	ctx  context.Context
+	offR int
+	offW int
+	rw   sync.Mutex
+	buf  []byte
+	mmap bool
 
 	readSignal  chan struct{}
 	readPending bool
@@ -658,76 +663,100 @@ type Buf struct {
 // NewBuf is a buffer that can have 1 read & 1 write at the same time.
 // when read is faster write, immediately feed data to read after written
 func NewBuf(ctx context.Context, maxSize int) *Buf {
-	return &Buf{
-		ctx:    ctx,
-		buffer: bytes.NewBuffer(make([]byte, 0, maxSize)),
-		size:   maxSize,
-
+	br := &Buf{
+		ctx:        ctx,
+		size:       maxSize,
 		readSignal: make(chan struct{}, 1),
 	}
-}
-func (br *Buf) Reset(size int) {
-	br.rw.Lock()
-	defer br.rw.Unlock()
-	if br.buffer == nil {
-		return
+	if conf.MmapThreshold > 0 && maxSize >= conf.MmapThreshold {
+		m, err := mmap.Alloc(maxSize)
+		if err == nil {
+			br.buf = m
+			br.mmap = true
+			return br
+		}
 	}
-	br.buffer.Reset()
-	br.size = size
-	br.off = 0
+	br.buf = make([]byte, maxSize)
+	return br
 }
 
-func (br *Buf) Read(p []byte) (n int, err error) {
+func (br *Buf) Reset(size int) error {
+	br.rw.Lock()
+	defer br.rw.Unlock()
+	if br.buf == nil {
+		return io.ErrClosedPipe
+	}
+	if size > cap(br.buf) {
+		return fmt.Errorf("reset size %d exceeds max size %d", size, cap(br.buf))
+	}
+	br.size = size
+	br.offR = 0
+	br.offW = 0
+	return nil
+}
+
+func (br *Buf) Read(p []byte) (int, error) {
 	if err := br.ctx.Err(); err != nil {
 		return 0, err
 	}
 	if len(p) == 0 {
 		return 0, nil
 	}
-	if br.off >= br.size {
+	if br.offR >= br.size {
 		return 0, io.EOF
 	}
 	for {
 		br.rw.Lock()
-		if br.buffer != nil {
-			n, err = br.buffer.Read(p)
-		} else {
-			err = io.ErrClosedPipe
-		}
-		if err != nil && err != io.EOF {
+		if br.buf == nil {
 			br.rw.Unlock()
-			return
+			return 0, io.ErrClosedPipe
 		}
-		if n > 0 {
-			br.off += n
+
+		if br.offW < br.offR {
 			br.rw.Unlock()
-			return n, nil
+			return 0, io.ErrUnexpectedEOF
 		}
-		br.readPending = true
-		br.rw.Unlock()
-		// n==0, err==io.EOF
-		select {
-		case <-br.ctx.Done():
-			return 0, br.ctx.Err()
-		case _, ok := <-br.readSignal:
-			if !ok {
-				return 0, io.ErrClosedPipe
+		if br.offW == br.offR {
+			br.readPending = true
+			br.rw.Unlock()
+			select {
+			case <-br.ctx.Done():
+				return 0, br.ctx.Err()
+			case _, ok := <-br.readSignal:
+				if !ok {
+					return 0, io.ErrClosedPipe
+				}
+				continue
 			}
-			continue
 		}
+
+		n := copy(p, br.buf[br.offR:br.offW])
+		br.offR += n
+		br.rw.Unlock()
+		if n < len(p) && br.offR >= br.size {
+			return n, io.EOF
+		}
+		return n, nil
 	}
 }
 
-func (br *Buf) Write(p []byte) (n int, err error) {
+func (br *Buf) Write(p []byte) (int, error) {
 	if err := br.ctx.Err(); err != nil {
 		return 0, err
 	}
+	if len(p) == 0 {
+		return 0, nil
+	}
 	br.rw.Lock()
 	defer br.rw.Unlock()
-	if br.buffer == nil {
+	if br.buf == nil {
 		return 0, io.ErrClosedPipe
 	}
-	n, err = br.buffer.Write(p)
+	if br.offW >= br.size {
+		return 0, io.ErrShortWrite
+	}
+	n := copy(br.buf[br.offW:], p[:min(br.size-br.offW, len(p))])
+	br.offW += n
 	if br.readPending {
 		br.readPending = false
 		select {
@@ -735,12 +764,21 @@ func (br *Buf) Write(p []byte) (n int, err error) {
 		default:
 		}
 	}
-	return
+	if n < len(p) {
+		return n, io.ErrShortWrite
+	}
+	return n, nil
 }
 
-func (br *Buf) Close() {
+func (br *Buf) Close() error {
 	br.rw.Lock()
 	defer br.rw.Unlock()
-	br.buffer = nil
+	var err error
+	if br.mmap {
+		err = mmap.Free(br.buf)
+		br.mmap = false
+	}
+	br.buf = nil
 	close(br.readSignal)
+	return err
 }

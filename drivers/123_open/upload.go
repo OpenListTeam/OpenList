@@ -70,6 +70,8 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		var reader *stream.SectionReader
 		var rateLimitedRd io.Reader
 		sliceMD5 := ""
+		// 表单
+		b := bytes.NewBuffer(make([]byte, 0, 2048))
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {
 				if reader == nil {
@@ -84,7 +86,6 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 					if err != nil {
 						return err
 					}
-					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
 				}
 				return nil
 			},
@@ -92,9 +93,8 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				// 重置分片reader位置，因为HashReader、上一次失败已经读取到分片EOF
 				reader.Seek(0, io.SeekStart)
 
-				// 创建表单数据
-				var b bytes.Buffer
-				w := multipart.NewWriter(&b)
+				b.Reset()
+				w := multipart.NewWriter(b)
 				// 添加表单字段
 				err = w.WriteField("preuploadID", createResp.Data.PreuploadID)
 				if err != nil {
@@ -109,21 +109,20 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 					return err
 				}
 				// 写入文件内容
-				fw, err := w.CreateFormFile("slice", fmt.Sprintf("%s.part%d", file.GetName(), partNumber))
+				_, err = w.CreateFormFile("slice", fmt.Sprintf("%s.part%d", file.GetName(), partNumber))
 				if err != nil {
 					return err
 				}
-				_, err = utils.CopyWithBuffer(fw, rateLimitedRd)
-				if err != nil {
-					return err
-				}
+				headSize := b.Len()
 				err = w.Close()
 				if err != nil {
 					return err
 				}
-
+				head := bytes.NewReader(b.Bytes()[:headSize])
+				tail := bytes.NewReader(b.Bytes()[headSize:])
+				rateLimitedRd = driver.NewLimitedUploadStream(ctx, io.MultiReader(head, reader, tail))
 				// 创建请求并设置header
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadDomain+"/upload/v2/file/slice", &b)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadDomain+"/upload/v2/file/slice", rateLimitedRd)
 				if err != nil {
 					return err
 				}
