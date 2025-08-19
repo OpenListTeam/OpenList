@@ -18,7 +18,7 @@ type Degoo struct {
 	model.Storage
 	Addition
 	Token string
-	// 用于缓存设备列表，模拟 Python 脚本的 __devices__
+	// Caches the list of devices, mimicking the __devices__ property in the Python script.
 	devices map[string]string
 }
 
@@ -30,49 +30,49 @@ func (d *Degoo) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
-// Init 实现登录和令牌管理，完全复现 Python 脚本的 login() 方法逻辑
+// Init implements login and token management, fully replicating the login() method logic from the Python script.
 func (d *Degoo) Init(ctx context.Context) error {
 	loginURL := "https://rest-api.degoo.com/login"
 	accessTokenURL := "https://rest-api.degoo.com/access-token/v2"
 	
 	creds := DegooLoginRequest{
 		GenerateToken: true,
-		Username:      d.Addition.Username,
-		Password:      d.Addition.Password,
+		Username:      d.Addition.Username,
+		Password:      d.Addition.Password,
 	}
 
 	jsonCreds, err := json.Marshal(creds)
 	if err != nil {
-		return fmt.Errorf("无法序列化登录凭证: %w", err)
+		return fmt.Errorf("failed to marshal login credentials: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", loginURL, bytes.NewBuffer(jsonCreds))
 	if err != nil {
-		return fmt.Errorf("无法创建登录请求: %w", err)
+		return fmt.Errorf("failed to create login request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	// 模仿 Python 脚本的 User-Agent
+	// Mimics the User-Agent from the Python script.
 	req.Header.Set("User-Agent", "Mozilla/5.0 Slackware/13.37 (X11; U; Linux x86_64; en-US) AppleWebKit/534.16 (KHTML, like Gecko) Chrome/11.0.696.50")
 	req.Header.Set("Origin", "https://app.degoo.com")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("登录请求失败: %w", err)
+		return fmt.Errorf("login request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("登录失败: %s", resp.Status)
+		return fmt.Errorf("login failed: %s", resp.Status)
 	}
 
 	var loginResp DegooLoginResponse
 	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return fmt.Errorf("无法解析登录响应: %w", err)
+		return fmt.Errorf("failed to parse login response: %w", err)
 	}
 
-	// 检查是否有 RefreshToken，如果有，则需要再次请求 AccessToken
+	// Checks for a RefreshToken; if it exists, an AccessToken must be requested.
 	if loginResp.RefreshToken != "" {
 		tokenReq := DegooAccessTokenRequest{RefreshToken: loginResp.RefreshToken}
 		jsonTokenReq, _ := json.Marshal(tokenReq)
@@ -83,39 +83,39 @@ func (d *Degoo) Init(ctx context.Context) error {
 		
 		tokenResp, err := client.Do(tokenReqHTTP)
 		if err != nil {
-			return fmt.Errorf("获取访问令牌失败: %w", err)
+			return fmt.Errorf("failed to get access token: %w", err)
 		}
 		defer tokenResp.Body.Close()
 		
 		var accessTokenResp DegooAccessTokenResponse
 		if err := json.NewDecoder(tokenResp.Body).Decode(&accessTokenResp); err != nil {
-			return fmt.Errorf("无法解析访问令牌响应: %w", err)
+			return fmt.Errorf("failed to parse access token response: %w", err)
 		}
 		
 		d.Token = accessTokenResp.AccessToken
 	} else if loginResp.Token != "" {
 		d.Token = loginResp.Token
 	} else {
-		return fmt.Errorf("登录失败，未返回有效的令牌")
+		return fmt.Errorf("login failed, no valid token returned")
 	}
 
-	// 初始化设备列表
+	// Initializes the device list.
 	d.devices = make(map[string]string)
 	d.getDevices(ctx)
 	
 	return nil
 }
 
-// getDevices 获取设备列表并缓存，模拟 Python 脚本的 devices property
+// getDevices fetches and caches the device list, mimicking the Python script's devices property.
 func (d *Degoo) getDevices(ctx context.Context) error {
 	const query = `query GetFileChildren5($Token: String! $ParentID: String $AllParentIDs: [String] $Limit: Int! $Order: Int! $NextToken: String ) { getFileChildren5(Token: $Token ParentID: $ParentID AllParentIDs: $AllParentIDs Limit: $Limit Order: $Order NextToken: $NextToken) { Items { ID Name Category } NextToken } }`
 	
-	// parentID 0 对应根目录
+	// parentID 0 corresponds to the root directory.
 	variables := map[string]interface{}{
-		"Token":      d.Token,
-		"ParentID":   "0",
-		"Limit":      1000,
-		"Order":      3,
+		"Token":      d.Token,
+		"ParentID":   "0",
+		"Limit":      1000,
+		"Order":      3,
 	}
 
 	data, err := d.apiCall(ctx, "GetFileChildren5", query, variables)
@@ -129,14 +129,14 @@ func (d *Degoo) getDevices(ctx context.Context) error {
 	}
 
 	for _, item := range resp.GetFileChildren5.Items {
-		if item.Category == 1 { // Category 1 代表 Device
+		if item.Category == 1 { // Category 1 represents a Device.
 			d.devices[item.ID] = item.Name
 		}
 	}
 	return nil
 }
 
-// List 列出文件和文件夹，完全复现 Python 脚本的 getFileChildren5() 逻辑
+// List lists files and folders, fully replicating the getFileChildren5() logic from the Python script.
 func (d *Degoo) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	items, err := d.getAllFileChildren5(ctx, dir.ID)
 	if err != nil {
@@ -145,7 +145,7 @@ func (d *Degoo) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	
 	var objs []model.Obj
 	for _, item := range items {
-		// 转换 DegooFileItem 为 model.Obj
+		// Converts DegooFileItem to model.Obj.
 		obj := d.toModelObj(item)
 		objs = append(objs, obj)
 	}
@@ -153,7 +153,7 @@ func (d *Degoo) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	return objs, nil
 }
 
-// getAllFileChildren5 处理分页，复现 Python 脚本的同名方法
+// getAllFileChildren5 handles pagination, replicating the method with the same name from the Python script.
 func (d *Degoo) getAllFileChildren5(ctx context.Context, parentID string) ([]DegooFileItem, error) {
 	const query = `query GetFileChildren5($Token: String! $ParentID: String $AllParentIDs: [String] $Limit: Int! $Order: Int! $NextToken: String ) { getFileChildren5(Token: $Token ParentID: $ParentID AllParentIDs: $AllParentIDs Limit: $Limit Order: $Order NextToken: $NextToken) { Items { ID ParentID Name Category Size CreationTime LastModificationTime LastUploadTime FilePath IsInRecycleBin DeviceID MetadataID } NextToken } }`
 
@@ -189,9 +189,9 @@ func (d *Degoo) getAllFileChildren5(ctx context.Context, parentID string) ([]Deg
 		nextToken = resp.GetFileChildren5.NextToken
 	}
 
-	// 修复文件路径，模拟 Python 脚本中的路径拼接逻辑
+	// Fixes file paths, mimicking the path joining logic in the Python script.
 	for i, item := range allItems {
-		if item.Category != 1 && item.Category != 10 { // 不是 Device 或 Recycle Bin
+		if item.Category != 1 && item.Category != 10 { // Not a Device or Recycle Bin.
 			devicePath := d.devices[item.DeviceID]
 			binned := item.IsInRecycleBin
 			prefix := devicePath
@@ -206,7 +206,7 @@ func (d *Degoo) getAllFileChildren5(ctx context.Context, parentID string) ([]Deg
 }
 
 
-// Link 获取下载链接，复现 Python 脚本的 getOverlay4() 逻辑
+// Link gets the download link, replicating the getOverlay4() logic from the Python script.
 func (d *Degoo) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	const query = `query GetOverlay4($Token: String!, $ID: IDType!) { getOverlay4(Token: $Token, ID: $ID) { URL OptimizedURL } }`
 
@@ -227,7 +227,7 @@ func (d *Degoo) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		return nil, err
 	}
 	
-	// 优先使用 OptimizedURL
+	// Prioritizes the OptimizedURL.
 	url := resp.GetOverlay4.URL
 	if resp.GetOverlay4.OptimizedURL != "" {
 		url = resp.GetOverlay4.OptimizedURL
@@ -236,24 +236,24 @@ func (d *Degoo) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	return &model.Link{URL: url}, nil
 }
 
-// toModelObj 将 DegooFileItem 转换为 OpenList 的 model.Obj
+// toModelObj converts a DegooFileItem to an OpenList model.Obj.
 func (d *Degoo) toModelObj(item DegooFileItem) model.Obj {
 	isFolder := item.Category == 2
 	
-	// 转换时间戳
+	// Converts the timestamp.
 	modTime, _ := time.Parse(time.RFC3339, item.LastModificationTime)
 
 	return model.Obj{
-		ID:        item.ID,
-		ParentID:  item.ParentID,
-		Name:      item.Name,
-		Size:      item.Size,
-		IsFolder:  isFolder,
+		ID:        item.ID,
+		ParentID:  item.ParentID,
+		Name:      item.Name,
+		Size:      item.Size,
+		IsFolder:  isFolder,
 		UpdatedAt: modTime,
 	}
 }
 
-// MakeDir 创建新文件夹，复现 Python 脚本的 setUploadFile3() 逻辑
+// MakeDir creates a new folder, replicating the setUploadFile3() logic from the Python script.
 func (d *Degoo) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	const query = `mutation SetUploadFile3($Token: String!, $FileInfos: [FileInfoUpload3]!) { setUploadFile3(Token: $Token, FileInfos: $FileInfos) }`
 	
@@ -261,11 +261,11 @@ func (d *Degoo) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 		"Token": d.Token,
 		"FileInfos": []map[string]interface{}{
 			{
-				"Checksum": "CgAQAg", // Python 脚本中创建文件夹的特定校验码
-				"Name":     dirName,
+				"Checksum": "CgAQAg", // Specific checksum for folder creation in the Python script.
+				"Name":     dirName,
 				"CreationTime": time.Now().UnixNano() / int64(time.Millisecond),
 				"ParentID": parentDir.ID,
-				"Size":     0,
+				"Size":     0,
 			},
 		},
 	}
@@ -275,11 +275,12 @@ func (d *Degoo) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 		return model.Obj{}, err
 	}
 	
-	// Degoo 创建文件夹后需要再次调用 getFileChildren5 来获取新目录ID，这与 Python 脚本逻辑相同
+	// After creating a folder, Degoo requires another getFileChildren5 call to get the new directory ID,
+	// which is consistent with the Python script's logic.
 	var newID string
 	var listResp DegooGetChildren5Data
 	if err := json.Unmarshal(data, &listResp); err == nil {
-		// 这里假设返回的是新文件夹的信息，实际需要从父目录重新获取列表来找到新ID
+		// Assuming the response contains the new folder info; otherwise, re-fetch the parent directory's list.
 		items, _ := d.getAllFileChildren5(ctx, parentDir.ID)
 		for _, item := range items {
 			if item.Name == dirName && item.ParentID == parentDir.ID && item.Category == 2 {
@@ -292,7 +293,7 @@ func (d *Degoo) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 	return model.Obj{ID: newID, Name: dirName, IsFolder: true}, nil
 }
 
-// Rename 重命名，复现 Python 脚本的 setRenameFile() 逻辑
+// Rename renames a file, replicating the setRenameFile() logic from the Python script.
 func (d *Degoo) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
 	const query = `mutation SetRenameFile($Token: String!, $FileRenames: [FileRenameInfo]!) { setRenameFile(Token: $Token, FileRenames: $FileRenames) }`
 
@@ -300,7 +301,7 @@ func (d *Degoo) Rename(ctx context.Context, srcObj model.Obj, newName string) (m
 		"Token": d.Token,
 		"FileRenames": []DegooFileRenameInfo{
 			{
-				ID:      srcObj.ID,
+				ID:      srcObj.ID,
 				NewName: newName,
 			},
 		},
@@ -315,15 +316,15 @@ func (d *Degoo) Rename(ctx context.Context, srcObj model.Obj, newName string) (m
 	return srcObj, nil
 }
 
-// Move 移动，复现 Python 脚本的 setMoveFile() 逻辑
+// Move moves a file, replicating the setMoveFile() logic from the Python script.
 func (d *Degoo) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
 	const query = `mutation SetMoveFile($Token: String!, $Copy: Boolean, $NewParentID: String!, $FileIDs: [String]!) { setMoveFile(Token: $Token, Copy: $Copy, NewParentID: $NewParentID, FileIDs: $FileIDs) }`
 
 	variables := map[string]interface{}{
-		"Token":       d.Token,
-		"Copy":        false, // Python 脚本中默认为 Move
+		"Token":       d.Token,
+		"Copy":        false, // Default is Move in the Python script.
 		"NewParentID": dstDir.ID,
-		"FileIDs":     []string{srcObj.ID},
+		"FileIDs":     []string{srcObj.ID},
 	}
 	
 	_, err := d.apiCall(ctx, "SetMoveFile", query, variables)
@@ -334,33 +335,33 @@ func (d *Degoo) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, 
 	return srcObj, nil
 }
 
-// Copy 复制，复现 Python 脚本中的逻辑（如果支持）
+// Copy copies a file, replicating the logic from the Python script (if supported).
 func (d *Degoo) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// Python 脚本没有直接的 Copy API。我们返回 NotImplement
+	// The Python script does not have a direct Copy API. Returning NotImplement.
 	return model.Obj{}, errs.NotImplement
 }
 
-// Remove 删除，复现 Python 脚本的 setDeleteFile5() 逻辑
+// Remove deletes a file, replicating the setDeleteFile5() logic from the Python script.
 func (d *Degoo) Remove(ctx context.Context, obj model.Obj) error {
 	const query = `mutation SetDeleteFile5($Token: String!, $IsInRecycleBin: Boolean!, $IDs: [IDType]!) { setDeleteFile5(Token: $Token, IsInRecycleBin: $IsInRecycleBin, IDs: $IDs) }`
 
 	variables := map[string]interface{}{
-		"Token":          d.Token,
-		"IsInRecycleBin": false, // 放入回收站
-		"IDs":            []map[string]string{{"FileID": obj.ID}},
+		"Token":          d.Token,
+		"IsInRecycleBin": false, // Moves to Recycle Bin.
+		"IDs":            []map[string]string{{"FileID": obj.ID}},
 	}
 	
 	_, err := d.apiCall(ctx, "SetDeleteFile5", query, variables)
 	return err
 }
 
-// Put 上传文件，复现 Python 脚本的 setUploadFile3() 和 getBucketWriteAuth4() 逻辑
+// Put uploads a file, replicating the setUploadFile3() and getBucketWriteAuth4() logic from the Python script.
 func (d *Degoo) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	// TODO: 这里需要一个本地文件路径，FileStreamer 接口可能需要转换或处理
-	// 假设我们能获取到本地文件路径
-	localFilePath := file.Name() // 这通常是文件在本地缓存的路径
-	// 直接使用 file 作为 io.Reader 传递给 checkSum
-	// 1. 调用 getBucketWriteAuth4 获取上传授权
+	// TODO: This requires a local file path; the FileStreamer interface might need conversion or special handling.
+	// Assuming we can get the local file path.
+	localFilePath := file.Name() // This is typically the path to the file's local cache.
+	// Use file as an io.Reader directly for the checksum.
+	// 1. Call getBucketWriteAuth4 to get upload authorization.
 	const authQuery = `query GetBucketWriteAuth4($Token: String!, $ParentID: String!, $StorageUploadInfos: [StorageUploadInfo2]) { getBucketWriteAuth4(Token: $Token, ParentID: $ParentID, StorageUploadInfos: $StorageUploadInfos) { AuthData { PolicyBase64 Signature BaseURL KeyPrefix AccessKey { Key Value } ACL } } }`
 	authVars := map[string]interface{}{
 		"Token": d.Token,
@@ -377,11 +378,10 @@ func (d *Degoo) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	}
 	authInfo := authResp["getBucketWriteAuth4"].([]interface{})[0].(map[string]interface{})["AuthData"].(map[string]interface{})
 
-	// 2. 将文件内容上传到返回的 URL
-	// 此处省略具体的上传逻辑，这通常涉及到 multipart/form-data POST 请求
-	// ...
+	// 2. Upload the file content to the returned URL.
+	// ... (Concrete upload logic is omitted here, typically involving a multipart/form-data POST request).
 
-	// 3. 调用 setUploadFile3 更新 Degoo 元数据
+	// 3. Call setUploadFile3 to update Degoo metadata.
 	checksum, err := checkSum(localFilePath)
 	if err != nil {
 		return model.Obj{}, err
@@ -389,14 +389,14 @@ func (d *Degoo) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	
 	fileInfo := map[string]interface{}{
 		"Checksum": checksum,
-		"Name":     file.Name(),
+		"Name":     file.Name(),
 		"CreationTime": time.Now().UnixNano() / int64(time.Millisecond),
 		"ParentID": dstDir.ID,
-		"Size":     file.Size(),
+		"Size":     file.Size(),
 	}
 	const uploadQuery = `mutation SetUploadFile3($Token: String!, $FileInfos: [FileInfoUpload3]!) { setUploadFile3(Token: $Token, FileInfos: $FileInfos) }`
 	uploadVars := map[string]interface{}{
-		"Token":     d.Token,
+		"Token":     d.Token,
 		"FileInfos": []map[string]interface{}{fileInfo},
 	}
 	
@@ -429,5 +429,5 @@ func (d *Degoo) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	return model.Obj{ID: newFileID, Name: file.Name(), Size: file.Size()}, nil
 }
 
-// 确保 Degoo 结构体实现了 driver.Driver 接口
+// Ensure the Degoo struct implements the driver.Driver interface.
 var _ driver.Driver = (*Degoo)(nil)
