@@ -359,7 +359,7 @@ func (d *Degoo) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	// TODO: 这里需要一个本地文件路径，FileStreamer 接口可能需要转换或处理
 	// 假设我们能获取到本地文件路径
 	localFilePath := file.Name() // 这通常是文件在本地缓存的路径
-
+	// 直接使用 file 作为 io.Reader 传递给 checkSum
 	// 1. 调用 getBucketWriteAuth4 获取上传授权
 	const authQuery = `query GetBucketWriteAuth4($Token: String!, $ParentID: String!, $StorageUploadInfos: [StorageUploadInfo2]) { getBucketWriteAuth4(Token: $Token, ParentID: $ParentID, StorageUploadInfos: $StorageUploadInfos) { AuthData { PolicyBase64 Signature BaseURL KeyPrefix AccessKey { Key Value } ACL } } }`
 	authVars := map[string]interface{}{
