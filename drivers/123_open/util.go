@@ -1,15 +1,20 @@
 package _123_open
 
 import (
+	"crypto/md5"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/go-resty/resty/v2"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -20,7 +25,8 @@ var ( //不同情况下获取的AccessTokenQPS限制不同 如下模块化易于
 	RefreshToken   = InitApiInfo(Api+"/api/v1/oauth2/access_token", 1)
 	UserInfo       = InitApiInfo(Api+"/api/v1/user/info", 1)
 	FileList       = InitApiInfo(Api+"/api/v2/file/list", 3)
-	DownloadInfo   = InitApiInfo(Api+"/api/v1/file/download_info", 0)
+	DownloadInfo   = InitApiInfo(Api+"/api/v1/file/download_info", 5)
+	DirectLink     = InitApiInfo(Api+"/api/v1/direct-link/url", 5)
 	Mkdir          = InitApiInfo(Api+"/upload/v1/file/mkdir", 2)
 	Move           = InitApiInfo(Api+"/api/v1/file/move", 1)
 	Rename         = InitApiInfo(Api+"/api/v1/file/name", 1)
@@ -112,6 +118,33 @@ func (d *Open123) flushAccessToken() error {
 	return nil
 }
 
+func (d *Open123) SignURL(originURL, privateKey string, uid uint64, validDuration time.Duration) (newURL string, err error) {
+	// 生成Unix时间戳
+	ts := time.Now().Add(validDuration).Unix()
+
+	// 生成随机数（建议使用UUID，不能包含中划线（-））
+	rand := strings.ReplaceAll(uuid.New().String(), "-", "")
+
+	// 解析URL
+	objURL, err := url.Parse(originURL)
+	if err != nil {
+		return "", err
+	}
+
+	// 待签名字符串，格式：path-timestamp-rand-uid-privateKey
+	unsignedStr := fmt.Sprintf("%s-%d-%s-%d-%s", objURL.Path, ts, rand, uid, privateKey)
+	md5Hash := md5.Sum([]byte(unsignedStr))
+	// 生成鉴权参数，格式：timestamp-rand-uid-md5hash
+	authKey := fmt.Sprintf("%d-%s-%d-%x", ts, rand, uid, md5Hash)
+
+	// 添加鉴权参数到URL查询参数
+	v := objURL.Query()
+	v.Add("auth_key", authKey)
+	objURL.RawQuery = v.Encode()
+
+	return objURL.String(), nil
+}
+
 func (d *Open123) getUserInfo() (*UserInfoResp, error) {
 	var resp UserInfoResp
 
@@ -148,6 +181,21 @@ func (d *Open123) getDownloadInfo(fileId int64) (*DownloadInfoResp, error) {
 	var resp DownloadInfoResp
 
 	_, err := d.Request(DownloadInfo, http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(map[string]string{
+			"fileId": strconv.FormatInt(fileId, 10),
+		})
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+func (d *Open123) getDirectLink(fileId int64) (*DirectLinkResp, error) {
+	var resp DirectLinkResp
+
+	_, err := d.Request(DirectLink, http.MethodGet, func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
 			"fileId": strconv.FormatInt(fileId, 10),
 		})
