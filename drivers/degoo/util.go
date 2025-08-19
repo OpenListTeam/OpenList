@@ -51,7 +51,7 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("User-Agent", userAgent)
-	
+
 	if d.Token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", d.Token))
 	}
@@ -92,32 +92,25 @@ func humanReadableTimes(creation, modification, upload string) (cTime, mTime, uT
 	}
 	return cTime, mTime, uTime
 }
-	// 将字符串时间戳转换为可读格式 "2006-01-02 15:04:05"
-	format := "2006-01-02 15:04:05"
-	cTime = parseTimestampToReadable(creation, format)
-	mTime = parseTimestampToReadable(modification, format)
-	uTime = parseTimestampToReadable(upload, format)
-	return cTime, mTime, uTime
-}
 
-// parseTimestampToReadable 辅助函数，将字符串时间戳转换为可读格式
+// parseTimestampToReadable is a helper function that converts a string timestamp to a readable format.
 func parseTimestampToReadable(ts string, format string) string {
 	if ts == "" {
 		return ""
 	}
-	// 支持秒和毫秒时间戳
 	var tInt int64
 	_, err := fmt.Sscanf(ts, "%d", &tInt)
 	if err != nil {
 		return ""
 	}
-	// 判断是否为毫秒级时间戳
+	// Determine if the timestamp is in milliseconds.
 	if len(ts) > 10 {
 		tInt = tInt / 1000
 	}
 	t := time.Unix(tInt, 0)
 	return t.Format(format)
 }
+
 // checkSum calculates the specific SHA1-based checksum required by the Degoo upload API.
 func checkSum(filePath string) (string, error) {
 	file, err := os.Open(filePath)
@@ -190,10 +183,10 @@ func (d *Degoo) getAllFileChildren5(ctx context.Context, parentID string) ([]Deg
 	nextToken := ""
 	for {
 		variables := map[string]interface{}{
-			"Token": d.Token,
+			"Token":    d.Token,
 			"ParentID": parentID,
-			"Limit": 1000,
-			"Order": 3,
+			"Limit":    1000,
+			"Order":    3,
 		}
 		if nextToken != "" {
 			variables["NextToken"] = nextToken
