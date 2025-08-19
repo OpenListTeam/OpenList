@@ -405,7 +405,28 @@ func (d *Degoo) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		return model.Obj{}, err
 	}
 	
-	return model.Obj{ID: "new_file_id", Name: file.Name(), Size: file.Size()}, nil
+	uploadRespData, err := d.apiCall(ctx, "SetUploadFile3", uploadQuery, uploadVars)
+	if err != nil {
+		return model.Obj{}, err
+	}
+	
+	// Parse the response to get the new file ID
+	var uploadResp map[string]interface{}
+	if err := json.Unmarshal(uploadRespData, &uploadResp); err != nil {
+		return model.Obj{}, err
+	}
+	// The response structure may vary; adjust as needed.
+	// Assuming setUploadFile3 returns a list of file IDs.
+	var newFileID string
+	if ids, ok := uploadResp["setUploadFile3"].([]interface{}); ok && len(ids) > 0 {
+		if idStr, ok := ids[0].(string); ok {
+			newFileID = idStr
+		}
+	}
+	if newFileID == "" {
+		return model.Obj{}, fmt.Errorf("failed to get new file ID from upload response")
+	}
+	return model.Obj{ID: newFileID, Name: file.Name(), Size: file.Size()}, nil
 }
 
 // 确保 Degoo 结构体实现了 driver.Driver 接口
