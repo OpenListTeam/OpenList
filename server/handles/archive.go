@@ -375,7 +375,7 @@ func ArchiveProxy(c *gin.Context) {
 		}
 		proxy(c, link, file, storage.GetStorage().ProxyRange)
 	} else {
-		common.ErrorStrResp(c, "proxy not allowed", 403)
+		common.ErrorPage(c, errors.New("proxy not allowed"), 403)
 		return
 	}
 }

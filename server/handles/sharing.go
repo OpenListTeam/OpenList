@@ -206,16 +206,16 @@ func SharingDown(c *gin.Context) {
 			err = errors.New("cannot get sharing root link")
 		}
 	}
-	if dealError(c, err) {
+	if dealErrorPage(c, err) {
 		return
 	}
 	unwrapPath, err := op.GetSharingUnwrapPath(s, path)
 	if err != nil {
-		common.ErrorStrResp(c, "failed get sharing unwrap path", 500)
+		common.ErrorPage(c, errors.New("failed get sharing unwrap path"), 500)
 		return
 	}
 	storage, actualPath, err := op.GetStorageAndActualPath(unwrapPath)
-	if dealError(c, err) {
+	if dealErrorPage(c, err) {
 		return
 	}
 	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
@@ -224,7 +224,7 @@ func SharingDown(c *gin.Context) {
 			Type:   c.Query("type"),
 		})
 		if err != nil {
-			common.ErrorResp(c, errors.WithMessage(err, "failed get sharing link"), 500)
+			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
 			return
 		}
 		_ = countAccess(c.ClientIP(), s)
@@ -237,7 +237,7 @@ func SharingDown(c *gin.Context) {
 			Redirect: true,
 		})
 		if err != nil {
-			common.ErrorResp(c, errors.WithMessage(err, "failed get sharing link"), 500)
+			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
 			return
 		}
 		_ = countAccess(c.ClientIP(), s)
@@ -247,7 +247,7 @@ func SharingDown(c *gin.Context) {
 
 func SharingArchiveExtract(c *gin.Context) {
 	if !setting.GetBool(conf.ShareArchivePreview) {
-		common.ErrorStrResp(c, "sharing archives previewing is not allowed", 403)
+		common.ErrorPage(c, errors.New("sharing archives previewing is not allowed"), 403)
 		return
 	}
 	sid := c.Request.Context().Value(conf.SharingIDKey).(string)
@@ -265,16 +265,16 @@ func SharingArchiveExtract(c *gin.Context) {
 			err = errors.New("cannot extract sharing root")
 		}
 	}
-	if dealError(c, err) {
+	if dealErrorPage(c, err) {
 		return
 	}
 	unwrapPath, err := op.GetSharingUnwrapPath(s, path)
 	if err != nil {
-		common.ErrorStrResp(c, "failed get sharing unwrap path", 500)
+		common.ErrorPage(c, errors.New("failed get sharing unwrap path"), 500)
 		return
 	}
 	storage, actualPath, err := op.GetStorageAndActualPath(unwrapPath)
-	if dealError(c, err) {
+	if dealErrorPage(c, err) {
 		return
 	}
 	args := model.ArchiveInnerArgs{
@@ -290,21 +290,21 @@ func SharingArchiveExtract(c *gin.Context) {
 	if _, ok := storage.(driver.ArchiveReader); ok {
 		if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
 			link, obj, err := op.DriverExtract(c.Request.Context(), storage, actualPath, args)
-			if dealError(c, err) {
+			if dealErrorPage(c, err) {
 				return
 			}
 			proxy(c, link, obj, storage.GetStorage().ProxyRange)
 		} else {
 			args.Redirect = true
 			link, _, err := op.DriverExtract(c.Request.Context(), storage, actualPath, args)
-			if dealError(c, err) {
+			if dealErrorPage(c, err) {
 				return
 			}
 			redirect(c, link)
 		}
 	} else {
 		rc, size, err := op.InternalExtract(c.Request.Context(), storage, actualPath, args)
-		if dealError(c, err) {
+		if dealErrorPage(c, err) {
 			return
 		}
 		fileName := stdpath.Base(innerPath)
@@ -325,6 +325,23 @@ func dealError(c *gin.Context, err error) bool {
 		common.ErrorResp(c, err, 202)
 	} else {
 		common.ErrorResp(c, err, 500)
+	}
+	return true
+}
+
+func dealErrorPage(c *gin.Context, err error) bool {
+	if err == nil {
+		return false
+	} else if errors.Is(err, errs.SharingNotFound) {
+		common.ErrorPage(c, errors.New("the share does not exist"), 500)
+	} else if errors.Is(err, errs.InvalidSharing) {
+		common.ErrorPage(c, errors.New("the share has expired or is no longer valid"), 500)
+	} else if errors.Is(err, errs.WrongShareCode) {
+		common.ErrorPage(c, err, 403)
+	} else if errors.Is(err, errs.WrongArchivePassword) {
+		common.ErrorPage(c, err, 202)
+	} else {
+		common.ErrorPage(c, err, 500)
 	}
 	return true
 }
