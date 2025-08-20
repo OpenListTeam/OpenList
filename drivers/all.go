@@ -23,6 +23,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/cloudreve"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/cloudreve_v4"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/crypt"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/crypt2"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/doubao"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/doubao_share"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/dropbox"
