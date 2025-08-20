@@ -3,6 +3,8 @@ package fs
 import (
 	"context"
 	"io"
+	stdpath "path"
+	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
 
@@ -90,12 +92,55 @@ func Rename(ctx context.Context, srcPath, dstName string, lazyCache ...bool) err
 	return err
 }
 
+func BatchRename(ctx context.Context, storage driver.Driver, srcPath string, renameObjs []model.RenameObj, lazyCache ...bool) error {
+
+	srcRawObj, err := op.Get(ctx, storage, srcPath)
+	if err != nil {
+		return errors.WithMessage(err, "failed to get src object")
+	}
+	srcObj := model.UnwrapObj(srcRawObj)
+	srcDirPath := stdpath.Dir(srcPath)
+
+	switch s := storage.(type) {
+	case driver.BatchRename:
+		err := s.BatchRename(ctx, srcObj, renameObjs)
+		if err == nil {
+			op.ClearCache(storage, srcDirPath)
+			return nil
+		}
+		return err
+	default:
+		for _, renameObject := range renameObjs {
+			err := op.Rename(ctx, storage, filepath.Join(srcPath, renameObject.SrcName), renameObject.NewName, lazyCache...)
+			if err != nil {
+				log.Errorf("failed rename %s to %s: %+v", renameObject.ID, renameObject.NewName, err)
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func Remove(ctx context.Context, path string) error {
 	err := remove(ctx, path)
 	if err != nil {
 		log.Errorf("failed remove %s: %+v", path, err)
 	}
 	return err
+}
+func BatchRemove(ctx context.Context, storage driver.Driver, actualPath string, objs []model.IDName) error {
+	switch storage.(type) {
+	case driver.BatchRemove:
+		return op.BatchRemove(ctx, storage, actualPath, objs)
+	default:
+		for _, obj := range objs {
+			err := op.Remove(ctx, storage, filepath.Join(actualPath, obj.Name))
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func PutDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer, lazyCache ...bool) error {

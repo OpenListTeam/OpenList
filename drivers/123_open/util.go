@@ -24,6 +24,7 @@ var ( //不同情况下获取的AccessTokenQPS限制不同 如下模块化易于
 	Mkdir          = InitApiInfo(Api+"/upload/v1/file/mkdir", 2)
 	Move           = InitApiInfo(Api+"/api/v1/file/move", 1)
 	Rename         = InitApiInfo(Api+"/api/v1/file/name", 1)
+	BatchRename    = InitApiInfo(Api+"/api/v1/file/rename", 0)
 	Trash          = InitApiInfo(Api+"/api/v1/file/trash", 2)
 	UploadCreate   = InitApiInfo(Api+"/upload/v2/file/create", 2)
 	UploadComplete = InitApiInfo(Api+"/upload/v2/file/upload_complete", 0)
@@ -200,11 +201,20 @@ func (d *Open123) rename(fileId int64, fileName string) error {
 
 	return nil
 }
+func (d *Open123) batchRename(renamelist []string) error {
 
-func (d *Open123) trash(fileId int64) error {
+	_, err := d.Request(BatchRename, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"renameList": renamelist,
+		})
+	}, nil)
+	return err
+}
+
+func (d *Open123) trash(fileIDs []int64) error {
 	_, err := d.Request(Trash, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(base.Json{
-			"fileIDs": []int64{fileId},
+			"fileIDs": fileIDs,
 		})
 	}, nil)
 	if err != nil {

@@ -227,3 +227,15 @@ func (om *ObjMerge) InitHideReg(hides string) {
 func (om *ObjMerge) Reset() {
 	om.set.Clear()
 }
+
+// IDName 文件ID，文件名称，有的网盘使用文件id管理文件，有的使用路径名称
+type IDName struct {
+	ID   string `json:"id" form:"id"`
+	Name string `json:"name" form:"name"`
+}
+
+type RenameObj struct {
+	ID      string `json:"id"` //文件id，部分网盘需要，如果没有可以不传
+	SrcName string `json:"src_name"`
+	NewName string `json:"new_name"`
+}

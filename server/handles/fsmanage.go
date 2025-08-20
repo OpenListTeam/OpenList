@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -236,8 +237,7 @@ func checkRelativePath(path string) error {
 }
 
 type RemoveReq struct {
-	Dir   string   `json:"dir"`
-	Names []string `json:"names"`
+	Names []model.IDName `json:"names"`
 }
 
 func FsRemove(c *gin.Context) {
@@ -250,23 +250,17 @@ func FsRemove(c *gin.Context) {
 		common.ErrorStrResp(c, "Empty file names", 400)
 		return
 	}
-	user := c.Request.Context().Value(conf.UserKey).(*model.User)
-	if !user.CanRemove() {
-		common.ErrorResp(c, errs.PermissionDenied, 403)
-		return
-	}
-	reqDir, err := user.JoinPath(req.Dir)
+
+	storage := c.Request.Context().Value(conf.StorageKey).(driver.Driver)
+	actualPath := c.Request.Context().Value(conf.PathKey).(string)
+
+	err := fs.BatchRemove(c.Request.Context(), storage, actualPath, req.Names)
+
 	if err != nil {
-		common.ErrorResp(c, err, 403)
+		common.ErrorResp(c, err, 500)
 		return
 	}
-	for _, name := range req.Names {
-		err := fs.Remove(c.Request.Context(), stdpath.Join(reqDir, name))
-		if err != nil {
-			common.ErrorResp(c, err, 500)
-			return
-		}
-	}
+
 	//fs.ClearCache(req.Dir)
 	common.SuccessResp(c)
 }

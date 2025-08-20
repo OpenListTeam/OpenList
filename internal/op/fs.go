@@ -572,6 +572,25 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 	return errors.WithStack(err)
 }
 
+func BatchRemove(ctx context.Context, storage driver.Driver, actualPath string, objs []model.IDName) error {
+	srcobj, err := Get(ctx, storage, actualPath)
+	if err != nil {
+		return errors.WithMessage(err, "failed to get src object")
+	}
+	switch s := storage.(type) {
+	case driver.BatchRemove:
+		err := s.BatchRemove(ctx, srcobj, objs)
+		if err == nil {
+			ClearCache(storage, actualPath)
+			return nil
+		}
+		return err
+	default:
+		return errs.NotImplement
+	}
+
+}
+
 func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file model.FileStreamer, up driver.UpdateProgress, lazyCache ...bool) error {
 	close := file.Close
 	defer func() {

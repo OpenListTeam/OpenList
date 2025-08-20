@@ -3,6 +3,7 @@ package _123_open
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -96,6 +97,26 @@ func (d *Open123) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 	return d.rename(fileId, newName)
 }
 
+func (d *Open123) BatchRename(ctx context.Context, obj model.Obj, renameObjs []model.RenameObj) error {
+	rl := []string{}
+	for _, ro := range renameObjs {
+		fileID, err := strconv.ParseInt(ro.ID, 10, 64)
+		if err != nil {
+			return err
+		}
+		rl = append(rl, fmt.Sprintf("%d|%s", fileID, ro.NewName))
+
+	}
+	// 每次最多30
+	for names := range slices.Chunk(rl, 30) {
+		if err := d.batchRename(names); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (d *Open123) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	// 尝试使用上传+MD5秒传功能实现复制
 	// 1. 创建文件
@@ -119,7 +140,27 @@ func (d *Open123) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 func (d *Open123) Remove(ctx context.Context, obj model.Obj) error {
 	fileId, _ := strconv.ParseInt(obj.GetID(), 10, 64)
 
-	return d.trash(fileId)
+	return d.trash([]int64{fileId})
+}
+
+// BatchRemove 批量删除
+func (d *Open123) BatchRemove(ctx context.Context, srcObj model.Obj, objs []model.IDName) error {
+
+	ids := []int64{}
+	for _, obj := range objs {
+		id, err := strconv.ParseInt(obj.ID, 10, 64)
+		if err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	//每次最多100
+	for cids := range slices.Chunk(ids, 100) {
+		if err := d.trash(cids); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
