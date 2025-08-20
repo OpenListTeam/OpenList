@@ -56,14 +56,27 @@ type FsListResp struct {
 	Provider string    `json:"provider"`
 }
 
-func FsList(c *gin.Context) {
+func FsListSplit(c *gin.Context) {
 	var req ListReq
 	if err := c.ShouldBind(&req); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
 	req.Validate()
+	if strings.HasPrefix(req.Path, "/@s") {
+		req.Path = strings.TrimPrefix(req.Path, "/@s")
+		SharingList(c, &req)
+		return
+	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	if user.IsGuest() && user.Disabled {
+		common.ErrorStrResp(c, "Guest user is disabled, login please", 401)
+		return
+	}
+	FsList(c, &req, user)
+}
+
+func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	reqPath, err := user.JoinPath(req.Path)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
@@ -243,13 +256,26 @@ type FsGetResp struct {
 	Related  []ObjResp `json:"related"`
 }
 
-func FsGet(c *gin.Context) {
+func FsGetSplit(c *gin.Context) {
 	var req FsGetReq
 	if err := c.ShouldBind(&req); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	if strings.HasPrefix(req.Path, "/@s") {
+		req.Path = strings.TrimPrefix(req.Path, "/@s")
+		SharingGet(c, &req)
+		return
+	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	if user.IsGuest() && user.Disabled {
+		common.ErrorStrResp(c, "Guest user is disabled, login please", 401)
+		return
+	}
+	FsGet(c, &req, user)
+}
+
+func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	reqPath, err := user.JoinPath(req.Path)
 	if err != nil {
 		common.ErrorResp(c, err, 403)

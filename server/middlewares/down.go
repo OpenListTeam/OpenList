@@ -15,14 +15,19 @@ import (
 	"github.com/pkg/errors"
 )
 
+func PathParse(c *gin.Context) {
+	rawPath := parsePath(c.Param("path"))
+	common.GinWithValue(c, conf.PathKey, rawPath)
+	c.Next()
+}
+
 func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 	return func(c *gin.Context) {
-		rawPath := parsePath(c.Param("path"))
-		common.GinWithValue(c, conf.PathKey, rawPath)
+		rawPath := c.Request.Context().Value(conf.PathKey).(string)
 		meta, err := op.GetNearestMeta(rawPath)
 		if err != nil {
 			if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-				common.ErrorResp(c, err, 500, true)
+				common.ErrorPage(c, err, 500, true)
 				return
 			}
 		}
@@ -32,7 +37,7 @@ func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 			s := c.Query("sign")
 			err = verifyFunc(rawPath, strings.TrimSuffix(s, "/"))
 			if err != nil {
-				common.ErrorResp(c, err, 401)
+				common.ErrorPage(c, err, 401)
 				c.Abort()
 				return
 			}
