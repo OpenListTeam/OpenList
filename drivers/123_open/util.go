@@ -86,8 +86,24 @@ func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCall
 }
 
 func (d *Open123) flushAccessToken() error {
-	if d.Addition.ClientID != "" {
-		if d.Addition.ClientSecret != "" {
+	if d.ClientID != "" {
+		if d.RefreshToken != "" {
+			var resp RefreshTokenResp
+			_, err := d.Request(RefreshToken, http.MethodPost, func(req *resty.Request) {
+				req.SetQueryParam("client_id", d.ClientID)
+				if d.ClientSecret != "" {
+					req.SetQueryParam("client_secret", d.ClientSecret)
+				}
+				req.SetQueryParam("grant_type", "refresh_token")
+				req.SetQueryParam("refresh_token", d.RefreshToken)
+			}, &resp)
+			if err != nil {
+				return err
+			}
+			d.AccessToken = resp.AccessToken
+			d.RefreshToken = resp.RefreshToken
+			op.MustSaveDriverStorage(d)
+		} else if d.ClientSecret != "" {
 			var resp AccessTokenResp
 			_, err := d.Request(AccessToken, http.MethodPost, func(req *resty.Request) {
 				req.SetBody(base.Json{
@@ -99,19 +115,6 @@ func (d *Open123) flushAccessToken() error {
 				return err
 			}
 			d.AccessToken = resp.Data.AccessToken
-			op.MustSaveDriverStorage(d)
-		} else if d.Addition.RefreshToken != "" {
-			var resp RefreshTokenResp
-			_, err := d.Request(RefreshToken, http.MethodPost, func(req *resty.Request) {
-				req.SetQueryParam("client_id", d.ClientID)
-				req.SetQueryParam("grant_type", "refresh_token")
-				req.SetQueryParam("refresh_token", d.Addition.RefreshToken)
-			}, &resp)
-			if err != nil {
-				return err
-			}
-			d.AccessToken = resp.AccessToken
-			d.RefreshToken = resp.RefreshToken
 			op.MustSaveDriverStorage(d)
 		}
 	}
