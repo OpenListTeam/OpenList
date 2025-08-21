@@ -74,7 +74,6 @@ Dank u voor uw ondersteuning en begrip
   - [x] [Thunder](https://pan.xunlei.com)
   - [x] [Lanzou](https://www.lanzou.com)
   - [x] [ILanzou](https://www.ilanzou.com)
-  - [x] [Aliyundrive share](https://www.alipan.com)
   - [x] [Google photo](https://photos.google.com)
   - [x] [Mega.nz](https://mega.nz)
   - [x] [Baidu photo](https://photo.baidu.com)

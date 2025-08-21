@@ -74,7 +74,6 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
   - [x] [迅雷网盘](https://pan.xunlei.com)
   - [x] [蓝奏云](https://www.lanzou.com)
   - [x] [蓝奏云优享版](https://www.ilanzou.com)
-  - [x] [阿里云盘分享](https://www.alipan.com)
   - [x] [Google 相册](https://photos.google.com)
   - [x] [Mega.nz](https://mega.nz)
   - [x] [百度相册](https://photo.baidu.com)
