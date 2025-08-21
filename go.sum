@@ -59,8 +59,8 @@ github.com/RoaringBitmap/roaring/v2 v2.4.5 h1:uGrrMreGjvAtTBobc0g5IrW1D5ldxDQYe2
 github.com/RoaringBitmap/roaring/v2 v2.4.5/go.mod h1:FiJcsfkGje/nZBZgCu0ZxCPOKD/hVXDS2dXi7/eUFE0=
 github.com/STARRY-S/zip v0.2.1 h1:pWBd4tuSGm3wtpoqRZZ2EAwOmcHK6XFf7bU9qcJXyFg=
 github.com/STARRY-S/zip v0.2.1/go.mod h1:xNvshLODWtC4EJ702g7cTYn13G53o1+X9BWnPFpcWV4=
-github.com/SheltonZhu/115driver v1.1.0 h1:kA8Vtu5JVWqqJFiTF06+HDb9zVEO6ZSdyjV5HsGx7Wg=
-github.com/SheltonZhu/115driver v1.1.0/go.mod h1:rKvNd4Y4OkXv1TMbr/SKjGdcvMQxh6AW5Tw9w0CJb7E=
+github.com/SheltonZhu/115driver v1.1.1 h1:9EMhe2ZJflGiAaZbYInw2jqxTcqZNF+DtVDsEy70aFU=
+github.com/SheltonZhu/115driver v1.1.1/go.mod h1:rKvNd4Y4OkXv1TMbr/SKjGdcvMQxh6AW5Tw9w0CJb7E=
 github.com/abbot/go-http-auth v0.4.0 h1:QjmvZ5gSC7jm3Zg54DqWE/T5m1t2AfDu6QlXJT0EVT0=
 github.com/abbot/go-http-auth v0.4.0/go.mod h1:Cz6ARTIzApMJDzh5bRMSUou6UMSp0IEXg9km/ci7TJM=
 github.com/aead/ecdh v0.2.0 h1:pYop54xVaq/CEREFEcukHRZfTdjiWvYIsZDXXrBapQQ=
