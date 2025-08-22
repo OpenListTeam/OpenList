@@ -42,11 +42,6 @@ func (d *Teldrive) Init(ctx context.Context) error {
 	if d.ChunkSize == 0 {
 		d.ChunkSize = 10
 	}
-	if d.WebdavPolicy == "native_proxy" {
-		d.WebProxy = true
-	} else {
-		d.WebProxy = false
-	}
 
 	op.MustSaveDriverStorage(d)
 	return nil
@@ -90,29 +85,29 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 }
 
 func (d *Teldrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	if d.WebdavPolicy != "native_proxy" {
-		var address string
-		if d.WebdavPolicy == "use_proxy_url" {
-			address = d.DownProxyURL
-		} else {
-			address = d.Address
-		}
-		if shareObj, err := d.getShareFileById(file.GetID()); err == nil && shareObj != nil {
-			return &model.Link{
-				URL: address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
-			}, nil
-		}
-		if err := d.createShareFile(file.GetID()); err != nil {
-			return nil, err
-		}
-		shareObj, err := d.getShareFileById(file.GetID())
-		if err != nil {
-			return nil, err
-		}
-		return &model.Link{
-			URL: address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
-		}, nil
-	}
+	//if d.WebdavPolicy != "native_proxy" {
+	//	var address string
+	//	if d.WebdavPolicy == "use_proxy_url" {
+	//		address = d.DownProxyURL
+	//	} else {
+	//		address = d.Address
+	//	}
+	//	if shareObj, err := d.getShareFileById(file.GetID()); err == nil && shareObj != nil {
+	//		return &model.Link{
+	//			URL: address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
+	//		}, nil
+	//	}
+	//	if err := d.createShareFile(file.GetID()); err != nil {
+	//		return nil, err
+	//	}
+	//	shareObj, err := d.getShareFileById(file.GetID())
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//	return &model.Link{
+	//		URL: address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
+	//	}, nil
+	//}
 	return &model.Link{
 		URL: d.Address + "/api/files/" + file.GetID() + "/" + file.GetName(),
 		Header: http.Header{
@@ -174,9 +169,7 @@ func (d *Teldrive) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 	chunkSize := chunkSizeInMB * 1024 * 1024 // Convert MB to bytes
 	totalSize := file.GetSize()
 	totalParts := int(math.Ceil(float64(totalSize) / float64(chunkSize)))
-	retryCount := 0
 	maxRetried := 3
-	p := driver.NewProgress(totalSize, up)
 
 	// delete the upload task when finished or failed
 	defer func() {
@@ -197,10 +190,10 @@ func (d *Teldrive) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 	}
 
 	if totalParts <= 1 {
-		return d.doSingleUpload(ctx, dstDir, file, p, retryCount, maxRetried, totalParts, fileId)
+		return d.doSingleUpload(ctx, dstDir, file, up, totalParts, chunkSize, fileId)
 	}
 
-	return d.doMultiUpload(ctx, dstDir, file, p, maxRetried, totalParts, chunkSize, fileId)
+	return d.doMultiUpload(ctx, dstDir, file, up, maxRetried, totalParts, chunkSize, fileId)
 }
 
 func (d *Teldrive) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {

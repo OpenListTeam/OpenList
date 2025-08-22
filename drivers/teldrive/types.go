@@ -3,6 +3,7 @@ package teldrive
 import (
 	"context"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 	"time"
@@ -45,9 +46,11 @@ type FilePart struct {
 }
 
 type chunkTask struct {
-	data     []byte
-	chunkIdx int
-	fileName string
+	chunkIdx  int
+	fileName  string
+	chunkSize int64
+	reader    *stream.SectionReader
+	ss        *stream.StreamSectionReader
 }
 
 type CopyManager struct {
@@ -61,10 +64,6 @@ type CopyManager struct {
 type CopyTask struct {
 	SrcObj model.Obj
 	DstDir model.Obj
-}
-
-type CustomProxy struct {
-	model.Proxy
 }
 
 type ShareObj struct {

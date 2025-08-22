@@ -1,12 +1,13 @@
 package teldrive
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -16,6 +17,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -190,58 +192,62 @@ func (d *Teldrive) singleUploadRequest(fileId string, callback base.ReqCallback,
 	return nil
 }
 
-func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, p *driver.Progress,
-	retryCount, maxRetried, totalParts int, fileId string) error {
+func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up model.UpdateProgress,
+	totalParts int, chunkSize int64, fileId string) error {
 
-	chunkIdx := 1
 	totalSize := file.GetSize()
 	var fileParts []FilePart
-	for p.Done < p.Total {
+	var uploaded int64 = 0
+	ss, err := stream.NewStreamSectionReader(file, int(totalSize), &up)
+	if err != nil {
+		return err
+	}
+
+	for uploaded < totalSize {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
 		}
-		// only one chunk, so we can use the whole file
-		byteData := make([]byte, totalSize)
-		_, err := io.ReadFull(file, byteData)
-		if err != io.EOF && err != nil {
+		curChunkSize := min(totalSize-uploaded, chunkSize)
+		rd, err := ss.GetSectionReader(uploaded, curChunkSize)
+		if err != nil {
 			return err
 		}
 		filePart := &FilePart{}
-		// be sure the file is uploaded, and break loop if success
-		for {
+		if err := retry.Do(func() error {
+
+			if _, err := rd.Seek(0, io.SeekStart); err != nil {
+				return err
+			}
+
 			if err := d.singleUploadRequest(fileId, func(req *resty.Request) {
 				uploadParams := map[string]string{
 					"partName": func() string {
 						digits := len(fmt.Sprintf("%d", totalParts))
-						return file.GetName() + fmt.Sprintf("%0*d", digits, chunkIdx)
+						return file.GetName() + fmt.Sprintf(".%0*d", digits, 1)
 					}(),
-					"partNo":   strconv.Itoa(chunkIdx),
+					"partNo":   strconv.Itoa(1),
 					"fileName": file.GetName(),
 				}
 				req.SetQueryParams(uploadParams)
-				req.SetBody(driver.NewLimitedUploadStream(ctx, bytes.NewReader(byteData)))
-				req.SetHeader("Content-Length", strconv.Itoa(len(byteData)))
+				req.SetBody(driver.NewLimitedUploadStream(ctx, rd))
+				req.SetHeader("Content-Length", strconv.FormatInt(curChunkSize, 10))
 			}, filePart); err != nil {
-				if retryCount >= maxRetried {
-					utils.Log.Errorf("[Teldrive] upload failed after %d retries: %s", maxRetried, err.Error())
-					return err
-				}
-				if errors.Is(err, context.DeadlineExceeded) {
-					continue
-				}
-				retryCount++
-				errorStr := fmt.Sprintf("[Teldrive] upload error: %v, retrying %d times", err, retryCount)
-				utils.Log.Errorf(errorStr)
-				time.Sleep(time.Duration(retryCount<<1) * time.Second) // Exponential backoff: 2, 4, 8, 16, ...
-				continue
+				return err
 			}
-			break
+
+			return nil
+		},
+			retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second)); err != nil {
+			return err
 		}
+
 		if filePart.Name != "" {
 			fileParts = append(fileParts, *filePart)
-			retryCount = 0
-			_, _ = p.Write(byteData)
-			chunkIdx++
+			uploaded += curChunkSize
+			up(float64(uploaded) / float64(totalSize))
+			ss.FreeSectionReader(rd)
 		}
 
 	}
@@ -249,62 +255,50 @@ func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file mo
 	return d.createFileOnUploadSuccess(file.GetName(), fileId, dstDir.GetPath(), fileParts, totalSize)
 }
 
-func (d *Teldrive) doMultiUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, p *driver.Progress,
+func (d *Teldrive) doMultiUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up model.UpdateProgress,
 	maxRetried, totalParts int, chunkSize int64, fileId string) error {
+
 	concurrent := d.UploadConcurrency
 	g, ctx := errgroup.WithContext(ctx)
 	sem := semaphore.NewWeighted(int64(concurrent))
 	chunkChan := make(chan chunkTask, concurrent*2)
 	resultChan := make(chan FilePart, concurrent)
 	totalSize := file.GetSize()
+
+	ss, err := stream.NewStreamSectionReader(file, int(totalSize), &up)
+	if err != nil {
+		return err
+	}
+	ssLock := sync.Mutex{}
 	g.Go(func() error {
 		defer close(chunkChan)
 
-		chunkIdx := 1
-		for {
+		chunkIdx := 0
+		for chunkIdx < totalParts {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 			}
 
-			if p.Done >= p.Total {
-				break
-			}
+			offset := int64(chunkIdx) * chunkSize
+			curChunkSize := min(totalSize-offset, chunkSize)
 
-			byteData := make([]byte, chunkSize)
-			n, err := io.ReadFull(file, byteData)
+			ssLock.Lock()
+			reader, err := ss.GetSectionReader(offset, curChunkSize)
+			ssLock.Unlock()
+
 			if err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					if n > 0 {
-						// handle the last chuck
-						byteData = byteData[:n]
-						task := chunkTask{
-							data:     byteData,
-							chunkIdx: chunkIdx,
-							fileName: file.GetName(),
-						}
-						select {
-						case chunkChan <- task:
-						case <-ctx.Done():
-							return ctx.Err()
-						}
-					}
-					break
-				}
-				return fmt.Errorf("read file error: %w", err)
+				return err
 			}
-
-			if _, err := p.Write(byteData); err != nil {
-				return fmt.Errorf("progress update error: %w", err)
-			}
-
 			task := chunkTask{
-				data:     byteData,
-				chunkIdx: chunkIdx,
-				fileName: file.GetName(),
+				chunkIdx:  chunkIdx + 1,
+				chunkSize: curChunkSize,
+				fileName:  file.GetName(),
+				reader:    reader,
+				ss:        ss,
 			}
-
+			// freeSectionReader will be called in d.uploadSingleChunk
 			select {
 			case chunkChan <- task:
 				chunkIdx++
@@ -381,6 +375,7 @@ func (d *Teldrive) doMultiUpload(ctx context.Context, dstDir model.Obj, file mod
 func (d *Teldrive) uploadSingleChunk(ctx context.Context, fileId string, task chunkTask, totalParts, maxRetried int) (*FilePart, error) {
 	filePart := &FilePart{}
 	retryCount := 0
+	defer task.ss.FreeSectionReader(task.reader)
 
 	for {
 		select {
@@ -397,14 +392,14 @@ func (d *Teldrive) uploadSingleChunk(ctx context.Context, fileId string, task ch
 			uploadParams := map[string]string{
 				"partName": func() string {
 					digits := len(fmt.Sprintf("%d", totalParts))
-					return task.fileName + fmt.Sprintf("%0*d", digits, task.chunkIdx)
+					return task.fileName + fmt.Sprintf(".%0*d", digits, task.chunkIdx)
 				}(),
 				"partNo":   strconv.Itoa(task.chunkIdx),
 				"fileName": task.fileName,
 			}
 			req.SetQueryParams(uploadParams)
-			req.SetBody(driver.NewLimitedUploadStream(ctx, bytes.NewReader(task.data)))
-			req.SetHeader("Content-Length", strconv.Itoa(len(task.data)))
+			req.SetBody(driver.NewLimitedUploadStream(ctx, task.reader))
+			req.SetHeader("Content-Length", strconv.Itoa(int(task.chunkSize)))
 		}, filePart)
 
 		if err == nil {

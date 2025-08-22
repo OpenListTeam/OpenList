@@ -18,6 +18,7 @@ type Addition struct {
 var config = driver.Config{
 	Name:        "Teldrive",
 	DefaultRoot: "/",
+	OnlyProxy:   true,
 }
 
 func init() {
