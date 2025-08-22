@@ -50,6 +50,7 @@ func fs(c *gin.Context, withstorage bool, permission permissionFunc) {
 	path, err = user.JoinPath(path)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
+		c.Abort()
 		return
 	}
 	meta, err := op.GetNearestMeta(stdpath.Dir(path))

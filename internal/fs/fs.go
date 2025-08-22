@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	stdpath "path"
-	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
 
@@ -111,7 +110,7 @@ func BatchRename(ctx context.Context, storage driver.Driver, srcPath string, ren
 		return err
 	default:
 		for _, renameObject := range renameObjs {
-			err := op.Rename(ctx, storage, filepath.Join(srcPath, renameObject.SrcName), renameObject.NewName, lazyCache...)
+			err := op.Rename(ctx, storage, stdpath.Join(srcPath, renameObject.SrcName), renameObject.NewName, lazyCache...)
 			if err != nil {
 				log.Errorf("failed rename %s to %s: %+v", renameObject.ID, renameObject.NewName, err)
 				return err
@@ -134,7 +133,7 @@ func BatchRemove(ctx context.Context, storage driver.Driver, actualPath string, 
 		return op.BatchRemove(ctx, storage, actualPath, objs)
 	default:
 		for _, obj := range objs {
-			err := op.Remove(ctx, storage, filepath.Join(actualPath, obj.Name))
+			err := op.Remove(ctx, storage, stdpath.Join(actualPath, obj.Name))
 			if err != nil {
 				return err
 			}

@@ -171,7 +171,7 @@ const (
 	ProxyHeaderKey
 	RequestHeaderKey
 	UserAgentKey
-	PathKey	
+	PathKey
 	SharingIDKey
-  StorageKey
+	StorageKey
 )
