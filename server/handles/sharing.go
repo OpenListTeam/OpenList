@@ -219,6 +219,12 @@ func SharingDown(c *gin.Context) {
 		return
 	}
 	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
+		if _, ok := c.GetQuery("d"); !ok {
+			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath); url != "" {
+				c.Redirect(302, url)
+				return
+			}
+		}
 		link, obj, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{
 			Header: c.Request.Header,
 			Type:   c.Query("type"),
