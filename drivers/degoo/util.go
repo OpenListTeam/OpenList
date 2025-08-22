@@ -1,36 +1,96 @@
-package template
+package degoo
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
+// Thanks to https://github.com/bernd-wechner/Degoo for API research.
+
 const (
-	// Degoo's GraphQL API endpoint.
+	loginURL       = "https://rest-api.degoo.com/login"
+	accessTokenURL = "https://rest-api.degoo.com/access-token/v2"
+
+	// Degoo GraphQL API endpoint.
 	apiURL = "https://production-appsync.degoo.com/graphql"
-	// The fixed API key found in the Python script.
+	// Fixed API key.
 	apiKey = "da2-vs6twz5vnjdavpqndtbzg3prra"
-	// User-Agent string to impersonate a legitimate client.
-	userAgent = "Mozilla/5.0 Slackware/13.37 (X11; U; Linux x86_64; en-US) AppleWebKit/534.16 (KHTML, like Gecko) Chrome/11.0.696.50"
-	// Checksum for a new folder, as determined in the Python script.
+	// Checksum for new folder.
 	folderChecksum = "CgAQAg"
 )
 
-// apiCall is a generic helper to perform GraphQL API requests to Degoo.
+// login performs the login process and retrieves the access token.
+func (d *Degoo) login(ctx context.Context) error {
+	creds := DegooLoginRequest{
+		GenerateToken: true,
+		Username:      d.Addition.Username,
+		Password:      d.Addition.Password,
+	}
+
+	jsonCreds, err := json.Marshal(creds)
+	if err != nil {
+		return fmt.Errorf("failed to serialize login credentials: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", loginURL, bytes.NewBuffer(jsonCreds))
+	if err != nil {
+		return fmt.Errorf("failed to create login request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", base.UserAgent)
+	req.Header.Set("Origin", "https://app.degoo.com")
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("login request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("login failed: %s", resp.Status)
+	}
+
+	var loginResp DegooLoginResponse
+	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+		return fmt.Errorf("failed to parse login response: %w", err)
+	}
+
+	if loginResp.RefreshToken != "" {
+		tokenReq := DegooAccessTokenRequest{RefreshToken: loginResp.RefreshToken}
+		jsonTokenReq, _ := json.Marshal(tokenReq)
+
+		tokenReqHTTP, _ := http.NewRequestWithContext(ctx, "POST", accessTokenURL, bytes.NewBuffer(jsonTokenReq))
+		tokenReqHTTP.Header.Set("Content-Type", "application/json")
+		tokenReqHTTP.Header.Set("User-Agent", base.UserAgent)
+
+		tokenResp, err := d.client.Do(tokenReqHTTP)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+		defer tokenResp.Body.Close()
+
+		var accessTokenResp DegooAccessTokenResponse
+		if err := json.NewDecoder(tokenResp.Body).Decode(&accessTokenResp); err != nil {
+			return fmt.Errorf("failed to parse access token response: %w", err)
+		}
+		d.Token = accessTokenResp.AccessToken
+	} else if loginResp.Token != "" {
+		d.Token = loginResp.Token
+	} else {
+		return fmt.Errorf("login failed, no valid token returned")
+	}
+	return nil
+}
+
+// apiCall performs a Degoo GraphQL API request.
 func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variables map[string]interface{}) (json.RawMessage, error) {
 	reqBody := map[string]interface{}{
 		"operationName": operationName,
@@ -50,7 +110,7 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", base.UserAgent)
 
 	if d.Token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", d.Token))
@@ -72,14 +132,21 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 	}
 
 	if len(degooResp.Errors) > 0 {
-		errMsg := degooResp.Errors[0]["message"]
-		return nil, fmt.Errorf("degoo API returned an error: %v", errMsg)
+		if degooResp.Errors[0].ErrorType == "Unauthorized" {
+			err = d.login(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("unauthorized access, login failed: %w", err)
+			}
+			// Retry the API call after re-login
+			return d.apiCall(ctx, operationName, query, variables)
+		}
+		return nil, fmt.Errorf("degoo API returned an error: %v", degooResp.Errors[0].Message)
 	}
 
 	return degooResp.Data, nil
 }
 
-// humanReadableTimes converts Degoo's raw timestamps into standard Go time.Time objects.
+// humanReadableTimes converts Degoo timestamps to Go time.Time.
 func humanReadableTimes(creation, modification, upload string) (cTime, mTime, uTime time.Time) {
 	cTime, _ = time.Parse(time.RFC3339, creation)
 	if modification != "" {
@@ -93,70 +160,13 @@ func humanReadableTimes(creation, modification, upload string) (cTime, mTime, uT
 	return cTime, mTime, uTime
 }
 
-// parseTimestampToReadable is a helper function that converts a string timestamp to a readable format.
-func parseTimestampToReadable(ts string, format string) string {
-	if ts == "" {
-		return ""
-	}
-	var tInt int64
-	_, err := fmt.Sscanf(ts, "%d", &tInt)
-	if err != nil {
-		return ""
-	}
-	// Determine if the timestamp is in milliseconds.
-	if len(ts) > 10 {
-		tInt = tInt / 1000
-	}
-	t := time.Unix(tInt, 0)
-	return t.Format(format)
-}
-
-// checkSum calculates the specific SHA1-based checksum required by the Degoo upload API.
-func checkSum(filePath string) (string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	seed := []byte{13, 7, 2, 2, 15, 40, 75, 117, 13, 10, 19, 16, 29, 23, 3, 36}
-	hasher := sha1.New()
-	hasher.Write(seed)
-
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
-	}
-
-	cs := hasher.Sum(nil)
-
-	csBytes := []byte{10, byte(len(cs))}
-	csBytes = append(csBytes, cs...)
-	csBytes = append(csBytes, 16, 0)
-
-	return base64.StdEncoding.EncodeToString(csBytes), nil
-}
-
-// toModelObj converts a DegooFileItem API object into an OpenList model.Obj.
-func (d *Degoo) toModelObj(item DegooFileItem) model.Obj {
-	isFolder := item.Category == 2 || item.Category == 1 || item.Category == 10
-	_, modTime, _ := humanReadableTimes(item.CreationTime, item.LastModificationTime, item.LastUploadTime)
-	return model.Obj{
-		ID:        item.ID,
-		ParentID:  item.ParentID,
-		Name:      item.Name,
-		Size:      item.Size,
-		IsFolder:  isFolder,
-		UpdatedAt: modTime,
-	}
-}
-
-// getDevices gets and caches the list of top-level devices and folders.
+// getDevices fetches and caches top-level devices and folders.
 func (d *Degoo) getDevices(ctx context.Context) error {
-	const query = `query GetFileChildren5($Token: String! $ParentID: String $AllParentIDs: [String] $Limit: Int! $Order: Int! $NextToken: String ) { getFileChildren5(Token: $Token ParentID: $ParentID AllParentIDs: $AllParentIDs Limit: $Limit Order: $Order NextToken: $NextToken) { Items { ID Name Category } NextToken } }`
+	const query = `query GetFileChildren5($Token: String! $ParentID: String $AllParentIDs: [String] $Limit: Int! $Order: Int! $NextToken: String ) { getFileChildren5(Token: $Token ParentID: $ParentID AllParentIDs: $AllParentIDs Limit: $Limit Order: $Order NextToken: $NextToken) { Items { ParentID } NextToken } }`
 	variables := map[string]interface{}{
 		"Token":    d.Token,
 		"ParentID": "0",
-		"Limit":    1000,
+		"Limit":    10,
 		"Order":    3,
 	}
 	data, err := d.apiCall(ctx, "GetFileChildren5", query, variables)
@@ -167,16 +177,16 @@ func (d *Degoo) getDevices(ctx context.Context) error {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return fmt.Errorf("failed to parse device list: %w", err)
 	}
-	d.devices = make(map[string]string)
-	for _, item := range resp.GetFileChildren5.Items {
-		if item.Category == 1 {
-			d.devices[item.ID] = item.Name
+	if d.RootFolderID == "0" {
+		if len(resp.GetFileChildren5.Items) > 0 {
+			d.RootFolderID = resp.GetFileChildren5.Items[0].ParentID
 		}
+		op.MustSaveDriverStorage(d)
 	}
 	return nil
 }
 
-// getAllFileChildren5 handles pagination to fetch all children of a directory.
+// getAllFileChildren5 fetches all children of a directory with pagination.
 func (d *Degoo) getAllFileChildren5(ctx context.Context, parentID string) ([]DegooFileItem, error) {
 	const query = `query GetFileChildren5($Token: String! $ParentID: String $AllParentIDs: [String] $Limit: Int! $Order: Int! $NextToken: String ) { getFileChildren5(Token: $Token ParentID: $ParentID AllParentIDs: $AllParentIDs Limit: $Limit Order: $Order NextToken: $NextToken) { Items { ID ParentID Name Category Size CreationTime LastModificationTime LastUploadTime FilePath IsInRecycleBin DeviceID MetadataID } NextToken } }`
 	var allItems []DegooFileItem
@@ -208,9 +218,9 @@ func (d *Degoo) getAllFileChildren5(ctx context.Context, parentID string) ([]Deg
 	return allItems, nil
 }
 
-// getOverlay4 fetches metadata for a single item by its ID.
+// getOverlay4 fetches metadata for a single item by ID.
 func (d *Degoo) getOverlay4(ctx context.Context, id string) (DegooFileItem, error) {
-	const query = `query GetOverlay4($Token: String!, $ID: IDType!) { getOverlay4(Token: $Token, ID: $ID) { ID ParentID Name Category Size CreationTime LastModificationTime LastUploadTime URL OptimizedURL FilePath IsInRecycleBin DeviceID MetadataID } }`
+	const query = `query GetOverlay4($Token: String!, $ID: IDType!) { getOverlay4(Token: $Token, ID: $ID) { ID ParentID Name Category Size CreationTime LastModificationTime LastUploadTime URL FilePath IsInRecycleBin DeviceID MetadataID } }`
 	variables := map[string]interface{}{
 		"Token": d.Token,
 		"ID": map[string]string{

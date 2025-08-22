@@ -1,4 +1,4 @@
-package template
+package degoo
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -6,25 +6,17 @@ import (
 )
 
 type Addition struct {
-	Username string `json:"username" required:"true" label:"Degoo Username" help:"Your Degoo account email"`
-	Password string `json:"password" type:"password" required:"true" label:"Degoo Password" help:"Your Degoo account password"`
-	// API key from the Python script. We can hardcode it here or make it an optional config item.
-	// APIKey string `json:"apiKey" type:"password" label:"API Key" default:"da2-vs6twz5vnjdavpqndtbzg3prra"`
+	driver.RootID
+	Username string `json:"username" required:"true" help:"Your Degoo account email"`
+	Password string `json:"password" required:"true" help:"Your Degoo account password"`
+	Token    string `json:"token" help:"Access token for Degoo API, will be obtained automatically if not provided"`
 }
 
 var config = driver.Config{
-	Name: "Degoo",
-	LocalSort: false,
-	OnlyLinkMFile: false,
-	OnlyProxy: false,
-	NoCache: false,
-	NoUpload: false,
-	NeedMs: true,
-	DefaultRoot: "0", // Root directory ID is "0" in the Python script.
-	CheckStatus: true,
-	Alert: "",
-	NoOverwriteUpload: false,
-	NoLinkURL: false,
+	Name:              "Degoo",
+	LocalSort:         true,
+	DefaultRoot:       "0",
+	NoOverwriteUpload: true,
 }
 
 func init() {
