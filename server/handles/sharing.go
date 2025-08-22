@@ -195,6 +195,7 @@ func SharingArchiveList(c *gin.Context, req *ArchiveListReq) {
 func SharingDown(c *gin.Context) {
 	sid := c.Request.Context().Value(conf.SharingIDKey).(string)
 	path := c.Request.Context().Value(conf.PathKey).(string)
+	path = utils.FixAndCleanPath(path)
 	pwd := c.Query("pwd")
 	s, err := op.GetSharingById(sid)
 	if err == nil {
@@ -259,6 +260,7 @@ func SharingArchiveExtract(c *gin.Context) {
 	}
 	sid := c.Request.Context().Value(conf.SharingIDKey).(string)
 	path := c.Request.Context().Value(conf.PathKey).(string)
+	path = utils.FixAndCleanPath(path)
 	pwd := c.Query("pwd")
 	innerPath := utils.FixAndCleanPath(c.Query("inner"))
 	archivePass := c.Query("pass")
