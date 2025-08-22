@@ -65,10 +65,16 @@ func (d *Degoo) login(ctx context.Context) error {
 
 	if loginResp.RefreshToken != "" {
 		tokenReq := DegooAccessTokenRequest{RefreshToken: loginResp.RefreshToken}
-		jsonTokenReq, _ := json.Marshal(tokenReq)
+		jsonTokenReq, err := json.Marshal(tokenReq)
+		if err != nil {
+			return fmt.Errorf("failed to serialize access token request: %w", err)
+		}
 
-		tokenReqHTTP, _ := http.NewRequestWithContext(ctx, "POST", accessTokenURL, bytes.NewBuffer(jsonTokenReq))
-		tokenReqHTTP.Header.Set("Content-Type", "application/json")
+		tokenReqHTTP, err := http.NewRequestWithContext(ctx, "POST", accessTokenURL, bytes.NewBuffer(jsonTokenReq))
+		if err != nil {
+			return fmt.Errorf("failed to create access token request: %w", err)
+		}
+
 		tokenReqHTTP.Header.Set("User-Agent", base.UserAgent)
 
 		tokenResp, err := d.client.Do(tokenReqHTTP)

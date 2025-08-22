@@ -92,7 +92,7 @@ func (d *Degoo) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 			{
 				"Checksum":     folderChecksum,
 				"Name":         dirName,
-				"CreationTime": time.Now().UnixNano() / int64(time.Millisecond),
+				"CreationTime": time.Now().UnixMilli(),
 				"ParentID":     parentDir.GetID(),
 				"Size":         0,
 			},
