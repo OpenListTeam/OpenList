@@ -9,7 +9,7 @@ type Addition struct {
 	driver.RootPath
 	Address           string `json:"url" required:"true"`
 	Cookie            string `json:"cookie" type:"string" required:"true" help:"access_token=xxx"`
-	UseShareLink      bool   `json:"use_share_link" type:"bool" default:"false" help:"Create share link when getting file link, support 302. If disabled, you need to enable web proxy."`
+	UseShareLink      bool   `json:"use_share_link" type:"bool" default:"false" help:"Create share link when getting link to support 302. If disabled, you need to enable web proxy."`
 	ChunkSize         int64  `json:"chunk_size" type:"number" default:"4" help:"Chunk size in MiB"`
 	UploadConcurrency int64  `json:"upload_concurrency" type:"number" default:"4" help:"Concurrency upload requests"`
 }
