@@ -83,29 +83,23 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 }
 
 func (d *Teldrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	//if d.WebdavPolicy != "native_proxy" {
-	//	var address string
-	//	if d.WebdavPolicy == "use_proxy_url" {
-	//		address = d.DownProxyURL
-	//	} else {
-	//		address = d.Address
-	//	}
-	//	if shareObj, err := d.getShareFileById(file.GetID()); err == nil && shareObj != nil {
-	//		return &model.Link{
-	//			URL: address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
-	//		}, nil
-	//	}
-	//	if err := d.createShareFile(file.GetID()); err != nil {
-	//		return nil, err
-	//	}
-	//	shareObj, err := d.getShareFileById(file.GetID())
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	//	return &model.Link{
-	//		URL: address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
-	//	}, nil
-	//}
+	if d.UseShareLink {
+		if shareObj, err := d.getShareFileById(file.GetID()); err == nil && shareObj != nil {
+			return &model.Link{
+				URL: d.Address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
+			}, nil
+		}
+		if err := d.createShareFile(file.GetID()); err != nil {
+			return nil, err
+		}
+		shareObj, err := d.getShareFileById(file.GetID())
+		if err != nil {
+			return nil, err
+		}
+		return &model.Link{
+			URL: d.Address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
+		}, nil
+	}
 	return &model.Link{
 		URL: d.Address + "/api/files/" + file.GetID() + "/" + file.GetName(),
 		Header: http.Header{
