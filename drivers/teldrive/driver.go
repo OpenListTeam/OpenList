@@ -32,6 +32,7 @@ func (d *Teldrive) GetAddition() driver.Additional {
 }
 
 func (d *Teldrive) Init(ctx context.Context) error {
+	d.Address = strings.TrimSuffix(d.Address, "/")
 	if d.Cookie == "" || !strings.HasPrefix(d.Cookie, "access_token=") {
 		return fmt.Errorf("cookie must start with 'access_token='")
 	}
