@@ -51,17 +51,13 @@ func (d *Teldrive) Drop(ctx context.Context) error {
 }
 
 func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	// endpoint /api/files， params ->page order sort path
 	var listResp ListResp
-	params := url.Values{}
-	params.Set("path", dir.GetPath())
-	//log.Info(dir.GetPath())
-	pathname, err := utils.InjectQuery("/api/files", params)
-	if err != nil {
-		return nil, err
-	}
-
-	err = d.request(http.MethodGet, pathname, nil, &listResp)
+	err := d.request(http.MethodGet, "/api/files", func(req *resty.Request) {
+		req.SetQueryParams(map[string]string{
+			"path":  dir.GetPath(),
+			"limit": "1000", // overide default 500, TODO pagination
+		})
+	}, &listResp)
 	if err != nil {
 		return nil, err
 	}
@@ -84,24 +80,22 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 
 func (d *Teldrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if d.UseShareLink {
-		if shareObj, err := d.getShareFileById(file.GetID()); err == nil && shareObj != nil {
-			return &model.Link{
-				URL: d.Address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
-			}, nil
-		}
-		if err := d.createShareFile(file.GetID()); err != nil {
-			return nil, err
-		}
 		shareObj, err := d.getShareFileById(file.GetID())
-		if err != nil {
-			return nil, err
+		if err != nil || shareObj == nil {
+			if err := d.createShareFile(file.GetID()); err != nil {
+				return nil, err
+			}
+			shareObj, err = d.getShareFileById(file.GetID())
+			if err != nil {
+				return nil, err
+			}
 		}
 		return &model.Link{
-			URL: d.Address + fmt.Sprintf("/api/shares/%s/files/%s/%s", shareObj.Id, file.GetID(), file.GetName()),
+			URL: d.Address + "/api/shares/" + url.PathEscape(shareObj.Id) + "/files/" + url.PathEscape(file.GetID()) + "/" + url.PathEscape(file.GetName()),
 		}, nil
 	}
 	return &model.Link{
-		URL: d.Address + "/api/files/" + file.GetID() + "/" + file.GetName(),
+		URL: d.Address + "/api/files/" + url.PathEscape(file.GetID()) + "/" + url.PathEscape(file.GetName()),
 		Header: http.Header{
 			"Cookie": {d.Cookie},
 		},
@@ -130,7 +124,8 @@ func (d *Teldrive) Rename(ctx context.Context, srcObj model.Obj, newName string)
 	body := base.Json{
 		"name": newName,
 	}
-	return d.request(http.MethodPatch, "/api/files/"+srcObj.GetID(), func(req *resty.Request) {
+	return d.request(http.MethodPatch, "/api/files/{id}", func(req *resty.Request) {
+		req.SetPathParam("id", srcObj.GetID())
 		req.SetBody(body)
 	}, nil)
 }
@@ -165,7 +160,9 @@ func (d *Teldrive) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 
 	// delete the upload task when finished or failed
 	defer func() {
-		_ = d.request(http.MethodDelete, "/api/uploads/"+fileId, nil, nil)
+		_ = d.request(http.MethodDelete, "/api/uploads/{id}", func(req *resty.Request) {
+			req.SetPathParam("id", fileId)
+		}, nil)
 	}()
 
 	if obj, err := d.getFile(dstDir.GetPath(), file.GetName(), file.IsDir()); err == nil {
@@ -174,7 +171,9 @@ func (d *Teldrive) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 		}
 	}
 	// start the upload process
-	if err := d.request(http.MethodGet, "/api/uploads/"+fileId, nil, nil); err != nil {
+	if err := d.request(http.MethodGet, "/api/uploads/fileId", func(req *resty.Request) {
+		req.SetPathParam("id", fileId)
+	}, nil); err != nil {
 		return err
 	}
 	if totalSize == 0 {

@@ -6,9 +6,7 @@ import (
 )
 
 type Addition struct {
-	// Usually one of two
 	driver.RootPath
-	// define other
 	Address           string `json:"url" required:"true"`
 	Cookie            string `json:"cookie" type:"string" required:"true" help:"access_token=xxx"`
 	UseShareLink      bool   `json:"use_share_link" type:"bool" default:"false" help:"Create share link when getting file link, support 302. If disabled, you need to enable web proxy."`

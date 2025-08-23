@@ -127,7 +127,8 @@ func (cm *CopyManager) copySingleFile(ctx context.Context, srcObj, dstDir model.
 	}
 
 	// Do copy
-	return cm.d.request(http.MethodPost, "/api/files/"+srcObj.GetID()+"/copy", func(req *resty.Request) {
+	return cm.d.request(http.MethodPost, "/api/files/{id}/copy", func(req *resty.Request) {
+		req.SetPathParam("id", srcObj.GetID())
 		req.SetBody(base.Json{
 			"newName":     srcObj.GetName(),
 			"destination": dstDir.GetPath(),

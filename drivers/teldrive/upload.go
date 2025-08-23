@@ -75,7 +75,9 @@ func (d *Teldrive) checkFilePartExist(fileId string, partId int) (FilePart, erro
 	var uploadedParts []FilePart
 	var filePart FilePart
 
-	if err := d.request(http.MethodGet, "/api/uploads/"+fileId, nil, &uploadedParts); err != nil {
+	if err := d.request(http.MethodGet, "/api/uploads/{id}", func(req *resty.Request) {
+		req.SetPathParam("id", fileId)
+	}, &uploadedParts); err != nil {
 		return filePart, err
 	}
 
@@ -90,7 +92,9 @@ func (d *Teldrive) checkFilePartExist(fileId string, partId int) (FilePart, erro
 
 func (d *Teldrive) getFilePart(fileId string) ([]FilePart, error) {
 	var uploadedParts []FilePart
-	if err := d.request(http.MethodGet, "/api/uploads/"+fileId, nil, &uploadedParts); err != nil {
+	if err := d.request(http.MethodGet, "/api/uploads/{id}", func(req *resty.Request) {
+		req.SetPathParam("id", fileId)
+	}, &uploadedParts); err != nil {
 		return nil, err
 	}
 

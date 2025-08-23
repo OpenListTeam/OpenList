@@ -75,7 +75,8 @@ func (err *ErrResp) Error() string {
 
 func (d *Teldrive) createShareFile(fileId string) error {
 	var errResp ErrResp
-	if err := d.request(http.MethodPost, "/api/files/"+fileId+"/share", func(req *resty.Request) {
+	if err := d.request(http.MethodPost, "/api/files/{id}/share", func(req *resty.Request) {
+		req.SetPathParam("id", fileId)
 		req.SetBody(base.Json{
 			"expiresAt": getDateTime(),
 		})
@@ -92,7 +93,9 @@ func (d *Teldrive) createShareFile(fileId string) error {
 
 func (d *Teldrive) getShareFileById(fileId string) (*ShareObj, error) {
 	var shareObj ShareObj
-	if err := d.request(http.MethodGet, "/api/files/"+fileId+"/share", nil, &shareObj); err != nil {
+	if err := d.request(http.MethodGet, "/api/files/{id}/share", func(req *resty.Request) {
+		req.SetPathParam("id", fileId)
+	}, &shareObj); err != nil {
 		return nil, err
 	}
 
