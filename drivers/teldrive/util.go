@@ -2,6 +2,13 @@ package teldrive
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"sort"
+	"strconv"
+	"sync"
+	"time"
+
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -13,12 +20,6 @@ import (
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
-	"io"
-	"net/http"
-	"sort"
-	"strconv"
-	"sync"
-	"time"
 )
 
 // do others that not defined in Driver interface

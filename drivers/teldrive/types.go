@@ -2,11 +2,12 @@ package teldrive
 
 import (
 	"context"
+	"time"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
-	"time"
 )
 
 type ErrResp struct {

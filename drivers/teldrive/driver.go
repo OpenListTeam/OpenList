@@ -3,6 +3,11 @@ package teldrive
 import (
 	"context"
 	"fmt"
+	"math"
+	"net/http"
+	"net/url"
+	"strings"
+
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -11,10 +16,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
-	"math"
-	"net/http"
-	"net/url"
-	"strings"
 )
 
 type Teldrive struct {
