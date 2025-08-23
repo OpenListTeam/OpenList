@@ -32,8 +32,6 @@ func (d *Teldrive) GetAddition() driver.Additional {
 }
 
 func (d *Teldrive) Init(ctx context.Context) error {
-	// TODO login / refresh token
-	// op.MustSaveDriverStorage(d)
 	if d.Cookie == "" || !strings.HasPrefix(d.Cookie, "access_token=") {
 		return fmt.Errorf("cookie must start with 'access_token='")
 	}
@@ -53,7 +51,6 @@ func (d *Teldrive) Drop(ctx context.Context) error {
 }
 
 func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	// TODO return the files list, required
 	// endpoint /api/files， params ->page order sort path
 	var listResp ListResp
 	params := url.Values{}
