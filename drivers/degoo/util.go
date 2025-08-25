@@ -23,28 +23,20 @@ const (
 	loginURL       = "https://rest-api.degoo.com/login"
 	accessTokenURL = "https://rest-api.degoo.com/access-token/v2"
 	apiURL         = "https://production-appsync.degoo.com/graphql"
-	
+
 	// API configuration
 	apiKey         = "da2-vs6twz5vnjdavpqndtbzg3prra"
 	folderChecksum = "CgAQAg"
-	
+
 	// Token management
 	tokenRefreshThreshold = 5 * time.Minute
-	
+
 	// Rate limiting
 	minRequestInterval = 1 * time.Second
-	
-	// HTTP headers
-	headerContentType = "application/json"
-	headerUserAgent   = "User-Agent"
-	headerOrigin      = "Origin"
-	headerAPIKey      = "x-api-key"
-	headerAuth        = "Authorization"
-	
+
 	// Error messages
-	errRateLimited     = "rate limited (429), please try again later"
-	errTokenExpired    = "token expired or invalid"
-	errUnauthorized    = "unauthorized access"
+	errRateLimited  = "rate limited (429), please try again later"
+	errUnauthorized = "unauthorized access"
 )
 
 var (
@@ -66,7 +58,7 @@ type JWTPayload struct {
 func applyRateLimit() {
 	requestMutex.Lock()
 	defer requestMutex.Unlock()
-	
+
 	if !lastRequestTime.IsZero() {
 		if elapsed := time.Since(lastRequestTime); elapsed < minRequestInterval {
 			time.Sleep(minRequestInterval - elapsed)
@@ -83,12 +75,12 @@ func createJSONRequest(ctx context.Context, method, url string, body interface{}
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", base.UserAgent)
 	return req, nil
@@ -110,12 +102,12 @@ func (d *Degoo) isTokenExpired() bool {
 	if d.Token == "" {
 		return true
 	}
-	
+
 	payload, err := extractJWTPayload(d.Token)
 	if err != nil {
 		return true // Invalid token format
 	}
-	
+
 	// Check if token expires within the threshold
 	expireTime := time.Unix(payload.Exp, 0)
 	return time.Now().Add(tokenRefreshThreshold).After(expireTime)
@@ -127,18 +119,18 @@ func extractJWTPayload(token string) (*JWTPayload, error) {
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("invalid JWT format")
 	}
-	
+
 	// Decode the payload (second part)
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode JWT payload: %w", err)
 	}
-	
+
 	var jwtPayload JWTPayload
 	if err := json.Unmarshal(payload, &jwtPayload); err != nil {
 		return nil, fmt.Errorf("failed to parse JWT payload: %w", err)
 	}
-	
+
 	return &jwtPayload, nil
 }
 
@@ -147,39 +139,39 @@ func (d *Degoo) refreshToken(ctx context.Context) error {
 	if d.RefreshToken == "" {
 		return fmt.Errorf("no refresh token available")
 	}
-	
+
 	// Create request
 	tokenReq := DegooAccessTokenRequest{RefreshToken: d.RefreshToken}
 	req, err := createJSONRequest(ctx, "POST", accessTokenURL, tokenReq)
 	if err != nil {
 		return fmt.Errorf("failed to create refresh token request: %w", err)
 	}
-	
+
 	// Execute request
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("refresh token request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Check response
 	if err := checkHTTPResponse(resp, "refresh token"); err != nil {
 		return err
 	}
-	
+
 	var accessTokenResp DegooAccessTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&accessTokenResp); err != nil {
 		return fmt.Errorf("failed to parse access token response: %w", err)
 	}
-	
+
 	if accessTokenResp.AccessToken == "" {
 		return fmt.Errorf("empty access token received")
 	}
-	
+
 	d.Token = accessTokenResp.AccessToken
 	// Save the updated token to storage
 	op.MustSaveDriverStorage(d)
-	
+
 	return nil
 }
 
@@ -196,11 +188,11 @@ func (d *Degoo) ensureValidToken(ctx context.Context) error {
 				fmt.Printf("Token refresh failed, falling back to full login: %v\n", refreshErr)
 			}
 		}
-		
+
 		// Perform full login
 		return d.login(ctx)
 	}
-	
+
 	return nil
 }
 
@@ -277,10 +269,10 @@ func (d *Degoo) login(ctx context.Context) error {
 	} else {
 		return fmt.Errorf("login failed, no valid token returned")
 	}
-	
+
 	// Save the updated tokens to storage
 	op.MustSaveDriverStorage(d)
-	
+
 	return nil
 }
 
@@ -293,10 +285,10 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 	if err := d.ensureValidToken(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
 	}
-	
+
 	// Update the Token in variables if it exists (after potential refresh)
 	d.updateTokenInVariables(variables)
-	
+
 	return d.executeGraphQLRequest(ctx, operationName, query, variables)
 }
 
@@ -322,7 +314,7 @@ func (d *Degoo) executeGraphQLRequest(ctx context.Context, operationName, query 
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Set Degoo-specific headers
 	req.Header.Set("x-api-key", apiKey)
 	if d.Token != "" {
@@ -362,12 +354,12 @@ func (d *Degoo) handleGraphQLError(ctx context.Context, gqlError DegooErrors, op
 		if err := d.login(ctx); err != nil {
 			return nil, fmt.Errorf("%s, login failed: %w", errUnauthorized, err)
 		}
-		
+
 		// Update token in variables and retry
 		d.updateTokenInVariables(variables)
 		return d.apiCall(ctx, operationName, query, variables)
 	}
-	
+
 	return nil, fmt.Errorf("GraphQL API error: %s", gqlError.Message)
 }
 
