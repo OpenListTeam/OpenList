@@ -32,11 +32,9 @@ func (d *Degoo) Init(ctx context.Context) error {
 
 	d.client = base.HttpClient
 
-	if d.Token == "" {
-		err := d.login(ctx)
-		if err != nil {
-			return err
-		}
+	// Ensure we have a valid token (will login if needed or refresh if expired)
+	if err := d.ensureValidToken(ctx); err != nil {
+		return fmt.Errorf("failed to initialize token: %w", err)
 	}
 
 	return d.getDevices(ctx)
