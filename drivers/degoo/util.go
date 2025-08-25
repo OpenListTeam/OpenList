@@ -99,11 +99,11 @@ func checkHTTPResponse(resp *http.Response, operation string) error {
 
 // isTokenExpired checks if the JWT token is expired or will expire soon
 func (d *Degoo) isTokenExpired() bool {
-	if d.Token == "" {
+	if d.AccessToken == "" {
 		return true
 	}
 
-	payload, err := extractJWTPayload(d.Token)
+	payload, err := extractJWTPayload(d.AccessToken)
 	if err != nil {
 		return true // Invalid token format
 	}
@@ -168,7 +168,7 @@ func (d *Degoo) refreshToken(ctx context.Context) error {
 		return fmt.Errorf("empty access token received")
 	}
 
-	d.Token = accessTokenResp.AccessToken
+	d.AccessToken = accessTokenResp.AccessToken
 	// Save the updated token to storage
 	op.MustSaveDriverStorage(d)
 
@@ -261,10 +261,10 @@ func (d *Degoo) login(ctx context.Context) error {
 		if err := json.NewDecoder(tokenResp.Body).Decode(&accessTokenResp); err != nil {
 			return fmt.Errorf("failed to parse access token response: %w", err)
 		}
-		d.Token = accessTokenResp.AccessToken
+		d.AccessToken = accessTokenResp.AccessToken
 		d.RefreshToken = loginResp.RefreshToken // Save refresh token
 	} else if loginResp.Token != "" {
-		d.Token = loginResp.Token
+		d.AccessToken = loginResp.Token
 		d.RefreshToken = "" // Direct token, no refresh token available
 	} else {
 		return fmt.Errorf("login failed, no valid token returned")
@@ -296,7 +296,7 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 func (d *Degoo) updateTokenInVariables(variables map[string]interface{}) {
 	if variables != nil {
 		if _, hasToken := variables["Token"]; hasToken {
-			variables["Token"] = d.Token
+			variables["Token"] = d.AccessToken
 		}
 	}
 }
@@ -317,8 +317,8 @@ func (d *Degoo) executeGraphQLRequest(ctx context.Context, operationName, query 
 
 	// Set Degoo-specific headers
 	req.Header.Set("x-api-key", apiKey)
-	if d.Token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", d.Token))
+	if d.AccessToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", d.AccessToken))
 	}
 
 	// Execute request
@@ -381,7 +381,7 @@ func humanReadableTimes(creation, modification, upload string) (cTime, mTime, uT
 func (d *Degoo) getDevices(ctx context.Context) error {
 	const query = `query GetFileChildren5($Token: String! $ParentID: String $AllParentIDs: [String] $Limit: Int! $Order: Int! $NextToken: String ) { getFileChildren5(Token: $Token ParentID: $ParentID AllParentIDs: $AllParentIDs Limit: $Limit Order: $Order NextToken: $NextToken) { Items { ParentID } NextToken } }`
 	variables := map[string]interface{}{
-		"Token":    d.Token,
+		"Token":    d.AccessToken,
 		"ParentID": "0",
 		"Limit":    10,
 		"Order":    3,
@@ -410,7 +410,7 @@ func (d *Degoo) getAllFileChildren5(ctx context.Context, parentID string) ([]Deg
 	nextToken := ""
 	for {
 		variables := map[string]interface{}{
-			"Token":    d.Token,
+			"Token":    d.AccessToken,
 			"ParentID": parentID,
 			"Limit":    1000,
 			"Order":    3,
@@ -439,7 +439,7 @@ func (d *Degoo) getAllFileChildren5(ctx context.Context, parentID string) ([]Deg
 func (d *Degoo) getOverlay4(ctx context.Context, id string) (DegooFileItem, error) {
 	const query = `query GetOverlay4($Token: String!, $ID: IDType!) { getOverlay4(Token: $Token, ID: $ID) { ID ParentID Name Category Size CreationTime LastModificationTime LastUploadTime URL FilePath IsInRecycleBin DeviceID MetadataID } }`
 	variables := map[string]interface{}{
-		"Token": d.Token,
+		"Token": d.AccessToken,
 		"ID": map[string]string{
 			"FileID": id,
 		},

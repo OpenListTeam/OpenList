@@ -85,7 +85,7 @@ func (d *Degoo) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 	const query = `mutation SetUploadFile3($Token: String!, $FileInfos: [FileInfoUpload3]!) { setUploadFile3(Token: $Token, FileInfos: $FileInfos) }`
 
 	variables := map[string]interface{}{
-		"Token": d.Token,
+		"Token": d.AccessToken,
 		"FileInfos": []map[string]interface{}{
 			{
 				"Checksum":     folderChecksum,
@@ -109,7 +109,7 @@ func (d *Degoo) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, 
 	const query = `mutation SetMoveFile($Token: String!, $Copy: Boolean, $NewParentID: String!, $FileIDs: [String]!) { setMoveFile(Token: $Token, Copy: $Copy, NewParentID: $NewParentID, FileIDs: $FileIDs) }`
 
 	variables := map[string]interface{}{
-		"Token":       d.Token,
+		"Token":       d.AccessToken,
 		"Copy":        false,
 		"NewParentID": dstDir.GetID(),
 		"FileIDs":     []string{srcObj.GetID()},
@@ -127,7 +127,7 @@ func (d *Degoo) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 	const query = `mutation SetRenameFile($Token: String!, $FileRenames: [FileRenameInfo]!) { setRenameFile(Token: $Token, FileRenames: $FileRenames) }`
 
 	variables := map[string]interface{}{
-		"Token": d.Token,
+		"Token": d.AccessToken,
 		"FileRenames": []DegooFileRenameInfo{
 			{
 				ID:      srcObj.GetID(),
@@ -153,7 +153,7 @@ func (d *Degoo) Remove(ctx context.Context, obj model.Obj) error {
 	const query = `mutation SetDeleteFile5($Token: String!, $IsInRecycleBin: Boolean!, $IDs: [IDType]!) { setDeleteFile5(Token: $Token, IsInRecycleBin: $IsInRecycleBin, IDs: $IDs) }`
 
 	variables := map[string]interface{}{
-		"Token":          d.Token,
+		"Token":          d.AccessToken,
 		"IsInRecycleBin": false,
 		"IDs":            []map[string]string{{"FileID": obj.GetID()}},
 	}

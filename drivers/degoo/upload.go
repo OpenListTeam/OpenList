@@ -49,7 +49,7 @@ func (d *Degoo) getBucketWriteAuth4(ctx context.Context, file model.FileStreamer
   }`
 
 	variables := map[string]interface{}{
-		"Token":    d.Token,
+		"Token":    d.AccessToken,
 		"ParentID": parentID,
 		"StorageUploadInfos": []map[string]string{{
 			"FileName": file.GetName(),
@@ -174,7 +174,7 @@ func (d *Degoo) SetUploadFile3(ctx context.Context, file model.FileStreamer, par
   }`
 
 	variables := map[string]interface{}{
-		"Token": d.Token,
+		"Token": d.AccessToken,
 		"FileInfos": []map[string]string{{
 			"Checksum":     checksum,
 			"CreationTime": strconv.FormatInt(file.CreateTime().UnixMilli(), 10),
