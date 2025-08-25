@@ -190,7 +190,9 @@ func (d *Degoo) ensureValidToken(ctx context.Context) error {
 		}
 
 		// Perform full login
-		return d.login(ctx)
+		if d.Username != "" && d.Password != "" {
+			return d.login(ctx)
+		}
 	}
 
 	return nil
@@ -198,10 +200,14 @@ func (d *Degoo) ensureValidToken(ctx context.Context) error {
 
 // login performs the login process and retrieves the access token.
 func (d *Degoo) login(ctx context.Context) error {
+	if d.Username == "" || d.Password == "" {
+		return fmt.Errorf("username or password not provided")
+	}
+
 	creds := DegooLoginRequest{
 		GenerateToken: true,
-		Username:      d.Addition.Username,
-		Password:      d.Addition.Password,
+		Username:      d.Username,
+		Password:      d.Password,
 	}
 
 	jsonCreds, err := json.Marshal(creds)
