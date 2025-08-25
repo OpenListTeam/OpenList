@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/rclone/rclone/lib/mmap"
 	"io"
 	"math"
 	"os"
@@ -179,26 +180,30 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 
 func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	limit := int64(conf.MaxBufferLimit)
-	// TODO: 这里不会改，我写成了buf := make([]byte, 64<<10)的形式
-	//var buf []byte
-	//if conf.MmapThreshold > 0 && limit >= int64(conf.MmapThreshold) {
-	//	m, err := mmap.Alloc(int(limit))
-	//	if err == nil {
-	//		f.Add(utils.CloseFunc(func() error {
-	//			return mmap.Free(m)
-	//		}))
-	//		buf = m
-	//	}
-	//}
 
 	if f.peekBuff == nil {
 		f.peekBuff = &buffer.Reader{}
 		f.oriReader = f.Reader
 	}
+	var buf []byte
+	bufSize := 64 << 10 // 64KB as default
+	if conf.MmapThreshold > 0 && bufSize >= conf.MmapThreshold {
+		m, err := mmap.Alloc(bufSize)
+		if err == nil {
+			f.Add(utils.CloseFunc(func() error {
+				return mmap.Free(m)
+			}))
+			buf = m
+		}
+	}
+
 	var readBytes int
 	// precache first `limit` byte
 	for int64(readBytes) < limit {
-		buf := make([]byte, 64<<10)
+		if buf == nil {
+			buf = make([]byte, bufSize)
+		}
+
 		want := limit - int64(readBytes)
 		if want > int64(len(buf)) {
 			want = int64(len(buf))
