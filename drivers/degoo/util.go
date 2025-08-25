@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -33,6 +34,12 @@ const (
 	
 	// Rate limiting
 	minRequestInterval = 1 * time.Second
+)
+
+var (
+	// Global rate limiting
+	lastRequestTime time.Time
+	requestMutex    sync.Mutex
 )
 
 // JWT payload structure for token expiration checking
@@ -166,8 +173,6 @@ func (d *Degoo) login(ctx context.Context) error {
 
 	// Handle rate limiting (429 Too Many Requests)
 	if resp.StatusCode == http.StatusTooManyRequests {
-		// Wait before retrying
-		time.Sleep(30 * time.Second)
 		return fmt.Errorf("login rate limited (429), please try again later")
 	}
 
@@ -221,10 +226,29 @@ func (d *Degoo) login(ctx context.Context) error {
 
 // apiCall performs a Degoo GraphQL API request.
 func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variables map[string]interface{}) (json.RawMessage, error) {
+	// Rate limiting: ensure minimum interval between requests
+	requestMutex.Lock()
+	if !lastRequestTime.IsZero() {
+		elapsed := time.Since(lastRequestTime)
+		if elapsed < minRequestInterval {
+			time.Sleep(minRequestInterval - elapsed)
+		}
+	}
+	lastRequestTime = time.Now()
+	requestMutex.Unlock()
+
 	// Ensure we have a valid token before making the API call
 	if err := d.ensureValidToken(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
 	}
+	
+	// Update the Token in variables if it exists (after potential refresh)
+	if variables != nil {
+		if _, hasToken := variables["Token"]; hasToken {
+			variables["Token"] = d.Token
+		}
+	}
+	
 	reqBody := map[string]interface{}{
 		"operationName": operationName,
 		"query":         query,
@@ -257,8 +281,6 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 
 	// Handle rate limiting (429 Too Many Requests)
 	if resp.StatusCode == http.StatusTooManyRequests {
-		// Wait before retrying
-		time.Sleep(30 * time.Second)
 		return nil, fmt.Errorf("API rate limited (429), please try again later")
 	}
 
@@ -276,6 +298,12 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 			err = d.login(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("unauthorized access, login failed: %w", err)
+			}
+			// Update Token in variables after re-login
+			if variables != nil {
+				if _, hasToken := variables["Token"]; hasToken {
+					variables["Token"] = d.Token
+				}
 			}
 			// Retry the API call after re-login
 			return d.apiCall(ctx, operationName, query, variables)
