@@ -19,25 +19,36 @@ import (
 // Thanks to https://github.com/bernd-wechner/Degoo for API research.
 
 const (
+	// API endpoints
 	loginURL       = "https://rest-api.degoo.com/login"
 	accessTokenURL = "https://rest-api.degoo.com/access-token/v2"
-
-	// Degoo GraphQL API endpoint.
-	apiURL = "https://production-appsync.degoo.com/graphql"
-	// Fixed API key.
-	apiKey = "da2-vs6twz5vnjdavpqndtbzg3prra"
-	// Checksum for new folder.
+	apiURL         = "https://production-appsync.degoo.com/graphql"
+	
+	// API configuration
+	apiKey         = "da2-vs6twz5vnjdavpqndtbzg3prra"
 	folderChecksum = "CgAQAg"
 	
-	// Token refresh threshold: refresh when token expires within 5 minutes
+	// Token management
 	tokenRefreshThreshold = 5 * time.Minute
 	
 	// Rate limiting
 	minRequestInterval = 1 * time.Second
+	
+	// HTTP headers
+	headerContentType = "application/json"
+	headerUserAgent   = "User-Agent"
+	headerOrigin      = "Origin"
+	headerAPIKey      = "x-api-key"
+	headerAuth        = "Authorization"
+	
+	// Error messages
+	errRateLimited     = "rate limited (429), please try again later"
+	errTokenExpired    = "token expired or invalid"
+	errUnauthorized    = "unauthorized access"
 )
 
 var (
-	// Global rate limiting
+	// Global rate limiting - protects against concurrent API calls
 	lastRequestTime time.Time
 	requestMutex    sync.Mutex
 )
@@ -49,32 +60,86 @@ type JWTPayload struct {
 	Iat    int64  `json:"iat"`
 }
 
+// Rate limiting helper functions
+
+// applyRateLimit ensures minimum interval between API requests
+func applyRateLimit() {
+	requestMutex.Lock()
+	defer requestMutex.Unlock()
+	
+	if !lastRequestTime.IsZero() {
+		if elapsed := time.Since(lastRequestTime); elapsed < minRequestInterval {
+			time.Sleep(minRequestInterval - elapsed)
+		}
+	}
+	lastRequestTime = time.Now()
+}
+
+// HTTP request helper functions
+
+// createJSONRequest creates a new HTTP request with JSON body
+func createJSONRequest(ctx context.Context, method, url string, body interface{}) (*http.Request, error) {
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", base.UserAgent)
+	return req, nil
+}
+
+// checkHTTPResponse checks for common HTTP error conditions
+func checkHTTPResponse(resp *http.Response, operation string) error {
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("%s %s", operation, errRateLimited)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s failed: %s", operation, resp.Status)
+	}
+	return nil
+}
+
 // isTokenExpired checks if the JWT token is expired or will expire soon
 func (d *Degoo) isTokenExpired() bool {
 	if d.Token == "" {
 		return true
 	}
 	
-	// Split JWT token (header.payload.signature)
-	parts := strings.Split(d.Token, ".")
+	payload, err := extractJWTPayload(d.Token)
+	if err != nil {
+		return true // Invalid token format
+	}
+	
+	// Check if token expires within the threshold
+	expireTime := time.Unix(payload.Exp, 0)
+	return time.Now().Add(tokenRefreshThreshold).After(expireTime)
+}
+
+// extractJWTPayload extracts and parses JWT payload
+func extractJWTPayload(token string) (*JWTPayload, error) {
+	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return true
+		return nil, fmt.Errorf("invalid JWT format")
 	}
 	
 	// Decode the payload (second part)
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return true
+		return nil, fmt.Errorf("failed to decode JWT payload: %w", err)
 	}
 	
 	var jwtPayload JWTPayload
 	if err := json.Unmarshal(payload, &jwtPayload); err != nil {
-		return true
+		return nil, fmt.Errorf("failed to parse JWT payload: %w", err)
 	}
 	
-	// Check if token expires within the threshold
-	expireTime := time.Unix(jwtPayload.Exp, 0)
-	return time.Now().Add(tokenRefreshThreshold).After(expireTime)
+	return &jwtPayload, nil
 }
 
 // refreshToken attempts to refresh the access token using the refresh token
@@ -83,28 +148,23 @@ func (d *Degoo) refreshToken(ctx context.Context) error {
 		return fmt.Errorf("no refresh token available")
 	}
 	
+	// Create request
 	tokenReq := DegooAccessTokenRequest{RefreshToken: d.RefreshToken}
-	jsonTokenReq, err := json.Marshal(tokenReq)
+	req, err := createJSONRequest(ctx, "POST", accessTokenURL, tokenReq)
 	if err != nil {
-		return fmt.Errorf("failed to serialize access token request: %w", err)
+		return fmt.Errorf("failed to create refresh token request: %w", err)
 	}
 	
-	req, err := http.NewRequestWithContext(ctx, "POST", accessTokenURL, bytes.NewBuffer(jsonTokenReq))
-	if err != nil {
-		return fmt.Errorf("failed to create access token request: %w", err)
-	}
-	
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", base.UserAgent)
-	
+	// Execute request
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to get access token: %w", err)
+		return fmt.Errorf("refresh token request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("refresh token request failed: %s", resp.Status)
+	// Check response
+	if err := checkHTTPResponse(resp, "refresh token"); err != nil {
+		return err
 	}
 	
 	var accessTokenResp DegooAccessTokenResponse
@@ -226,16 +286,8 @@ func (d *Degoo) login(ctx context.Context) error {
 
 // apiCall performs a Degoo GraphQL API request.
 func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variables map[string]interface{}) (json.RawMessage, error) {
-	// Rate limiting: ensure minimum interval between requests
-	requestMutex.Lock()
-	if !lastRequestTime.IsZero() {
-		elapsed := time.Since(lastRequestTime)
-		if elapsed < minRequestInterval {
-			time.Sleep(minRequestInterval - elapsed)
-		}
-	}
-	lastRequestTime = time.Now()
-	requestMutex.Unlock()
+	// Apply rate limiting
+	applyRateLimit()
 
 	// Ensure we have a valid token before making the API call
 	if err := d.ensureValidToken(ctx); err != nil {
@@ -243,75 +295,80 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 	}
 	
 	// Update the Token in variables if it exists (after potential refresh)
+	d.updateTokenInVariables(variables)
+	
+	return d.executeGraphQLRequest(ctx, operationName, query, variables)
+}
+
+// updateTokenInVariables updates the Token field in GraphQL variables
+func (d *Degoo) updateTokenInVariables(variables map[string]interface{}) {
 	if variables != nil {
 		if _, hasToken := variables["Token"]; hasToken {
 			variables["Token"] = d.Token
 		}
 	}
-	
+}
+
+// executeGraphQLRequest executes a GraphQL request with retry logic
+func (d *Degoo) executeGraphQLRequest(ctx context.Context, operationName, query string, variables map[string]interface{}) (json.RawMessage, error) {
 	reqBody := map[string]interface{}{
 		"operationName": operationName,
 		"query":         query,
 		"variables":     variables,
 	}
 
-	jsonBody, err := json.Marshal(reqBody)
+	// Create and configure request
+	req, err := createJSONRequest(ctx, "POST", apiURL, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize request body: %w", err)
+		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
+	
+	// Set Degoo-specific headers
 	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("User-Agent", base.UserAgent)
-
 	if d.Token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", d.Token))
 	}
 
+	// Execute request
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("API request failed: %w", err)
+		return nil, fmt.Errorf("GraphQL API request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Handle rate limiting (429 Too Many Requests)
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("API rate limited (429), please try again later")
+	// Check for HTTP errors
+	if err := checkHTTPResponse(resp, "GraphQL API"); err != nil {
+		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API response error: %s", resp.Status)
-	}
-
+	// Parse GraphQL response
 	var degooResp DegooGraphqlResponse
 	if err := json.NewDecoder(resp.Body).Decode(&degooResp); err != nil {
-		return nil, fmt.Errorf("failed to decode API response: %w", err)
+		return nil, fmt.Errorf("failed to decode GraphQL response: %w", err)
 	}
 
+	// Handle GraphQL errors
 	if len(degooResp.Errors) > 0 {
-		if degooResp.Errors[0].ErrorType == "Unauthorized" {
-			err = d.login(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("unauthorized access, login failed: %w", err)
-			}
-			// Update Token in variables after re-login
-			if variables != nil {
-				if _, hasToken := variables["Token"]; hasToken {
-					variables["Token"] = d.Token
-				}
-			}
-			// Retry the API call after re-login
-			return d.apiCall(ctx, operationName, query, variables)
-		}
-		return nil, fmt.Errorf("degoo API returned an error: %v", degooResp.Errors[0].Message)
+		return d.handleGraphQLError(ctx, degooResp.Errors[0], operationName, query, variables)
 	}
 
 	return degooResp.Data, nil
+}
+
+// handleGraphQLError handles GraphQL-level errors with retry logic
+func (d *Degoo) handleGraphQLError(ctx context.Context, gqlError DegooErrors, operationName, query string, variables map[string]interface{}) (json.RawMessage, error) {
+	if gqlError.ErrorType == "Unauthorized" {
+		// Re-login and retry
+		if err := d.login(ctx); err != nil {
+			return nil, fmt.Errorf("%s, login failed: %w", errUnauthorized, err)
+		}
+		
+		// Update token in variables and retry
+		d.updateTokenInVariables(variables)
+		return d.apiCall(ctx, operationName, query, variables)
+	}
+	
+	return nil, fmt.Errorf("GraphQL API error: %s", gqlError.Message)
 }
 
 // humanReadableTimes converts Degoo timestamps to Go time.Time.
