@@ -3,10 +3,12 @@ package degoo
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -25,7 +27,115 @@ const (
 	apiKey = "da2-vs6twz5vnjdavpqndtbzg3prra"
 	// Checksum for new folder.
 	folderChecksum = "CgAQAg"
+	
+	// Token refresh threshold: refresh when token expires within 5 minutes
+	tokenRefreshThreshold = 5 * time.Minute
+	
+	// Rate limiting
+	minRequestInterval = 1 * time.Second
 )
+
+// JWT payload structure for token expiration checking
+type JWTPayload struct {
+	UserID string `json:"userID"`
+	Exp    int64  `json:"exp"`
+	Iat    int64  `json:"iat"`
+}
+
+// isTokenExpired checks if the JWT token is expired or will expire soon
+func (d *Degoo) isTokenExpired() bool {
+	if d.Token == "" {
+		return true
+	}
+	
+	// Split JWT token (header.payload.signature)
+	parts := strings.Split(d.Token, ".")
+	if len(parts) != 3 {
+		return true
+	}
+	
+	// Decode the payload (second part)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return true
+	}
+	
+	var jwtPayload JWTPayload
+	if err := json.Unmarshal(payload, &jwtPayload); err != nil {
+		return true
+	}
+	
+	// Check if token expires within the threshold
+	expireTime := time.Unix(jwtPayload.Exp, 0)
+	return time.Now().Add(tokenRefreshThreshold).After(expireTime)
+}
+
+// refreshToken attempts to refresh the access token using the refresh token
+func (d *Degoo) refreshToken(ctx context.Context) error {
+	if d.RefreshToken == "" {
+		return fmt.Errorf("no refresh token available")
+	}
+	
+	tokenReq := DegooAccessTokenRequest{RefreshToken: d.RefreshToken}
+	jsonTokenReq, err := json.Marshal(tokenReq)
+	if err != nil {
+		return fmt.Errorf("failed to serialize access token request: %w", err)
+	}
+	
+	req, err := http.NewRequestWithContext(ctx, "POST", accessTokenURL, bytes.NewBuffer(jsonTokenReq))
+	if err != nil {
+		return fmt.Errorf("failed to create access token request: %w", err)
+	}
+	
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", base.UserAgent)
+	
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to get access token: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("refresh token request failed: %s", resp.Status)
+	}
+	
+	var accessTokenResp DegooAccessTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&accessTokenResp); err != nil {
+		return fmt.Errorf("failed to parse access token response: %w", err)
+	}
+	
+	if accessTokenResp.AccessToken == "" {
+		return fmt.Errorf("empty access token received")
+	}
+	
+	d.Token = accessTokenResp.AccessToken
+	// Save the updated token to storage
+	op.MustSaveDriverStorage(d)
+	
+	return nil
+}
+
+// ensureValidToken ensures we have a valid, non-expired token
+func (d *Degoo) ensureValidToken(ctx context.Context) error {
+	// Check if token is expired or will expire soon
+	if d.isTokenExpired() {
+		// Try to refresh token first if we have a refresh token
+		if d.RefreshToken != "" {
+			if refreshErr := d.refreshToken(ctx); refreshErr == nil {
+				return nil // Successfully refreshed
+			} else {
+				// If refresh failed, fall back to full login
+				fmt.Printf("Token refresh failed, falling back to full login: %v\n", refreshErr)
+			}
+		}
+		
+		// Perform full login
+		return d.login(ctx)
+	}
+	
+	return nil
+}
 
 // login performs the login process and retrieves the access token.
 func (d *Degoo) login(ctx context.Context) error {
@@ -53,6 +163,13 @@ func (d *Degoo) login(ctx context.Context) error {
 		return fmt.Errorf("login request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Handle rate limiting (429 Too Many Requests)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		// Wait before retrying
+		time.Sleep(30 * time.Second)
+		return fmt.Errorf("login rate limited (429), please try again later")
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("login failed: %s", resp.Status)
@@ -88,16 +205,26 @@ func (d *Degoo) login(ctx context.Context) error {
 			return fmt.Errorf("failed to parse access token response: %w", err)
 		}
 		d.Token = accessTokenResp.AccessToken
+		d.RefreshToken = loginResp.RefreshToken // Save refresh token
 	} else if loginResp.Token != "" {
 		d.Token = loginResp.Token
+		d.RefreshToken = "" // Direct token, no refresh token available
 	} else {
 		return fmt.Errorf("login failed, no valid token returned")
 	}
+	
+	// Save the updated tokens to storage
+	op.MustSaveDriverStorage(d)
+	
 	return nil
 }
 
 // apiCall performs a Degoo GraphQL API request.
 func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variables map[string]interface{}) (json.RawMessage, error) {
+	// Ensure we have a valid token before making the API call
+	if err := d.ensureValidToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
+	}
 	reqBody := map[string]interface{}{
 		"operationName": operationName,
 		"query":         query,
@@ -127,6 +254,13 @@ func (d *Degoo) apiCall(ctx context.Context, operationName, query string, variab
 		return nil, fmt.Errorf("API request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Handle rate limiting (429 Too Many Requests)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		// Wait before retrying
+		time.Sleep(30 * time.Second)
+		return nil, fmt.Errorf("API rate limited (429), please try again later")
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API response error: %s", resp.Status)
