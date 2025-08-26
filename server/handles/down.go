@@ -114,9 +114,11 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 		link = common.ProxyRange(c, link, file.GetSize())
 	}
 	Writer := &common.WrittenResponseWriter{ResponseWriter: c.Writer}
-
-	//优先处理md文件
-	if utils.Ext(file.GetName()) == "md" && setting.GetBool(conf.FilterReadMeScripts) {
+	raw, err := strconv.ParseBool(c.Query("raw"))
+	if err != nil {
+		raw = false
+	}
+	if utils.Ext(file.GetName()) == "md" && setting.GetBool(conf.FilterReadMeScripts) && !raw {
 		buf := bytes.NewBuffer(make([]byte, 0, file.GetSize()))
 		w := &common.InterceptResponseWriter{ResponseWriter: Writer, Writer: buf}
 		err = common.Proxy(w, c.Request, link, file)
