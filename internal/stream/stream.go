@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/rclone/rclone/lib/mmap"
 	"io"
 	"math"
 	"os"
 	"sync"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/rclone/rclone/lib/mmap"
 	"go4.org/readerutil"
 )
 
@@ -137,6 +137,61 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 	if writer != nil {
 		reader = io.TeeReader(reader, writer)
 	}
+
+	if f.GetSize() == 0 {
+		if f.peekBuff == nil {
+			f.peekBuff = &buffer.Reader{}
+		}
+		// 检查是否有数据
+		buf := make([]byte, 64*utils.KB)
+		n, err := io.ReadFull(reader, buf)
+		if err == io.ErrUnexpectedEOF {
+			if n > 0 {
+				f.peekBuff.Append(buf[:n])
+			}
+			f.size = f.peekBuff.Size()
+			f.Reader = f.peekBuff
+			return f.peekBuff, nil
+		} else if err != nil {
+			return nil, err
+		}
+		f.peekBuff.Append(buf[:n])
+		if conf.MaxBufferLimit-n > conf.MmapThreshold && conf.MmapThreshold > 0 {
+			m, err := mmap.Alloc(conf.MaxBufferLimit - n)
+			if err == nil {
+				f.Add(utils.CloseFunc(func() error {
+					return mmap.Free(m)
+				}))
+				n, err = io.ReadFull(reader, m)
+				if err == io.ErrUnexpectedEOF {
+					if n > 0 {
+						f.peekBuff.Append(m[:n])
+					}
+					f.size = f.peekBuff.Size()
+					f.Reader = f.peekBuff
+					return f.peekBuff, nil
+				} else if err != nil {
+					return nil, err
+				}
+			}
+		}
+
+		tmpF, err := utils.CreateTempFile(reader, 0)
+		if err != nil {
+			return nil, err
+		}
+		f.Add(utils.CloseFunc(func() error {
+			return errors.Join(tmpF.Close(), os.RemoveAll(tmpF.Name()))
+		}))
+		peekF, err := buffer.NewPeekFile(f.peekBuff, tmpF)
+		if err != nil {
+			return nil, err
+		}
+		f.size = peekF.Size()
+		f.Reader = peekF
+		return peekF, nil
+	}
+
 	f.Reader = reader
 	return f.cache(f.GetSize())
 }
@@ -162,7 +217,7 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	}
 
 	size := httpRange.Start + httpRange.Length
-	if f.peekBuff != nil && size <= int64(f.peekBuff.Len()) {
+	if f.peekBuff != nil && size <= int64(f.peekBuff.Size()) {
 		return io.NewSectionReader(f.peekBuff, httpRange.Start, httpRange.Length), nil
 	}
 
@@ -179,16 +234,25 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 // 即使被写入的数据量与Buffer.Cap一致，Buffer也会扩大
 
 func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
-	limit := int64(conf.MaxBufferLimit)
+	if maxCacheSize > int64(conf.MaxBufferLimit) {
+		tmpF, err := utils.CreateTempFile(f.Reader, f.GetSize())
+		if err != nil {
+			return nil, err
+		}
+		f.Add(tmpF)
+		f.tmpFile = tmpF
+		f.Reader = tmpF
+		return tmpF, nil
+	}
 
 	if f.peekBuff == nil {
 		f.peekBuff = &buffer.Reader{}
 		f.oriReader = f.Reader
 	}
+	bufSize := maxCacheSize - int64(f.peekBuff.Size())
 	var buf []byte
-	bufSize := 64 << 10 // 64KB as default
-	if conf.MmapThreshold > 0 && bufSize >= conf.MmapThreshold {
-		m, err := mmap.Alloc(bufSize)
+	if conf.MmapThreshold > 0 && bufSize >= int64(conf.MmapThreshold) {
+		m, err := mmap.Alloc(int(bufSize))
 		if err == nil {
 			f.Add(utils.CloseFunc(func() error {
 				return mmap.Free(m)
@@ -196,40 +260,21 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 			buf = m
 		}
 	}
-
-	var readBytes int
-	// precache first `limit` byte
-	for int64(readBytes) < limit {
-		if buf == nil {
-			buf = make([]byte, bufSize)
-		}
-
-		want := limit - int64(readBytes)
-		if want > int64(len(buf)) {
-			want = int64(len(buf))
-		}
-		n, err := f.oriReader.Read(buf[:want])
-		if n > 0 {
-			f.peekBuff.Append(buf[:n])
-			readBytes += n
-		}
-		if err == io.EOF {
-			f.Reader = f.peekBuff
-			f.oriReader = nil
-			// should update real file size here to solve `GetSize == 0` issue
-			f.size = int64(readBytes)
-			return f.peekBuff, nil
-		}
+	if buf == nil {
+		buf = make([]byte, bufSize)
 	}
-	// if file is larger than MaxBufferLimit, fallback to disk
-	tmpF, err := utils.CreateTempFile(io.MultiReader(f.peekBuff, f.oriReader), f.GetSize())
-	if err != nil {
-		return nil, err
+	n, err := io.ReadFull(f.oriReader, buf)
+	if bufSize != int64(n) {
+		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", bufSize, n, err)
 	}
-	f.Add(tmpF)
-	f.tmpFile = tmpF
-	f.Reader = tmpF
-	return tmpF, nil
+	f.peekBuff.Append(buf)
+	if int64(f.peekBuff.Size()) >= f.GetSize() {
+		f.Reader = f.peekBuff
+		f.oriReader = nil
+	} else {
+		f.Reader = io.MultiReader(f.peekBuff, f.oriReader)
+	}
+	return f.peekBuff, nil
 }
 
 func (f *FileStream) SetTmpFile(file model.File) {

@@ -71,7 +71,7 @@ func TestReader_ReadAt(t *testing.T) {
 				off: 24,
 			},
 			want: func(a args, n int, err error) error {
-				if n != bs.Len()-int(a.off) {
+				if n != int(bs.Size()-a.off) {
 					return errors.New("read length not match")
 				}
 				if string(a.p[:n]) != "OpenList" {

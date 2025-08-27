@@ -8,29 +8,29 @@ import (
 // 用于存储不复用的[]byte
 type Reader struct {
 	bufs   [][]byte
-	length int
-	offset int
+	size   int64
+	offset int64
 }
 
-func (r *Reader) Len() int {
-	return r.length
+func (r *Reader) Size() int64 {
+	return r.size
 }
 
 func (r *Reader) Append(buf []byte) {
-	r.length += len(buf)
+	r.size += int64(len(buf))
 	r.bufs = append(r.bufs, buf)
 }
 
 func (r *Reader) Read(p []byte) (int, error) {
-	n, err := r.ReadAt(p, int64(r.offset))
+	n, err := r.ReadAt(p, r.offset)
 	if n > 0 {
-		r.offset += n
+		r.offset += int64(n)
 	}
 	return n, err
 }
 
 func (r *Reader) ReadAt(p []byte, off int64) (int, error) {
-	if off < 0 || off >= int64(r.length) {
+	if off < 0 || off >= r.size {
 		return 0, io.EOF
 	}
 
@@ -56,35 +56,35 @@ func (r *Reader) ReadAt(p []byte, off int64) (int, error) {
 }
 
 func (r *Reader) Seek(offset int64, whence int) (int64, error) {
-	var abs int
 	switch whence {
 	case io.SeekStart:
-		abs = int(offset)
 	case io.SeekCurrent:
-		abs = r.offset + int(offset)
+		offset = r.offset + offset
 	case io.SeekEnd:
-		abs = r.length + int(offset)
+		offset = r.size + offset
 	default:
 		return 0, errors.New("Seek: invalid whence")
 	}
 
-	if abs < 0 || abs > r.length {
+	if offset < 0 || offset > r.size {
 		return 0, errors.New("Seek: invalid offset")
 	}
 
-	r.offset = abs
-	return int64(abs), nil
+	r.offset = offset
+	return offset, nil
 }
 
 func (r *Reader) Reset() {
 	clear(r.bufs)
 	r.bufs = nil
-	r.length = 0
+	r.size = 0
 	r.offset = 0
 }
 
 func NewReader(buf ...[]byte) *Reader {
-	b := &Reader{}
+	b := &Reader{
+		bufs: make([][]byte, 0, len(buf)),
+	}
 	for _, b1 := range buf {
 		b.Append(b1)
 	}
