@@ -145,17 +145,16 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 		// 检查是否有数据
 		buf := make([]byte, 64*utils.KB)
 		n, err := io.ReadFull(reader, buf)
+		if n > 0 {
+			f.peekBuff.Append(buf[:n])
+		}
 		if err == io.ErrUnexpectedEOF {
-			if n > 0 {
-				f.peekBuff.Append(buf[:n])
-			}
 			f.size = f.peekBuff.Size()
 			f.Reader = f.peekBuff
 			return f.peekBuff, nil
 		} else if err != nil {
 			return nil, err
 		}
-		f.peekBuff.Append(buf[:n])
 		if conf.MaxBufferLimit-n > conf.MmapThreshold && conf.MmapThreshold > 0 {
 			m, err := mmap.Alloc(conf.MaxBufferLimit - n)
 			if err == nil {
@@ -163,10 +162,10 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 					return mmap.Free(m)
 				}))
 				n, err = io.ReadFull(reader, m)
+				if n > 0 {
+					f.peekBuff.Append(m[:n])
+				}
 				if err == io.ErrUnexpectedEOF {
-					if n > 0 {
-						f.peekBuff.Append(m[:n])
-					}
 					f.size = f.peekBuff.Size()
 					f.Reader = f.peekBuff
 					return f.peekBuff, nil
