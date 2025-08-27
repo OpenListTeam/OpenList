@@ -36,5 +36,6 @@ func (d *Wopan) getSpaceType() string {
 
 // 20230607214351
 func getTime(str string) (time.Time, error) {
-	return time.Parse("20060102150405", str)
+	loc := time.FixedZone("UTC+8", 8*60*60)
+	return time.ParseInLocation("20060102150405", str, loc)
 }
