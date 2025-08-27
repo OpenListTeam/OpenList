@@ -481,7 +481,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		"parentFolderId": dstDir.GetID(),
 		"fileName":       url.QueryEscape(file.GetName()),
 		"fileSize":       fmt.Sprint(fileSize),
-		"sliceSize":      fmt.Sprint(sliceSize), // 必须返回特定分片大小
+		"sliceSize":      fmt.Sprint(sliceSize), // 必须为特定分片大小
 		"lazyCheck":      "1",
 	}
 
