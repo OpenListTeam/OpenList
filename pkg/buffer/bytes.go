@@ -34,22 +34,25 @@ func (r *Reader) ReadAt(p []byte, off int64) (int, error) {
 		return 0, io.EOF
 	}
 
-	n, length := 0, int64(0)
+	n := 0
 	readFrom := false
 	for _, buf := range r.bufs {
-		newLength := length + int64(len(buf))
 		if readFrom {
-			w := copy(p[n:], buf)
-			n += w
-		} else if off < newLength {
+			nn := copy(p[n:], buf)
+			n += nn
+			if n == len(p) {
+				return n, nil
+			}
+		} else if newOff := off - int64(len(buf)); newOff >= 0 {
+			off = newOff
+		} else {
+			nn := copy(p, buf[off:])
+			if nn == len(p) {
+				return nn, nil
+			}
+			n += nn
 			readFrom = true
-			w := copy(p[n:], buf[int(off-length):])
-			n += w
 		}
-		if n == len(p) {
-			return n, nil
-		}
-		length = newLength
 	}
 
 	return n, io.EOF

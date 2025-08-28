@@ -13,8 +13,7 @@ func TestReader_ReadAt(t *testing.T) {
 	}
 	bs := &Reader{}
 	bs.Append([]byte("github.com"))
-	bs.Append([]byte("/"))
-	bs.Append([]byte("OpenList"))
+	bs.Append([]byte("/OpenList"))
 	bs.Append([]byte("Team/"))
 	bs.Append([]byte("OpenList"))
 	tests := []struct {
