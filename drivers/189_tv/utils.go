@@ -110,6 +110,7 @@ func (y *Cloud189TV) post(url string, callback base.ReqCallback, resp interface{
 }
 
 func (y *Cloud189TV) put(ctx context.Context, url string, headers map[string]string, sign bool, file io.Reader, isFamily bool) ([]byte, error) {
+	// http.Request结束后会Close body
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, file)
 	if err != nil {
 		return nil, err
@@ -333,7 +334,10 @@ func (y *Cloud189TV) OldUpload(ctx context.Context, dstDir model.Obj, file model
 
 	// 网盘中不存在该文件，开始上传
 	status := GetUploadFileStatusResp{CreateUploadFileResp: *uploadInfo}
-	rateLimitedRd := driver.NewLimitedUploadStream(ctx, tempFile)
+	// driver.RateLimitReader会尝试Close底层的reader
+	// 但这里的tempFile是一个*os.File，Close后就没法继续读了
+	// 所以这里用io.NopCloser包一层
+	rateLimitedRd := driver.NewLimitedUploadStream(ctx, io.NopCloser(tempFile))
 	for status.GetSize() < file.GetSize() && status.FileDataExists != 1 {
 		if utils.IsCanceled(ctx) {
 			return nil, ctx.Err()
