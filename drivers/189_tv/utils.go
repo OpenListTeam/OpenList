@@ -333,6 +333,7 @@ func (y *Cloud189TV) OldUpload(ctx context.Context, dstDir model.Obj, file model
 
 	// 网盘中不存在该文件，开始上传
 	status := GetUploadFileStatusResp{CreateUploadFileResp: *uploadInfo}
+	rateLimitedRd := driver.NewLimitedUploadStream(ctx, tempFile)
 	for status.GetSize() < file.GetSize() && status.FileDataExists != 1 {
 		if utils.IsCanceled(ctx) {
 			return nil, ctx.Err()
@@ -350,7 +351,7 @@ func (y *Cloud189TV) OldUpload(ctx context.Context, dstDir model.Obj, file model
 			header["Edrive-UploadFileId"] = fmt.Sprint(status.UploadFileId)
 		}
 
-		_, err := y.put(ctx, status.FileUploadUrl, header, true, tempFile, isFamily)
+		_, err := y.put(ctx, status.FileUploadUrl, header, true, rateLimitedRd, isFamily)
 		if err, ok := err.(*RespErr); ok && err.Code != "InputStreamReadError" {
 			return nil, err
 		}
