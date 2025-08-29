@@ -595,7 +595,10 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			rateLimited := driver.NewLimitedUploadStream(ctx, stream)
 
 			// 先上传前100个分片
-			d.uploadPersonalParts(ctx, partInfos, resp.Data.PartInfos, rateLimited, p)
+			err = d.uploadPersonalParts(ctx, partInfos, resp.Data.PartInfos, rateLimited, p)
+			if err != nil {
+				return err
+			}
 
 			// 如果还有剩余分片，分批获取上传地址并上传
 			for i := 100; i < len(partInfos); i += 100 {
@@ -616,7 +619,10 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				if err != nil {
 					return err
 				}
-				d.uploadPersonalParts(ctx, partInfos, moreresp.Data.PartInfos, rateLimited, p)
+				err = d.uploadPersonalParts(ctx, partInfos, moreresp.Data.PartInfos, rateLimited, p)
+				if err != nil {
+					return err
+				}
 			}
 
 			// 全部分片上传完毕后，complete
