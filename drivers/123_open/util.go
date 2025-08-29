@@ -158,6 +158,18 @@ func (d *Open123) getUserInfo() (*UserInfoResp, error) {
 	return &resp, nil
 }
 
+func (d *Open123) getUID() (uint64, error) {
+	if d.UID != 0 {
+		return d.UID, nil
+	}
+	resp, err := d.getUserInfo()
+	if err != nil {
+		return 0, err
+	}
+	d.UID = resp.Data.UID
+	return resp.Data.UID, nil
+}
+
 func (d *Open123) getFiles(parentFileId int64, limit int, lastFileId int64) (*FileListResp, error) {
 	var resp FileListResp
 
