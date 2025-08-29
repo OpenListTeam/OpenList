@@ -635,6 +635,9 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 
 	for _, uploadPartInfo := range uploadPartInfos {
 		index := uploadPartInfo.PartNumber - 1
+		if index < 0 || index >= len(partInfos) {
+			return fmt.Errorf("invalid PartNumber %d: index out of bounds (partInfos length: %d)", uploadPartInfo.PartNumber, len(partInfos))
+		}
 		partSize := partInfos[index].PartSize
 		log.Debugf("[139] uploading part %+v/%+v", index, len(partInfos))
 		limitReader := io.LimitReader(rateLimited, partSize)
