@@ -39,6 +39,9 @@ func (d *Strm) Init(ctx context.Context) error {
 	if d.Paths == "" {
 		return errors.New("paths is required")
 	}
+	if d.SaveStrmToLocal && len(d.SaveStrmLocalPath) <= 0 {
+		return errors.New("SaveStrmLocalPath is required")
+	}
 	d.pathMap = make(map[string][]string)
 	for _, path := range strings.Split(d.Paths, "\n") {
 		path = strings.TrimSpace(path)
