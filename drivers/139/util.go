@@ -648,14 +648,21 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 		req.Header.Set("Origin", "https://yun.139.com")
 		req.Header.Set("Referer", "https://yun.139.com/")
 		req.ContentLength = partSize
-		res, err := base.HttpClient.Do(req)
+		err = func() error {
+			res, err := base.HttpClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer res.Body.Close()
+			log.Debugf("[139] uploaded: %+v", res)
+			if res.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(res.Body)
+				return fmt.Errorf("unexpected status code: %d, body: %s", res.StatusCode, string(body))
+			}
+			return nil
+		}()
 		if err != nil {
 			return err
-		}
-		_ = res.Body.Close()
-		log.Debugf("[139] uploaded: %+v", res)
-		if res.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status code: %d", res.StatusCode)
 		}
 	}
 	return nil
