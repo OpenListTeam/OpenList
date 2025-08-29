@@ -110,7 +110,6 @@ func (y *Cloud189TV) post(url string, callback base.ReqCallback, resp interface{
 }
 
 func (y *Cloud189TV) put(ctx context.Context, url string, headers map[string]string, sign bool, file io.Reader, isFamily bool) ([]byte, error) {
-	// http.Request结束后会Close body
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, file)
 	if err != nil {
 		return nil, err
@@ -132,6 +131,7 @@ func (y *Cloud189TV) put(ctx context.Context, url string, headers map[string]str
 		}
 	}
 
+	// 请求完成后http.Client会Close Request.Body
 	resp, err := base.HttpClient.Do(req)
 	if err != nil {
 		return nil, err
