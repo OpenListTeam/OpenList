@@ -628,6 +628,11 @@ func (d *Yun139) getPersonalCloudHost() string {
 }
 
 func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, uploadPartInfos []PersonalPartInfo, rateLimited *driver.RateLimitReader, p *driver.Progress) error {
+	// 确保数组以 PartNumber 从小到大排序
+	sort.Slice(uploadPartInfos, func(i, j int) bool {
+		return uploadPartInfos[i].PartNumber < uploadPartInfos[j].PartNumber
+	})
+
 	for _, uploadPartInfo := range uploadPartInfos {
 		index := uploadPartInfo.PartNumber - 1
 		partSize := partInfos[index].PartSize
