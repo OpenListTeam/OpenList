@@ -136,7 +136,7 @@ type UserInfoResp struct {
 		SpaceUsed      int64  `json:"spaceUsed"`
 		SpacePermanent int64  `json:"spacePermanent"`
 		SpaceTemp      int64  `json:"spaceTemp"`
-		SpaceTempExpr  string `json:"spaceTempExpr"`
+		SpaceTempExpr  int64  `json:"spaceTempExpr"`
 		Vip            bool   `json:"vip"`
 		DirectTraffic  int64  `json:"directTraffic"`
 		IsHideUID      bool   `json:"isHideUID"`
