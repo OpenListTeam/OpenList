@@ -158,6 +158,18 @@ func (d *Open123) getUserInfo() (*UserInfoResp, error) {
 	return &resp, nil
 }
 
+func (d *Open123) getUID() (uint64, error) {
+	if d.UID != 0 {
+		return d.UID, nil
+	}
+	resp, err := d.getUserInfo()
+	if err != nil {
+		return 0, err
+	}
+	d.UID = resp.Data.UID
+	return resp.Data.UID, nil
+}
+
 func (d *Open123) getFiles(parentFileId int64, limit int, lastFileId int64) (*FileListResp, error) {
 	var resp FileListResp
 
@@ -200,7 +212,7 @@ func (d *Open123) getDirectLink(fileId int64) (*DirectLinkResp, error) {
 
 	_, err := d.Request(DirectLink, http.MethodGet, func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"fileId": strconv.FormatInt(fileId, 10),
+			"fileID": strconv.FormatInt(fileId, 10),
 		})
 	}, &resp)
 	if err != nil {
