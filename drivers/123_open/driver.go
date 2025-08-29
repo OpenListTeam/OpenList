@@ -3,12 +3,16 @@ package _123_open
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/model/reqres"
+	"github.com/OpenListTeam/OpenList/v4/internal/model/tables"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -25,6 +29,13 @@ func (d *Open123) Config() driver.Config {
 
 func (d *Open123) GetAddition() driver.Additional {
 	return &d.Addition
+}
+
+func (d *Open123) GetUploadInfo() *model.UploadInfo {
+	return &model.UploadInfo{
+		SliceHashNeed: true,
+		HashMd5Need:   true,
+	}
 }
 
 func (d *Open123) Init(ctx context.Context) error {
@@ -211,6 +222,57 @@ func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 		time.Sleep(time.Second)
 	}
 	return nil, fmt.Errorf("upload complete timeout")
+}
+
+// Preup 预上传
+func (d *Open123) Preup(c context.Context, srcobj model.Obj, req *reqres.PreupReq) (*model.PreupInfo, error) {
+	pid, err := strconv.ParseUint(srcobj.GetID(), 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	duplicate := 1
+	if req.Overwrite {
+		duplicate = 2
+	}
+
+	ucr := &UploadCreateReq{
+		ParentFileID: pid,
+		Etag:         req.Hash.Md5,
+		FileName:     req.Name,
+		Size:         int64(req.Size),
+		Duplicate:    duplicate,
+	}
+
+	resp, err := d.uploadCreate(ucr)
+	if err != nil {
+		return nil, err
+	}
+	return &model.PreupInfo{
+		PreupID:   resp.PreuploadID,
+		Server:    resp.Servers[0],
+		SliceSize: resp.SliceSize,
+		Reuse:     resp.Reuse,
+	}, nil
+}
+
+// UploadSlice 上传分片
+func (d *Open123) SliceUpload(c context.Context, req *tables.SliceUpload, sliceno uint, fd io.Reader) error {
+	sh := strings.Split(req.SliceHash, ",")
+	r := &UploadSliceReq{
+		Name:        req.Name,
+		PreuploadID: req.PreupID,
+		Server:      req.Server,
+		Slice:       fd,
+		SliceMD5:    sh[sliceno],
+		SliceNo:     int(sliceno) + 1,
+	}
+	return d.uploadSlice(r)
+}
+
+// UploadSliceComplete 分片上传完成
+func (d *Open123) UploadSliceComplete(c context.Context, su *tables.SliceUpload) error {
+
+	return d.sliceUpComplete(su.PreupID)
 }
 
 var _ driver.Driver = (*Open123)(nil)
