@@ -137,6 +137,60 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 	if writer != nil {
 		reader = io.TeeReader(reader, writer)
 	}
+
+	if f.GetSize() < 0 {
+		if f.peekBuff == nil {
+			f.peekBuff = &buffer.Reader{}
+		}
+		// 检查是否有数据
+		buf := []byte{0}
+		n, err := io.ReadFull(reader, buf)
+		if n > 0 {
+			f.peekBuff.Append(buf[:n])
+		}
+		if err == io.ErrUnexpectedEOF {
+			f.size = f.peekBuff.Size()
+			f.Reader = f.peekBuff
+			return f.peekBuff, nil
+		} else if err != nil {
+			return nil, err
+		}
+		if conf.MaxBufferLimit-n > conf.MmapThreshold && conf.MmapThreshold > 0 {
+			m, err := mmap.Alloc(conf.MaxBufferLimit - n)
+			if err == nil {
+				f.Add(utils.CloseFunc(func() error {
+					return mmap.Free(m)
+				}))
+				n, err = io.ReadFull(reader, m)
+				if n > 0 {
+					f.peekBuff.Append(m[:n])
+				}
+				if err == io.ErrUnexpectedEOF {
+					f.size = f.peekBuff.Size()
+					f.Reader = f.peekBuff
+					return f.peekBuff, nil
+				} else if err != nil {
+					return nil, err
+				}
+			}
+		}
+
+		tmpF, err := utils.CreateTempFile(reader, 0)
+		if err != nil {
+			return nil, err
+		}
+		f.Add(utils.CloseFunc(func() error {
+			return errors.Join(tmpF.Close(), os.RemoveAll(tmpF.Name()))
+		}))
+		peekF, err := buffer.NewPeekFile(f.peekBuff, tmpF)
+		if err != nil {
+			return nil, err
+		}
+		f.size = peekF.Size()
+		f.Reader = peekF
+		return peekF, nil
+	}
+
 	f.Reader = reader
 	return f.cache(f.GetSize())
 }
@@ -162,7 +216,7 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	}
 
 	size := httpRange.Start + httpRange.Length
-	if f.peekBuff != nil && size <= int64(f.peekBuff.Len()) {
+	if f.peekBuff != nil && size <= int64(f.peekBuff.Size()) {
 		return io.NewSectionReader(f.peekBuff, httpRange.Start, httpRange.Length), nil
 	}
 
@@ -194,7 +248,7 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 		f.peekBuff = &buffer.Reader{}
 		f.oriReader = f.Reader
 	}
-	bufSize := maxCacheSize - int64(f.peekBuff.Len())
+	bufSize := maxCacheSize - int64(f.peekBuff.Size())
 	var buf []byte
 	if conf.MmapThreshold > 0 && bufSize >= int64(conf.MmapThreshold) {
 		m, err := mmap.Alloc(int(bufSize))
@@ -213,7 +267,7 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", bufSize, n, err)
 	}
 	f.peekBuff.Append(buf)
-	if int64(f.peekBuff.Len()) >= f.GetSize() {
+	if int64(f.peekBuff.Size()) >= f.GetSize() {
 		f.Reader = f.peekBuff
 		f.oriReader = nil
 	} else {
