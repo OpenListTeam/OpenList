@@ -138,12 +138,12 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 		reader = io.TeeReader(reader, writer)
 	}
 
-	if f.GetSize() == 0 {
+	if f.GetSize() < 0 {
 		if f.peekBuff == nil {
 			f.peekBuff = &buffer.Reader{}
 		}
 		// 检查是否有数据
-		buf := make([]byte, 64*utils.KB)
+		buf := []byte{0}
 		n, err := io.ReadFull(reader, buf)
 		if n > 0 {
 			f.peekBuff.Append(buf[:n])
