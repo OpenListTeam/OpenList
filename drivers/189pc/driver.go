@@ -21,8 +21,6 @@ type Cloud189PC struct {
 	model.Storage
 	Addition
 
-	identity string
-
 	client *resty.Client
 
 	loginParam *LoginParam
@@ -84,14 +82,18 @@ func (y *Cloud189PC) Init(ctx context.Context) (err error) {
 			})
 		}
 
-		// 避免重复登陆
-		identity := utils.GetMD5EncodeStr(y.Username + y.Password)
-		if !y.isLogin() || y.identity != identity {
-			y.identity = identity
+		// 先尝试用Token刷新，之后尝试登陆
+		if y.Addition.RefreshToken != "" {
+			y.tokenInfo = &AppSessionResp{RefreshToken: y.Addition.RefreshToken}
+			if err = y.refreshToken(); err != nil {
+				return
+			}
+		} else {
 			if err = y.login(); err != nil {
 				return
 			}
 		}
+
 	}
 
 	// 处理家庭云ID

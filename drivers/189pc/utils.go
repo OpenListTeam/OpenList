@@ -278,10 +278,15 @@ func (y *Cloud189PC) login() (err error) {
 		// 销毁登陆参数
 		y.loginParam = nil
 		// 遇到错误，重新加载登陆参数(刷新验证码)
-		if err != nil && y.NoUseOcr {
-			if err1 := y.initLoginParam(); err1 != nil {
-				err = fmt.Errorf("err1: %s \nerr2: %s", err, err1)
+		if err != nil {
+			if y.NoUseOcr {
+				if err1 := y.initLoginParam(); err1 != nil {
+					err = fmt.Errorf("err1: %s \nerr2: %s", err, err1)
+				}
 			}
+
+			y.Status = err.Error()
+			op.MustSaveDriverStorage(y)
 		}
 	}()
 
@@ -336,7 +341,9 @@ func (y *Cloud189PC) login() (err error) {
 		err = fmt.Errorf(tokenInfo.ResMessage)
 		return
 	}
+	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
+	op.MustSaveDriverStorage(y)
 	return
 }
 
@@ -449,24 +456,48 @@ func (y *Cloud189PC) refreshSession() (err error) {
 		return err
 	}
 
-	// 错误影响正常访问，下线该储存
-	defer func() {
-		if err != nil {
-			y.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
-			op.MustSaveDriverStorage(y)
-		}
-	}()
-
+	// token生效刷新token
 	if erron.HasError() {
 		if erron.ResCode == "UserInvalidOpenToken" {
-			if err = y.login(); err != nil {
-				return err
-			}
+			return y.refreshToken()
+		} else {
+			return &erron
 		}
-		return &erron
 	}
 	y.tokenInfo.UserSessionResp = userSessionResp
 	return
+}
+
+func (y *Cloud189PC) refreshToken() (err error) {
+	if y.ref != nil {
+		return y.ref.refreshSession()
+	}
+	var erron RespErr
+	var tokenInfo AppSessionResp
+	_, err = y.client.R().
+		SetResult(&tokenInfo).
+		ForceContentType("application/json;charset=UTF-8").
+		SetError(&erron).
+		SetFormData(map[string]string{
+			"clientId":     APP_ID,
+			"refreshToken": y.tokenInfo.RefreshToken,
+			"grantType":    "refresh_token",
+			"format":       "json",
+		}).
+		Post(AUTH_URL + "/api/oauth2/refreshToken.do")
+	if err != nil {
+		return err
+	}
+
+	// token 生效重新登陆
+	if erron.HasError() {
+		return y.login()
+	}
+
+	y.Addition.RefreshToken = tokenInfo.RefreshToken
+	y.tokenInfo = &tokenInfo
+	op.MustSaveDriverStorage(y)
+	return y.refreshSession()
 }
 
 // 普通上传
