@@ -330,9 +330,9 @@ func (y *Cloud189TV) keepAlive() {
 		r.SetQueryParams(clientSuffix())
 	}, nil)
 	if err != nil {
-		utils.Log.Warnf("189pc: Failed to keep user session alive: %v", err)
+		utils.Log.Warnf("189tv: Failed to keep user session alive: %v", err)
 	} else {
-		utils.Log.Debugf("189pc: User session kept alive successfully.")
+		utils.Log.Debugf("189tv: User session kept alive successfully.")
 	}
 }
 
