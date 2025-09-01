@@ -486,12 +486,18 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 				updateCacheObj(storage, srcDirPath, srcRawObj, model.WrapObjName(newObj))
 			} else if !utils.IsBool(lazyCache...) {
 				DeleteCache(storage, srcDirPath)
+				if srcRawObj.IsDir() {
+					ClearCache(storage, srcPath)
+				}
 			}
 		}
 	case driver.Rename:
 		err = s.Rename(ctx, srcObj, dstName)
 		if err == nil && !utils.IsBool(lazyCache...) {
 			DeleteCache(storage, srcDirPath)
+			if srcRawObj.IsDir() {
+				ClearCache(storage, srcPath)
+			}
 		}
 	default:
 		return errs.NotImplement
