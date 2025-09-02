@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -287,6 +288,26 @@ func NewHttpClient() *http.Client {
 		Transport: &http.Transport{
 			Proxy:           http.ProxyFromEnvironment,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				mainDialer := &net.Dialer{}
+
+				// 优先尝试IPv6连接
+				if network == "tcp" {
+					ipv6Context, cancel := context.WithTimeout(ctx, 1*time.Second) // 缩短IPv6尝试时间
+					defer cancel()
+
+					ipv6Conn, err := mainDialer.DialContext(ipv6Context, "tcp6", addr)
+					if err == nil {
+						log.Debugf("Connected via IPv6: %s", ipv6Conn.RemoteAddr().String())
+						return ipv6Conn, nil
+					}
+
+					// 如果IPv6连接失败，回退到IPv4
+					log.Debugf("IPv6 connection failed, falling back to IPv4: %v", err)
+					return mainDialer.DialContext(ctx, network, addr)
+				}
+				return mainDialer.DialContext(ctx, network, addr)
+			},
 		},
 	}
 }
