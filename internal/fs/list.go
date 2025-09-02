@@ -42,6 +42,15 @@ func list(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error)
 		om.InitHideReg(meta.Hide)
 	}
 	objs := om.Merge(_objs, virtualFiles...)
+	if storage != nil {
+		if storage.Config().LocalSort {
+			model.SortFiles(objs, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
+		}
+		model.ExtractFolder(objs, storage.GetStorage().ExtractFolder)
+	} else if len(virtualFiles) > 0 {
+		model.ExtractFolder(objs, "front")
+	}
+	
 	return objs, nil
 }
 
