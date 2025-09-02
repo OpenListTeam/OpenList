@@ -50,7 +50,6 @@ func list(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error)
 	} else if len(virtualFiles) > 0 {
 		model.ExtractFolder(objs, "front")
 	}
-	
 	return objs, nil
 }
 
