@@ -89,6 +89,7 @@ func (y *Cloud189TV) Init(ctx context.Context) (err error) {
 func (y *Cloud189TV) Drop(ctx context.Context) error {
 	if y.cron != nil {
 		y.cron.Stop()
+		y.cron = nil
 	}
 	return nil
 }

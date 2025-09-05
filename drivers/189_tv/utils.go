@@ -66,6 +66,10 @@ func (y *Cloud189TV) AppKeySignatureHeader(url, method string) map[string]string
 }
 
 func (y *Cloud189TV) request(url, method string, callback base.ReqCallback, params map[string]string, resp interface{}, isFamily ...bool) ([]byte, error) {
+	return y.requestWithRetry(url, method, callback, params, resp, 0, isFamily...)
+}
+
+func (y *Cloud189TV) requestWithRetry(url, method string, callback base.ReqCallback, params map[string]string, resp interface{}, retryCount int, isFamily ...bool) ([]byte, error) {
 	req := y.client.R().SetQueryParams(clientSuffix())
 
 	if params != nil {
@@ -91,16 +95,22 @@ func (y *Cloud189TV) request(url, method string, callback base.ReqCallback, para
 
 	if strings.Contains(res.String(), "userSessionBO is null") ||
 		strings.Contains(res.String(), "InvalidSessionKey") {
-		// 尝试刷新会话
+		// 限制重试次数，避免无限递归
+		if retryCount >= 3 {
+			y.Addition.AccessToken = ""
+			op.MustSaveDriverStorage(y)
+			return nil, errors.New("session expired after retry")
+		}
 
+		// 尝试刷新会话
 		if err := y.refreshSession(); err != nil {
 			// 如果刷新失败，说明AccessToken也已过期，需要重新登录
 			y.Addition.AccessToken = ""
 			op.MustSaveDriverStorage(y)
 			return nil, errors.New("session expired")
 		}
-		// 如果刷新成功，则重试原始请求
-		return y.request(url, method, callback, params, resp, isFamily...)
+		// 如果刷新成功，则重试原始请求（增加重试计数）
+		return y.requestWithRetry(url, method, callback, params, resp, retryCount+1, isFamily...)
 	}
 
 	// 处理错误
@@ -331,6 +341,10 @@ func (y *Cloud189TV) keepAlive() {
 	}, nil)
 	if err != nil {
 		utils.Log.Warnf("189tv: Failed to keep user session alive: %v", err)
+		// 如果keepAlive失败，尝试刷新session
+		if refreshErr := y.refreshSession(); refreshErr != nil {
+			utils.Log.Errorf("189tv: Failed to refresh session after keepAlive error: %v", refreshErr)
+		}
 	} else {
 		utils.Log.Debugf("189tv: User session kept alive successfully.")
 	}

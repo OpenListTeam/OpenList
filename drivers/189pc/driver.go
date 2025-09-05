@@ -140,6 +140,7 @@ func (y *Cloud189PC) Drop(ctx context.Context) error {
 	y.ref = nil
 	if y.cron != nil {
 		y.cron.Stop()
+		y.cron = nil
 	}
 	return nil
 }

@@ -55,6 +55,9 @@ const (
 	MAC = "TELEMAC"
 
 	CHANNEL_ID = "web_cloud.189.cn"
+
+	// Error codes
+	UserInvalidOpenTokenError = "UserInvalidOpenToken"
 )
 
 func (y *Cloud189PC) SignatureHeader(url, method, params string, isFamily bool) map[string]string {
@@ -591,7 +594,7 @@ func (y *Cloud189PC) refreshSession() (err error) {
 
 	// token生效刷新token
 	if erron.HasError() {
-		if erron.ResCode == "UserInvalidOpenToken" {
+		if erron.ResCode == UserInvalidOpenTokenError {
 			return y.refreshToken()
 		}
 		return &erron
@@ -649,6 +652,10 @@ func (y *Cloud189PC) keepAlive() {
 	}, nil)
 	if err != nil {
 		utils.Log.Warnf("189pc: Failed to keep user session alive: %v", err)
+		// 如果keepAlive失败，尝试刷新session
+		if refreshErr := y.refreshSession(); refreshErr != nil {
+			utils.Log.Errorf("189pc: Failed to refresh session after keepAlive error: %v", refreshErr)
+		}
 	} else {
 		utils.Log.Debugf("189pc: User session kept alive successfully.")
 	}
