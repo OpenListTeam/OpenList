@@ -574,8 +574,12 @@ func (y *Cloud189PC) initQRCodeParam() (err error) {
 
 // 刷新会话
 func (y *Cloud189PC) refreshSession() (err error) {
+	return y.refreshSessionWithRetry(0)
+}
+
+func (y *Cloud189PC) refreshSessionWithRetry(retryCount int) (err error) {
 	if y.ref != nil {
-		return y.ref.refreshSession()
+		return y.ref.refreshSessionWithRetry(retryCount)
 	}
 	var erron RespErr
 	var userSessionResp UserSessionResp
@@ -595,7 +599,7 @@ func (y *Cloud189PC) refreshSession() (err error) {
 	// token生效刷新token
 	if erron.HasError() {
 		if erron.ResCode == UserInvalidOpenTokenError {
-			return y.refreshToken()
+			return y.refreshTokenWithRetry(retryCount)
 		}
 		return &erron
 	}
@@ -605,9 +609,23 @@ func (y *Cloud189PC) refreshSession() (err error) {
 
 // refreshToken 刷新token，失败时返回错误，不再直接调用login
 func (y *Cloud189PC) refreshToken() (err error) {
+	return y.refreshTokenWithRetry(0)
+}
+
+func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 	if y.ref != nil {
-		return y.ref.refreshToken()
+		return y.ref.refreshTokenWithRetry(retryCount)
 	}
+	
+	// 限制重试次数，避免无限递归
+	if retryCount >= 3 {
+		if y.Addition.RefreshToken != "" {
+			y.Addition.RefreshToken = ""
+			op.MustSaveDriverStorage(y)
+		}
+		return errors.New("refresh token failed after maximum retries")
+	}
+	
 	var erron RespErr
 	var tokenInfo AppSessionResp
 	_, err = y.client.R().
@@ -643,7 +661,7 @@ func (y *Cloud189PC) refreshToken() (err error) {
 	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
 	op.MustSaveDriverStorage(y)
-	return y.refreshSession()
+	return y.refreshSessionWithRetry(retryCount + 1)
 }
 
 func (y *Cloud189PC) keepAlive() {
