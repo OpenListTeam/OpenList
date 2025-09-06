@@ -2,18 +2,15 @@ package tool
 
 import (
 	"context"
-	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
-
-	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
-
 	"net/url"
 	stdpath "path"
 	"path/filepath"
 
 	_115 "github.com/OpenListTeam/OpenList/v4/drivers/115"
+	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
 	"github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder"
+	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -22,6 +19,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )
@@ -87,7 +85,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	}
 
 	uid := uuid.NewString()
-	tempDir := filepath.Join(conf.Conf.TempDir, args.Tool, uid)
+	tempDir := filepath.Join(conf.GetPersistentTempDir(), args.Tool, uid)
 	deletePolicy := args.DeletePolicy
 
 	// 如果当前 storage 是对应网盘，则直接下载到目标路径，无需转存
