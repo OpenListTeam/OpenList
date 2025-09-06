@@ -10,7 +10,6 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 type SubFile interface {
@@ -118,8 +117,7 @@ type WrapFileInfo struct {
 func DecompressFromFolderTraversal(r ArchiveReader, outputPath string, args model.ArchiveInnerArgs, up model.UpdateProgress) error {
 	var err error
 	files := r.Files()
-	innerPath := utils.FixAndCleanPath(args.InnerPath)
-	if innerPath == "/" {
+	if args.InnerPath == "/" {
 		for i, file := range files {
 			name := file.Name()
 			err = decompress(file, name, outputPath, args.Password)
@@ -129,7 +127,7 @@ func DecompressFromFolderTraversal(r ArchiveReader, outputPath string, args mode
 			up(float64(i+1) * 100.0 / float64(len(files)))
 		}
 	} else {
-		innerPath = strings.TrimPrefix(innerPath, "/")
+		innerPath := strings.TrimPrefix(args.InnerPath, "/")
 		innerBase := filepath.Base(innerPath)
 		createdBaseDir := false
 		for _, file := range files {
@@ -165,7 +163,7 @@ func decompress(file SubFile, filePath, outputPath, password string) error {
 	dir, base := filepath.Split(filePath)
 	if dir != "" {
 		targetPath = filepath.Join(targetPath, dir)
-		if strings.HasPrefix(targetPath, outputPath) {
+		if strings.HasPrefix(targetPath, outputPath+string(os.PathSeparator)) {
 			err := os.MkdirAll(targetPath, 0700)
 			if err != nil {
 				return err
