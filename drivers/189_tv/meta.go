@@ -8,7 +8,6 @@ import (
 type Addition struct {
 	driver.RootID
 	AccessToken    string `json:"access_token"`
-	TempUuid       string
 	OrderBy        string `json:"order_by" type:"select" options:"filename,filesize,lastOpTime" default:"filename"`
 	OrderDirection string `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
 	Type           string `json:"type" type:"select" options:"personal,family" default:"personal"`

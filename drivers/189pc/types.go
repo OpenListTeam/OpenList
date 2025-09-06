@@ -68,15 +68,7 @@ func (e *RespErr) Error() string {
 	return ""
 }
 
-// 登陆需要的参数
-type LoginParam struct {
-	// 加密后的用户名和密码
-	RsaUsername string
-	RsaPassword string
-
-	// rsa密钥
-	jRsaKey string
-
+type BaseLoginParam struct {
 	// 请求头参数
 	Lt    string
 	ReqId string
@@ -86,6 +78,27 @@ type LoginParam struct {
 
 	// 验证码
 	CaptchaToken string
+}
+
+// QRLoginParam 用于暂存二维码登录过程中的参数
+type QRLoginParam struct {
+	BaseLoginParam
+
+	UUID       string `json:"uuid"`
+	EncodeUUID string `json:"encodeuuid"`
+	EncryUUID  string `json:"encryuuid"`
+}
+
+// 登陆需要的参数
+type LoginParam struct {
+	// 加密后的用户名和密码
+	RsaUsername string
+	RsaPassword string
+
+	// rsa密钥
+	jRsaKey string
+
+	BaseLoginParam
 }
 
 // 登陆加密相关

@@ -80,6 +80,20 @@ func timestamp() int64 {
 	return time.Now().UTC().UnixNano() / 1e6
 }
 
+// formatDate formats a time.Time object into the "YYYY-MM-DDHH:mm:ssSSS" format.
+func formatDate(t time.Time) string {
+	// The layout string "2006-01-0215:04:05.000" corresponds to:
+	// 2006 -> Year (YYYY)
+	// 01   -> Month (MM)
+	// 02   -> Day (DD)
+	// 15   -> Hour (HH)
+	// 04   -> Minute (mm)
+	// 05   -> Second (ss)
+	// 000  -> Millisecond (SSS) with leading zeros
+	// Note the lack of a separator between the date and hour, matching the desired output.
+	return t.Format("2006-01-0215:04:05.000")
+}
+
 func MustParseTime(str string) *time.Time {
 	lastOpTime, _ := time.ParseInLocation("2006-01-02 15:04:05 -07", str+" +08", time.Local)
 	return &lastOpTime
