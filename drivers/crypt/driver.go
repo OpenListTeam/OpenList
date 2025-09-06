@@ -186,14 +186,15 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	return result, nil
 }
 
+func (d *Crypt) GetRoot(ctx context.Context) (model.Obj, error) {
+	return &model.Object{
+		Name:     "Root",
+		IsFolder: true,
+		Path:     "/",
+	}, nil
+}
+
 func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
-	if utils.PathEqual(path, "/") {
-		return &model.Object{
-			Name:     "Root",
-			IsFolder: true,
-			Path:     "/",
-		}, nil
-	}
 	remoteFullPath := ""
 	var remoteObj model.Obj
 	var err, err2 error

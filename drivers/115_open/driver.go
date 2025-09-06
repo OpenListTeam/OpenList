@@ -131,7 +131,7 @@ func (d *Open115) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	}, nil
 }
 
-func (d *Open115) GetObjInfo(ctx context.Context, path string) (model.Obj, error) {
+func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 	if err := d.WaitLimit(ctx); err != nil {
 		return nil, err
 	}
