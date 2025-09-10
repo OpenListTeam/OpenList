@@ -131,6 +131,7 @@ func (y *Cloud189TV) put(ctx context.Context, url string, headers map[string]str
 		}
 	}
 
+	// 请求完成后http.Client会Close Request.Body
 	resp, err := base.HttpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -333,6 +334,10 @@ func (y *Cloud189TV) OldUpload(ctx context.Context, dstDir model.Obj, file model
 
 	// 网盘中不存在该文件，开始上传
 	status := GetUploadFileStatusResp{CreateUploadFileResp: *uploadInfo}
+	// driver.RateLimitReader会尝试Close底层的reader
+	// 但这里的tempFile是一个*os.File，Close后就没法继续读了
+	// 所以这里用io.NopCloser包一层
+	rateLimitedRd := driver.NewLimitedUploadStream(ctx, io.NopCloser(tempFile))
 	for status.GetSize() < file.GetSize() && status.FileDataExists != 1 {
 		if utils.IsCanceled(ctx) {
 			return nil, ctx.Err()
@@ -350,7 +355,7 @@ func (y *Cloud189TV) OldUpload(ctx context.Context, dstDir model.Obj, file model
 			header["Edrive-UploadFileId"] = fmt.Sprint(status.UploadFileId)
 		}
 
-		_, err := y.put(ctx, status.FileUploadUrl, header, true, tempFile, isFamily)
+		_, err := y.put(ctx, status.FileUploadUrl, header, true, rateLimitedRd, isFamily)
 		if err, ok := err.(*RespErr); ok && err.Code != "InputStreamReadError" {
 			return nil, err
 		}

@@ -6,10 +6,9 @@ services:
     ports:
       - '5244:5244'
       - '5245:5245'
+    user: '0:0'
     environment:
-      - PUID=0
-      - PGID=0
       - UMASK=022
-      - TZ=UTC
+      - TZ=Asia/Shanghai
     container_name: openlist
     image: 'openlistteam/openlist:latest'

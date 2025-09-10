@@ -28,6 +28,15 @@ import (
 
 // do others that not defined in Driver interface
 
+const (
+	CodeLoginRequired     = http.StatusUnauthorized
+	CodeCredentialInvalid = 40020 // Failed to issue token
+)
+
+var (
+	ErrorIssueToken = errors.New("failed to issue token")
+)
+
 func (d *CloudreveV4) getUA() string {
 	if d.CustomUA != "" {
 		return d.CustomUA
@@ -39,6 +48,23 @@ func (d *CloudreveV4) request(method string, path string, callback base.ReqCallb
 	if d.ref != nil {
 		return d.ref.request(method, path, callback, out)
 	}
+
+	// ensure token
+	if d.isTokenExpired() {
+		err := d.refreshToken()
+		if err != nil {
+			return err
+		}
+	}
+
+	return d._request(method, path, callback, out)
+}
+
+func (d *CloudreveV4) _request(method string, path string, callback base.ReqCallback, out any) error {
+	if d.ref != nil {
+		return d.ref._request(method, path, callback, out)
+	}
+
 	u := d.Address + "/api/v4" + path
 	req := base.RestyClient.R()
 	req.SetHeaders(map[string]string{
@@ -65,15 +91,17 @@ func (d *CloudreveV4) request(method string, path string, callback base.ReqCallb
 	}
 
 	if r.Code != 0 {
-		if r.Code == 401 && d.RefreshToken != "" && path != "/session/token/refresh" {
-			// try to refresh token
-			err = d.refreshToken()
+		if r.Code == CodeLoginRequired && d.canLogin() && path != "/session/token/refresh" {
+			err = d.login()
 			if err != nil {
 				return err
 			}
 			return d.request(method, path, callback, out)
 		}
-		return errors.New(r.Msg)
+		if r.Code == CodeCredentialInvalid {
+			return ErrorIssueToken
+		}
+		return fmt.Errorf("%d: %s", r.Code, r.Msg)
 	}
 
 	if out != nil && r.Data != nil {
@@ -91,14 +119,18 @@ func (d *CloudreveV4) request(method string, path string, callback base.ReqCallb
 	return nil
 }
 
+func (d *CloudreveV4) canLogin() bool {
+	return d.Username != "" && d.Password != ""
+}
+
 func (d *CloudreveV4) login() error {
 	var siteConfig SiteLoginConfigResp
-	err := d.request(http.MethodGet, "/site/config/login", nil, &siteConfig)
+	err := d._request(http.MethodGet, "/site/config/login", nil, &siteConfig)
 	if err != nil {
 		return err
 	}
 	var prepareLogin PrepareLoginResp
-	err = d.request(http.MethodGet, "/session/prepare?email="+d.Addition.Username, nil, &prepareLogin)
+	err = d._request(http.MethodGet, "/session/prepare?email="+d.Addition.Username, nil, &prepareLogin)
 	if err != nil {
 		return err
 	}
@@ -128,7 +160,7 @@ func (d *CloudreveV4) doLogin(needCaptcha bool) error {
 	}
 	if needCaptcha {
 		var config BasicConfigResp
-		err = d.request(http.MethodGet, "/site/config/basic", nil, &config)
+		err = d._request(http.MethodGet, "/site/config/basic", nil, &config)
 		if err != nil {
 			return err
 		}
@@ -136,7 +168,7 @@ func (d *CloudreveV4) doLogin(needCaptcha bool) error {
 			return fmt.Errorf("captcha type %s not support", config.CaptchaType)
 		}
 		var captcha CaptchaResp
-		err = d.request(http.MethodGet, "/site/captcha", nil, &captcha)
+		err = d._request(http.MethodGet, "/site/captcha", nil, &captcha)
 		if err != nil {
 			return err
 		}
@@ -162,20 +194,22 @@ func (d *CloudreveV4) doLogin(needCaptcha bool) error {
 		loginBody["captcha"] = captchaCode
 	}
 	var token TokenResponse
-	err = d.request(http.MethodPost, "/session/token", func(req *resty.Request) {
+	err = d._request(http.MethodPost, "/session/token", func(req *resty.Request) {
 		req.SetBody(loginBody)
 	}, &token)
 	if err != nil {
 		return err
 	}
 	d.AccessToken, d.RefreshToken = token.Token.AccessToken, token.Token.RefreshToken
+	d.AccessExpires, d.RefreshExpires = token.Token.AccessExpires, token.Token.RefreshExpires
 	op.MustSaveDriverStorage(d)
 	return nil
 }
 
 func (d *CloudreveV4) refreshToken() error {
+	// if no refresh token, try to login if possible
 	if d.RefreshToken == "" {
-		if d.Username != "" {
+		if d.canLogin() {
 			err := d.login()
 			if err != nil {
 				return fmt.Errorf("cannot login to get refresh token, error: %s", err)
@@ -183,18 +217,125 @@ func (d *CloudreveV4) refreshToken() error {
 		}
 		return nil
 	}
+
+	// parse jwt to check if refresh token is valid
+	var jwt RefreshJWT
+	err := d.parseJWT(d.RefreshToken, &jwt)
+	if err != nil {
+		// if refresh token is invalid, try to login if possible
+		if d.canLogin() {
+			return d.login()
+		}
+		d.GetStorage().SetStatus(fmt.Sprintf("Invalid RefreshToken: %s", err.Error()))
+		op.MustSaveDriverStorage(d)
+		return fmt.Errorf("invalid refresh token: %w", err)
+	}
+
+	// do refresh token
 	var token Token
-	err := d.request(http.MethodPost, "/session/token/refresh", func(req *resty.Request) {
+	err = d._request(http.MethodPost, "/session/token/refresh", func(req *resty.Request) {
 		req.SetBody(base.Json{
 			"refresh_token": d.RefreshToken,
 		})
 	}, &token)
 	if err != nil {
+		if errors.Is(err, ErrorIssueToken) {
+			if d.canLogin() {
+				// try to login again
+				return d.login()
+			}
+			d.GetStorage().SetStatus("This session is no longer valid")
+			op.MustSaveDriverStorage(d)
+			return ErrorIssueToken
+		}
 		return err
 	}
 	d.AccessToken, d.RefreshToken = token.AccessToken, token.RefreshToken
+	d.AccessExpires, d.RefreshExpires = token.AccessExpires, token.RefreshExpires
 	op.MustSaveDriverStorage(d)
 	return nil
+}
+
+func (d *CloudreveV4) parseJWT(token string, jwt any) error {
+	split := strings.Split(token, ".")
+	if len(split) != 3 {
+		return fmt.Errorf("invalid token length: %d, ensure the token is a valid JWT", len(split))
+	}
+	data, err := base64.RawURLEncoding.DecodeString(split[1])
+	if err != nil {
+		return fmt.Errorf("invalid token encoding: %w, ensure the token is a valid JWT", err)
+	}
+	err = json.Unmarshal(data, &jwt)
+	if err != nil {
+		return fmt.Errorf("invalid token content: %w, ensure the token is a valid JWT", err)
+	}
+	return nil
+}
+
+// check if token is expired
+// https://github.com/cloudreve/frontend/blob/ddfacc1c31c49be03beb71de4cc114c8811038d6/src/session/index.ts#L177-L200
+func (d *CloudreveV4) isTokenExpired() bool {
+	if d.RefreshToken == "" {
+		// login again if username and password is set
+		if d.canLogin() {
+			return true
+		}
+		// no refresh token, cannot refresh
+		return false
+	}
+	if d.AccessToken == "" {
+		return true
+	}
+	var (
+		err     error
+		expires time.Time
+	)
+	// check if token is expired
+	if d.AccessExpires != "" {
+		// use expires field if possible to prevent timezone issue
+		// only available after login or refresh token
+		// 2025-08-28T02:43:07.645109985+08:00
+		expires, err = time.Parse(time.RFC3339Nano, d.AccessExpires)
+		if err != nil {
+			return false
+		}
+	} else {
+		// fallback to parse jwt
+		// if failed, disable the storage
+		var jwt AccessJWT
+		err = d.parseJWT(d.AccessToken, &jwt)
+		if err != nil {
+			d.GetStorage().SetStatus(fmt.Sprintf("Invalid AccessToken: %s", err.Error()))
+			op.MustSaveDriverStorage(d)
+			return false
+		}
+		// may be have timezone issue
+		expires = time.Unix(jwt.Exp, 0)
+	}
+	// add a 10 minutes safe margin
+	ddl := time.Now().Add(10 * time.Minute)
+	if expires.Before(ddl) {
+		// current access token expired, check if refresh token is expired
+		// warning: cannot parse refresh token from jwt, because the exp field is not standard
+		if d.RefreshExpires != "" {
+			refreshExpires, err := time.Parse(time.RFC3339Nano, d.RefreshExpires)
+			if err != nil {
+				return false
+			}
+			if refreshExpires.Before(time.Now()) {
+				// This session is no longer valid
+				if d.canLogin() {
+					// try to login again
+					return true
+				}
+				d.GetStorage().SetStatus("This session is no longer valid")
+				op.MustSaveDriverStorage(d)
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (d *CloudreveV4) upLocal(ctx context.Context, file model.FileStreamer, u FileUploadResp, up driver.UpdateProgress) error {

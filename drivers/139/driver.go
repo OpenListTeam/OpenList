@@ -534,16 +534,15 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		if size > partSize {
 			part = (size + partSize - 1) / partSize
 		}
+
+		// 生成所有 partInfos
 		partInfos := make([]PartInfo, 0, part)
 		for i := int64(0); i < part; i++ {
 			if utils.IsCanceled(ctx) {
 				return ctx.Err()
 			}
 			start := i * partSize
-			byteSize := size - start
-			if byteSize > partSize {
-				byteSize = partSize
-			}
+			byteSize := min(size-start, partSize)
 			partNumber := i + 1
 			partInfo := PartInfo{
 				PartNumber: partNumber,
@@ -591,17 +590,20 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		// resp.Data.RapidUpload: true 支持快传，但此处直接检测是否返回分片的上传地址
 		// 快传的情况下同样需要手动处理冲突
 		if resp.Data.PartInfos != nil {
-			// 读取前100个分片的上传地址
-			uploadPartInfos := resp.Data.PartInfos
+			// Progress
+			p := driver.NewProgress(size, up)
+			rateLimited := driver.NewLimitedUploadStream(ctx, stream)
 
-			// 获取后续分片的上传地址
-			for i := 101; i < len(partInfos); i += 100 {
-				end := i + 100
-				if end > len(partInfos) {
-					end = len(partInfos)
-				}
+			// 先上传前100个分片
+			err = d.uploadPersonalParts(ctx, partInfos, resp.Data.PartInfos, rateLimited, p)
+			if err != nil {
+				return err
+			}
+
+			// 如果还有剩余分片，分批获取上传地址并上传
+			for i := 100; i < len(partInfos); i += 100 {
+				end := min(i+100, len(partInfos))
 				batchPartInfos := partInfos[i:end]
-
 				moredata := base.Json{
 					"fileId":    resp.Data.FileId,
 					"uploadId":  resp.Data.UploadId,
@@ -617,44 +619,13 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				if err != nil {
 					return err
 				}
-				uploadPartInfos = append(uploadPartInfos, moreresp.Data.PartInfos...)
-			}
-
-			// Progress
-			p := driver.NewProgress(size, up)
-
-			rateLimited := driver.NewLimitedUploadStream(ctx, stream)
-			// 上传所有分片
-			for _, uploadPartInfo := range uploadPartInfos {
-				index := uploadPartInfo.PartNumber - 1
-				partSize := partInfos[index].PartSize
-				log.Debugf("[139] uploading part %+v/%+v", index, len(uploadPartInfos))
-				limitReader := io.LimitReader(rateLimited, partSize)
-
-				// Update Progress
-				r := io.TeeReader(limitReader, p)
-
-				req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadPartInfo.UploadUrl, r)
+				err = d.uploadPersonalParts(ctx, partInfos, moreresp.Data.PartInfos, rateLimited, p)
 				if err != nil {
 					return err
 				}
-				req.Header.Set("Content-Type", "application/octet-stream")
-				req.Header.Set("Content-Length", fmt.Sprint(partSize))
-				req.Header.Set("Origin", "https://yun.139.com")
-				req.Header.Set("Referer", "https://yun.139.com/")
-				req.ContentLength = partSize
-
-				res, err := base.HttpClient.Do(req)
-				if err != nil {
-					return err
-				}
-				_ = res.Body.Close()
-				log.Debugf("[139] uploaded: %+v", res)
-				if res.StatusCode != http.StatusOK {
-					return fmt.Errorf("unexpected status code: %d", res.StatusCode)
-				}
 			}
 
+			// 全部分片上传完毕后，complete
 			data = base.Json{
 				"contentHash":          fullHash,
 				"contentHashAlgorithm": "SHA256",

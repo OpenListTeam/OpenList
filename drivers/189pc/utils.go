@@ -472,14 +472,16 @@ func (y *Cloud189PC) refreshSession() (err error) {
 // 普通上传
 // 无法上传大小为0的文件
 func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool) (model.Obj, error) {
-	size := file.GetSize()
-	sliceSize := min(size, partSize(size))
+	// 文件大小
+	fileSize := file.GetSize()
+	// 分片大小，不得为文件大小
+	sliceSize := partSize(fileSize)
 
 	params := Params{
 		"parentFolderId": dstDir.GetID(),
 		"fileName":       url.QueryEscape(file.GetName()),
-		"fileSize":       fmt.Sprint(file.GetSize()),
-		"sliceSize":      fmt.Sprint(sliceSize),
+		"fileSize":       fmt.Sprint(fileSize),
+		"sliceSize":      fmt.Sprint(sliceSize), // 必须为特定分片大小
 		"lazyCheck":      "1",
 	}
 
@@ -512,10 +514,10 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		retry.DelayType(retry.BackOffDelay))
 
 	count := 1
-	if size > sliceSize {
-		count = int((size + sliceSize - 1) / sliceSize)
+	if fileSize > sliceSize {
+		count = int((fileSize + sliceSize - 1) / sliceSize)
 	}
-	lastPartSize := size % sliceSize
+	lastPartSize := fileSize % sliceSize
 	if lastPartSize == 0 {
 		lastPartSize = sliceSize
 	}
@@ -535,9 +537,9 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 			break
 		}
 		offset := int64((i)-1) * sliceSize
-		size := sliceSize
+		partSize := sliceSize
 		if i == count {
-			size = lastPartSize
+			partSize = lastPartSize
 		}
 		partInfo := ""
 		var reader *stream.SectionReader
@@ -546,14 +548,14 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 			Before: func(ctx context.Context) error {
 				if reader == nil {
 					var err error
-					reader, err = ss.GetSectionReader(offset, size)
+					reader, err = ss.GetSectionReader(offset, partSize)
 					if err != nil {
 						return err
 					}
 					silceMd5.Reset()
 					w, err := utils.CopyWithBuffer(writers, reader)
-					if w != size {
-						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", size, w, err)
+					if w != partSize {
+						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", partSize, w, err)
 					}
 					// 计算块md5并进行hex和base64编码
 					md5Bytes := silceMd5.Sum(nil)
@@ -595,7 +597,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		fileMd5Hex = strings.ToUpper(hex.EncodeToString(fileMd5.Sum(nil)))
 	}
 	sliceMd5Hex := fileMd5Hex
-	if file.GetSize() > sliceSize {
+	if fileSize > sliceSize {
 		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(silceMd5Hexs, "\n")))
 	}
 
