@@ -1,7 +1,6 @@
 package _189_tv
 
 import (
-	"container/ring"
 	"context"
 	"net/http"
 	"strconv"
@@ -12,18 +11,20 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/go-resty/resty/v2"
 )
 
 type Cloud189TV struct {
 	model.Storage
 	Addition
-	client                  *resty.Client
-	tokenInfo               *AppSessionResp
-	uploadThread            int
-	familyTransferFolder    *ring.Ring
-	cleanFamilyTransferFile func()
-	storageConfig           driver.Config
+	client        *resty.Client
+	tokenInfo     *AppSessionResp
+	uploadThread  int
+	storageConfig driver.Config
+
+	TempUuid string
+	cron     *cron.Cron // 新增 cron 字段
 }
 
 func (y *Cloud189TV) Config() driver.Config {
@@ -79,10 +80,17 @@ func (y *Cloud189TV) Init(ctx context.Context) (err error) {
 		}
 	}
 
+	y.cron = cron.NewCron(time.Minute * 5)
+	y.cron.Do(y.keepAlive)
+
 	return
 }
 
 func (y *Cloud189TV) Drop(ctx context.Context) error {
+	if y.cron != nil {
+		y.cron.Stop()
+		y.cron = nil
+	}
 	return nil
 }
 
