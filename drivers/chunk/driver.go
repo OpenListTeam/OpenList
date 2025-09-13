@@ -151,7 +151,8 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	if err != nil {
 		return nil, err
 	}
-	return utils.SliceConvert(remoteObjs, func(obj model.Obj) (model.Obj, error) {
+	result := make([]model.Obj, len(remoteObjs))
+	for _, obj := range remoteObjs {
 		rawName := obj.GetName()
 		if obj.IsDir() {
 			if name, ok := strings.CutPrefix(rawName, "[openlist_chunk]"); ok {
@@ -165,17 +166,9 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 				totalSize := int64(0)
 				h := make(map[*utils.HashType]string)
 				first := obj
-				thumb := ""
 				for _, o := range chunkObjs {
 					if o.IsDir() {
 						continue
-					}
-					if o.GetName() == "thumbnail.webp" {
-						thumbPath := stdpath.Join(args.ReqPath, rawName, o.GetName())
-						thumb = fmt.Sprintf("%s/d%s?sign=%s",
-							common.GetApiUrl(ctx),
-							utils.EncodePath(thumbPath, true),
-							sign.Sign(thumbPath))
 					}
 					if after, ok := strings.CutPrefix(strings.TrimSuffix(o.GetName(), d.CustomExt), "hash_"); ok {
 						hn, value, ok := strings.Cut(after, "_")
@@ -205,18 +198,28 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 				if len(h) > 0 {
 					objRes.HashInfo = utils.NewHashInfoByMap(h)
 				}
-				if thumb == "" {
-					return &objRes, nil
+				if !d.Thumbnail {
+					result = append(result, &objRes)
+				} else {
+					thumbPath := stdpath.Join(args.ReqPath, ".thumbnails", name+".webp")
+					thumb := fmt.Sprintf("%s/d%s?sign=%s",
+						common.GetApiUrl(ctx),
+						utils.EncodePath(thumbPath, true),
+						sign.Sign(thumbPath))
+					result = append(result, &model.ObjThumb{
+						Object: objRes,
+						Thumbnail: model.Thumbnail{
+							Thumbnail: thumb,
+						},
+					})
 				}
-				return &model.ObjThumb{
-					Object: objRes,
-					Thumbnail: model.Thumbnail{
-						Thumbnail: thumb,
-					},
-				}, nil
+				continue
 			}
 		}
 
+		if !d.ShowHidden && strings.HasPrefix(rawName, ".") {
+			continue
+		}
 		thumb, ok := model.GetThumb(obj)
 		objRes := model.Object{
 			Name:     rawName,
@@ -226,15 +229,17 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			HashInfo: obj.GetHash(),
 		}
 		if !ok {
-			return &objRes, nil
+			result = append(result, &objRes)
+		} else {
+			result = append(result, &model.ObjThumb{
+				Object: objRes,
+				Thumbnail: model.Thumbnail{
+					Thumbnail: thumb,
+				},
+			})
 		}
-		return &model.ObjThumb{
-			Object: objRes,
-			Thumbnail: model.Thumbnail{
-				Thumbnail: thumb,
-			},
-		}, nil
-	})
+	}
+	return result, nil
 }
 
 func (d *Chunk) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
