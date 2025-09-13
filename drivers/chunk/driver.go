@@ -151,7 +151,7 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	if err != nil {
 		return nil, err
 	}
-	result := make([]model.Obj, len(remoteObjs))
+	result := make([]model.Obj, 0, len(remoteObjs))
 	for _, obj := range remoteObjs {
 		rawName := obj.GetName()
 		if obj.IsDir() {
