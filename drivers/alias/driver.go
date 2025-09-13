@@ -79,21 +79,45 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	if !ok {
 		return nil, errs.ObjectNotFound
 	}
+	var ret *model.Object
+	provider := ""
 	for _, dst := range dsts {
-		obj, err := fs.Get(ctx, stdpath.Join(dst, sub), &fs.GetArgs{NoLog: true})
+		rawPath := stdpath.Join(dst, sub)
+		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
 		if err != nil {
 			continue
 		}
-		return &model.Object{
-			Path:     path,
-			Name:     obj.GetName(),
-			Size:     obj.GetSize(),
-			Modified: obj.ModTime(),
-			IsFolder: obj.IsDir(),
-			HashInfo: obj.GetHash(),
+		storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
+		if ret == nil {
+			ret = &model.Object{
+				Path:     path,
+				Name:     obj.GetName(),
+				Size:     obj.GetSize(),
+				Modified: obj.ModTime(),
+				IsFolder: obj.IsDir(),
+				HashInfo: obj.GetHash(),
+			}
+			if !d.ProviderPassThrough || err != nil {
+				break
+			}
+			provider = storage.Config().Name
+		} else if err != nil || provider != storage.GetStorage().Driver {
+			provider = ""
+			break
+		}
+	}
+	if ret == nil {
+		return nil, errs.ObjectNotFound
+	}
+	if provider != "" {
+		return &model.ObjectProvider{
+			Object: *ret,
+			Provider: model.Provider{
+				Provider: provider,
+			},
 		}, nil
 	}
-	return nil, errs.ObjectNotFound
+	return ret, nil
 }
 
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
@@ -184,6 +208,35 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		return &resultLink, nil
 	}
 	return nil, errs.ObjectNotFound
+}
+
+func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
+	root, sub := d.getRootAndPath(args.Obj.GetPath())
+	dsts, ok := d.pathMap[root]
+	if !ok {
+		return nil, errs.ObjectNotFound
+	}
+	for _, dst := range dsts {
+		rawPath := stdpath.Join(dst, sub)
+		storage, actualPath, err := op.GetStorageAndActualPath(rawPath)
+		if err != nil {
+			continue
+		}
+		other, ok := storage.(driver.Other)
+		if !ok {
+			continue
+		}
+		obj, err := op.GetUnwrap(ctx, storage, actualPath)
+		if err != nil {
+			continue
+		}
+		return other.Other(ctx, model.OtherArgs{
+			Obj:    obj,
+			Method: args.Method,
+			Data:   args.Data,
+		})
+	}
+	return nil, errs.NotImplement
 }
 
 func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {

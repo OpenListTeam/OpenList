@@ -80,6 +80,10 @@ type SetPath interface {
 	SetPath(path string)
 }
 
+type ObjWithProvider interface {
+	GetProvider() string
+}
+
 func SortFiles(objs []Obj, orderBy, orderDirection string) {
 	if orderBy == "" {
 		return
@@ -166,6 +170,16 @@ func GetUrl(obj Obj) (url string, ok bool) {
 	return url, false
 }
 
+func GetProvider(obj Obj) (string, bool) {
+	if obj, ok := obj.(ObjWithProvider); ok {
+		return obj.GetProvider(), true
+	}
+	if unwrap, ok := obj.(ObjUnwrap); ok {
+		return GetProvider(unwrap.Unwrap())
+	}
+	return "unknown", false
+}
+
 func GetRawObject(obj Obj) *Object {
 	switch v := obj.(type) {
 	case *ObjThumbURL:
@@ -173,6 +187,8 @@ func GetRawObject(obj Obj) *Object {
 	case *ObjThumb:
 		return &v.Object
 	case *ObjectURL:
+		return &v.Object
+	case *ObjectProvider:
 		return &v.Object
 	case *Object:
 		return v
