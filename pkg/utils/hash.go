@@ -57,6 +57,11 @@ var (
 	Supported  []*HashType
 )
 
+func GetHashByName(name string) (ht *HashType, ok bool) {
+	ht, ok = name2hash[name]
+	return
+}
+
 // RegisterHash adds a new Hash to the list and returns its Type
 func RegisterHash(name, alias string, width int, newFunc func() hash.Hash) *HashType {
 	return RegisterHashWithParam(name, alias, width, func(a ...any) hash.Hash { return newFunc() })

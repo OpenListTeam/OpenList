@@ -114,7 +114,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 		reader, err := RangeReadCloser.RangeRead(ctx, http_range.Range{Length: -1})
 		if err != nil {
 			code = http.StatusRequestedRangeNotSatisfiable
-			if statusCode, ok := errors.Unwrap(err).(ErrorHttpStatusCode); ok {
+			if statusCode, ok := errors.Unwrap(err).(HttpStatusCodeError); ok {
 				code = int(statusCode)
 			}
 			http.Error(w, err.Error(), code)
@@ -137,7 +137,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 		sendContent, err = RangeReadCloser.RangeRead(ctx, ra)
 		if err != nil {
 			code = http.StatusRequestedRangeNotSatisfiable
-			if statusCode, ok := errors.Unwrap(err).(ErrorHttpStatusCode); ok {
+			if statusCode, ok := errors.Unwrap(err).(HttpStatusCodeError); ok {
 				code = int(statusCode)
 			}
 			http.Error(w, err.Error(), code)
@@ -199,7 +199,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 				log.Warnf("Maybe size incorrect or reader not giving correct/full data, or connection closed before finish. written bytes: %d ,sendSize:%d, ", written, sendSize)
 			}
 			code = http.StatusInternalServerError
-			if statusCode, ok := errors.Unwrap(err).(ErrorHttpStatusCode); ok {
+			if statusCode, ok := errors.Unwrap(err).(HttpStatusCodeError); ok {
 				code = int(statusCode)
 			}
 			w.WriteHeader(code)
@@ -253,14 +253,14 @@ func RequestHttp(ctx context.Context, httpMethod string, headerOverride http.Hea
 		_ = res.Body.Close()
 		msg := string(all)
 		log.Debugln(msg)
-		return nil, fmt.Errorf("http request [%s] failure,status: %w response:%s", URL, ErrorHttpStatusCode(res.StatusCode), msg)
+		return nil, fmt.Errorf("http request [%s] failure,status: %w response:%s", URL, HttpStatusCodeError(res.StatusCode), msg)
 	}
 	return res, nil
 }
 
-type ErrorHttpStatusCode int
+type HttpStatusCodeError int
 
-func (e ErrorHttpStatusCode) Error() string {
+func (e HttpStatusCodeError) Error() string {
 	return fmt.Sprintf("%d|%s", e, http.StatusText(int(e)))
 }
 

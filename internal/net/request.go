@@ -125,7 +125,7 @@ type ConcurrencyLimit struct {
 	Limit int // 需要大于0
 }
 
-var ErrExceedMaxConcurrency = ErrorHttpStatusCode(http.StatusTooManyRequests)
+var ErrExceedMaxConcurrency = HttpStatusCodeError(http.StatusTooManyRequests)
 
 func (l *ConcurrencyLimit) sub() error {
 	l._m.Lock()
@@ -403,7 +403,7 @@ var errInfiniteRetry = errors.New("infinite retry")
 func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int64, error) {
 	resp, err := d.cfg.HttpClient(d.ctx, params)
 	if err != nil {
-		statusCode, ok := errors.Unwrap(err).(ErrorHttpStatusCode)
+		statusCode, ok := errors.Unwrap(err).(HttpStatusCodeError)
 		if !ok {
 			return 0, err
 		}

@@ -405,11 +405,8 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return nil
 	})
 	link, err, _ := extractG.Do(key, fn)
-	if err == nil && !link.AcquireReference() {
+	for err == nil && !link.AcquireReference() {
 		link, err, _ = extractG.Do(key, fn)
-		if err == nil {
-			link.AcquireReference()
-		}
 	}
 	if err == errLinkMFileCache {
 		if linkM != nil {
