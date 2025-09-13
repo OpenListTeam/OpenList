@@ -396,6 +396,9 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	if err != nil {
 		return err
 	}
+	if d.Thumbnail && dstDir.GetName() == ".thumbnails" {
+		return op.Put(ctx, remoteStorage, stdpath.Join(remoteActualPath, dstDir.GetPath()), file, up)
+	}
 	upReader := &driver.ReaderUpdatingProgress{
 		Reader:         file,
 		UpdateProgress: up,
