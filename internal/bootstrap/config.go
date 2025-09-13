@@ -125,9 +125,14 @@ func InitConfig() {
 	if err != nil {
 		log.Fatalf("create temp dir error: %+v", err)
 	}
+	err = os.MkdirAll(conf.GetPersistentTempDir(), 0o777)
+	if err != nil {
+		log.Fatalf("create persistent temp dir error: %+v", err)
+	}
 	log.Debugf("config: %+v", conf.Conf)
 	base.InitClient()
 	initURL()
+	CleanTempDir()
 }
 
 func confFromEnv() {
@@ -160,6 +165,9 @@ func CleanTempDir() {
 		log.Errorln("failed list temp file: ", err)
 	}
 	for _, file := range files {
+		if file.Name() == "persistent" {
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(conf.Conf.TempDir, file.Name())); err != nil {
 			log.Errorln("failed delete temp file: ", err)
 		}

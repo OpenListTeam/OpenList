@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -20,6 +21,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
+	log "github.com/sirupsen/logrus"
 )
 
 // 创建文件 V2
@@ -182,4 +184,64 @@ func (d *Open123) complete(preuploadID string) (*UploadCompleteResp, error) {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (d *Open123) uploadSlice(req *UploadSliceReq) error {
+	_, err := d.Request(InitApiInfo(req.Server+"/upload/v2/file/slice", 0), http.MethodPost, func(rt *resty.Request) {
+		rt.SetHeader("Content-Type", "multipart/form-data")
+		rt.SetMultipartFormData(map[string]string{
+			"preuploadID": req.PreuploadID,
+			"sliceMD5":    req.SliceMD5,
+			"sliceNo":     strconv.FormatInt(int64(req.SliceNo), 10),
+		})
+		rt.SetMultipartField("slice", req.Name, "multipart/form-data", req.Slice)
+	}, nil)
+	return err
+}
+
+func (d *Open123) sliceUpComplete(uploadID string) error {
+	r := &SliceUpCompleteResp{}
+
+	b, err := d.Request(UploadComplete, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"preuploadID": uploadID,
+		})
+	}, r)
+	if err != nil {
+		log.Error("123 open uploadComplete error", err)
+		return err
+	}
+	log.Debugf("upload complete,body: %s", string(b))
+	if r.Data.Completed {
+		return nil
+	}
+
+	return errors.New("upload uncomplete")
+
+}
+
+func (d *Open123) getUploadServer() (string, error) {
+	r := &GetUploadServerResp{}
+	body, err := d.Request(UploadFileDomain, "GET", nil, r)
+	if err != nil {
+		log.Error("get upload server failed", string(body), r, err)
+		return "", err
+	}
+	if len(r.Data) == 0 {
+		return "", errors.New("upload server is empty")
+	}
+
+	return r.Data[0], err
+}
+
+func (d *Open123) uploadCreate(uc *UploadCreateReq) (*UploadCreateData, error) {
+	r := &UploadCreateResp{}
+	_, err := d.Request(UploadCreate, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(uc)
+	}, r)
+	if err != nil {
+		log.Error("123 open uploadCreate error", err)
+	}
+	return &r.Data, err
+
 }
