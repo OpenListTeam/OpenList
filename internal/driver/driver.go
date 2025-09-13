@@ -73,12 +73,20 @@ type Rename interface {
 	Rename(ctx context.Context, srcObj model.Obj, newName string) error
 }
 
+type BatchRename interface {
+	BatchRename(ctx context.Context, obj model.Obj, renameObjs []model.RenameObj) error
+}
+
 type Copy interface {
 	Copy(ctx context.Context, srcObj, dstDir model.Obj) error
 }
 
 type Remove interface {
 	Remove(ctx context.Context, obj model.Obj) error
+}
+
+type BatchRemove interface {
+	BatchRemove(ctx context.Context, srcobj model.Obj, objs []model.IDName) error
 }
 
 type Put interface {
