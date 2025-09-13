@@ -5,7 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	stdpath "path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -124,7 +124,7 @@ type WrapFileInfo struct {
 }
 
 func (f *WrapFileInfo) Name() string {
-	return stdpath.Base(f.File.Name)
+	return filepath.Base(f.File.Name)
 }
 
 func (f *WrapFileInfo) Size() int64 {
@@ -183,12 +183,16 @@ func getReader(ss []*stream.SeekableStream, password string) (*rardecode.Reader,
 
 func decompress(reader *rardecode.Reader, header *rardecode.FileHeader, filePath, outputPath string) error {
 	targetPath := outputPath
-	dir, base := stdpath.Split(filePath)
+	dir, base := filepath.Split(filePath)
 	if dir != "" {
-		targetPath = stdpath.Join(targetPath, dir)
-		err := os.MkdirAll(targetPath, 0700)
-		if err != nil {
-			return err
+		targetPath = filepath.Join(targetPath, dir)
+		if strings.HasPrefix(targetPath, outputPath+string(os.PathSeparator)) {
+			err := os.MkdirAll(targetPath, 0700)
+			if err != nil {
+				return err
+			}
+		} else {
+			targetPath = outputPath
 		}
 	}
 	if base != "" {
@@ -201,7 +205,11 @@ func decompress(reader *rardecode.Reader, header *rardecode.FileHeader, filePath
 }
 
 func _decompress(reader *rardecode.Reader, header *rardecode.FileHeader, targetPath string, up model.UpdateProgress) error {
-	f, err := os.OpenFile(stdpath.Join(targetPath, stdpath.Base(header.Name)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	destPath := filepath.Join(targetPath, filepath.Base(header.Name))
+	if !strings.HasPrefix(destPath, targetPath+string(os.PathSeparator)) {
+		return fmt.Errorf("illegal file path: %s", filepath.Base(header.Name))
+	}
+	f, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
