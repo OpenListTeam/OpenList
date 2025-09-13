@@ -199,14 +199,13 @@ func Config(ctx context.Context) searcher.Config {
 	return instance.Config()
 }
 
-func Update(parent string, objs []model.Obj) {
+func Update(ctx context.Context, parent string, objs []model.Obj) {
 	if instance == nil || !instance.Config().AutoUpdate || !setting.GetBool(conf.AutoUpdateIndex) || Running() {
 		return
 	}
 	if isIgnorePath(parent) {
 		return
 	}
-	ctx := context.Background()
 	// only update when index have built
 	progress, err := Progress()
 	if err != nil {
