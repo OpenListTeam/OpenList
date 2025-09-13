@@ -1,6 +1,7 @@
 package archives
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -122,7 +123,7 @@ func (Archives) Decompress(ss []*stream.SeekableStream, outputPath string, args 
 			relPath := strings.TrimPrefix(p, path+"/")
 			dstPath := filepath.Join(outputPath, relPath)
 			if !strings.HasPrefix(dstPath, outputPath+string(os.PathSeparator)) {
-				dstPath = outputPath
+				return fmt.Errorf("illegal file path: %s", relPath)
 			}
 			if d.IsDir() {
 				err = os.MkdirAll(dstPath, 0700)
