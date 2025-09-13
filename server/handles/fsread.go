@@ -301,8 +301,8 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	var rawURL string
 
 	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
-	provider := "unknown"
-	if err == nil {
+	provider, ok := model.GetProvider(obj)
+	if !ok && err == nil {
 		provider = storage.Config().Name
 	}
 	if !obj.IsDir() {
