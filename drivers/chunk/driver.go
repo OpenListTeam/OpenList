@@ -77,6 +77,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 		return nil, err
 	}
 	var totalSize int64 = 0
+	// 0号块必须存在
 	chunkSizes := []int64{-1}
 	h := make(map[*utils.HashType]string)
 	var first model.Obj
@@ -113,8 +114,15 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 			chunkSizes[idx] = o.GetSize()
 		}
 	}
+	// 检查0号块不等于-1 以支持空文件
+	// 如果块数量大于1 最后一块不可能为0
+	// 只检查中间块是否有0
 	for i, l := 0, len(chunkSizes)-2; ; i++ {
-		if (i == 0 && chunkSizes[i] == -1) || chunkSizes[i] == 0 {
+		if i == 0 {
+			if chunkSizes[i] == -1 {
+				return nil, fmt.Errorf("chunk part[%d] are missing", i)
+			}
+		} else if chunkSizes[i] == 0 {
 			return nil, fmt.Errorf("chunk part[%d] are missing", i)
 		}
 		if i >= l {
