@@ -333,6 +333,7 @@ func (d *Chunk) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 				}
 				rc, err = rrf.RangeRead(ctx, http_range.Range{Start: start, Length: -1})
 				if err != nil {
+					_ = cs.Close()
 					return nil, err
 				}
 				length -= chunkSize2 - start
