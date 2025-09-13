@@ -17,9 +17,10 @@ const (
 	AllowMounted = "allow_mounted"
 	RobotsTxt    = "robots_txt"
 
-	Logo      = "logo" // multi-lines text, L1: light, EOL: dark
-	Favicon   = "favicon"
-	MainColor = "main_color"
+	Logo               = "logo" // multi-lines text, L1: light, EOL: dark
+	Favicon            = "favicon"
+	MainColor          = "main_color"
+	HideStorageDetails = "hide_storage_details"
 
 	// preview
 	TextTypes                = "text_types"
