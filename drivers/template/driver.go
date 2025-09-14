@@ -93,6 +93,11 @@ func (d *Template) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.O
 	return nil, errs.NotImplement
 }
 
+func (d *Template) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	// TODO return storage details (total space, free space, etc.)
+	return nil, errs.NotImplement
+}
+
 //func (d *Template) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}

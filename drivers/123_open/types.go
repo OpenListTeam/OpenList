@@ -133,9 +133,9 @@ type UserInfoResp struct {
 		// HeadImage      string `json:"headImage"`
 		// Passport       string `json:"passport"`
 		// Mail           string `json:"mail"`
-		// SpaceUsed      int64  `json:"spaceUsed"`
-		// SpacePermanent int64  `json:"spacePermanent"`
-		// SpaceTemp      int64  `json:"spaceTemp"`
+		SpaceUsed      uint64 `json:"spaceUsed"`
+		SpacePermanent uint64 `json:"spacePermanent"`
+		SpaceTemp      uint64 `json:"spaceTemp"`
 		// SpaceTempExpr  int64  `json:"spaceTempExpr"`
 		// Vip            bool   `json:"vip"`
 		// DirectTraffic  int64  `json:"directTraffic"`

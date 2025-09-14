@@ -17,7 +17,9 @@ import (
 type Open123 struct {
 	model.Storage
 	Addition
-	UID uint64
+	UID        uint64
+	freeSpace  uint64
+	totalSpace uint64
 }
 
 func (d *Open123) Config() driver.Config {
@@ -212,6 +214,21 @@ func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 		time.Sleep(time.Second)
 	}
 	return nil, fmt.Errorf("upload complete timeout")
+}
+
+func (d *Open123) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	userInfo, err := d.getUserInfo()
+	if err != nil {
+		return nil, err
+	}
+	total := userInfo.Data.SpacePermanent + userInfo.Data.SpaceTemp
+	free := total - userInfo.Data.SpaceUsed
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  free,
+		},
+	}, nil
 }
 
 var _ driver.Driver = (*Open123)(nil)
