@@ -357,7 +357,9 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 		}
 		details, err := storage.GetDetails(ctx)
 		if err != nil {
-			log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
+			if !errors.Is(err, errs.NotImplement) {
+				log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
+			}
 			return ret
 		}
 		ret.StorageDetails = details

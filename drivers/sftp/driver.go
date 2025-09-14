@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -125,6 +126,24 @@ func (d *SFTP) Put(ctx context.Context, dstDir model.Obj, stream model.FileStrea
 	}()
 	err = utils.CopyWithCtx(ctx, dstFile, driver.NewLimitedUploadStream(ctx, stream), stream.GetSize(), up)
 	return err
+}
+
+func (d *SFTP) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	stat, err := d.client.StatVFS(d.RootFolderPath)
+	if err != nil {
+		if strings.Contains(err.Error(), "unimplemented") {
+			return nil, errs.NotImplement
+		}
+		return nil, err
+	}
+	total := stat.Blocks * stat.Bsize
+	free := stat.Bfree * stat.Bsize
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  free,
+		},
+	}, nil
 }
 
 var _ driver.Driver = (*SFTP)(nil)

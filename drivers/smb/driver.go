@@ -205,6 +205,22 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	return nil
 }
 
+func (d *SMB) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if err := d.checkConn(); err != nil {
+		return nil, err
+	}
+	stat, err := d.fs.Statfs(d.RootFolderPath)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: stat.BlockSize() * stat.TotalBlockCount(),
+			FreeSpace:  stat.BlockSize() * stat.AvailableBlockCount(),
+		},
+	}, nil
+}
+
 //func (d *SMB) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}
