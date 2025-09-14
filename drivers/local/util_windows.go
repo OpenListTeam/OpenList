@@ -32,7 +32,7 @@ func getDiskUsage(path string) (model.DiskUsage, error) {
 	}
 	root := filepath.VolumeName(abs)
 	if len(root) != 2 || root[1] != ':' {
-		return model.DiskUsage{}, errors.New("invalid disk usage")
+		return model.DiskUsage{}, errors.New("cannot get disk label")
 	}
 	var freeBytes, totalBytes, totalFreeBytes uint64
 	err = windows.GetDiskFreeSpaceEx(
