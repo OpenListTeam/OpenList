@@ -17,9 +17,7 @@ import (
 type Open123 struct {
 	model.Storage
 	Addition
-	UID        uint64
-	freeSpace  uint64
-	totalSpace uint64
+	UID uint64
 }
 
 func (d *Open123) Config() driver.Config {
