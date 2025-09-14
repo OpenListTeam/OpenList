@@ -339,6 +339,21 @@ func (d *CloudreveV4) ArchiveDecompress(ctx context.Context, srcObj, dstDir mode
 	return nil, errs.NotImplement
 }
 
+func (d *CloudreveV4) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	// TODO return storage details (total space, free space, etc.)
+	var r CapacityResp
+	err := d.request(http.MethodGet, "/user/capacity", nil, &r)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: r.Total,
+			FreeSpace:  r.Total - r.Used,
+		},
+	}, nil
+}
+
 //func (d *CloudreveV4) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}
