@@ -3,6 +3,7 @@
 package local
 
 import (
+	"errors"
 	"io/fs"
 	"path/filepath"
 	"syscall"
@@ -25,9 +26,16 @@ func isHidden(f fs.FileInfo, fullPath string) bool {
 }
 
 func getDiskUsage(path string) (model.DiskUsage, error) {
-	root := string(path[0]) + ":"
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return model.DiskUsage{}, err
+	}
+	root := filepath.VolumeName(abs)
+	if len(root) != 2 || root[1] != ':' {
+		return model.DiskUsage{}, errors.New("invalid disk usage")
+	}
 	var freeBytes, totalBytes, totalFreeBytes uint64
-	err := windows.GetDiskFreeSpaceEx(
+	err = windows.GetDiskFreeSpaceEx(
 		windows.StringToUTF16Ptr(root),
 		&freeBytes,
 		&totalBytes,
