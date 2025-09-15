@@ -381,11 +381,10 @@ func (d *Chunk) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Chunk) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	chunkObj, ok := srcObj.(*chunkObject)
-	if !ok {
-		return fs.Rename(ctx, stdpath.Join(d.RemotePath, srcObj.GetPath()), newName)
+	if _, ok := srcObj.(*chunkObject); ok {
+		newName = "[openlist_chunk]" + newName
 	}
-	return fs.Rename(ctx, stdpath.Join(d.RemotePath, chunkObj.GetPath()), "[openlist_chunk]"+newName)
+	return fs.Rename(ctx, stdpath.Join(d.RemotePath, srcObj.GetPath()), newName)
 }
 
 func (d *Chunk) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
