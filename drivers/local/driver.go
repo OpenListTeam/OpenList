@@ -374,6 +374,13 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 			err = os.Remove(obj.GetPath())
 		}
 	} else {
+		if !utils.Exists(d.RecycleBinPath) {
+			err = os.MkdirAll(d.RecycleBinPath, 0755)
+			if err != nil {
+				return err
+			}
+		}
+
 		dstPath := filepath.Join(d.RecycleBinPath, obj.GetName())
 		if utils.Exists(dstPath) {
 			dstPath = filepath.Join(d.RecycleBinPath, obj.GetName()+"_"+time.Now().Format("20060102150405"))

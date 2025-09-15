@@ -7,9 +7,10 @@ import (
 
 type Addition struct {
 	driver.RootID
-	Username string `json:"username" required:"true" help:"Your Degoo account email"`
-	Password string `json:"password" required:"true" help:"Your Degoo account password"`
-	Token    string `json:"token" help:"Access token for Degoo API, will be obtained automatically if not provided"`
+	Username     string `json:"username" help:"Your Degoo account email"`
+	Password     string `json:"password" help:"Your Degoo account password"`
+	RefreshToken string `json:"refresh_token" help:"Refresh token for automatic token renewal, obtained automatically"`
+	AccessToken  string `json:"access_token" help:"Access token for Degoo API, obtained automatically"`
 }
 
 var config = driver.Config{

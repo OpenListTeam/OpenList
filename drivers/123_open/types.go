@@ -127,19 +127,19 @@ type RefreshTokenResp struct {
 type UserInfoResp struct {
 	BaseResp
 	Data struct {
-		UID            uint64 `json:"uid"`
-		Username       string `json:"username"`
-		DisplayName    string `json:"displayName"`
-		HeadImage      string `json:"headImage"`
-		Passport       string `json:"passport"`
-		Mail           string `json:"mail"`
-		SpaceUsed      int64  `json:"spaceUsed"`
-		SpacePermanent int64  `json:"spacePermanent"`
-		SpaceTemp      int64  `json:"spaceTemp"`
-		SpaceTempExpr  string `json:"spaceTempExpr"`
-		Vip            bool   `json:"vip"`
-		DirectTraffic  int64  `json:"directTraffic"`
-		IsHideUID      bool   `json:"isHideUID"`
+		UID uint64 `json:"uid"`
+		// Username       string `json:"username"`
+		// DisplayName    string `json:"displayName"`
+		// HeadImage      string `json:"headImage"`
+		// Passport       string `json:"passport"`
+		// Mail           string `json:"mail"`
+		// SpaceUsed      int64  `json:"spaceUsed"`
+		// SpacePermanent int64  `json:"spacePermanent"`
+		// SpaceTemp      int64  `json:"spaceTemp"`
+		// SpaceTempExpr  int64  `json:"spaceTempExpr"`
+		// Vip            bool   `json:"vip"`
+		// DirectTraffic  int64  `json:"directTraffic"`
+		// IsHideUID      bool   `json:"isHideUID"`
 	} `json:"data"`
 }
 

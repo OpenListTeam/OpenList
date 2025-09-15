@@ -74,7 +74,6 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
   - [x] [迅雷网盘](https://pan.xunlei.com)
   - [x] [蓝奏云](https://www.lanzou.com)
   - [x] [蓝奏云优享版](https://www.ilanzou.com)
-  - [x] [阿里云盘分享](https://www.alipan.com)
   - [x] [Google 相册](https://photos.google.com)
   - [x] [Mega.nz](https://mega.nz)
   - [x] [百度相册](https://photo.baidu.com)
@@ -85,6 +84,15 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
   - [x] [飞机盘](https://www.feijipan.com)
   - [x] [多吉云](https://www.dogecloud.com/product/oss)
   - [x] [Azure Blob Storage](https://azure.microsoft.com/products/storage/blobs)
+  - [x] [超星](https://www.chaoxing.com)
+  - [x] [CNB](https://cnb.cool/)
+  - [x] [Degoo](https://degoo.com)
+  - [x] [豆包](https://www.doubao.com)
+  - [x] [Febbox](https://www.febbox.com)
+  - [x] [GitHub](https://github.com)
+  - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
+  - [x] [Teldrive](https://github.com/tgdrive/teldrive)
+  - [x] [微云](https://www.weiyun.com)
 - [x] 部署方便，开箱即用
 - [x] 文件预览（PDF、markdown、代码、纯文本等）
 - [x] 画廊模式下的图片预览

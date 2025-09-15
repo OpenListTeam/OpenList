@@ -73,4 +73,5 @@ jobs:
         with:
           files: build/compress/*
           prerelease: false
+          tag_name: ${{ github.event.release.tag_name }}
 

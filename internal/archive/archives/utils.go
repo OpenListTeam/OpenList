@@ -1,10 +1,11 @@
 package archives
 
 import (
+	"fmt"
 	"io"
 	fs2 "io/fs"
 	"os"
-	stdpath "path"
+	"path/filepath"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -69,7 +70,11 @@ func decompress(fsys fs2.FS, filePath, targetPath string, up model.UpdateProgres
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(stdpath.Join(targetPath, stat.Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	destPath := filepath.Join(targetPath, stat.Name())
+	if !strings.HasPrefix(destPath, targetPath+string(os.PathSeparator)) {
+		return fmt.Errorf("illegal file path: %s", stat.Name())
+	}
+	f, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}

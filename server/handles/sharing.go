@@ -195,6 +195,7 @@ func SharingArchiveList(c *gin.Context, req *ArchiveListReq) {
 func SharingDown(c *gin.Context) {
 	sid := c.Request.Context().Value(conf.SharingIDKey).(string)
 	path := c.Request.Context().Value(conf.PathKey).(string)
+	path = utils.FixAndCleanPath(path)
 	pwd := c.Query("pwd")
 	s, err := op.GetSharingById(sid)
 	if err == nil {
@@ -219,6 +220,13 @@ func SharingDown(c *gin.Context) {
 		return
 	}
 	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
+		if _, ok := c.GetQuery("d"); !ok {
+			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath); url != "" {
+				c.Redirect(302, url)
+				_ = countAccess(c.ClientIP(), s)
+				return
+			}
+		}
 		link, obj, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{
 			Header: c.Request.Header,
 			Type:   c.Query("type"),
@@ -252,6 +260,7 @@ func SharingArchiveExtract(c *gin.Context) {
 	}
 	sid := c.Request.Context().Value(conf.SharingIDKey).(string)
 	path := c.Request.Context().Value(conf.PathKey).(string)
+	path = utils.FixAndCleanPath(path)
 	pwd := c.Query("pwd")
 	innerPath := utils.FixAndCleanPath(c.Query("inner"))
 	archivePass := c.Query("pass")
