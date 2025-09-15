@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -20,6 +21,11 @@ type GoogleDrive struct {
 	AccessToken            string
 	ServiceAccountFile     int
 	ServiceAccountFileList []string
+
+	// 驱动级客户端（用于支持仅本驱动走代理）
+	RestyClient      *resty.Client
+	NoRedirectClient *resty.Client
+	HttpClient       *http.Client
 }
 
 func (d *GoogleDrive) Config() driver.Config {
@@ -34,6 +40,54 @@ func (d *GoogleDrive) Init(ctx context.Context) error {
 	if d.ChunkSize == 0 {
 		d.ChunkSize = 5
 	}
+
+	// 初始化驱动级 Resty 客户端（尽量 clone 全局，避免改变全局行为）
+	if base.RestyClient != nil {
+		d.RestyClient = base.RestyClient.Clone()
+	} else {
+		d.RestyClient = resty.New()
+	}
+	if base.NoRedirectClient != nil {
+		d.NoRedirectClient = base.NoRedirectClient.Clone()
+	} else {
+		d.NoRedirectClient = resty.New()
+	}
+
+	// 初始化驱动级 http.Client（尽量保留 base.HttpClient 的 transport/timeout）
+	if base.HttpClient != nil {
+		var tr *http.Transport
+		if t, ok := base.HttpClient.Transport.(*http.Transport); ok && t != nil {
+			tr = t.Clone()
+		} else {
+			tr = &http.Transport{}
+		}
+		d.HttpClient = &http.Client{
+			Transport: tr,
+			Timeout:   base.HttpClient.Timeout,
+		}
+	} else {
+		d.HttpClient = &http.Client{}
+	}
+
+	// 若开启代理并提供了代理地址，则尝试设置代理（解析失败则忽略代理设置）
+	if d.ProxyEnable && d.ProxyAddress != "" {
+		if parsed, err := url.Parse(d.ProxyAddress); err == nil {
+			// resty 设置代理
+			d.RestyClient.SetProxy(d.ProxyAddress)
+			d.NoRedirectClient.SetProxy(d.ProxyAddress)
+
+			// http.Transport 设置代理
+			if tr, ok := d.HttpClient.Transport.(*http.Transport); ok && tr != nil {
+				tr.Proxy = http.ProxyURL(parsed)
+				d.HttpClient.Transport = tr
+			} else {
+				d.HttpClient.Transport = &http.Transport{
+					Proxy: http.ProxyURL(parsed),
+				}
+			}
+		}
+	}
+
 	return d.refreshToken()
 }
 
@@ -130,7 +184,7 @@ func (d *GoogleDrive) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 		}
 		url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true"
 	}
-	req := base.NoRedirectClient.R().
+	req := d.NoRedirectClient.R().
 		SetHeaders(map[string]string{
 			"Authorization":           "Bearer " + d.AccessToken,
 			"X-Upload-Content-Type":   stream.GetMimetype(),

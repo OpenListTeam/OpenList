@@ -49,7 +49,7 @@ func (d *GoogleDrive) refreshToken() error {
 			AccessToken  string `json:"access_token"`
 			ErrorMessage string `json:"text"`
 		}
-		_, err := base.RestyClient.R().
+		_, err := d.RestyClient.R().
 			SetHeader("User-Agent", "Mozilla/5.0 (Macintosh; Apple macOS 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/138.0.0.0 Openlist/425.6.30").
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
@@ -153,7 +153,7 @@ func (d *GoogleDrive) refreshToken() error {
 
 		var resp base.TokenResp
 		var e TokenError
-		res, err := base.RestyClient.R().SetResult(&resp).SetError(&e).
+		res, err := d.RestyClient.R().SetResult(&resp).SetError(&e).
 			SetFormData(map[string]string{
 				"assertion":  assertion,
 				"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -173,7 +173,7 @@ func (d *GoogleDrive) refreshToken() error {
 	url := "https://www.googleapis.com/oauth2/v4/token"
 	var resp base.TokenResp
 	var e TokenError
-	res, err := base.RestyClient.R().SetResult(&resp).SetError(&e).
+	res, err := d.RestyClient.R().SetResult(&resp).SetError(&e).
 		SetFormData(map[string]string{
 			"client_id":     d.ClientID,
 			"client_secret": d.ClientSecret,
@@ -192,7 +192,7 @@ func (d *GoogleDrive) refreshToken() error {
 }
 
 func (d *GoogleDrive) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := d.RestyClient.R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	req.SetQueryParam("includeItemsFromAllDrives", "true")
 	req.SetQueryParam("supportsAllDrives", "true")
@@ -238,8 +238,6 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 			"fields":   "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken",
 			"pageSize": "1000",
 			"q":        fmt.Sprintf("'%s' in parents and trashed = false", id),
-			//"includeItemsFromAllDrives": "true",
-			//"supportsAllDrives":         "true",
 			"pageToken": pageToken,
 		}
 		_, err := d.request("https://www.googleapis.com/drive/v3/files", http.MethodGet, func(req *resty.Request) {
@@ -284,7 +282,7 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 				"Content-Length": {strconv.FormatInt(chunkSize, 10)},
 				"Content-Range":  {fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, file.GetSize())},
 			}
-			res, err := base.HttpClient.Do(req)
+			res, err := d.HttpClient.Do(req)
 			if err != nil {
 				return err
 			}

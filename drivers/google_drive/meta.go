@@ -15,6 +15,10 @@ type Addition struct {
 	ClientID       string `json:"client_id"`
 	ClientSecret   string `json:"client_secret"`
 	ChunkSize      int64  `json:"chunk_size" type:"number" default:"5" help:"chunk size while uploading (unit: MB)"`
+
+	// 代理相关配置
+	ProxyEnable  bool   `json:"proxy_enable" default:"false" help:"enable proxy for this driver"`
+	ProxyAddress string `json:"proxy_address" type:"string" help:"proxy address like http://127.0.0.1:7890 or socks5://127.0.0.1:1080"`
 }
 
 var config = driver.Config{
