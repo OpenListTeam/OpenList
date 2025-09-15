@@ -785,8 +785,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 
 				// step.4 上传切片
 				uploadUrl := uploadUrls[0]
-				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false,
-					driver.NewLimitedUploadStream(ctx, rateLimitedRd), isFamily)
+				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false, rateLimitedRd, isFamily)
 				if err != nil {
 					return err
 				}
