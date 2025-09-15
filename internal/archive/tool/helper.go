@@ -1,10 +1,11 @@
 package tool
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	stdpath "path"
+	"path/filepath"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -40,13 +41,13 @@ func GenerateMetaTreeFromFolderTraversal(r ArchiveReader) (bool, []model.ObjTree
 		isNewFolder := false
 		if !file.FileInfo().IsDir() {
 			// 先将 文件 添加到 所在的文件夹
-			dir = stdpath.Dir(name)
+			dir = filepath.Dir(name)
 			dirObj = dirMap[dir]
 			if dirObj == nil {
 				isNewFolder = dir != "."
 				dirObj = &model.ObjectTree{}
 				dirObj.IsFolder = true
-				dirObj.Name = stdpath.Base(dir)
+				dirObj.Name = filepath.Base(dir)
 				dirObj.Modified = file.FileInfo().ModTime()
 				dirMap[dir] = dirObj
 			}
@@ -64,28 +65,28 @@ func GenerateMetaTreeFromFolderTraversal(r ArchiveReader) (bool, []model.ObjTree
 				dirMap[dir] = dirObj
 			}
 			dirObj.IsFolder = true
-			dirObj.Name = stdpath.Base(dir)
+			dirObj.Name = filepath.Base(dir)
 			dirObj.Modified = file.FileInfo().ModTime()
 		}
 		if isNewFolder {
 			// 将 文件夹 添加到 父文件夹
 			// 考虑压缩包仅记录文件的路径，不记录文件夹
 			// 循环创建所有父文件夹
-			parentDir := stdpath.Dir(dir)
+			parentDir := filepath.Dir(dir)
 			for {
 				parentDirObj := dirMap[parentDir]
 				if parentDirObj == nil {
 					parentDirObj = &model.ObjectTree{}
 					if parentDir != "." {
 						parentDirObj.IsFolder = true
-						parentDirObj.Name = stdpath.Base(parentDir)
+						parentDirObj.Name = filepath.Base(parentDir)
 						parentDirObj.Modified = file.FileInfo().ModTime()
 					}
 					dirMap[parentDir] = parentDirObj
 				}
 				parentDirObj.Children = append(parentDirObj.Children, dirObj)
 
-				parentDir = stdpath.Dir(parentDir)
+				parentDir = filepath.Dir(parentDir)
 				if dirMap[parentDir] != nil {
 					break
 				}
@@ -127,7 +128,7 @@ func DecompressFromFolderTraversal(r ArchiveReader, outputPath string, args mode
 		}
 	} else {
 		innerPath := strings.TrimPrefix(args.InnerPath, "/")
-		innerBase := stdpath.Base(innerPath)
+		innerBase := filepath.Base(innerPath)
 		createdBaseDir := false
 		for _, file := range files {
 			name := file.Name()
@@ -138,7 +139,7 @@ func DecompressFromFolderTraversal(r ArchiveReader, outputPath string, args mode
 				}
 				break
 			} else if strings.HasPrefix(name, innerPath+"/") {
-				targetPath := stdpath.Join(outputPath, innerBase)
+				targetPath := filepath.Join(outputPath, innerBase)
 				if !createdBaseDir {
 					err = os.Mkdir(targetPath, 0700)
 					if err != nil {
@@ -159,12 +160,16 @@ func DecompressFromFolderTraversal(r ArchiveReader, outputPath string, args mode
 
 func decompress(file SubFile, filePath, outputPath, password string) error {
 	targetPath := outputPath
-	dir, base := stdpath.Split(filePath)
+	dir, base := filepath.Split(filePath)
 	if dir != "" {
-		targetPath = stdpath.Join(targetPath, dir)
-		err := os.MkdirAll(targetPath, 0700)
-		if err != nil {
-			return err
+		targetPath = filepath.Join(targetPath, dir)
+		if strings.HasPrefix(targetPath, outputPath+string(os.PathSeparator)) {
+			err := os.MkdirAll(targetPath, 0700)
+			if err != nil {
+				return err
+			}
+		} else {
+			targetPath = outputPath
 		}
 	}
 	if base != "" {
@@ -185,7 +190,11 @@ func _decompress(file SubFile, targetPath, password string, up model.UpdateProgr
 		return err
 	}
 	defer func() { _ = rc.Close() }()
-	f, err := os.OpenFile(stdpath.Join(targetPath, file.FileInfo().Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	destPath := filepath.Join(targetPath, file.FileInfo().Name())
+	if !strings.HasPrefix(destPath, targetPath+string(os.PathSeparator)) {
+		return fmt.Errorf("illegal file path: %s", file.FileInfo().Name())
+	}
+	f, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
