@@ -375,18 +375,26 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 			err = os.Remove(obj.GetPath())
 		}
 	} else {
-		if !utils.Exists(d.RecycleBinPath) {
-			err = os.MkdirAll(d.RecycleBinPath, 0o755)
+		objPath := obj.GetPath()
+		objName := obj.GetName()
+		var relPath string
+		relPath, err = filepath.Rel(d.GetRootPath(), filepath.Dir(objPath))
+		if err != nil {
+			return err
+		}
+		recycleBinPath := filepath.Join(d.RecycleBinPath, relPath)
+		if !utils.Exists(recycleBinPath) {
+			err = os.MkdirAll(recycleBinPath, 0o755)
 			if err != nil {
 				return err
 			}
 		}
 
-		dstPath := filepath.Join(d.RecycleBinPath, obj.GetName())
+		dstPath := filepath.Join(recycleBinPath, objName)
 		if utils.Exists(dstPath) {
-			dstPath = filepath.Join(d.RecycleBinPath, obj.GetName()+"_"+time.Now().Format("20060102150405"))
+			dstPath = filepath.Join(recycleBinPath, objName+"_"+time.Now().Format("20060102150405"))
 		}
-		err = os.Rename(obj.GetPath(), dstPath)
+		err = os.Rename(objPath, dstPath)
 	}
 	if err != nil {
 		return err
