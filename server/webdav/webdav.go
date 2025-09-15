@@ -344,7 +344,7 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	}
 	size := r.ContentLength
 	if size < 0 {
-		sizeStr := r.Header.Get("File-Size")
+		sizeStr := r.Header.Get("X-File-Size")
 		if sizeStr != "" {
 			size, err = strconv.ParseInt(sizeStr, 10, 64)
 			if err != nil {
