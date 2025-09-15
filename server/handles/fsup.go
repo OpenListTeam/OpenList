@@ -56,6 +56,7 @@ func FsStream(c *gin.Context) {
 		}
 	}
 	dir, name := stdpath.Split(path)
+	// 如果请求头 Content-Length 和 File-Size 都没有，则 size=-1，表示未知大小的流式上传
 	size := c.Request.ContentLength
 	if size < 0 {
 		sizeStr := c.GetHeader("File-Size")
