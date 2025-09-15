@@ -1,9 +1,11 @@
 package iso9660
 
 import (
+	"fmt"
 	"io"
 	"os"
-	stdpath "path"
+	"path/filepath"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -79,7 +81,11 @@ func (ISO9660) Decompress(ss []*stream.SeekableStream, outputPath string, args m
 	}
 	if obj.IsDir() {
 		if args.InnerPath != "/" {
-			outputPath = stdpath.Join(outputPath, obj.Name())
+			rootpath := outputPath
+			outputPath = filepath.Join(outputPath, obj.Name())
+			if !strings.HasPrefix(outputPath, rootpath+string(os.PathSeparator)) {
+				return fmt.Errorf("illegal file path: %s", obj.Name())
+			}
 			if err = os.MkdirAll(outputPath, 0700); err != nil {
 				return err
 			}

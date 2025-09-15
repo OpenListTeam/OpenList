@@ -1,8 +1,9 @@
 package iso9660
 
 import (
+	"fmt"
 	"os"
-	stdpath "path"
+	"path/filepath"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -62,7 +63,11 @@ func toModelObj(file *iso9660.File) model.Obj {
 }
 
 func decompress(f *iso9660.File, path string, up model.UpdateProgress) error {
-	file, err := os.OpenFile(stdpath.Join(path, f.Name()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	destPath := filepath.Join(path, f.Name())
+	if !strings.HasPrefix(destPath, path+string(os.PathSeparator)) {
+		return fmt.Errorf("illegal file path: %s", f.Name())
+	}
+	file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
@@ -84,7 +89,10 @@ func decompressAll(children []*iso9660.File, path string) error {
 			if err != nil {
 				return err
 			}
-			nextPath := stdpath.Join(path, child.Name())
+			nextPath := filepath.Join(path, child.Name())
+			if !strings.HasPrefix(nextPath, path+string(os.PathSeparator)) {
+				return fmt.Errorf("illegal file path: %s", child.Name())
+			}
 			if err = os.MkdirAll(nextPath, 0700); err != nil {
 				return err
 			}
