@@ -3,6 +3,7 @@ package ftp
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -89,6 +90,10 @@ func (f *FileUploadProxy) Close() error {
 	if _, err := f.buffer.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
+	borrow, err := MakeStage(f.buffer, size, f.path)
+	if err != nil {
+		return fmt.Errorf("failed make stage for [%s]: %+v", f.path, err)
+	}
 	if f.trunc {
 		_ = fs.Remove(f.ctx, f.path)
 	}
@@ -100,8 +105,9 @@ func (f *FileUploadProxy) Close() error {
 		},
 		Mimetype:     contentType,
 		WebPutAsTask: true,
+		Reader:       f.buffer,
 	}
-	s.SetTmpFile(f.buffer)
+	s.Add(borrow)
 	_, err = fs.PutAsTask(f.ctx, dir, s)
 	return err
 }
@@ -214,6 +220,6 @@ func (f *FileUploadWithLengthProxy) Close() error {
 			WebPutAsTask: false,
 			Reader:       bytes.NewReader(data),
 		}
-		return fs.PutDirectly(f.ctx, dir, s, true)
+		return fs.PutDirectly(f.ctx, dir, s)
 	}
 }

@@ -157,6 +157,8 @@ func List(ctx context.Context, path string) ([]os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	uploading := ListStage(reqPath)
+	objs = append(objs, uploading...)
 	ret := make([]os.FileInfo, len(objs))
 	for i, obj := range objs {
 		ret[i] = &OsFileInfoAdapter{obj: obj}
