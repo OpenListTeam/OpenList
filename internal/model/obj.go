@@ -243,3 +243,9 @@ func (om *ObjMerge) InitHideReg(hides string) {
 func (om *ObjMerge) Reset() {
 	om.set.Clear()
 }
+
+type Hash struct {
+	Md5      string `json:"md5"`
+	Md5256KB string `json:"md5_256kb"`
+	Sha1     string `json:"sha1"`
+}
