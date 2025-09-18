@@ -14,40 +14,40 @@ import (
 
 func whereInParent(parent string) *gorm.DB {
 	if parent == "/" {
-		return db.Where("1 = 1")
+		return rwDb.R().Where("1 = 1")
 	}
-	return db.Where(fmt.Sprintf("%s LIKE ?", columnName("parent")),
+	return rwDb.R().Where(fmt.Sprintf("%s LIKE ?", columnName("parent")),
 		fmt.Sprintf("%s/%%", parent)).
 		Or(fmt.Sprintf("%s = ?", columnName("parent")), parent)
 }
 
 func CreateSearchNode(node *model.SearchNode) error {
-	return db.Create(node).Error
+	return rwDb.W().Create(node).Error
 }
 
 func BatchCreateSearchNodes(nodes *[]model.SearchNode) error {
-	return db.CreateInBatches(nodes, 1000).Error
+	return rwDb.W().CreateInBatches(nodes, 1000).Error
 }
 
 func DeleteSearchNodesByParent(path string) error {
 	path = utils.FixAndCleanPath(path)
-	err := db.Where(whereInParent(path)).Delete(&model.SearchNode{}).Error
+	err := rwDb.W().Where(whereInParent(path)).Delete(&model.SearchNode{}).Error
 	if err != nil {
 		return err
 	}
 	dir, name := stdpath.Split(path)
-	return db.Where(fmt.Sprintf("%s = ? AND %s = ?",
+	return rwDb.W().Where(fmt.Sprintf("%s = ? AND %s = ?",
 		columnName("parent"), columnName("name")),
 		dir, name).Delete(&model.SearchNode{}).Error
 }
 
 func ClearSearchNodes() error {
-	return db.Where("1 = 1").Delete(&model.SearchNode{}).Error
+	return rwDb.W().Where("1 = 1").Delete(&model.SearchNode{}).Error
 }
 
 func GetSearchNodesByParent(parent string) ([]model.SearchNode, error) {
 	var nodes []model.SearchNode
-	if err := db.Where(fmt.Sprintf("%s = ?",
+	if err := rwDb.R().Where(fmt.Sprintf("%s = ?",
 		columnName("parent")), parent).Find(&nodes).Error; err != nil {
 		return nil, err
 	}
@@ -57,25 +57,25 @@ func GetSearchNodesByParent(parent string) ([]model.SearchNode, error) {
 func SearchNode(req model.SearchReq, useFullText bool) ([]model.SearchNode, int64, error) {
 	var searchDB *gorm.DB
 	if !useFullText || conf.Conf.Database.Type == "sqlite3" {
-		keywordsClause := db.Where("1 = 1")
+		keywordsClause := rwDb.R().Where("1 = 1")
 		for _, keyword := range strings.Fields(req.Keywords) {
 			keywordsClause = keywordsClause.Where("name LIKE ?", fmt.Sprintf("%%%s%%", keyword))
 		}
-		searchDB = db.Model(&model.SearchNode{}).Where(whereInParent(req.Parent)).Where(keywordsClause)
+		searchDB = rwDb.R().Model(&model.SearchNode{}).Where(whereInParent(req.Parent)).Where(keywordsClause)
 	} else {
 		switch conf.Conf.Database.Type {
 		case "mysql":
-			searchDB = db.Model(&model.SearchNode{}).Where(whereInParent(req.Parent)).
+			searchDB = rwDb.R().Model(&model.SearchNode{}).Where(whereInParent(req.Parent)).
 				Where("MATCH (name) AGAINST (? IN BOOLEAN MODE)", "'*"+req.Keywords+"*'")
 		case "postgres":
-			searchDB = db.Model(&model.SearchNode{}).Where(whereInParent(req.Parent)).
+			searchDB = rwDb.R().Model(&model.SearchNode{}).Where(whereInParent(req.Parent)).
 				Where("to_tsvector(name) @@ to_tsquery(?)", strings.Join(strings.Fields(req.Keywords), " & "))
 		}
 	}
 
 	if req.Scope != 0 {
 		isDir := req.Scope == 1
-		searchDB.Where(db.Where("is_dir = ?", isDir))
+		searchDB.Where(rwDb.R().Where("is_dir = ?", isDir))
 	}
 
 	var count int64

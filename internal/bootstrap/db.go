@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"fmt"
+	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/dbengine"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	stdlog "log"
 	"strings"
 	"time"
@@ -10,9 +12,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	log "github.com/sirupsen/logrus"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/schema"
@@ -38,10 +37,10 @@ func InitDB() {
 		},
 		Logger: newLogger,
 	}
-	var dB *gorm.DB
+	var dB model.Connection
 	var err error
 	if flags.Dev {
-		dB, err = gorm.Open(sqlite.Open("file::memory:?cache=shared"), gormConfig)
+		dB, err = dbengine.CreateSqliteCon("file::memory:?cache=shared", gormConfig)
 		conf.Conf.Database.Type = "sqlite3"
 	} else {
 		database := conf.Conf.Database
@@ -51,18 +50,18 @@ func InitDB() {
 				if !(strings.HasSuffix(database.DBFile, ".db") && len(database.DBFile) > 3) {
 					log.Fatalf("db name error.")
 				}
-				dB, err = gorm.Open(sqlite.Open(fmt.Sprintf("%s?_journal=WAL&_vacuum=incremental",
-					database.DBFile)), gormConfig)
+				dB, err = dbengine.CreateSqliteCon(fmt.Sprintf("%s?_journal=WAL&_vacuum=incremental&_txlock=immediate",
+					database.DBFile), gormConfig)
 			}
 		case "mysql":
 			{
 				dsn := database.DSN
 				if dsn == "" {
-					//[username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
+					// [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
 					dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&tls=%s",
 						database.User, database.Password, database.Host, database.Port, database.Name, database.SSLMode)
 				}
-				dB, err = gorm.Open(mysql.Open(dsn), gormConfig)
+				dB, err = dbengine.CreateMysqlCon(dsn, gormConfig)
 			}
 		case "postgres":
 			{
@@ -76,7 +75,7 @@ func InitDB() {
 							database.Host, database.User, database.Name, database.Port, database.SSLMode)
 					}
 				}
-				dB, err = gorm.Open(postgres.Open(dsn), gormConfig)
+				dB, err = dbengine.CreatePostgresCon(dsn, gormConfig)
 			}
 		default:
 			log.Fatalf("not supported database type: %s", database.Type)
