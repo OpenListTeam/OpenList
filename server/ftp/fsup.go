@@ -63,10 +63,10 @@ func (f *FileUploadProxy) Read(p []byte) (n int, err error) {
 func (f *FileUploadProxy) Write(p []byte) (n int, err error) {
 	n, err = f.buffer.Write(p)
 	if err != nil {
-		return
+		return n, err
 	}
 	err = stream.ClientUploadLimit.WaitN(f.ctx, n)
-	return
+	return n, err
 }
 
 func (f *FileUploadProxy) Seek(offset int64, whence int) (int64, error) {
@@ -90,7 +90,7 @@ func (f *FileUploadProxy) Close() error {
 	if _, err := f.buffer.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	borrow, err := MakeStage(f.buffer, size, f.path)
+	borrow, err := MakeStage(f.ctx, f.buffer, size, f.path)
 	if err != nil {
 		return fmt.Errorf("failed make stage for [%s]: %+v", f.path, err)
 	}
@@ -188,10 +188,10 @@ func (f *FileUploadWithLengthProxy) write(p []byte) (n int, err error) {
 func (f *FileUploadWithLengthProxy) Write(p []byte) (n int, err error) {
 	n, err = f.write(p)
 	if err != nil {
-		return
+		return n, err
 	}
 	err = stream.ClientUploadLimit.WaitN(f.ctx, n)
-	return
+	return n, err
 }
 
 func (f *FileUploadWithLengthProxy) Seek(offset int64, whence int) (int64, error) {

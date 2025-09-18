@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
@@ -21,24 +20,27 @@ var (
 	stageMutex sync.Mutex
 )
 
-func init() {
+func InitStage() {
+	if stage != nil {
+		return
+	}
 	stage = patricia.NewTrie(patricia.MaxPrefixPerNode(16))
 	stageMutex = sync.Mutex{}
 }
 
 type uploadingFile struct {
-	file     *os.File
+	name     string
 	size     int64
 	modTime  time.Time
 	refCount int
 }
 
-func MakeStage(buffer *os.File, size int64, path string) (io.Closer, error) {
+func MakeStage(ctx context.Context, buffer *os.File, size int64, path string) (*BorrowedFile, error) {
 	stageMutex.Lock()
 	defer stageMutex.Unlock()
 	prefix := patricia.Prefix(path)
 	f := uploadingFile{
-		file:     buffer,
+		name:     buffer.Name(),
 		size:     size,
 		modTime:  time.Now(),
 		refCount: 1,
@@ -46,7 +48,11 @@ func MakeStage(buffer *os.File, size int64, path string) (io.Closer, error) {
 	if !stage.Insert(prefix, f) {
 		return nil, errors.New("upload path conflict")
 	}
-	return dropCloser{prefix}, nil
+	return &BorrowedFile{
+		file: buffer,
+		path: prefix,
+		ctx:  ctx,
+	}, nil
 }
 
 func Borrow(ctx context.Context, path string) (*BorrowedFile, error) {
@@ -58,9 +64,9 @@ func Borrow(ctx context.Context, path string) (*BorrowedFile, error) {
 		return nil, errs.ObjectNotFound
 	}
 	s := v.(*uploadingFile)
-	borrowed, err := os.OpenFile(s.file.Name(), os.O_RDONLY, 0644)
+	borrowed, err := os.OpenFile(s.name, os.O_RDONLY, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("failed borrow [%s]: %+v", s.file.Name(), err)
+		return nil, fmt.Errorf("failed borrow [%s]: %+v", s.name, err)
 	}
 	s.refCount++
 	return &BorrowedFile{
@@ -80,8 +86,7 @@ func drop(path patricia.Prefix) {
 	s := v.(*uploadingFile)
 	s.refCount--
 	if s.refCount == 0 {
-		_ = s.file.Close()
-		_ = os.RemoveAll(s.file.Name())
+		_ = os.RemoveAll(s.name)
 		stage.Delete(path)
 	}
 }
@@ -112,15 +117,6 @@ func ListStage(path string) []model.Obj {
 	return ret
 }
 
-type dropCloser struct {
-	path patricia.Prefix
-}
-
-func (dc dropCloser) Close() error {
-	drop(dc.path)
-	return nil
-}
-
 type BorrowedFile struct {
 	file *os.File
 	path patricia.Prefix
@@ -130,19 +126,19 @@ type BorrowedFile struct {
 func (f *BorrowedFile) Read(p []byte) (n int, err error) {
 	n, err = f.file.Read(p)
 	if err != nil {
-		return
+		return n, err
 	}
 	err = stream.ClientDownloadLimit.WaitN(f.ctx, n)
-	return
+	return n, err
 }
 
 func (f *BorrowedFile) ReadAt(p []byte, off int64) (n int, err error) {
 	n, err = f.file.ReadAt(p, off)
 	if err != nil {
-		return
+		return n, err
 	}
 	err = stream.ClientDownloadLimit.WaitN(f.ctx, n)
-	return
+	return n, err
 }
 
 func (f *BorrowedFile) Seek(offset int64, whence int) (int64, error) {
@@ -154,6 +150,7 @@ func (f *BorrowedFile) Write(_ []byte) (n int, err error) {
 }
 
 func (f *BorrowedFile) Close() error {
+	err := f.file.Close()
 	drop(f.path)
-	return f.file.Close()
+	return err
 }
