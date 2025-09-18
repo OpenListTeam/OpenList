@@ -91,12 +91,12 @@ func drop(path patricia.Prefix) {
 	}
 }
 
-func ListStage(path string) []model.Obj {
+func ListStage(path string) map[string]model.Obj {
 	stageMutex.Lock()
 	defer stageMutex.Unlock()
 	path = path + "/"
 	prefix := patricia.Prefix(path)
-	ret := make([]model.Obj, 0)
+	ret := make(map[string]model.Obj)
 	_ = stage.VisitSubtree(prefix, func(prefix patricia.Prefix, item patricia.Item) error {
 		visit := string(prefix)
 		visitSub := strings.TrimPrefix(visit, path)
@@ -105,13 +105,13 @@ func ListStage(path string) []model.Obj {
 			return nil
 		}
 		f := item.(*uploadingFile)
-		ret = append(ret, &model.Object{
+		ret[name] = &model.Object{
 			Path:     visit,
 			Name:     name,
 			Size:     f.size,
 			Modified: f.modTime,
 			IsFolder: false,
-		})
+		}
 		return nil
 	})
 	return ret
