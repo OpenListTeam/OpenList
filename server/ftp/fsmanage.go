@@ -2,7 +2,6 @@ package ftp
 
 import (
 	"context"
-	"fmt"
 	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -43,6 +42,9 @@ func Remove(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
+	if err = RemoveStage(reqPath); !errors.Is(err, errs.ObjectNotFound) {
+		return err
+	}
 	return fs.Remove(ctx, reqPath)
 }
 
@@ -62,23 +64,24 @@ func Rename(ctx context.Context, oldPath, newPath string) error {
 		if !user.CanRename() || !user.CanFTPManage() {
 			return errs.PermissionDenied
 		}
+		if err = MoveStage(srcPath, dstPath); !errors.Is(err, errs.ObjectNotFound) {
+			return err
+		}
 		return fs.Rename(ctx, srcPath, dstBase)
 	} else {
 		if !user.CanFTPManage() || !user.CanMove() || (srcBase != dstBase && !user.CanRename()) {
 			return errs.PermissionDenied
 		}
-		if _, err = fs.Move(ctx, srcPath, dstDir); err != nil {
-			if srcBase != dstBase {
-				return err
-			}
-			if _, err1 := fs.Copy(ctx, srcPath, dstDir); err1 != nil {
-				return fmt.Errorf("failed move for %+v, and failed try copying for %+v", err, err1)
-			}
-			return nil
+		if err = MoveStage(srcPath, dstPath); !errors.Is(err, errs.ObjectNotFound) {
+			return err
 		}
 		if srcBase != dstBase {
-			return fs.Rename(ctx, stdpath.Join(dstDir, srcBase), dstBase)
+			err = fs.Rename(ctx, srcPath, dstBase, true)
+			if err != nil {
+				return err
+			}
 		}
-		return nil
+		_, err = fs.Move(ctx, stdpath.Join(srcDir, dstBase), dstDir)
+		return err
 	}
 }

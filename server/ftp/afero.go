@@ -3,6 +3,8 @@ package ftp
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -96,6 +98,23 @@ func (a *AferoAdapter) GetHandle(name string, flags int, offset int64) (ftpserve
 	path, err := user.JoinPath(name)
 	if err != nil {
 		return nil, err
+	}
+	if f, err := Borrow(a.ctx, path); !errors.Is(err, errs.ObjectNotFound) {
+		if err != nil {
+			return nil, err
+		}
+		if (flags & os.O_EXCL) != 0 {
+			return nil, errors.New("file already exists")
+		}
+		if (flags & os.O_WRONLY) != 0 {
+			return nil, errors.New("cannot write to uploading file")
+		}
+		_, err = f.Seek(offset, io.SeekStart)
+		if err != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("failed seek borrow: %+v", err)
+		}
+		return f, nil
 	}
 	_, err = fs.Get(a.ctx, path, &fs.GetArgs{})
 	exists := err == nil

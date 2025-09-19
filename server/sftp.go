@@ -23,6 +23,7 @@ type SftpDriver struct {
 }
 
 func NewSftpDriver() (*SftpDriver, error) {
+	ftp.InitStage()
 	sftp.InitHostKey()
 	return &SftpDriver{
 		proxyHeader: http.Header{
@@ -50,7 +51,7 @@ func (d *SftpDriver) GetConfig() *sftpd.Config {
 		ServerConfig: serverConfig,
 		HostPort:     conf.Conf.SFTP.Listen,
 		ErrorLogFunc: utils.Log.Error,
-		//DebugLogFunc: utils.Log.Debugf,
+		// DebugLogFunc: utils.Log.Debugf,
 	}
 	return d.config
 }
