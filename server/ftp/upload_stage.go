@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	log "github.com/sirupsen/logrus"
 	"github.com/tchap/go-patricia/v2/patricia"
 )
 
@@ -39,7 +40,7 @@ func MakeStage(ctx context.Context, buffer *os.File, size int64, path string) (*
 	stageMutex.Lock()
 	defer stageMutex.Unlock()
 	prefix := patricia.Prefix(path)
-	f := uploadingFile{
+	f := &uploadingFile{
 		name:     buffer.Name(),
 		size:     size,
 		modTime:  time.Now(),
@@ -48,6 +49,7 @@ func MakeStage(ctx context.Context, buffer *os.File, size int64, path string) (*
 	if !stage.Insert(prefix, f) {
 		return nil, errors.New("upload path conflict")
 	}
+	log.Debugf("[ftp-stage] succeed to make [%s] stage", buffer.Name())
 	return &BorrowedFile{
 		file: buffer,
 		path: prefix,
@@ -69,6 +71,7 @@ func Borrow(ctx context.Context, path string) (*BorrowedFile, error) {
 		return nil, fmt.Errorf("failed borrow [%s]: %+v", s.name, err)
 	}
 	s.refCount++
+	log.Debugf("[ftp-stage] borrow [%s] succeed", s.name)
 	return &BorrowedFile{
 		file: borrowed,
 		path: prefix,
@@ -85,8 +88,13 @@ func drop(path patricia.Prefix) {
 	}
 	s := v.(*uploadingFile)
 	s.refCount--
+	log.Debugf("[ftp-stage] dropped [%s]", s.name)
 	if s.refCount == 0 {
-		_ = os.RemoveAll(s.name)
+		log.Debugf("[ftp-stage] there is no more reference to [%s], removing temp file", s.name)
+		err := os.RemoveAll(s.name)
+		if err != nil {
+			log.Errorf("[ftp-stage] failed to remove stage file [%s]: %+v", s.name, err)
+		}
 		stage.Delete(path)
 	}
 }
