@@ -90,7 +90,22 @@ func (f *FileUploadProxy) Close() error {
 	if _, err := f.buffer.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	borrow, err := MakeStage(f.ctx, f.buffer, size, f.path)
+	user := f.ctx.Value(conf.UserKey).(*model.User)
+	sf, borrow, err := MakeStage(f.ctx, f.buffer, size, f.path, func(target string) {
+		ctx := context.WithValue(context.Background(), conf.UserKey, user)
+		dstDir, dstBase := stdpath.Split(target)
+		if dir == dstDir {
+			_ = fs.Rename(ctx, f.path, dstBase)
+		} else {
+			if name != dstBase {
+				e := fs.Rename(ctx, f.path, dstBase, true)
+				if e != nil {
+					return
+				}
+			}
+			_, _ = fs.Move(ctx, stdpath.Join(dir, dstBase), dstDir)
+		}
+	})
 	if err != nil {
 		return fmt.Errorf("failed make stage for [%s]: %+v", f.path, err)
 	}
@@ -108,8 +123,15 @@ func (f *FileUploadProxy) Close() error {
 		Reader:       f.buffer,
 	}
 	s.Add(borrow)
-	_, err = fs.PutAsTask(f.ctx, dir, s)
-	return err
+	task, err := fs.PutAsTask(f.ctx, dir, s)
+	if err != nil {
+		_ = s.Close()
+		return err
+	}
+	sf.SetRemoveCallback(func() {
+		fs.UploadTaskManager.Cancel(task.GetID())
+	})
+	return nil
 }
 
 type FileUploadWithLengthProxy struct {

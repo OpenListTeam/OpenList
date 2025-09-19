@@ -17,8 +17,10 @@ import (
 )
 
 var (
-	stage      *patricia.Trie
-	stageMutex sync.Mutex
+	stage                *patricia.Trie
+	stageMutex           = sync.Mutex{}
+	ErrStagePathConflict = errors.New("upload path conflict")
+	ErrStageMoved        = errors.New("uploading file has been moved")
 )
 
 func InitStage() {
@@ -26,31 +28,47 @@ func InitStage() {
 		return
 	}
 	stage = patricia.NewTrie(patricia.MaxPrefixPerNode(16))
-	stageMutex = sync.Mutex{}
 }
 
-type uploadingFile struct {
-	name     string
-	size     int64
-	modTime  time.Time
-	refCount int
+type UploadingFile struct {
+	name        string
+	size        int64
+	modTime     time.Time
+	refCount    int
+	currentPath string
+	softLinks   []patricia.Prefix
+	mvCallback  func(string)
+	rmCallback  func()
 }
 
-func MakeStage(ctx context.Context, buffer *os.File, size int64, path string) (*BorrowedFile, error) {
+func (u *UploadingFile) SetRemoveCallback(rm func()) {
+	stageMutex.Lock()
+	defer stageMutex.Unlock()
+	u.rmCallback = rm
+}
+
+type softLink struct {
+	target *UploadingFile
+}
+
+func MakeStage(ctx context.Context, buffer *os.File, size int64, path string, mv func(string)) (*UploadingFile, *BorrowedFile, error) {
 	stageMutex.Lock()
 	defer stageMutex.Unlock()
 	prefix := patricia.Prefix(path)
-	f := &uploadingFile{
-		name:     buffer.Name(),
-		size:     size,
-		modTime:  time.Now(),
-		refCount: 1,
+	f := &UploadingFile{
+		name:        buffer.Name(),
+		size:        size,
+		modTime:     time.Now(),
+		refCount:    1,
+		currentPath: path,
+		softLinks:   []patricia.Prefix{},
+		mvCallback:  mv,
 	}
 	if !stage.Insert(prefix, f) {
-		return nil, errors.New("upload path conflict")
+		return nil, nil, ErrStagePathConflict
 	}
 	log.Debugf("[ftp-stage] succeed to make [%s] stage", buffer.Name())
-	return &BorrowedFile{
+	return f, &BorrowedFile{
 		file: buffer,
 		path: prefix,
 		ctx:  ctx,
@@ -65,7 +83,13 @@ func Borrow(ctx context.Context, path string) (*BorrowedFile, error) {
 	if v == nil {
 		return nil, errs.ObjectNotFound
 	}
-	s := v.(*uploadingFile)
+	s, ok := v.(*UploadingFile)
+	if !ok {
+		s = v.(*softLink).target
+	}
+	if s.currentPath != path {
+		return nil, ErrStageMoved
+	}
 	borrowed, err := os.OpenFile(s.name, os.O_RDONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("failed borrow [%s]: %+v", s.name, err)
@@ -86,7 +110,10 @@ func drop(path patricia.Prefix) {
 	if v == nil {
 		return
 	}
-	s := v.(*uploadingFile)
+	s, ok := v.(*UploadingFile)
+	if !ok {
+		s = v.(*softLink).target
+	}
 	s.refCount--
 	log.Debugf("[ftp-stage] dropped [%s]", s.name)
 	if s.refCount == 0 {
@@ -95,7 +122,15 @@ func drop(path patricia.Prefix) {
 		if err != nil {
 			log.Errorf("[ftp-stage] failed to remove stage file [%s]: %+v", s.name, err)
 		}
+		for _, sl := range s.softLinks {
+			stage.Delete(sl)
+		}
 		stage.Delete(path)
+		if s.currentPath != string(path) {
+			if s.currentPath != "" {
+				go s.mvCallback(s.currentPath)
+			}
+		}
 	}
 }
 
@@ -112,17 +147,87 @@ func ListStage(path string) map[string]model.Obj {
 		if nonDirect {
 			return nil
 		}
-		f := item.(*uploadingFile)
-		ret[name] = &model.Object{
-			Path:     visit,
-			Name:     name,
-			Size:     f.size,
-			Modified: f.modTime,
-			IsFolder: false,
+		f, ok := item.(*UploadingFile)
+		if !ok {
+			f = item.(*softLink).target
+		}
+		if f.currentPath == visit {
+			ret[name] = &model.Object{
+				Path:     visit,
+				Name:     name,
+				Size:     f.size,
+				Modified: f.modTime,
+				IsFolder: false,
+			}
 		}
 		return nil
 	})
 	return ret
+}
+
+func StatStage(path string) (os.FileInfo, error) {
+	stageMutex.Lock()
+	defer stageMutex.Unlock()
+	prefix := patricia.Prefix(path)
+	v := stage.Get(prefix)
+	if v == nil {
+		return nil, errs.ObjectNotFound
+	}
+	s, ok := v.(*UploadingFile)
+	if !ok {
+		s = v.(*softLink).target
+	}
+	if s.currentPath != path {
+		return nil, ErrStageMoved
+	}
+	return os.Stat(s.name)
+}
+
+func MoveStage(from, to string) error {
+	stageMutex.Lock()
+	defer stageMutex.Unlock()
+	prefix := patricia.Prefix(from)
+	v := stage.Get(prefix)
+	if v == nil {
+		return errs.ObjectNotFound
+	}
+	s, ok := v.(*UploadingFile)
+	if !ok {
+		s = v.(*softLink).target
+	}
+	if s.currentPath != from {
+		return ErrStageMoved
+	}
+	slPrefix := patricia.Prefix(to)
+	sl := &softLink{target: s}
+	if !stage.Insert(slPrefix, sl) {
+		return ErrStagePathConflict
+	}
+	s.currentPath = to
+	s.softLinks = append(s.softLinks, slPrefix)
+	return nil
+}
+
+func RemoveStage(path string) error {
+	stageMutex.Lock()
+	defer stageMutex.Unlock()
+	prefix := patricia.Prefix(path)
+	v := stage.Get(prefix)
+	if v == nil {
+		return errs.ObjectNotFound
+	}
+	s, ok := v.(*UploadingFile)
+	if !ok {
+		s = v.(*softLink).target
+	}
+	if s.currentPath != path {
+		return ErrStageMoved
+	}
+	s.currentPath = ""
+	if s.rmCallback != nil {
+		s.rmCallback()
+	}
+	return nil
 }
 
 type BorrowedFile struct {

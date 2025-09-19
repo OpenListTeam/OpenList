@@ -130,6 +130,9 @@ func Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
 		return nil, errs.PermissionDenied
 	}
+	if ret, err := StatStage(reqPath); !errors.Is(err, errs.ObjectNotFound) {
+		return ret, err
+	}
 	obj, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
 		return nil, err
