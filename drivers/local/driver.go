@@ -434,4 +434,14 @@ func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	return nil
 }
 
+func (d *Local) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	du, err := getDiskUsage(d.RootFolderPath)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: du,
+	}, nil
+}
+
 var _ driver.Driver = (*Local)(nil)

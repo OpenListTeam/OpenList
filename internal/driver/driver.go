@@ -210,6 +210,11 @@ type ArchiveDecompressResult interface {
 	ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) ([]model.Obj, error)
 }
 
+type WithDetails interface {
+	// GetDetails get storage details (total space, free space, etc.)
+	GetDetails(ctx context.Context) (*model.StorageDetails, error)
+}
+
 type Reference interface {
 	InitReference(storage Driver) error
 }

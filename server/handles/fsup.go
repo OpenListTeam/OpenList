@@ -56,14 +56,17 @@ func FsStream(c *gin.Context) {
 		}
 	}
 	dir, name := stdpath.Split(path)
-	sizeStr := c.GetHeader("Content-Length")
-	if sizeStr == "" {
-		sizeStr = "0"
-	}
-	size, err := strconv.ParseInt(sizeStr, 10, 64)
-	if err != nil {
-		common.ErrorResp(c, err, 400)
-		return
+	// 如果请求头 Content-Length 和 X-File-Size 都没有，则 size=-1，表示未知大小的流式上传
+	size := c.Request.ContentLength
+	if size < 0 {
+		sizeStr := c.GetHeader("X-File-Size")
+		if sizeStr != "" {
+			size, err = strconv.ParseInt(sizeStr, 10, 64)
+			if err != nil {
+				common.ErrorResp(c, err, 400)
+				return
+			}
+		}
 	}
 	h := make(map[*utils.HashType]string)
 	if md5 := c.GetHeader("X-File-Md5"); md5 != "" {

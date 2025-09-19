@@ -11,11 +11,11 @@ import (
 	"github.com/pkg/errors"
 )
 
-func get(ctx context.Context, path string) (model.Obj, error) {
+func get(ctx context.Context, path string, args *GetArgs) (model.Obj, error) {
 	path = utils.FixAndCleanPath(path)
 	// maybe a virtual file
 	if path != "/" {
-		virtualFiles := op.GetStorageVirtualFilesByPath(stdpath.Dir(path))
+		virtualFiles := op.GetStorageVirtualFilesWithDetailsByPath(ctx, stdpath.Dir(path), !args.WithStorageDetails)
 		for _, f := range virtualFiles {
 			if f.GetName() == stdpath.Base(path) {
 				return f, nil
