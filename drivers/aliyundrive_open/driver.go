@@ -291,6 +291,21 @@ func (d *AliyundriveOpen) Other(ctx context.Context, args model.OtherArgs) (inte
 	return resp, nil
 }
 
+func (d *AliyundriveOpen) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	res, err := d.request(ctx, limiterOther, "/adrive/v1.0/user/getSpaceInfo", http.MethodPost, nil)
+	if err != nil {
+		return nil, err
+	}
+	total := utils.Json.Get(res, "personal_space_info", "total_size").ToUint64()
+	used := utils.Json.Get(res, "personal_space_info", "used_size").ToUint64()
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  total - used,
+		},
+	}, nil
+}
+
 var _ driver.Driver = (*AliyundriveOpen)(nil)
 var _ driver.MkdirResult = (*AliyundriveOpen)(nil)
 var _ driver.MoveResult = (*AliyundriveOpen)(nil)

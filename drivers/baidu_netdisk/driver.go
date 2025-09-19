@@ -364,4 +364,12 @@ func (d *BaiduNetdisk) uploadSlice(ctx context.Context, params map[string]string
 	return nil
 }
 
+func (d *BaiduNetdisk) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	du, err := d.quota()
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{DiskUsage: *du}, nil
+}
+
 var _ driver.Driver = (*BaiduNetdisk)(nil)

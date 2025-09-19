@@ -19,8 +19,9 @@ import (
 // then pass the actual path to the op package
 
 type ListArgs struct {
-	Refresh bool
-	NoLog   bool
+	Refresh            bool
+	NoLog              bool
+	WithStorageDetails bool
 }
 
 func List(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error) {
@@ -35,11 +36,12 @@ func List(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error)
 }
 
 type GetArgs struct {
-	NoLog bool
+	NoLog              bool
+	WithStorageDetails bool
 }
 
 func Get(ctx context.Context, path string, args *GetArgs) (model.Obj, error) {
-	res, err := get(ctx, path)
+	res, err := get(ctx, path, args)
 	if err != nil {
 		if !args.NoLog {
 			log.Warnf("failed get %s: %s", path, err)

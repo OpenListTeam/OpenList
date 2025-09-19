@@ -630,6 +630,11 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		up = func(p float64) {}
 	}
 
+	// 如果小于0，则通过缓存获取完整大小，可能发生于流式上传
+	if file.GetSize() < 0 {
+		log.Warnf("file size < 0, try to get full size from cache")
+		file.CacheFullAndWriter(nil, nil)
+	}
 	switch s := storage.(type) {
 	case driver.PutResult:
 		var newObj model.Obj

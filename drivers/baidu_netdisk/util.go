@@ -381,6 +381,18 @@ func (d *BaiduNetdisk) getSliceSize(filesize int64) int64 {
 	return maxSliceSize
 }
 
+func (d *BaiduNetdisk) quota() (*model.DiskUsage, error) {
+	var resp QuotaResp
+	_, err := d.request("https://pan.baidu.com/api/quota", http.MethodGet, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &model.DiskUsage{
+		TotalSpace: resp.Total,
+		FreeSpace:  resp.Total - resp.Used,
+	}, nil
+}
+
 // func encodeURIComponent(str string) string {
 // 	r := url.QueryEscape(str)
 // 	r = strings.ReplaceAll(r, "+", "%20")
