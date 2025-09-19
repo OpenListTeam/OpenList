@@ -30,7 +30,7 @@ func UpdateMeta(u *model.Meta) error {
 }
 
 func GetMetas(pageIndex, pageSize int) (metas []model.Meta, count int64, err error) {
-	metaDB := rwDb.W().Model(&model.Meta{})
+	metaDB := rwDb.R().Model(&model.Meta{})
 	if err = metaDB.Count(&count).Error; err != nil {
 		return nil, 0, errors.Wrapf(err, "failed get metas count")
 	}

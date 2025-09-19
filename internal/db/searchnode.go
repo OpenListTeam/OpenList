@@ -75,7 +75,7 @@ func SearchNode(req model.SearchReq, useFullText bool) ([]model.SearchNode, int6
 
 	if req.Scope != 0 {
 		isDir := req.Scope == 1
-		searchDB.Where(rwDb.R().Where("is_dir = ?", isDir))
+		searchDB = searchDB.Where("is_dir = ?", isDir)
 	}
 
 	var count int64

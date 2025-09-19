@@ -49,7 +49,7 @@ func CreateSqliteCon(dsn string, gormConfig *gorm.Config) (con model.Connection,
 		return model.Connection{}, fmt.Errorf("cannot access underlying write database connection: %w", err)
 	}
 	if !strings.Contains(dsn, ":memory:") && !strings.Contains(dsn, "mode=memory") {
-		err = setDefaultPragmas(readDB)
+		err = setDefaultPragmas(writeDB)
 	}
 	if err != nil {
 		return model.Connection{}, err
