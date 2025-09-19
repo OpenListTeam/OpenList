@@ -52,14 +52,15 @@ func (d *Chunk) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (d *Chunk) GetRoot(ctx context.Context) (model.Obj, error) {
+	return &model.Object{
+		Name:     "Root",
+		IsFolder: true,
+		Path:     "/",
+	}, nil
+}
+
 func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
-	if utils.PathEqual(path, "/") {
-		return &model.Object{
-			Name:     "Root",
-			IsFolder: true,
-			Path:     "/",
-		}, nil
-	}
 	remoteStorage, remoteActualPath, err := op.GetStorageAndActualPath(d.RemotePath)
 	if err != nil {
 		return nil, err

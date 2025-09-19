@@ -89,14 +89,15 @@ func (d *Strm) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (d *Strm) GetRoot(ctx context.Context) (model.Obj, error) {
+	return &model.Object{
+		Name:     "Root",
+		IsFolder: true,
+		Path:     "/",
+	}, nil
+}
+
 func (d *Strm) Get(ctx context.Context, path string) (model.Obj, error) {
-	if utils.PathEqual(path, "/") {
-		return &model.Object{
-			Name:     "Root",
-			IsFolder: true,
-			Path:     "/",
-		}, nil
-	}
 	root, sub := d.getRootAndPath(path)
 	dsts, ok := d.pathMap[root]
 	if !ok {
