@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -432,7 +433,7 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	}
 	partIndex := 0
 	for partIndex < fullPartCount {
-		err = errors.Join(err, op.Put(ctx, remoteStorage, dst, &stream.FileStream{
+		err = op.Put(ctx, remoteStorage, dst, &stream.FileStream{
 			Obj: &model.Object{
 				Name:     d.getPartName(partIndex),
 				Size:     d.PartSize,
@@ -440,10 +441,14 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 			},
 			Mimetype: file.GetMimetype(),
 			Reader:   io.LimitReader(upReader, d.PartSize),
-		}, nil, true))
+		}, nil, true)
+		if err != nil {
+			_ = op.Remove(ctx, remoteStorage, dst)
+			return err
+		}
 		partIndex++
 	}
-	return errors.Join(err, op.Put(ctx, remoteStorage, dst, &stream.FileStream{
+	err = op.Put(ctx, remoteStorage, dst, &stream.FileStream{
 		Obj: &model.Object{
 			Name:     d.getPartName(fullPartCount),
 			Size:     tailSize,
@@ -451,11 +456,33 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		},
 		Mimetype: file.GetMimetype(),
 		Reader:   upReader,
-	}, nil))
+	}, nil)
+	if err != nil {
+		_ = op.Remove(ctx, remoteStorage, dst)
+	}
+	return err
 }
 
 func (d *Chunk) getPartName(part int) string {
 	return fmt.Sprintf("%d%s", part, d.CustomExt)
+}
+
+func (d *Chunk) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	remoteStorage, err := fs.GetStorage(d.RemotePath, &fs.GetStoragesArgs{})
+	if err != nil {
+		return nil, errs.NotImplement
+	}
+	wd, ok := remoteStorage.(driver.WithDetails)
+	if !ok {
+		return nil, errs.NotImplement
+	}
+	remoteDetails, err := wd.GetDetails(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: remoteDetails.DiskUsage,
+	}, nil
 }
 
 var _ driver.Driver = (*Chunk)(nil)
