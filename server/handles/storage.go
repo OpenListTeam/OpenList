@@ -3,15 +3,53 @@ package handles
 import (
 	"context"
 	"strconv"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 )
+
+type StorageResp struct {
+	model.Storage
+	MountDetails *model.StorageDetails `json:"mount_details,omitempty"`
+}
+
+func makeStorageResp(c *gin.Context, storages []model.Storage) []*StorageResp {
+	ret := make([]*StorageResp, len(storages))
+	var wg sync.WaitGroup
+	for i, s := range storages {
+		ret[i] = &StorageResp{
+			Storage:      s,
+			MountDetails: nil,
+		}
+		d, err := op.GetStorageByMountPath(s.MountPath)
+		if err != nil {
+			continue
+		}
+		wd, ok := d.(driver.WithDetails)
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			details, err := wd.GetDetails(c)
+			if err != nil {
+				log.Errorf("failed get %s details: %+v", s.MountPath, err)
+				return
+			}
+			ret[i].MountDetails = details
+		}()
+	}
+	wg.Wait()
+	return ret
+}
 
 func ListStorages(c *gin.Context) {
 	var req model.PageReq
@@ -27,7 +65,7 @@ func ListStorages(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c, common.PageResp{
-		Content: storages,
+		Content: makeStorageResp(c, storages),
 		Total:   total,
 	})
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/generic_sync"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -335,6 +334,40 @@ func getStoragesByPath(path string) []driver.Driver {
 // for example, there are: /a/b,/a/c,/a/d/e,/a/b.balance1,/av
 // GetStorageVirtualFilesByPath(/a) => b,c,d
 func GetStorageVirtualFilesByPath(prefix string) []model.Obj {
+	return getStorageVirtualFilesByPath(prefix, func(_ driver.Driver, obj model.Obj) model.Obj {
+		return obj
+	})
+}
+
+func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string, hideDetails ...bool) []model.Obj {
+	if utils.IsBool(hideDetails...) {
+		return GetStorageVirtualFilesByPath(prefix)
+	}
+	return getStorageVirtualFilesByPath(prefix, func(d driver.Driver, obj model.Obj) model.Obj {
+		ret := &model.ObjStorageDetails{
+			Obj: obj,
+			StorageDetailsWithName: model.StorageDetailsWithName{
+				StorageDetails: nil,
+				DriverName:     d.Config().Name,
+			},
+		}
+		storage, ok := d.(driver.WithDetails)
+		if !ok {
+			return ret
+		}
+		details, err := storage.GetDetails(ctx)
+		if err != nil {
+			if !errors.Is(err, errs.NotImplement) {
+				log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
+			}
+			return ret
+		}
+		ret.StorageDetails = details
+		return ret
+	})
+}
+
+func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver, model.Obj) model.Obj) []model.Obj {
 	files := make([]model.Obj, 0)
 	storages := storagesMap.Values()
 	sort.Slice(storages, func(i, j int) bool {
@@ -345,21 +378,30 @@ func GetStorageVirtualFilesByPath(prefix string) []model.Obj {
 	})
 
 	prefix = utils.FixAndCleanPath(prefix)
-	set := mapset.NewSet[string]()
+	set := make(map[string]int)
 	for _, v := range storages {
 		mountPath := utils.GetActualMountPath(v.GetStorage().MountPath)
 		// Exclude prefix itself and non prefix
 		if len(prefix) >= len(mountPath) || !utils.IsSubPath(prefix, mountPath) {
 			continue
 		}
-		name := strings.SplitN(strings.TrimPrefix(mountPath[len(prefix):], "/"), "/", 2)[0]
-		if set.Add(name) {
-			files = append(files, &model.Object{
-				Name:     name,
+		names := strings.SplitN(strings.TrimPrefix(mountPath[len(prefix):], "/"), "/", 2)
+		idx, ok := set[names[0]]
+		if !ok {
+			set[names[0]] = len(files)
+			obj := &model.Object{
+				Name:     names[0],
 				Size:     0,
 				Modified: v.GetStorage().Modified,
 				IsFolder: true,
-			})
+			}
+			if len(names) == 1 {
+				files = append(files, rootCallback(v, obj))
+			} else {
+				files = append(files, obj)
+			}
+		} else if len(names) == 1 {
+			files[idx] = rootCallback(v, files[idx])
 		}
 	}
 	return files

@@ -411,6 +411,20 @@ func (d *Crypt) Put(ctx context.Context, dstDir model.Obj, streamer model.FileSt
 	return nil
 }
 
+func (d *Crypt) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	wd, ok := d.remoteStorage.(driver.WithDetails)
+	if !ok {
+		return nil, errs.NotImplement
+	}
+	remoteDetails, err := wd.GetDetails(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: remoteDetails.DiskUsage,
+	}, nil
+}
+
 //func (d *Safe) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}
