@@ -626,6 +626,7 @@ func (d *Mediafire) getFileByHash(_ context.Context, hash string) (*model.ObjThu
 
 	file := resp.Response.FileInfo[0]
 	return d.fileToObj(file), nil
+}
 
 func (d *Mediafire) formatAPIError(result string, body []byte) error {
 	var baseResp MediafireBaseResponse
@@ -640,7 +641,7 @@ func (d *Mediafire) formatAPIError(result string, body []byte) error {
 			return fmt.Errorf("MediaFire API Error - %s (Code: %s)", result, baseResp.Response.Code)
 		}
 	}
+	
+	// Fallback to original error format if no detailed error found
 	return fmt.Errorf("MediaFire API Error: %s", result)
-}	file := resp.Response.FileInfo[0]
-	return d.fileToObj(file), nil
 }
