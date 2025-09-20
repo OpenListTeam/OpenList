@@ -6,7 +6,19 @@ Author: Da3zKi7<da3zki7@duck.com>
 Date: 2025-09-11
 
 D@' 3z K!7 - The King Of Cracking
+
+Modifications by ILoveScratch2<ilovescratch@foxmail.com>
+Date: 2025-09-20
 */
+
+type MediafireBaseResponse struct {
+	Response struct {
+		Result  string `json:"result"`
+		Error   string `json:"error,omitempty"`
+		Message string `json:"message,omitempty"`
+		Code    string `json:"code,omitempty"`
+	} `json:"response"`
+}
 
 type MediafireRenewTokenResponse struct {
 	Response struct {

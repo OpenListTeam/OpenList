@@ -8,7 +8,7 @@ Date: 2025-09-11
 D@' 3z K!7 - The King Of Cracking
 
 Modifications by ILoveScratch2<ilovescratch@foxmail.com>
-Date: 2025-09-14
+Date: 2025-09-20
 */
 
 import (
@@ -132,13 +132,9 @@ func (d *Mediafire) MakeDir(ctx context.Context, parentDir model.Obj, dirName st
 	}
 
 	var resp MediafireFolderCreateResponse
-	_, err := d.postForm("/folder/create.php", data, &resp)
+	_, err := d.postFormWithErrorHandling("/folder/create.php", data, &resp)
 	if err != nil {
 		return nil, err
-	}
-
-	if resp.Response.Result != "Success" {
-		return nil, fmt.Errorf("MediaFire API error: %s", resp.Response.Result)
 	}
 
 	created, _ := time.Parse("2006-01-02T15:04:05Z", resp.Response.CreatedUTC)
@@ -181,13 +177,9 @@ func (d *Mediafire) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 	}
 
 	var resp MediafireMoveResponse
-	_, err := d.postForm(endpoint, data, &resp)
+	_, err := d.postFormWithErrorHandling(endpoint, data, &resp)
 	if err != nil {
 		return nil, err
-	}
-
-	if resp.Response.Result != "Success" {
-		return nil, fmt.Errorf("MediaFire API error: %s", resp.Response.Result)
 	}
 
 	return srcObj, nil
@@ -218,13 +210,9 @@ func (d *Mediafire) Rename(ctx context.Context, srcObj model.Obj, newName string
 	}
 
 	var resp MediafireRenameResponse
-	_, err := d.postForm(endpoint, data, &resp)
+	_, err := d.postFormWithErrorHandling(endpoint, data, &resp)
 	if err != nil {
 		return nil, err
-	}
-
-	if resp.Response.Result != "Success" {
-		return nil, fmt.Errorf("MediaFire API error: %s", resp.Response.Result)
 	}
 
 	return &model.ObjThumb{
@@ -265,13 +253,9 @@ func (d *Mediafire) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 	}
 
 	var resp MediafireCopyResponse
-	_, err := d.postForm(endpoint, data, &resp)
+	_, err := d.postFormWithErrorHandling(endpoint, data, &resp)
 	if err != nil {
 		return nil, err
-	}
-
-	if resp.Response.Result != "Success" {
-		return nil, fmt.Errorf("MediaFire API error: %s", resp.Response.Result)
 	}
 
 	var newID string
@@ -321,13 +305,9 @@ func (d *Mediafire) Remove(ctx context.Context, obj model.Obj) error {
 	}
 
 	var resp MediafireRemoveResponse
-	_, err := d.postForm(endpoint, data, &resp)
+	_, err := d.postFormWithErrorHandling(endpoint, data, &resp)
 	if err != nil {
 		return err
-	}
-
-	if resp.Response.Result != "Success" {
-		return fmt.Errorf("MediaFire API error: %s", resp.Response.Result)
 	}
 
 	return nil

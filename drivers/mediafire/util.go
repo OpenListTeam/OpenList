@@ -6,6 +6,9 @@ Author: Da3zKi7<da3zki7@duck.com>
 Date: 2025-09-11
 
 D@' 3z K!7 - The King Of Cracking
+
+Modifications by ILoveScratch2<ilovescratch@foxmail.com>
+Date: 2025-09-20
 */
 
 import (
@@ -121,17 +124,13 @@ func (d *Mediafire) renewToken(_ context.Context) error {
 	}
 
 	var resp MediafireRenewTokenResponse
-	_, err := d.postForm("/user/renew_session_token.php", query, &resp)
+	_, err := d.postFormWithErrorHandling("/user/renew_session_token.php", query, &resp)
 	if err != nil {
 		return fmt.Errorf("failed to renew token: %w", err)
 	}
 
 	//fmt.Printf("getInfo :: Raw response: %s\n", string(body))
 	//fmt.Printf("getInfo :: Parsed response: %+v\n", resp)
-
-	if resp.Response.Result != "Success" {
-		return fmt.Errorf("MediaFire token renewal failed: %s", resp.Response.Result)
-	}
 
 	d.SessionToken = resp.Response.SessionToken
 
@@ -215,13 +214,9 @@ func (d *Mediafire) getFolderContentByType(_ context.Context, folderKey, content
 	}
 
 	var resp MediafireResponse
-	_, err := d.postForm("/folder/get_content.php", data, &resp)
+	_, err := d.postFormWithErrorHandling("/folder/get_content.php", data, &resp)
 	if err != nil {
 		return nil, err
-	}
-
-	if resp.Response.Result != "Success" {
-		return nil, fmt.Errorf("MediaFire API error: %s", resp.Response.Result)
 	}
 
 	return &resp, nil
@@ -278,6 +273,19 @@ func (d *Mediafire) getForm(endpoint string, query map[string]string, resp inter
 	return res.Body(), nil
 }
 
+func (d *Mediafire) getFormWithErrorHandling(endpoint string, query map[string]string, resp interface{}) ([]byte, error) {
+	body, err := d.getForm(endpoint, query, resp)
+	if err != nil {
+		return nil, err
+	}
+	var baseResp MediafireBaseResponse
+	if json.Unmarshal(body, &baseResp) == nil && baseResp.Response.Result != "Success" {
+		return body, d.formatAPIError(baseResp.Response.Result, body)
+	}
+
+	return body, nil
+}
+
 func (d *Mediafire) postForm(endpoint string, data map[string]string, resp interface{}) ([]byte, error) {
 	req := base.RestyClient.R()
 
@@ -306,6 +314,21 @@ func (d *Mediafire) postForm(endpoint string, data map[string]string, resp inter
 	return res.Body(), nil
 }
 
+func (d *Mediafire) postFormWithErrorHandling(endpoint string, data map[string]string, resp interface{}) ([]byte, error) {
+	body, err := d.postForm(endpoint, data, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if response indicates an error and provide detailed error message
+	var baseResp MediafireBaseResponse
+	if json.Unmarshal(body, &baseResp) == nil && baseResp.Response.Result != "Success" {
+		return body, d.formatAPIError(baseResp.Response.Result, body)
+	}
+
+	return body, nil
+}
+
 func (d *Mediafire) getDirectDownloadLink(_ context.Context, fileID string) (string, error) {
 	data := map[string]string{
 		"session_token":   d.SessionToken,
@@ -315,13 +338,9 @@ func (d *Mediafire) getDirectDownloadLink(_ context.Context, fileID string) (str
 	}
 
 	var resp MediafireDirectDownloadResponse
-	_, err := d.getForm("/file/get_links.php", data, &resp)
+	_, err := d.getFormWithErrorHandling("/file/get_links.php", data, &resp)
 	if err != nil {
 		return "", err
-	}
-
-	if resp.Response.Result != "Success" {
-		return "", fmt.Errorf("MediaFire API error: %s", resp.Response.Result)
 	}
 
 	if len(resp.Response.Links) == 0 {
@@ -360,7 +379,7 @@ func (d *Mediafire) uploadCheck(ctx context.Context, filename string, filesize i
 	}
 
 	var resp MediafireCheckResponse
-	_, err = d.postForm("/upload/check.php", query, &resp)
+	_, err = d.postFormWithErrorHandling("/upload/check.php", query, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -370,10 +389,6 @@ func (d *Mediafire) uploadCheck(ctx context.Context, filename string, filesize i
 
 	//fmt.Printf("uploadCheck :: ResumableUpload section: %+v\n", resp.Response.ResumableUpload)
 	//fmt.Printf("uploadCheck :: Upload key specifically: '%s'\n", resp.Response.ResumableUpload.UploadKey)
-
-	if resp.Response.Result != "Success" {
-		return nil, fmt.Errorf("MediaFire upload check failed: %s", resp.Response.Result)
-	}
 
 	return &resp, nil
 }
@@ -520,13 +535,9 @@ func (d *Mediafire) getActionToken(_ context.Context) (string, error) {
 	}
 
 	var resp MediafireActionTokenResponse
-	_, err := d.postForm("/user/get_action_token.php", data, &resp)
+	_, err := d.postFormWithErrorHandling("/user/get_action_token.php", data, &resp)
 	if err != nil {
 		return "", err
-	}
-
-	if resp.Response.Result != "Success" {
-		return "", fmt.Errorf("MediaFire action token failed: %s", resp.Response.Result)
 	}
 
 	return resp.Response.ActionToken, nil
@@ -548,7 +559,7 @@ func (d *Mediafire) pollUpload(ctx context.Context, key string) (*MediafirePollR
 	}
 
 	var resp MediafirePollResponse
-	_, err = d.postForm("/upload/poll_upload.php", query, &resp)
+	_, err = d.postFormWithErrorHandling("/upload/poll_upload.php", query, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -557,10 +568,6 @@ func (d *Mediafire) pollUpload(ctx context.Context, key string) (*MediafirePollR
 	//fmt.Printf("pollUpload :: Parsed response: %+v\n", resp)
 
 	//fmt.Printf("pollUpload :: Debug Result: %+v\n", resp.Response.Result)
-
-	if resp.Response.Result != "Success" {
-		return nil, fmt.Errorf("MediaFire poll upload failed: %s", resp.Response.Result)
-	}
 
 	return &resp, nil
 }
@@ -608,13 +615,9 @@ func (d *Mediafire) getFileByHash(_ context.Context, hash string) (*model.ObjThu
 	}
 
 	var resp MediafireFileSearchResponse
-	_, err := d.postForm("/file/get_info.php", query, &resp)
+	_, err := d.postFormWithErrorHandling("/file/get_info.php", query, &resp)
 	if err != nil {
 		return nil, err
-	}
-
-	if resp.Response.Result != "Success" {
-		return nil, fmt.Errorf("MediaFire file search failed: %s", resp.Response.Result)
 	}
 
 	if len(resp.Response.FileInfo) == 0 {
@@ -622,5 +625,22 @@ func (d *Mediafire) getFileByHash(_ context.Context, hash string) (*model.ObjThu
 	}
 
 	file := resp.Response.FileInfo[0]
+	return d.fileToObj(file), nil
+
+func (d *Mediafire) formatAPIError(result string, body []byte) error {
+	var baseResp MediafireBaseResponse
+	if err := json.Unmarshal(body, &baseResp); err == nil {
+		if baseResp.Response.Error != "" {
+			return fmt.Errorf("MediaFire API Error - %s: %s", result, baseResp.Response.Error)
+		}
+		if baseResp.Response.Message != "" {
+			return fmt.Errorf("MediaFire API Error - %s: %s", result, baseResp.Response.Message)
+		}
+		if baseResp.Response.Code != "" {
+			return fmt.Errorf("MediaFire API Error - %s (Code: %s)", result, baseResp.Response.Code)
+		}
+	}
+	return fmt.Errorf("MediaFire API Error: %s", result)
+}	file := resp.Response.FileInfo[0]
 	return d.fileToObj(file), nil
 }
