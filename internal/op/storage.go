@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
@@ -379,6 +380,7 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 
 	prefix = utils.FixAndCleanPath(prefix)
 	set := make(map[string]int)
+	var wg sync.WaitGroup
 	for _, v := range storages {
 		mountPath := utils.GetActualMountPath(v.GetStorage().MountPath)
 		// Exclude prefix itself and non prefix
@@ -396,14 +398,25 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 				IsFolder: true,
 			}
 			if len(names) == 1 {
-				files = append(files, rootCallback(v, obj))
+				idx = len(files)
+				files = append(files, obj)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					files[idx] = rootCallback(v, files[idx])
+				}()
 			} else {
 				files = append(files, obj)
 			}
 		} else if len(names) == 1 {
-			files[idx] = rootCallback(v, files[idx])
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				files[idx] = rootCallback(v, files[idx])
+			}()
 		}
 	}
+	wg.Wait()
 	return files
 }
 
