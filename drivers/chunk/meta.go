@@ -13,6 +13,8 @@ type Addition struct {
 
 	Thumbnail  bool `json:"thumbnail" required:"true" default:"false" help:"enable thumbnail which pre-generated under .thumbnails folder"`
 	ShowHidden bool `json:"show_hidden"  default:"true" required:"false" help:"show hidden directories and files"`
+
+	ChunkPrefix string `json:"chunk_prefix" type:"string" default:"[openlist_chunk]" help:"the prefix of chunk folder"`
 }
 
 var config = driver.Config{
@@ -26,6 +28,10 @@ var config = driver.Config{
 
 func init() {
 	op.RegisterDriver(func() driver.Driver {
-		return &Chunk{}
+		return &Chunk{
+			Addition: Addition{
+				ChunkPrefix: "[openlist_chunk]",
+			},
+		}
 	})
 }

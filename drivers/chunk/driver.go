@@ -39,6 +39,9 @@ func (d *Chunk) Init(ctx context.Context) error {
 	if d.PartSize <= 0 {
 		return errors.New("part size must be positive")
 	}
+	if len(d.ChunkPrefix) <= 0 {
+		return errors.New("chunk folder prefix must not be empty")
+	}
 	d.RemotePath = utils.FixAndCleanPath(d.RemotePath)
 	return nil
 }
@@ -72,7 +75,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 	}
 
 	remoteActualDir, name := stdpath.Split(remoteActualPath)
-	chunkName := "[openlist_chunk]" + name
+	chunkName := d.ChunkPrefix + name
 	chunkObjs, err := op.List(ctx, remoteStorage, stdpath.Join(remoteActualDir, chunkName), model.ListArgs{})
 	if err != nil {
 		return nil, err
@@ -149,7 +152,7 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	for _, obj := range remoteObjs {
 		rawName := obj.GetName()
 		if obj.IsDir() {
-			if name, ok := strings.CutPrefix(rawName, "[openlist_chunk]"); ok {
+			if name, ok := strings.CutPrefix(rawName, d.ChunkPrefix); ok {
 				chunkObjs, err := op.List(ctx, remoteStorage, stdpath.Join(remoteActualDir, rawName), model.ListArgs{
 					ReqPath: stdpath.Join(args.ReqPath, rawName),
 					Refresh: args.Refresh,
@@ -383,7 +386,7 @@ func (d *Chunk) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 
 func (d *Chunk) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
 	if _, ok := srcObj.(*chunkObject); ok {
-		newName = "[openlist_chunk]" + newName
+		newName = d.ChunkPrefix + newName
 	}
 	return fs.Rename(ctx, stdpath.Join(d.RemotePath, srcObj.GetPath()), newName)
 }
@@ -411,7 +414,7 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		Reader:         file,
 		UpdateProgress: up,
 	}
-	dst := stdpath.Join(remoteActualPath, dstDir.GetPath(), "[openlist_chunk]"+file.GetName())
+	dst := stdpath.Join(remoteActualPath, dstDir.GetPath(), d.ChunkPrefix+file.GetName())
 	if d.StoreHash {
 		for ht, value := range file.GetHash().All() {
 			_ = op.Put(ctx, remoteStorage, dst, &stream.FileStream{
