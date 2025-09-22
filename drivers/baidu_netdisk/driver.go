@@ -265,27 +265,12 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 	precreateResp, ok := base.GetUploadProgress[*PrecreateResp](d, d.AccessToken, contentMd5)
 	if !ok {
 		// 没有进度，走预上传
-		params := map[string]string{"method": "precreate"}
-		form := map[string]string{
-			"path":        path,
-			"size":        strconv.FormatInt(streamSize, 10),
-			"isdir":       "0",
-			"autoinit":    "1",
-			"rtype":       "3",
-			"block_list":  blockListStr,
-			"content-md5": contentMd5,
-			"slice-md5":   sliceMd5,
-		}
-		joinTime(form, ctime, mtime)
-		_, err = d.postForm("/xpan/file", params, form, &precreateResp)
+		precreateResp, err = d.precreate(ctx, path, streamSize, blockListStr, contentMd5, sliceMd5, ctime, mtime)
 		if err != nil {
 			return nil, err
 		}
 		if precreateResp.ReturnType == 2 {
 			//rapid upload, since got md5 match from baidu server
-			// 修复时间，具体原因见 Put 方法注释的 **注意**
-			precreateResp.File.Ctime = ctime
-			precreateResp.File.Mtime = mtime
 			return fileToObj(precreateResp.File), nil
 		}
 	}
@@ -353,27 +338,14 @@ uploadLoop:
 		if errors.Is(err, ErrUploadIDExpired) {
 			log.Warn("[baidu_netdisk] uploadid expired, will restart from scratch")
 			// 重新 precreate（所有分片都要重传）
-			params := map[string]string{"method": "precreate"}
-			form := map[string]string{
-				"path":       path,
-				"size":       strconv.FormatInt(streamSize, 10),
-				"isdir":      "0",
-				"autoinit":   "1",
-				"rtype":      "3",
-				"block_list": blockListStr,
-			}
-			joinTime(form, ctime, mtime)
-			var newPre PrecreateResp
-			_, err2 := d.postForm("/xpan/file", params, form, &newPre)
+			newPre, err2 := d.precreate(ctx, path, streamSize, blockListStr, "", "", ctime, mtime)
 			if err2 != nil {
 				return nil, err2
 			}
 			if newPre.ReturnType == 2 {
-				newPre.File.Ctime = ctime
-				newPre.File.Mtime = mtime
 				return fileToObj(newPre.File), nil
 			}
-			precreateResp = &newPre
+			precreateResp = newPre
 			// 覆盖掉旧的进度
 			base.SaveUploadProgress(d, precreateResp, d.AccessToken, contentMd5)
 			continue uploadLoop
@@ -395,6 +367,41 @@ uploadLoop:
 	return fileToObj(newFile), nil
 }
 
+// precreate 执行预上传操作，支持首次上传和 uploadid 过期重试
+func (d *BaiduNetdisk) precreate(ctx context.Context, path string, streamSize int64, blockListStr, contentMd5, sliceMd5 string, ctime, mtime int64) (*PrecreateResp, error) {
+	params := map[string]string{"method": "precreate"}
+	form := map[string]string{
+		"path":       path,
+		"size":       strconv.FormatInt(streamSize, 10),
+		"isdir":      "0",
+		"autoinit":   "1",
+		"rtype":      "3",
+		"block_list": blockListStr,
+	}
+
+	// 只有在首次上传时才包含 content-md5 和 slice-md5
+	if contentMd5 != "" && sliceMd5 != "" {
+		form["content-md5"] = contentMd5
+		form["slice-md5"] = sliceMd5
+	}
+
+	joinTime(form, ctime, mtime)
+
+	var precreateResp PrecreateResp
+	_, err := d.postForm("/xpan/file", params, form, &precreateResp)
+	if err != nil {
+		return nil, err
+	}
+
+	// 修复时间，具体原因见 Put 方法注释的 **注意**
+	if precreateResp.ReturnType == 2 {
+		precreateResp.File.Ctime = ctime
+		precreateResp.File.Mtime = mtime
+	}
+
+	return &precreateResp, nil
+}
+
 func (d *BaiduNetdisk) uploadSlice(ctx context.Context, params map[string]string, fileName string, file io.Reader) error {
 	res, err := base.RestyClient.R().
 		SetContext(ctx).
@@ -409,7 +416,7 @@ func (d *BaiduNetdisk) uploadSlice(ctx context.Context, params map[string]string
 	errNo := utils.Json.Get(res.Body(), "errno").ToInt()
 	respStr := res.String()
 	lower := strings.ToLower(respStr)
-// 合并 uploadid 过期检测逻辑
+	// 合并 uploadid 过期检测逻辑
 	if strings.Contains(lower, "uploadid") &&
 		(strings.Contains(lower, "invalid") || strings.Contains(lower, "expired") || strings.Contains(lower, "not found")) {
 		return ErrUploadIDExpired
@@ -430,4 +437,3 @@ func (d *BaiduNetdisk) GetDetails(ctx context.Context) (*model.StorageDetails, e
 }
 
 var _ driver.Driver = (*BaiduNetdisk)(nil)
-
