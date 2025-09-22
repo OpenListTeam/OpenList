@@ -407,7 +407,7 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	if err != nil {
 		return err
 	}
-	if d.Thumbnail && dstDir.GetName() == ".thumbnails" {
+	if (d.Thumbnail && dstDir.GetName() == ".thumbnails") || (d.ChunkLargeFileOnly && file.GetSize() <= d.PartSize) {
 		return op.Put(ctx, remoteStorage, stdpath.Join(remoteActualPath, dstDir.GetPath()), file, up)
 	}
 	upReader := &driver.ReaderUpdatingProgress{

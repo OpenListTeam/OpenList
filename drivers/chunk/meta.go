@@ -6,15 +6,15 @@ import (
 )
 
 type Addition struct {
-	RemotePath string `json:"remote_path" required:"true"`
-	PartSize   int64  `json:"part_size" required:"true" type:"number" help:"bytes"`
-	CustomExt  string `json:"custom_ext" type:"string"`
-	StoreHash  bool   `json:"store_hash" type:"bool" default:"true"`
+	RemotePath         string `json:"remote_path" required:"true"`
+	PartSize           int64  `json:"part_size" required:"true" type:"number" help:"bytes"`
+	ChunkLargeFileOnly bool   `json:"chunk_large_file_only" default:"false" help:"chunk only if file size > part_size"`
+	ChunkPrefix        string `json:"chunk_prefix" type:"string" default:"[openlist_chunk]" help:"the prefix of chunk folder"`
+	CustomExt          string `json:"custom_ext" type:"string"`
+	StoreHash          bool   `json:"store_hash" type:"bool" default:"true"`
 
 	Thumbnail  bool `json:"thumbnail" required:"true" default:"false" help:"enable thumbnail which pre-generated under .thumbnails folder"`
 	ShowHidden bool `json:"show_hidden"  default:"true" required:"false" help:"show hidden directories and files"`
-
-	ChunkPrefix string `json:"chunk_prefix" type:"string" default:"[openlist_chunk]" help:"the prefix of chunk folder"`
 }
 
 var config = driver.Config{
