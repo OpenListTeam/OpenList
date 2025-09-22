@@ -20,6 +20,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/baidu_netdisk"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/baidu_photo"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/chaoxing"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/chunk"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/cloudreve"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/cloudreve_v4"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/cnb_releases"

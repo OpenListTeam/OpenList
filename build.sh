@@ -236,7 +236,7 @@ BuildRelease() {
 BuildLoongGLIBC() {
   local target_abi="$2"
   local output_file="$1"
-  local oldWorldGoVersion="1.24.3"
+  local oldWorldGoVersion="1.25.0"
   
   if [ "$target_abi" = "abi1.0" ]; then
     echo building for linux-loong64-abi1.0
@@ -254,13 +254,13 @@ BuildLoongGLIBC() {
     
     # Download and setup patched Go compiler for old-world
     if ! curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" \
-      "https://github.com/loong64/loong64-abi1.0-toolchains/releases/download/20250722/go${oldWorldGoVersion}.linux-amd64.tar.gz" \
+      "https://github.com/loong64/loong64-abi1.0-toolchains/releases/download/20250821/go${oldWorldGoVersion}.linux-amd64.tar.gz" \
       -o go-loong64-abi1.0.tar.gz; then
       echo "Error: Failed to download patched Go compiler for old-world ABI1.0"
       if [ -n "$GITHUB_TOKEN" ]; then
         echo "Error output from curl:"
         curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" \
-          "https://github.com/loong64/loong64-abi1.0-toolchains/releases/download/20250722/go${oldWorldGoVersion}.linux-amd64.tar.gz" \
+          "https://github.com/loong64/loong64-abi1.0-toolchains/releases/download/20250821/go${oldWorldGoVersion}.linux-amd64.tar.gz" \
           -o go-loong64-abi1.0.tar.gz || true
       fi
       return 1
