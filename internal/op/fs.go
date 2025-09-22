@@ -184,7 +184,7 @@ func Get(ctx context.Context, storage driver.Driver, path string) (model.Obj, er
 		if err == nil {
 			return model.WrapObjName(obj), nil
 		}
-		if !errs.IsNotImplement(err) {
+		if !errs.IsNotImplementError(err) && !errs.IsNotSupportError(err) {
 			return nil, errors.WithMessage(err, "failed to get obj")
 		}
 	}
