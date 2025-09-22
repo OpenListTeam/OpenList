@@ -249,9 +249,48 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 			return nil, err
 		}
 		pageToken = resp.NextPageToken
+
+		// 处理快捷链接，获取目标文件的大小信息
+		for i := range resp.Files {
+			if resp.Files[i].MimeType == "application/vnd.google-apps.shortcut" && resp.Files[i].ShortcutDetails.TargetId != "" {
+				// 获取目标文件的详细信息
+				targetFile, err := d.getTargetFileInfo(resp.Files[i].ShortcutDetails.TargetId)
+				if err == nil && targetFile.Size != "" {
+					// 使用目标文件的大小信息
+					resp.Files[i].Size = targetFile.Size
+					// 同时更新其他相关信息
+					if targetFile.MD5Checksum != "" {
+						resp.Files[i].MD5Checksum = targetFile.MD5Checksum
+					}
+					if targetFile.SHA1Checksum != "" {
+						resp.Files[i].SHA1Checksum = targetFile.SHA1Checksum
+					}
+					if targetFile.SHA256Checksum != "" {
+						resp.Files[i].SHA256Checksum = targetFile.SHA256Checksum
+					}
+				}
+			}
+		}
+
 		res = append(res, resp.Files...)
 	}
 	return res, nil
+}
+
+// getTargetFileInfo 获取目标文件的详细信息，用于快捷链接
+func (d *GoogleDrive) getTargetFileInfo(targetId string) (File, error) {
+	var targetFile File
+	url := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s", targetId)
+	query := map[string]string{
+		"fields": "id,name,mimeType,size,md5Checksum,sha1Checksum,sha256Checksum",
+	}
+	_, err := d.request(url, http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(query)
+	}, &targetFile)
+	if err != nil {
+		return File{}, err
+	}
+	return targetFile, nil
 }
 
 func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, url string, up driver.UpdateProgress) error {
