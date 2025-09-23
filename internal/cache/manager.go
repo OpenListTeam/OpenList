@@ -64,12 +64,7 @@ func (cm *CacheManager) UpdateDirectoryObject(storage driver.Driver, dirPath str
 	key := makeDirectoryKey(storage, dirPath)
 	if data, exists := cm.directories.Get(key); exists {
 		if dirCache, ok := data.(*DirectoryCache); ok {
-			if obj == nil {
-				// Do nothing if obj is nil - should use RemoveDirectoryObject instead
-				return
-			} else {
-				dirCache.AddObject(obj)
-			}
+			dirCache.AddObject(obj)
 		}
 	}
 }
@@ -119,6 +114,11 @@ func (cm *CacheManager) GetLink(key string) (*model.Link, bool) {
 
 // remove a specific link from cache
 func (cm *CacheManager) InvalidateLink(key string) {
+	cm.links.Delete(key)
+}
+
+// remove a specific link from cache
+func (cm *CacheManager) DelLink(key string) {
 	cm.links.Delete(key)
 }
 

@@ -59,6 +59,13 @@ func (c *UnifiedCache) Get(key string) (interface{}, bool) {
 		entry, exists := c.entries[key]
 		if exists && now.After(entry.expires) {
 			delete(c.entries, key)
+			c.mu.Unlock()
+			return nil, false
+		}
+		if exists {
+			val := entry.data
+			c.mu.Unlock()
+			return val, true
 		}
 		c.mu.Unlock()
 		return nil, false
