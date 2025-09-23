@@ -4,113 +4,59 @@ import (
 	"context"
 	stderrors "errors"
 	stdpath "path"
-	"slices"
 	"strings"
-	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
-	"github.com/OpenListTeam/OpenList/v4/pkg/generic_sync"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/go-cache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
 // In order to facilitate adding some other things before and after file op
 
-var listCache = cache.NewMemCache(cache.WithShards[[]model.Obj](64))
 var listG singleflight.Group[[]model.Obj]
 
-func updateCacheObj(storage driver.Driver, path string, oldObj model.Obj, newObj model.Obj) {
-	key := Key(storage, path)
-	objs, ok := listCache.Get(key)
-	if ok {
-		for i, obj := range objs {
-			if obj.GetName() == newObj.GetName() {
-				objs = slices.Delete(objs, i, i+1)
-				break
-			}
-		}
-		for i, obj := range objs {
-			if obj.GetName() == oldObj.GetName() {
-				objs[i] = newObj
-				break
-			}
-		}
-		listCache.Set(key, objs, cache.WithEx[[]model.Obj](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
+func updateCache(storage driver.Driver, dirPath string, objName string, newObj model.Obj) {
+	if storage.Config().NoCache {
+		return
+	}
+
+	if newObj == nil {
+		cache.Manager.RemoveDirectoryObject(storage, dirPath, objName)
+	} else {
+		cache.Manager.UpdateDirectoryObject(storage, dirPath, newObj)
 	}
 }
 
-func delCacheObj(storage driver.Driver, path string, obj model.Obj) {
-	key := Key(storage, path)
-	objs, ok := listCache.Get(key)
-	if ok {
-		for i, oldObj := range objs {
-			if oldObj.GetName() == obj.GetName() {
-				objs = append(objs[:i], objs[i+1:]...)
-				break
-			}
-		}
-		listCache.Set(key, objs, cache.WithEx[[]model.Obj](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
-	}
-}
-
-var addSortDebounceMap generic_sync.MapOf[string, func(func())]
-
-func addCacheObj(storage driver.Driver, path string, newObj model.Obj) {
-	key := Key(storage, path)
-	objs, ok := listCache.Get(key)
-	if ok {
-		for i, obj := range objs {
-			if obj.GetName() == newObj.GetName() {
-				objs[i] = newObj
-				return
-			}
-		}
-
-		// Simple separation of files and folders
-		if len(objs) > 0 && objs[len(objs)-1].IsDir() == newObj.IsDir() {
-			objs = append(objs, newObj)
-		} else {
-			objs = append([]model.Obj{newObj}, objs...)
-		}
-
-		if storage.Config().LocalSort {
-			debounce, _ := addSortDebounceMap.LoadOrStore(key, utils.NewDebounce(time.Minute))
-			log.Debug("addCacheObj: wait start sort")
-			debounce(func() {
-				log.Debug("addCacheObj: start sort")
-				model.SortFiles(objs, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
-				addSortDebounceMap.Delete(key)
-			})
-		}
-
-		listCache.Set(key, objs, cache.WithEx[[]model.Obj](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
-	}
+// keep it same as old version
+func Key(storage driver.Driver, path string) string {
+	return stdpath.Join(storage.GetStorage().MountPath, utils.FixAndCleanPath(path))
 }
 
 func ClearCache(storage driver.Driver, path string) {
-	objs, ok := listCache.Get(Key(storage, path))
-	if ok {
-		for _, obj := range objs {
-			if obj.IsDir() {
-				ClearCache(storage, stdpath.Join(path, obj.GetName()))
-			}
-		}
-	}
-	listCache.Del(Key(storage, path))
+	cache.Manager.InvalidateDirectoryTree(storage, path)
 }
 
 func DeleteCache(storage driver.Driver, path string) {
-	listCache.Del(Key(storage, path))
+	cache.Manager.InvalidateDirectory(storage, path)
 }
 
-func Key(storage driver.Driver, path string) string {
-	return stdpath.Join(storage.GetStorage().MountPath, utils.FixAndCleanPath(path))
+func addCacheObj(storage driver.Driver, path string, newObj model.Obj) {
+	updateCache(storage, path, "", newObj)
+}
+
+func delCacheObj(storage driver.Driver, path string, obj model.Obj) {
+	updateCache(storage, path, obj.GetName(), nil)
+}
+
+func updateCacheObj(storage driver.Driver, path string, oldObj model.Obj, newObj model.Obj) {
+	updateCache(storage, path, oldObj.GetName(), nil)
+	updateCache(storage, path, "", newObj)
 }
 
 // List files in storage, not contains virtual file
@@ -120,13 +66,17 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 	path = utils.FixAndCleanPath(path)
 	log.Debugf("op.List %s", path)
-	key := Key(storage, path)
 	if !args.Refresh {
-		if files, ok := listCache.Get(key); ok {
+		if dirCache, exists := cache.Manager.GetDirectoryListing(storage, path); exists {
 			log.Debugf("use cache when list %s", path)
-			return files, nil
+			objects := dirCache.GetSortedObjects()
+			if storage.Config().LocalSort {
+				model.SortFiles(objects, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
+			}
+			return objects, nil
 		}
 	}
+
 	dir, err := GetUnwrap(ctx, storage, path)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed get dir")
@@ -135,6 +85,8 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 	if !dir.IsDir() {
 		return nil, errors.WithStack(errs.NotFolder)
 	}
+
+	key := Key(storage, path)
 	objs, err, _ := listG.Do(key, func() ([]model.Obj, error) {
 		files, err := storage.List(ctx, dir, args)
 		if err != nil {
@@ -159,14 +111,12 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 		model.ExtractFolder(files, storage.GetStorage().ExtractFolder)
 
-		if !storage.Config().NoCache {
-			if len(files) > 0 {
-				log.Debugf("set cache: %s => %+v", key, files)
-				listCache.Set(key, files, cache.WithEx[[]model.Obj](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
-			} else {
-				log.Debugf("del cache: %s", key)
-				listCache.Del(key)
-			}
+		if len(files) > 0 {
+			log.Debugf("set cache: %s => %+v", key, files)
+			cache.Manager.SetDirectoryListing(storage, path, files)
+		} else {
+			log.Debugf("invalidate cache: %s", key)
+			cache.Manager.InvalidateDirectory(storage, path)
 		}
 		return files, nil
 	})
@@ -252,7 +202,6 @@ func GetUnwrap(ctx context.Context, storage driver.Driver, path string) (model.O
 	return model.UnwrapObj(obj), err
 }
 
-var linkCache = cache.NewMemCache(cache.WithShards[*model.Link](16))
 var linkG = singleflight.Group[*model.Link]{Remember: true}
 var errLinkMFileCache = stderrors.New("ErrLinkMFileCache")
 
@@ -267,12 +216,10 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	)
 	// use cache directly
 	dir, name := stdpath.Split(stdpath.Join(storage.GetStorage().MountPath, path))
-	if cacheFiles, ok := listCache.Get(strings.TrimSuffix(dir, "/")); ok {
-		for _, f := range cacheFiles {
-			if f.GetName() == name {
-				file = model.UnwrapObj(f)
-				break
-			}
+	dirPath := strings.TrimSuffix(dir, "/")
+	if dirCache, exists := cache.Manager.GetDirectoryListing(storage, dirPath); exists {
+		if obj, found := dirCache.GetObject(name); found {
+			file = model.UnwrapObj(obj)
 		}
 	} else {
 		if g, ok := storage.(driver.GetObjInfo); ok {
@@ -292,7 +239,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 
 	key := stdpath.Join(Key(storage, path), args.Type)
-	if link, ok := linkCache.Get(key); ok {
+	if link, exists := cache.Manager.GetLink(key); exists {
 		return link, file, nil
 	}
 
@@ -308,7 +255,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errLinkMFileCache
 		}
 		if link.Expiration != nil {
-			linkCache.Set(key, link, cache.WithEx[*model.Link](*link.Expiration))
+			cache.Manager.SetLink(key, link, *link.Expiration)
 		}
 		link.AddIfCloser(forget)
 		return link, nil
@@ -395,15 +342,15 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string, lazyCache 
 					newObj, err = s.MakeDir(ctx, parentDir, dirName)
 					if err == nil {
 						if newObj != nil {
-							addCacheObj(storage, parentPath, model.WrapObjName(newObj))
-						} else if !utils.IsBool(lazyCache...) {
-							DeleteCache(storage, parentPath)
+							updateCache(storage, parentPath, "", model.WrapObjName(newObj))
+						} else {
+							cache.Manager.InvalidateDirectory(storage, parentPath)
 						}
 					}
 				case driver.Mkdir:
 					err = s.MakeDir(ctx, parentDir, dirName)
-					if err == nil && !utils.IsBool(lazyCache...) {
-						DeleteCache(storage, parentPath)
+					if err == nil {
+						cache.Manager.InvalidateDirectory(storage, parentPath)
 					}
 				default:
 					return nil, errs.NotImplement
@@ -444,20 +391,18 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		var newObj model.Obj
 		newObj, err = s.Move(ctx, srcObj, dstDir)
 		if err == nil {
-			delCacheObj(storage, srcDirPath, srcRawObj)
+			updateCache(storage, srcDirPath, srcRawObj.GetName(), nil) // Remove from source
 			if newObj != nil {
-				addCacheObj(storage, dstDirPath, model.WrapObjName(newObj))
-			} else if !utils.IsBool(lazyCache...) {
-				DeleteCache(storage, dstDirPath)
+				updateCache(storage, dstDirPath, "", model.WrapObjName(newObj)) // Add to destination
+			} else {
+				cache.Manager.InvalidateDirectory(storage, dstDirPath)
 			}
 		}
 	case driver.Move:
 		err = s.Move(ctx, srcObj, dstDir)
 		if err == nil {
-			delCacheObj(storage, srcDirPath, srcRawObj)
-			if !utils.IsBool(lazyCache...) {
-				DeleteCache(storage, dstDirPath)
-			}
+			updateCache(storage, srcDirPath, srcRawObj.GetName(), nil) // Remove from source
+			cache.Manager.InvalidateDirectory(storage, dstDirPath)
 		}
 	default:
 		return errs.NotImplement
@@ -669,7 +614,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 				return err
 			} else {
 				key := Key(storage, stdpath.Join(dstDirPath, file.GetName()))
-				linkCache.Del(key)
+				cache.Manager.InvalidateDirectory(storage, stdpath.Dir(key))
 			}
 		}
 	}
