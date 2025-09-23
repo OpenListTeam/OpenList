@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -271,7 +272,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	}
 	err = common.Proxy(w, r, link, fi)
 	if err != nil {
-		if statusCode, ok := errors.Unwrap(err).(net.ErrorHttpStatusCode); ok {
+		if statusCode, ok := errors.Unwrap(err).(net.HttpStatusCodeError); ok {
 			return int(statusCode), err
 		}
 		return http.StatusInternalServerError, fmt.Errorf("webdav proxy error: %+v", err)
@@ -341,9 +342,19 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	size := r.ContentLength
+	if size < 0 {
+		sizeStr := r.Header.Get("X-File-Size")
+		if sizeStr != "" {
+			size, err = strconv.ParseInt(sizeStr, 10, 64)
+			if err != nil {
+				return http.StatusBadRequest, err
+			}
+		}
+	}
 	obj := model.Object{
 		Name:     path.Base(reqPath),
-		Size:     r.ContentLength,
+		Size:     size,
 		Modified: h.getModTime(r),
 		Ctime:    h.getCreateTime(r),
 	}

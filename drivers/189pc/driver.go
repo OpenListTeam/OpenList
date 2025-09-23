@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
@@ -21,12 +22,12 @@ type Cloud189PC struct {
 	model.Storage
 	Addition
 
-	identity string
-
 	client *resty.Client
 
-	loginParam *LoginParam
-	tokenInfo  *AppSessionResp
+	loginParam  *LoginParam
+	qrcodeParam *QRLoginParam
+
+	tokenInfo *AppSessionResp
 
 	uploadThread int
 
@@ -35,6 +36,7 @@ type Cloud189PC struct {
 
 	storageConfig driver.Config
 	ref           *Cloud189PC
+	cron          *cron.Cron
 }
 
 func (y *Cloud189PC) Config() driver.Config {
@@ -84,14 +86,22 @@ func (y *Cloud189PC) Init(ctx context.Context) (err error) {
 			})
 		}
 
-		// 避免重复登陆
-		identity := utils.GetMD5EncodeStr(y.Username + y.Password)
-		if !y.isLogin() || y.identity != identity {
-			y.identity = identity
+		// 先尝试用Token刷新，之后尝试登陆
+		if y.Addition.RefreshToken != "" {
+			y.tokenInfo = &AppSessionResp{RefreshToken: y.Addition.RefreshToken}
+			if err = y.refreshToken(); err != nil {
+				return
+			}
+		} else {
 			if err = y.login(); err != nil {
 				return
 			}
 		}
+
+		// 初始化并启动 cron 任务
+		y.cron = cron.NewCron(time.Duration(time.Minute * 5))
+		// 每5分钟执行一次 keepAlive
+		y.cron.Do(y.keepAlive)
 	}
 
 	// 处理家庭云ID
@@ -128,6 +138,10 @@ func (d *Cloud189PC) InitReference(storage driver.Driver) error {
 
 func (y *Cloud189PC) Drop(ctx context.Context) error {
 	y.ref = nil
+	if y.cron != nil {
+		y.cron.Stop()
+		y.cron = nil
+	}
 	return nil
 }
 

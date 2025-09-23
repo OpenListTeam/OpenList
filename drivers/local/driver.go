@@ -51,7 +51,7 @@ func (d *Local) Config() driver.Config {
 
 func (d *Local) Init(ctx context.Context) error {
 	if d.MkdirPerm == "" {
-		d.mkdirPerm = 0777
+		d.mkdirPerm = 0o777
 	} else {
 		v, err := strconv.ParseUint(d.MkdirPerm, 8, 32)
 		if err != nil {
@@ -150,6 +150,7 @@ func (d *Local) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	}
 	return files, nil
 }
+
 func (d *Local) FileInfoToObj(ctx context.Context, f fs.FileInfo, reqPath string, fullPath string) model.Obj {
 	thumb := ""
 	if d.Thumbnail {
@@ -198,7 +199,7 @@ func (d *Local) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = filepath.Join(d.GetRootPath(), path)
 	f, err := os.Stat(path)
 	if err != nil {
-		if strings.Contains(err.Error(), "cannot find the file") {
+		if os.IsNotExist(err) {
 			return nil, errs.ObjectNotFound
 		}
 		return nil, err
@@ -375,7 +376,7 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 		}
 	} else {
 		if !utils.Exists(d.RecycleBinPath) {
-			err = os.MkdirAll(d.RecycleBinPath, 0755)
+			err = os.MkdirAll(d.RecycleBinPath, 0o755)
 			if err != nil {
 				return err
 			}
@@ -432,6 +433,16 @@ func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	}
 
 	return nil
+}
+
+func (d *Local) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	du, err := getDiskUsage(d.RootFolderPath)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: du,
+	}, nil
 }
 
 var _ driver.Driver = (*Local)(nil)

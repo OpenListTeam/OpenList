@@ -200,26 +200,37 @@ type SyncClosers struct {
 var _ SyncClosersIF = (*SyncClosers)(nil)
 
 func (c *SyncClosers) AcquireReference() bool {
-	ref := atomic.AddInt32(&c.ref, 1)
-	if ref > 0 {
-		// log.Debugf("SyncClosers.AcquireReference %p,ref=%d\n", c, ref)
-		return true
+	for {
+		ref := atomic.LoadInt32(&c.ref)
+		if ref < 0 {
+			return false
+		}
+		newRef := ref + 1
+		if atomic.CompareAndSwapInt32(&c.ref, ref, newRef) {
+			log.Debugf("AcquireReference %p: %d", c, newRef)
+			return true
+		}
 	}
-	atomic.StoreInt32(&c.ref, math.MinInt16)
-	return false
 }
 
 func (c *SyncClosers) Close() error {
-	ref := atomic.AddInt32(&c.ref, -1)
-	if ref < -1 {
-		atomic.StoreInt32(&c.ref, math.MinInt16)
-		return nil
+	for {
+		ref := atomic.LoadInt32(&c.ref)
+		if ref < 0 {
+			return nil
+		}
+		newRef := ref - 1
+		if newRef <= 0 {
+			newRef = math.MinInt16
+		}
+		if atomic.CompareAndSwapInt32(&c.ref, ref, newRef) {
+			log.Debugf("Close %p: %d", c, ref)
+			if newRef > 0 {
+				return nil
+			}
+			break
+		}
 	}
-	// log.Debugf("SyncClosers.Close %p,ref=%d\n", c, ref+1)
-	if ref > 0 {
-		return nil
-	}
-	atomic.StoreInt32(&c.ref, math.MinInt16)
 
 	var errs []error
 	for _, closer := range c.closers {

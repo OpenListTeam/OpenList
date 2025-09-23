@@ -204,3 +204,9 @@ type FolderSummaryResp struct {
 		CalculatedAt time.Time `json:"calculated_at"`
 	} `json:"folder_summary"`
 }
+
+type CapacityResp struct {
+	Total uint64 `json:"total"`
+	Used  uint64 `json:"used"`
+	// StoragePackTotal uint64 `json:"storage_pack_total"`
+}

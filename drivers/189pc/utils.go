@@ -29,6 +29,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/skip2/go-qrcode"
 
 	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
@@ -54,6 +55,9 @@ const (
 	MAC = "TELEMAC"
 
 	CHANNEL_ID = "web_cloud.189.cn"
+
+	// Error codes
+	UserInvalidOpenTokenError = "UserInvalidOpenToken"
 )
 
 func (y *Cloud189PC) SignatureHeader(url, method, params string, isFamily bool) map[string]string {
@@ -264,7 +268,14 @@ func (y *Cloud189PC) findFileByName(ctx context.Context, searchName string, fold
 	}
 }
 
-func (y *Cloud189PC) login() (err error) {
+func (y *Cloud189PC) login() error {
+	if y.LoginType == "qrcode" {
+		return y.loginByQRCode()
+	}
+	return y.loginByPassword()
+}
+
+func (y *Cloud189PC) loginByPassword() (err error) {
 	// 初始化登陆所需参数
 	if y.loginParam == nil {
 		if err = y.initLoginParam(); err != nil {
@@ -278,10 +289,15 @@ func (y *Cloud189PC) login() (err error) {
 		// 销毁登陆参数
 		y.loginParam = nil
 		// 遇到错误，重新加载登陆参数(刷新验证码)
-		if err != nil && y.NoUseOcr {
-			if err1 := y.initLoginParam(); err1 != nil {
-				err = fmt.Errorf("err1: %s \nerr2: %s", err, err1)
+		if err != nil {
+			if y.NoUseOcr {
+				if err1 := y.initLoginParam(); err1 != nil {
+					err = fmt.Errorf("err1: %s \nerr2: %s", err, err1)
+				}
 			}
+
+			y.Status = err.Error()
+			op.MustSaveDriverStorage(y)
 		}
 	}()
 
@@ -336,14 +352,105 @@ func (y *Cloud189PC) login() (err error) {
 		err = fmt.Errorf(tokenInfo.ResMessage)
 		return
 	}
+	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
+	op.MustSaveDriverStorage(y)
 	return
 }
 
-/* 初始化登陆需要的参数
-*  如果遇到验证码返回错误
- */
-func (y *Cloud189PC) initLoginParam() error {
+func (y *Cloud189PC) loginByQRCode() error {
+	if y.qrcodeParam == nil {
+		if err := y.initQRCodeParam(); err != nil {
+			// 二维码也通过错误返回
+			return err
+		}
+	}
+
+	var state struct {
+		Status      int    `json:"status"`
+		RedirectUrl string `json:"redirectUrl"`
+		Msg         string `json:"msg"`
+	}
+
+	now := time.Now()
+	_, err := y.client.R().
+		SetHeaders(map[string]string{
+			"Referer": AUTH_URL,
+			"Reqid":   y.qrcodeParam.ReqId,
+			"lt":      y.qrcodeParam.Lt,
+		}).
+		SetFormData(map[string]string{
+			"appId":      APP_ID,
+			"clientType": CLIENT_TYPE,
+			"returnUrl":  RETURN_URL,
+			"paramId":    y.qrcodeParam.ParamId,
+			"uuid":       y.qrcodeParam.UUID,
+			"encryuuid":  y.qrcodeParam.EncryUUID,
+			"date":       formatDate(now),
+			"timeStamp":  fmt.Sprint(now.UTC().UnixNano() / 1e6),
+		}).
+		ForceContentType("application/json;charset=UTF-8").
+		SetResult(&state).
+		Post(AUTH_URL + "/api/logbox/oauth2/qrcodeLoginState.do")
+	if err != nil {
+		return fmt.Errorf("failed to check QR code state: %w", err)
+	}
+
+	switch state.Status {
+	case 0: // 登录成功
+		var tokenInfo AppSessionResp
+		_, err = y.client.R().
+			SetResult(&tokenInfo).
+			SetQueryParams(clientSuffix()).
+			SetQueryParam("redirectURL", state.RedirectUrl).
+			Post(API_URL + "/getSessionForPC.action")
+		if err != nil {
+			return err
+		}
+		if tokenInfo.ResCode != 0 {
+			return fmt.Errorf(tokenInfo.ResMessage)
+		}
+		y.Addition.RefreshToken = tokenInfo.RefreshToken
+		y.tokenInfo = &tokenInfo
+		op.MustSaveDriverStorage(y)
+		return nil
+	case -11001: // 二维码过期
+		y.qrcodeParam = nil
+		return errors.New("QR code expired, please try again")
+	case -106: // 等待扫描
+		return y.genQRCode("QR code has not been scanned yet, please scan and save again")
+	case -11002: // 等待确认
+		return y.genQRCode("QR code has been scanned, please confirm the login on your phone and save again")
+	default: // 其他错误
+		y.qrcodeParam = nil
+		return fmt.Errorf("QR code login failed with status %d: %s", state.Status, state.Msg)
+	}
+}
+
+func (y *Cloud189PC) genQRCode(text string) error {
+	// 展示二维码
+	qrTemplate := `<body>
+	state: %s
+	<br><img src="data:image/jpeg;base64,%s"/>
+    <br>Or Click here: <a href="%s">Login</a>
+</body>`
+
+	// Generate QR code
+	qrCode, err := qrcode.Encode(y.qrcodeParam.UUID, qrcode.Medium, 256)
+	if err != nil {
+		return fmt.Errorf("failed to generate QR code: %v", err)
+	}
+
+	// Encode QR code to base64
+	qrCodeBase64 := base64.StdEncoding.EncodeToString(qrCode)
+
+	// Create the HTML page
+	qrPage := fmt.Sprintf(qrTemplate, text, qrCodeBase64, y.qrcodeParam.UUID)
+	return fmt.Errorf("need verify: \n%s", qrPage)
+
+}
+
+func (y *Cloud189PC) initBaseParams() (*BaseLoginParam, error) {
 	// 清除cookie
 	jar, _ := cookiejar.New(nil)
 	y.client.SetCookieJar(jar)
@@ -357,16 +464,29 @@ func (y *Cloud189PC) initLoginParam() error {
 		}).
 		Get(WEB_URL + "/api/portal/unifyLoginForPC.action")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	param := LoginParam{
+	return &BaseLoginParam{
 		CaptchaToken: regexp.MustCompile(`'captchaToken' value='(.+?)'`).FindStringSubmatch(res.String())[1],
 		Lt:           regexp.MustCompile(`lt = "(.+?)"`).FindStringSubmatch(res.String())[1],
 		ParamId:      regexp.MustCompile(`paramId = "(.+?)"`).FindStringSubmatch(res.String())[1],
 		ReqId:        regexp.MustCompile(`reqId = "(.+?)"`).FindStringSubmatch(res.String())[1],
-		// jRsaKey:      regexp.MustCompile(`"j_rsaKey" value="(.+?)"`).FindStringSubmatch(res.String())[1],
+	}, nil
+}
+
+/* 初始化登陆需要的参数
+ *  如果遇到验证码返回错误
+ */
+func (y *Cloud189PC) initLoginParam() error {
+	y.loginParam = nil
+
+	baseParam, err := y.initBaseParams()
+	if err != nil {
+		return err
 	}
+
+	y.loginParam = &LoginParam{BaseLoginParam: *baseParam}
 
 	// 获取rsa公钥
 	var encryptConf EncryptConfResp
@@ -378,18 +498,17 @@ func (y *Cloud189PC) initLoginParam() error {
 		return err
 	}
 
-	param.jRsaKey = fmt.Sprintf("-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----", encryptConf.Data.PubKey)
-	param.RsaUsername = encryptConf.Data.Pre + RsaEncrypt(param.jRsaKey, y.Username)
-	param.RsaPassword = encryptConf.Data.Pre + RsaEncrypt(param.jRsaKey, y.Password)
-	y.loginParam = &param
+	y.loginParam.jRsaKey = fmt.Sprintf("-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----", encryptConf.Data.PubKey)
+	y.loginParam.RsaUsername = encryptConf.Data.Pre + RsaEncrypt(y.loginParam.jRsaKey, y.Username)
+	y.loginParam.RsaPassword = encryptConf.Data.Pre + RsaEncrypt(y.loginParam.jRsaKey, y.Password)
 
 	// 判断是否需要验证码
 	resp, err := y.client.R().
-		SetHeader("REQID", param.ReqId).
+		SetHeader("REQID", y.loginParam.ReqId).
 		SetFormData(map[string]string{
 			"appKey":      APP_ID,
 			"accountType": ACCOUNT_TYPE,
-			"userName":    param.RsaUsername,
+			"userName":    y.loginParam.RsaUsername,
 		}).Post(AUTH_URL + "/api/logbox/oauth2/needcaptcha.do")
 	if err != nil {
 		return err
@@ -401,8 +520,8 @@ func (y *Cloud189PC) initLoginParam() error {
 	// 拉取验证码
 	imgRes, err := y.client.R().
 		SetQueryParams(map[string]string{
-			"token": param.CaptchaToken,
-			"REQID": param.ReqId,
+			"token": y.loginParam.CaptchaToken,
+			"REQID": y.loginParam.ReqId,
 			"rnd":   fmt.Sprint(timestamp()),
 		}).
 		Get(AUTH_URL + "/api/logbox/oauth2/picCaptcha.do")
@@ -429,10 +548,38 @@ func (y *Cloud189PC) initLoginParam() error {
 	return nil
 }
 
+// getQRCode 获取并返回二维码
+func (y *Cloud189PC) initQRCodeParam() (err error) {
+	y.qrcodeParam = nil
+
+	baseParam, err := y.initBaseParams()
+	if err != nil {
+		return err
+	}
+
+	var qrcodeParam QRLoginParam
+	_, err = y.client.R().
+		SetFormData(map[string]string{"appId": APP_ID}).
+		ForceContentType("application/json;charset=UTF-8").
+		SetResult(&qrcodeParam).
+		Post(AUTH_URL + "/api/logbox/oauth2/getUUID.do")
+	if err != nil {
+		return err
+	}
+	qrcodeParam.BaseLoginParam = *baseParam
+	y.qrcodeParam = &qrcodeParam
+
+	return y.genQRCode("please scan the QR code with the 189 Cloud app, then save the settings again.")
+}
+
 // 刷新会话
 func (y *Cloud189PC) refreshSession() (err error) {
+	return y.refreshSessionWithRetry(0)
+}
+
+func (y *Cloud189PC) refreshSessionWithRetry(retryCount int) (err error) {
 	if y.ref != nil {
-		return y.ref.refreshSession()
+		return y.ref.refreshSessionWithRetry(retryCount)
 	}
 	var erron RespErr
 	var userSessionResp UserSessionResp
@@ -449,24 +596,87 @@ func (y *Cloud189PC) refreshSession() (err error) {
 		return err
 	}
 
-	// 错误影响正常访问，下线该储存
-	defer func() {
-		if err != nil {
-			y.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
-			op.MustSaveDriverStorage(y)
-		}
-	}()
-
+	// token生效刷新token
 	if erron.HasError() {
-		if erron.ResCode == "UserInvalidOpenToken" {
-			if err = y.login(); err != nil {
-				return err
-			}
+		if erron.ResCode == UserInvalidOpenTokenError {
+			return y.refreshTokenWithRetry(retryCount)
 		}
 		return &erron
 	}
 	y.tokenInfo.UserSessionResp = userSessionResp
-	return
+	return nil
+}
+
+// refreshToken 刷新token，失败时返回错误，不再直接调用login
+func (y *Cloud189PC) refreshToken() (err error) {
+	return y.refreshTokenWithRetry(0)
+}
+
+func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
+	if y.ref != nil {
+		return y.ref.refreshTokenWithRetry(retryCount)
+	}
+	
+	// 限制重试次数，避免无限递归
+	if retryCount >= 3 {
+		if y.Addition.RefreshToken != "" {
+			y.Addition.RefreshToken = ""
+			op.MustSaveDriverStorage(y)
+		}
+		return errors.New("refresh token failed after maximum retries")
+	}
+	
+	var erron RespErr
+	var tokenInfo AppSessionResp
+	_, err = y.client.R().
+		SetResult(&tokenInfo).
+		ForceContentType("application/json;charset=UTF-8").
+		SetError(&erron).
+		SetFormData(map[string]string{
+			"clientId":     APP_ID,
+			"refreshToken": y.tokenInfo.RefreshToken,
+			"grantType":    "refresh_token",
+			"format":       "json",
+		}).
+		Post(AUTH_URL + "/api/oauth2/refreshToken.do")
+	if err != nil {
+		return err
+	}
+
+	// 如果刷新失败，返回错误给上层处理
+	if erron.HasError() {
+		if y.Addition.RefreshToken != "" {
+			y.Addition.RefreshToken = ""
+			op.MustSaveDriverStorage(y)
+		}
+
+		// 根据登录类型决定下一步行为
+		if y.LoginType == "qrcode" {
+			return errors.New("QR code session has expired, please re-scan the code to log in")
+		}
+		// 密码登录模式下，尝试回退到完整登录
+		return y.login()
+	}
+
+	y.Addition.RefreshToken = tokenInfo.RefreshToken
+	y.tokenInfo = &tokenInfo
+	op.MustSaveDriverStorage(y)
+	return y.refreshSessionWithRetry(retryCount + 1)
+}
+
+func (y *Cloud189PC) keepAlive() {
+	_, err := y.get(API_URL+"/keepUserSession.action", func(r *resty.Request) {
+		r.SetQueryParams(clientSuffix())
+	}, nil)
+	if err != nil {
+		utils.Log.Warnf("189pc: Failed to keep user session alive: %v", err)
+		// 如果keepAlive失败，尝试刷新session
+		if refreshErr := y.refreshSession(); refreshErr != nil {
+			utils.Log.Errorf("189pc: Failed to refresh session after keepAlive error: %v", refreshErr)
+		}
+	} else {
+		utils.Log.Debugf("189pc: User session kept alive successfully.")
+	}
 }
 
 // 普通上传
@@ -575,8 +785,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 
 				// step.4 上传切片
 				uploadUrl := uploadUrls[0]
-				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false,
-					driver.NewLimitedUploadStream(ctx, rateLimitedRd), isFamily)
+				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false, rateLimitedRd, isFamily)
 				if err != nil {
 					return err
 				}

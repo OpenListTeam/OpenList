@@ -3,7 +3,7 @@ package rardecode
 import (
 	"io"
 	"os"
-	stdpath "path"
+	"path/filepath"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
@@ -93,7 +93,7 @@ func (RarDecoder) Decompress(ss []*stream.SeekableStream, outputPath string, arg
 		}
 	} else {
 		innerPath := strings.TrimPrefix(args.InnerPath, "/")
-		innerBase := stdpath.Base(innerPath)
+		innerBase := filepath.Base(innerPath)
 		createdBaseDir := false
 		for {
 			var header *rardecode.FileHeader
@@ -115,7 +115,7 @@ func (RarDecoder) Decompress(ss []*stream.SeekableStream, outputPath string, arg
 				}
 				break
 			} else if strings.HasPrefix(name, innerPath+"/") {
-				targetPath := stdpath.Join(outputPath, innerBase)
+				targetPath := filepath.Join(outputPath, innerBase)
 				if !createdBaseDir {
 					err = os.Mkdir(targetPath, 0700)
 					if err != nil {

@@ -99,3 +99,16 @@ type ObjThumbURL struct {
 	Thumbnail
 	Url
 }
+
+type Provider struct {
+	Provider string
+}
+
+func (p Provider) GetProvider() string {
+	return p.Provider
+}
+
+type ObjectProvider struct {
+	Object
+	Provider
+}

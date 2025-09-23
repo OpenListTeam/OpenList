@@ -234,4 +234,11 @@ type SliceUpCompleteResp struct {
 	Ctime          uint64 `json:"ctime"`           // 文件创建时间
 	Mtime          uint64 `json:"mtime"`           // 文件修改时间
 	Isdir          int    `json:"isdir"`           // 是否目录，0 文件、1 目录
+type QuotaResp struct {
+	Errno     int    `json:"errno"`
+	RequestId int64  `json:"request_id"`
+	Total     uint64 `json:"total"`
+	Used      uint64 `json:"used"`
+	//Free      uint64 `json:"free"`
+	//Expire    bool   `json:"expire"`
 }

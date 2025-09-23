@@ -28,7 +28,7 @@ func (f File) CreateTime() time.Time {
 }
 
 func (f File) GetHash() utils.HashInfo {
-	return utils.HashInfo{}
+	return utils.NewHashInfo(utils.MD5, f.Etag)
 }
 
 func (f File) GetPath() string {

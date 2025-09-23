@@ -337,6 +337,27 @@ func (d *Open115) OfflineList(ctx context.Context) (*sdk.OfflineTaskListResp, er
 	return resp, nil
 }
 
+func (d *Open115) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	userInfo, err := d.client.UserInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	total, err := userInfo.RtSpaceInfo.AllTotal.Size.Int64()
+	if err != nil {
+		return nil, err
+	}
+	free, err := userInfo.RtSpaceInfo.AllRemain.Size.Int64()
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: uint64(total),
+			FreeSpace:  uint64(free),
+		},
+	}, nil
+}
+
 // func (d *Open115) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
 // 	// TODO get archive file meta-info, return errs.NotImplement to use an internal archive tool, optional
 // 	return nil, errs.NotImplement
