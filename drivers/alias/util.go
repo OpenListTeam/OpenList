@@ -34,7 +34,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 		if err != nil {
 			continue
 		}
-		wd, ok := remoteDriver.(driver.WithDetails)
+		_, ok := remoteDriver.(driver.WithDetails)
 		if !ok {
 			continue
 		}
@@ -48,7 +48,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			details, e := wd.GetDetails(ctx)
+			details, e := op.GetStorageDetails(ctx, remoteDriver)
 			if e != nil {
 				if !errors.Is(e, errs.NotImplement) {
 					log.Errorf("failed get %s storage details: %+v", remoteDriver.GetStorage().MountPath, e)
@@ -64,7 +64,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 
 // do others that not defined in Driver interface
 func getPair(path string) (string, string) {
-	//path = strings.TrimSpace(path)
+	// path = strings.TrimSpace(path)
 	if strings.Contains(path, ":") {
 		pair := strings.SplitN(path, ":", 2)
 		if !strings.Contains(pair[0], "/") {
