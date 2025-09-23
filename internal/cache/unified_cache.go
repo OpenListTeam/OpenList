@@ -43,15 +43,23 @@ func (c *UnifiedCache) SetWithTTL(key string, value interface{}, ttl time.Durati
 
 func (c *UnifiedCache) Get(key string) (interface{}, bool) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	entry, exists := c.entries[key]
 	if !exists {
+		c.mu.RUnlock()
 		return nil, false
 	}
 
-	if time.Now().After(entry.expires) {
-		delete(c.entries, key)
+	expired := time.Now().After(entry.expires)
+	c.mu.RUnlock()
+
+	if expired {
+		c.mu.Lock()
+		// Re-check in case another goroutine already deleted or updated it
+		entry, exists := c.entries[key]
+		if exists && time.Now().After(entry.expires) {
+			delete(c.entries, key)
+		}
+		c.mu.Unlock()
 		return nil, false
 	}
 

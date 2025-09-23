@@ -614,7 +614,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 				return err
 			} else {
 				key := Key(storage, stdpath.Join(dstDirPath, file.GetName()))
-				cache.Manager.InvalidateDirectory(storage, stdpath.Dir(key))
+				cache.Manager.InvalidateLink(key)
 			}
 		}
 	}

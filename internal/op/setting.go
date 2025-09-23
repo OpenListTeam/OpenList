@@ -16,9 +16,6 @@ var settingCacheF = func(item *model.SettingItem) {
 }
 
 var settingGroupG singleflight.Group[[]model.SettingItem]
-var settingGroupCacheF = func(key string, item []model.SettingItem) {
-	// group settings cache would need to be added to cache manager if needed?
-}
 
 var settingChangingCallbacks = make([]func(), 0)
 
