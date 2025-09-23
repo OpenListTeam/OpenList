@@ -27,6 +27,14 @@ import (
 
 // do others that not defined in Driver interface
 
+// Google Drive API 字段常量
+const (
+	// 文件列表查询字段
+	FilesListFields = "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken"
+	// 单个文件查询字段
+	FileInfoFields = "id,name,mimeType,size,md5Checksum,sha1Checksum,sha256Checksum"
+)
+
 type googleDriveServiceAccount struct {
 	//Type                    string `json:"type"`
 	//ProjectID               string `json:"project_id"`
@@ -235,7 +243,7 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 		}
 		query := map[string]string{
 			"orderBy":  orderBy,
-			"fields":   "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken",
+			"fields":   FilesListFields,
 			"pageSize": "1000",
 			"q":        fmt.Sprintf("'%s' in parents and trashed = false", id),
 			//"includeItemsFromAllDrives": "true",
@@ -249,9 +257,80 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 			return nil, err
 		}
 		pageToken = resp.NextPageToken
+
+		// 批量处理快捷链接，只对文件快捷方式进行API调用
+		shortcutTargetIds := make([]string, 0)
+		shortcutIndices := make([]int, 0)
+
+		// 收集所有文件快捷方式的目标ID（跳过文件夹快捷方式）
+		for i := range resp.Files {
+			if resp.Files[i].MimeType == "application/vnd.google-apps.shortcut" &&
+				resp.Files[i].ShortcutDetails.TargetId != "" &&
+				resp.Files[i].ShortcutDetails.TargetMimeType != "application/vnd.google-apps.folder" {
+				shortcutTargetIds = append(shortcutTargetIds, resp.Files[i].ShortcutDetails.TargetId)
+				shortcutIndices = append(shortcutIndices, i)
+			}
+		}
+
+		// 批量获取目标文件信息（只对文件快捷方式）
+		if len(shortcutTargetIds) > 0 {
+			targetFiles := d.batchGetTargetFilesInfo(shortcutTargetIds)
+			// 更新快捷方式文件的信息
+			for j, targetId := range shortcutTargetIds {
+				if targetFile, exists := targetFiles[targetId]; exists {
+					fileIndex := shortcutIndices[j]
+					if targetFile.Size != "" {
+						resp.Files[fileIndex].Size = targetFile.Size
+					}
+					if targetFile.MD5Checksum != "" {
+						resp.Files[fileIndex].MD5Checksum = targetFile.MD5Checksum
+					}
+					if targetFile.SHA1Checksum != "" {
+						resp.Files[fileIndex].SHA1Checksum = targetFile.SHA1Checksum
+					}
+					if targetFile.SHA256Checksum != "" {
+						resp.Files[fileIndex].SHA256Checksum = targetFile.SHA256Checksum
+					}
+				}
+			}
+		}
+
 		res = append(res, resp.Files...)
 	}
 	return res, nil
+}
+
+// getTargetFileInfo 获取目标文件的详细信息，用于快捷链接
+func (d *GoogleDrive) getTargetFileInfo(targetId string) (File, error) {
+	var targetFile File
+	url := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s", targetId)
+	query := map[string]string{
+		"fields": FileInfoFields,
+	}
+	_, err := d.request(url, http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(query)
+	}, &targetFile)
+	if err != nil {
+		return File{}, err
+	}
+	return targetFile, nil
+}
+
+// batchGetTargetFilesInfo 批量获取目标文件信息，顺序处理避免并发复杂性
+func (d *GoogleDrive) batchGetTargetFilesInfo(targetIds []string) map[string]File {
+	if len(targetIds) == 0 {
+		return make(map[string]File)
+	}
+
+	result := make(map[string]File)
+	// 顺序处理，避免并发复杂性
+	for _, targetId := range targetIds {
+		file, err := d.getTargetFileInfo(targetId)
+		if err == nil {
+			result[targetId] = file
+		}
+	}
+	return result
 }
 
 func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, url string, up driver.UpdateProgress) error {
