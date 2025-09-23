@@ -157,6 +157,21 @@ func (cm *CacheManager) GetSetting(key string) (*model.SettingItem, bool) {
 	return nil, false
 }
 
+// cache setting groups
+func (cm *CacheManager) SetSettingGroup(key string, settings []model.SettingItem) {
+	cm.settings.Set(key, settings)
+}
+
+// cached setting group
+func (cm *CacheManager) GetSettingGroup(key string) ([]model.SettingItem, bool) {
+	if data, exists := cm.settings.Get(key); exists {
+		if settings, ok := data.([]model.SettingItem); ok {
+			return settings, true
+		}
+	}
+	return nil, false
+}
+
 // clears all caches
 func (cm *CacheManager) ClearAll() {
 	cm.directories.Clear()

@@ -2,6 +2,8 @@ package op
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
@@ -16,6 +18,9 @@ var settingCacheF = func(item *model.SettingItem) {
 }
 
 var settingGroupG singleflight.Group[[]model.SettingItem]
+var settingGroupCacheF = func(key string, items []model.SettingItem) {
+	cache.Manager.SetSettingGroup(key, items)
+}
 
 var settingChangingCallbacks = make([]func(), 0)
 
@@ -49,11 +54,33 @@ func GetSettingsMap() map[string]string {
 }
 
 func GetSettingItems() ([]model.SettingItem, error) {
-	return db.GetSettingItems()
+	if items, exists := cache.Manager.GetSettingGroup("ALL_SETTING_ITEMS"); exists {
+		return items, nil
+	}
+	items, err, _ := settingGroupG.Do("ALL_SETTING_ITEMS", func() ([]model.SettingItem, error) {
+		_items, err := db.GetSettingItems()
+		if err != nil {
+			return nil, err
+		}
+		settingGroupCacheF("ALL_SETTING_ITEMS", _items)
+		return _items, nil
+	})
+	return items, err
 }
 
 func GetPublicSettingItems() ([]model.SettingItem, error) {
-	return db.GetPublicSettingItems()
+	if items, exists := cache.Manager.GetSettingGroup("ALL_PUBLIC_SETTING_ITEMS"); exists {
+		return items, nil
+	}
+	items, err, _ := settingGroupG.Do("ALL_PUBLIC_SETTING_ITEMS", func() ([]model.SettingItem, error) {
+		_items, err := db.GetPublicSettingItems()
+		if err != nil {
+			return nil, err
+		}
+		settingGroupCacheF("ALL_PUBLIC_SETTING_ITEMS", _items)
+		return _items, nil
+	})
+	return items, err
 }
 
 func GetSettingItemByKey(key string) (*model.SettingItem, error) {
@@ -85,11 +112,44 @@ func GetSettingItemInKeys(keys []string) ([]model.SettingItem, error) {
 }
 
 func GetSettingItemsByGroup(group int) ([]model.SettingItem, error) {
-	return db.GetSettingItemsByGroup(group)
+	key := fmt.Sprintf("GROUP_%d", group)
+	if items, exists := cache.Manager.GetSettingGroup(key); exists {
+		return items, nil
+	}
+	items, err, _ := settingGroupG.Do(key, func() ([]model.SettingItem, error) {
+		_items, err := db.GetSettingItemsByGroup(group)
+		if err != nil {
+			return nil, err
+		}
+		settingGroupCacheF(key, _items)
+		return _items, nil
+	})
+	return items, err
 }
 
 func GetSettingItemsInGroups(groups []int) ([]model.SettingItem, error) {
-	return db.GetSettingItemsInGroups(groups)
+	sortedGroups := make([]int, len(groups))
+	copy(sortedGroups, groups)
+	sort.Ints(sortedGroups)
+
+	var keyParts []string
+	for _, g := range sortedGroups {
+		keyParts = append(keyParts, fmt.Sprintf("%d", g))
+	}
+	key := "GROUPS_" + strings.Join(keyParts, "_")
+
+	if items, exists := cache.Manager.GetSettingGroup(key); exists {
+		return items, nil
+	}
+	items, err, _ := settingGroupG.Do(key, func() ([]model.SettingItem, error) {
+		_items, err := db.GetSettingItemsInGroups(groups)
+		if err != nil {
+			return nil, err
+		}
+		settingGroupCacheF(key, _items)
+		return _items, nil
+	})
+	return items, err
 }
 
 func SaveSettingItems(items []model.SettingItem) error {
