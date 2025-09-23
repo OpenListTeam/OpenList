@@ -245,3 +245,7 @@ func DefaultConfig(dataDir string) *Config {
 		LastLaunchedVersion: "",
 	}
 }
+
+func GetPersistentTempDir() string {
+	return filepath.Join(Conf.TempDir, "persistent")
+}

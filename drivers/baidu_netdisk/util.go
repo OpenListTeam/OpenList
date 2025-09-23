@@ -2,6 +2,7 @@ package baidu_netdisk
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -304,6 +305,37 @@ func (d *BaiduNetdisk) create(path string, size int64, isdir int, uploadid, bloc
 		form["block_list"] = block_list
 	}
 	return d.postForm("/xpan/file", params, form, resp)
+}
+
+func (d *BaiduNetdisk) precreate(req *PrecreateReq) (*PrecreateResp, error) {
+	bl, err := json.Marshal(req.BlockList)
+	if err != nil {
+		log.Errorf("json.Marshal error: %v", err)
+		return nil, err
+	}
+	b := map[string]string{
+		"path":        req.Path,
+		"size":        strconv.Itoa(int(req.Size)),
+		"isdir":       strconv.Itoa(req.Isdir),
+		"autoinit":    strconv.Itoa(req.Autoinit),
+		"rtype":       strconv.Itoa(req.Rtype),
+		"block_list":  string(bl),
+		"content-md5": req.ContentMd5,
+		"slice-md5":   req.SliceMd5,
+	}
+
+	res := &PrecreateResp{}
+	r, err := d.request("https://pan.baidu.com/rest/2.0/xpan/file", http.MethodPost, func(rt *resty.Request) {
+		rt.SetQueryParam("method", "precreate").
+			SetFormData(b)
+
+	}, res)
+	if err != nil {
+		log.Errorf("baidu_netdisk precreate error: %s, %v", string(r), err)
+		return nil, err
+	}
+	return res, nil
+
 }
 
 func joinTime(form map[string]string, ctime, mtime int64) {

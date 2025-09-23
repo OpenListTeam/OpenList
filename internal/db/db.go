@@ -5,6 +5,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/model/tables"
 	"gorm.io/gorm"
 )
 
@@ -12,9 +13,13 @@ var db *gorm.DB
 
 func Init(d *gorm.DB) {
 	db = d
-	err := AutoMigrate(new(model.Storage), new(model.User), new(model.Meta), new(model.SettingItem), new(model.SearchNode), new(model.TaskItem), new(model.SSHPublicKey), new(model.SharingDB))
+	err := AutoMigrate(new(model.Storage), new(model.User), new(model.Meta), new(model.SettingItem), new(model.SearchNode), new(model.TaskItem), new(model.SSHPublicKey), new(model.SharingDB), new(tables.SliceUpload))
 	if err != nil {
 		log.Fatalf("failed migrate database: %s", err.Error())
+	}
+
+	if err := CleanupOrphanedSliceUploads(); err != nil {
+		log.Errorf("Failed to cleanup orphaned slice uploads: %v", err)
 	}
 }
 

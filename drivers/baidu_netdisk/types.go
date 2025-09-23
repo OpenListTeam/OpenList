@@ -190,6 +190,52 @@ type PrecreateResp struct {
 	File File `json:"info"`
 }
 
+// PrecreateReq  预上传请求
+type PrecreateReq struct {
+	Path       string   `json:"path"`                  // 上传后使用的文件绝对路径（需urlencode）
+	Size       int64    `json:"size"`                  // 文件或目录大小，单位B
+	Isdir      int      `json:"isdir"`                 // 是否为目录，0 文件，1 目录
+	BlockList  []string `json:"block_list"`            // 文件各分片MD5数组的json串
+	Autoinit   int      `json:"autoinit"`              // 固定值1
+	Rtype      int      `json:"rtype,omitempty"`       // 文件命名策略，非必填
+	Uploadid   string   `json:"uploadid,omitempty"`    // 上传ID，非必填
+	ContentMd5 string   `json:"content-md5,omitempty"` // 文件MD5，非必填
+	SliceMd5   string   `json:"slice-md5,omitempty"`   // 文件校验段的MD5，非必填
+	LocalCtime string   `json:"local_ctime,omitempty"` // 客户端创建时间，非必填
+	LocalMtime string   `json:"local_mtime,omitempty"` // 客户端修改时间，非必填
+}
+
+// SliceupCompleteReq  分片上传完成请求
+type SliceUpCompleteReq struct {
+	Path       string   `json:"path"`                  // 上传后使用的文件绝对路径（需urlencode），与预上传precreate接口中的path保持一致
+	Size       int64    `json:"size"`                  // 文件或目录的大小，必须与实际大小一致
+	Isdir      int      `json:"isdir"`                 // 是否目录，0 文件、1 目录，与预上传precreate接口中的isdir保持一致
+	BlockList  []string `json:"block_list"`            // 文件各分片md5数组的json串，与预上传precreate接口中的block_list保持一致
+	Uploadid   string   `json:"uploadid"`              // 预上传precreate接口下发的uploadid
+	Rtype      int      `json:"rtype,omitempty"`       // 文件命名策略，默认0
+	LocalCtime int64    `json:"local_ctime,omitempty"` // 客户端创建时间(精确到秒)，默认为当前时间戳
+	LocalMtime int64    `json:"local_mtime,omitempty"` // 客户端修改时间(精确到秒)，默认为当前时间戳
+	ZipQuality int      `json:"zip_quality,omitempty"` // 图片压缩程度，有效值50、70、100（带此参数时，zip_sign 参数需要一并带上）
+	ZipSign    string   `json:"zip_sign,omitempty"`    // 未压缩原始图片文件真实md5（带此参数时，zip_quality 参数需要一并带上）
+	IsRevision int      `json:"is_revision,omitempty"` // 是否需要多版本支持，1为支持，0为不支持，默认为0
+	Mode       int      `json:"mode,omitempty"`        // 上传方式，1手动、2批量上传、3文件自动备份、4相册自动备份、5视频自动备份
+	ExifInfo   string   `json:"exif_info,omitempty"`   // exif信息，json字符串，orientation、width、height、recovery为必传字段
+}
+
+// SliceUpCompleteResp  分片上传完成响应
+type SliceUpCompleteResp struct {
+	Errno          int    `json:"errno"`           // 错误码
+	FsID           uint64 `json:"fs_id"`           // 文件在云端的唯一标识ID
+	Md5            string `json:"md5,omitempty"`   // 文件的MD5，只有提交文件时才返回，提交目录时没有该值
+	ServerFilename string `json:"server_filename"` // 文件名
+	Category       int    `json:"category"`        // 分类类型, 1 视频 2 音频 3 图片 4 文档 5 应用 6 其他 7 种子
+	Path           string `json:"path"`            // 上传后使用的文件绝对路径
+	Size           uint64 `json:"size"`            // 文件大小，单位B
+	Ctime          uint64 `json:"ctime"`           // 文件创建时间
+	Mtime          uint64 `json:"mtime"`           // 文件修改时间
+	Isdir          int    `json:"isdir"`           // 是否目录，0 文件、1 目录
+}
+
 type QuotaResp struct {
 	Errno     int    `json:"errno"`
 	RequestId int64  `json:"request_id"`

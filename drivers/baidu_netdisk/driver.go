@@ -4,12 +4,16 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
 	stdpath "path"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -17,6 +21,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/model/reqres"
+	"github.com/OpenListTeam/OpenList/v4/internal/model/tables"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/avast/retry-go"
@@ -37,6 +43,14 @@ func (d *BaiduNetdisk) Config() driver.Config {
 
 func (d *BaiduNetdisk) GetAddition() driver.Additional {
 	return &d.Addition
+}
+
+func (d *BaiduNetdisk) GetUploadInfo() *model.UploadInfo {
+	return &model.UploadInfo{
+		SliceHashNeed:    true,
+		HashMd5Need:      true,
+		HashMd5256KBNeed: true,
+	}
 }
 
 func (d *BaiduNetdisk) Init(ctx context.Context) error {
@@ -361,6 +375,88 @@ func (d *BaiduNetdisk) uploadSlice(ctx context.Context, params map[string]string
 	if errCode != 0 || errNo != 0 {
 		return errs.NewErr(errs.StreamIncomplete, "error in uploading to baidu, will retry. response=%s", res.String())
 	}
+	return nil
+}
+
+// SliceUpload 上传分片
+func (d *BaiduNetdisk) SliceUpload(ctx context.Context, req *tables.SliceUpload, sliceno uint, fd io.Reader) error {
+	fp := filepath.Join(req.DstPath, req.Name)
+	if sliceno == 0 { //第一个分片需要先执行预上传
+		rtype := 1
+		if req.Overwrite {
+			rtype = 3
+		}
+		precreateResp, err := d.precreate(&PrecreateReq{
+			Path:       fp,
+			Size:       req.Size,
+			Isdir:      0,
+			BlockList:  strings.Split(req.SliceHash, ","),
+			Autoinit:   1,
+			Rtype:      rtype,
+			ContentMd5: req.HashMd5,
+			SliceMd5:   req.HashMd5256KB,
+		})
+		if err != nil {
+			return fmt.Errorf("precreate failed: %w", err)
+		}
+		if precreateResp == nil {
+			return fmt.Errorf("precreate returned nil response")
+		}
+		req.PreupID = precreateResp.Uploadid
+	}
+	
+	if req.PreupID == "" {
+		return fmt.Errorf("preupload ID is empty for slice %d", sliceno)
+	}
+	
+	err := d.uploadSlice(ctx, map[string]string{
+		"method":       "upload",
+		"access_token": d.AccessToken,
+		"type":         "tmpfile",
+		"path":         fp,
+		"uploadid":     req.PreupID,
+		"partseq":      strconv.Itoa(int(sliceno)),
+	}, req.Name, fd)
+	
+	if err != nil {
+		return fmt.Errorf("upload slice %d failed: %w", sliceno, err)
+	}
+	return nil
+}
+
+// Preup 预上传(自定以接口，为了适配自定义的分片上传)
+func (d *BaiduNetdisk) Preup(ctx context.Context, srcobj model.Obj, req *reqres.PreupReq) (*model.PreupInfo, error) {
+	return &model.PreupInfo{
+		SliceSize: d.getSliceSize(req.Size),
+	}, nil
+}
+
+// UploadSliceComplete 分片上传完成
+func (d *BaiduNetdisk) UploadSliceComplete(ctx context.Context, su *tables.SliceUpload) error {
+	fp := filepath.Join(su.DstPath, su.Name)
+	rsp := &SliceUpCompleteResp{}
+	t := time.Now().Unix()
+	
+	sliceHashList := strings.Split(su.SliceHash, ",")
+	if len(sliceHashList) == 0 {
+		return fmt.Errorf("slice hash list is empty")
+	}
+	
+	sh, err := json.Marshal(sliceHashList)
+	if err != nil {
+		return fmt.Errorf("failed to marshal slice hash: %w", err)
+	}
+	
+	b, err := d.create(fp, int64(su.Size), 0, su.PreupID, string(sh), rsp, t, t)
+	if err != nil {
+		log.Errorf("create file failed: %v, response: %v, body: %s", err, rsp, string(b))
+		return fmt.Errorf("create file failed: %w", err)
+	}
+	
+	if rsp.Errno != 0 {
+		return fmt.Errorf("baidu response error: errno=%d", rsp.Errno)
+	}
+	
 	return nil
 }
 

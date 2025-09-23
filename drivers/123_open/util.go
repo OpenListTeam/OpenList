@@ -21,18 +21,19 @@ import (
 var ( //不同情况下获取的AccessTokenQPS限制不同 如下模块化易于拓展
 	Api = "https://open-api.123pan.com"
 
-	AccessToken    = InitApiInfo(Api+"/api/v1/access_token", 1)
-	RefreshToken   = InitApiInfo(Api+"/api/v1/oauth2/access_token", 1)
-	UserInfo       = InitApiInfo(Api+"/api/v1/user/info", 1)
-	FileList       = InitApiInfo(Api+"/api/v2/file/list", 3)
-	DownloadInfo   = InitApiInfo(Api+"/api/v1/file/download_info", 5)
-	DirectLink     = InitApiInfo(Api+"/api/v1/direct-link/url", 5)
-	Mkdir          = InitApiInfo(Api+"/upload/v1/file/mkdir", 2)
-	Move           = InitApiInfo(Api+"/api/v1/file/move", 1)
-	Rename         = InitApiInfo(Api+"/api/v1/file/name", 1)
-	Trash          = InitApiInfo(Api+"/api/v1/file/trash", 2)
-	UploadCreate   = InitApiInfo(Api+"/upload/v2/file/create", 2)
-	UploadComplete = InitApiInfo(Api+"/upload/v2/file/upload_complete", 0)
+	AccessToken      = InitApiInfo(Api+"/api/v1/access_token", 1)
+	RefreshToken     = InitApiInfo(Api+"/api/v1/oauth2/access_token", 1)
+	UserInfo         = InitApiInfo(Api+"/api/v1/user/info", 1)
+	FileList         = InitApiInfo(Api+"/api/v2/file/list", 3)
+	DownloadInfo     = InitApiInfo(Api+"/api/v1/file/download_info", 5)
+	DirectLink       = InitApiInfo(Api+"/api/v1/direct-link/url", 5)
+	Mkdir            = InitApiInfo(Api+"/upload/v1/file/mkdir", 2)
+	Move             = InitApiInfo(Api+"/api/v1/file/move", 1)
+	Rename           = InitApiInfo(Api+"/api/v1/file/name", 1)
+	Trash            = InitApiInfo(Api+"/api/v1/file/trash", 2)
+	UploadCreate     = InitApiInfo(Api+"/upload/v2/file/create", 2)
+	UploadComplete   = InitApiInfo(Api+"/upload/v2/file/upload_complete", 0)
+	UploadFileDomain = InitApiInfo(Api+"/upload/v2/file/domain", 0)
 )
 
 func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
@@ -78,7 +79,10 @@ func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCall
 		} else if baseResp.Code == 429 {
 			time.Sleep(500 * time.Millisecond)
 			log.Warningf("API: %s, QPS: %d, 请求太频繁，对应API提示过多请减小QPS", apiInfo.url, apiInfo.qps)
+		} else if baseResp.Code == 20103 { //code: 20103, error: 文件正在校验中,请间隔1秒后再试
+			time.Sleep(2 * time.Second)
 		} else {
+			log.Errorf("API: %s, body:%s, code: %d, error: %s", apiInfo.url, res.Body(), baseResp.Code, baseResp.Message)
 			return nil, errors.New(baseResp.Message)
 		}
 	}

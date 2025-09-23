@@ -2,8 +2,11 @@ package driver
 
 import (
 	"context"
+	"io"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/model/reqres"
+	"github.com/OpenListTeam/OpenList/v4/internal/model/tables"
 )
 
 type Driver interface {
@@ -79,6 +82,22 @@ type Copy interface {
 
 type Remove interface {
 	Remove(ctx context.Context, obj model.Obj) error
+}
+
+type IUploadInfo interface {
+	GetUploadInfo() *model.UploadInfo
+}
+
+type IPreup interface {
+	Preup(ctx context.Context, srcobj model.Obj, req *reqres.PreupReq) (*model.PreupInfo, error)
+}
+
+type ISliceUpload interface {
+	SliceUpload(ctx context.Context, req *tables.SliceUpload, sliceno uint, file io.Reader) error
+}
+
+type IUploadSliceComplete interface {
+	UploadSliceComplete(ctx context.Context, req *tables.SliceUpload) error
 }
 
 type Put interface {

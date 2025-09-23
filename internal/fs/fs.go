@@ -9,6 +9,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/model/reqres"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/pkg/errors"
@@ -189,4 +190,16 @@ func PutURL(ctx context.Context, path, dstName, urlStr string) error {
 		return errs.NotImplement
 	}
 	return op.PutURL(ctx, storage, dstDirActualPath, dstName, urlStr)
+}
+
+func Preup(c context.Context, s driver.Driver, actualPath string, req *reqres.PreupReq) (*reqres.PreupResp, error) {
+	return globalSliceManager.CreateSession(c, s, actualPath, req)
+}
+
+func UploadSlice(ctx context.Context, storage driver.Driver, req *reqres.UploadSliceReq, reader io.Reader) error {
+	return globalSliceManager.UploadSlice(ctx, storage, req, reader)
+}
+
+func SliceUpComplete(ctx context.Context, storage driver.Driver, taskID string) (*reqres.UploadSliceCompleteResp, error) {
+	return globalSliceManager.CompleteUpload(ctx, storage, taskID)
 }
