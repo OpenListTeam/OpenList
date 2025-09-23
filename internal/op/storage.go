@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
@@ -407,7 +408,7 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 	return files
 }
 
-var balanceMap generic_sync.MapOf[string, int]
+var balanceMap generic_sync.MapOf[string, *int64]
 
 // GetBalancedStorage get storage by path
 func GetBalancedStorage(path string) driver.Driver {
@@ -421,9 +422,8 @@ func GetBalancedStorage(path string) driver.Driver {
 		return storages[0]
 	default:
 		virtualPath := utils.GetActualMountPath(storages[0].GetStorage().MountPath)
-		i, _ := balanceMap.LoadOrStore(virtualPath, 0)
-		i = (i + 1) % storageNum
-		balanceMap.Store(virtualPath, i)
+		p, _ := balanceMap.LoadOrStore(virtualPath, new(int64))
+		i := int(atomic.AddInt64(p, 1) % int64(storageNum))
 		return storages[i]
 	}
 }
