@@ -12,10 +12,7 @@ Date: 2025-09-21
 */
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -405,7 +402,7 @@ func (d *Mediafire) uploadCheck(ctx context.Context, filename string, filesize i
 	return &resp, nil
 }
 
-func (d *Mediafire) resumableUpload(ctx context.Context, folderKey, uploadKey string, unitData []byte, unitID int, fileHash, filename string, totalFileSize int64) (string, error) {
+func (d *Mediafire) resumableUpload(ctx context.Context, folderKey, uploadKey string, unitData io.ReadSeeker, unitID int, fileHash, filename string, totalFileSize, unitSize int64) (string, error) {
 	actionToken, err := d.getActionToken(ctx)
 	if err != nil {
 		return "", err
@@ -417,11 +414,16 @@ func (d *Mediafire) resumableUpload(ctx context.Context, folderKey, uploadKey st
 	}
 
 	url := d.apiBase + "/upload/resumable.php"
-	reader := driver.NewLimitedUploadStream(ctx, bytes.NewReader(unitData))
+	reader := driver.NewLimitedUploadStream(ctx, unitData)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reader)
 	if err != nil {
 		return "", err
 	}
+	unitHash, err := utils.HashReader(utils.SHA256, reader)
+	if err != nil {
+		return "", err
+	}
+	unitData.Seek(0, io.SeekStart)
 
 	q := req.URL.Query()
 	q.Add("folder_key", folderKey)
@@ -433,13 +435,11 @@ func (d *Mediafire) resumableUpload(ctx context.Context, folderKey, uploadKey st
 	req.Header.Set("x-filehash", fileHash)
 	req.Header.Set("x-filesize", strconv.FormatInt(totalFileSize, 10))
 	req.Header.Set("x-unit-id", strconv.Itoa(unitID))
-	req.Header.Set("x-unit-size", strconv.FormatInt(int64(len(unitData)), 10))
-	h := sha256.New()
-	h.Write(unitData)
-	req.Header.Set("x-unit-hash", hex.EncodeToString(h.Sum(nil)))
+	req.Header.Set("x-unit-size", strconv.FormatInt(unitSize, 10))
+	req.Header.Set("x-unit-hash", unitHash)
 	req.Header.Set("x-filename", filename)
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.ContentLength = int64(len(unitData))
+	req.ContentLength = unitSize
 
 	/* fmt.Printf("Debug resumable upload request:\n")
 	fmt.Printf("  URL: %s\n", req.URL.String())
@@ -515,25 +515,16 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 		if err != nil {
 			return "", err
 		}
-		buf := make([]byte, size)
-		n, err := io.ReadFull(section, buf)
-		if err == nil && int64(n) != size {
-			err = fmt.Errorf("failed to read all data: (expect =%d, actual =%d)", size, n)
-		}
-		if err != nil {
-			return "", fmt.Errorf("failed to skip uploaded unit: %w", err)
+
+		if !d.isUnitUploaded(intWords, unitID) {
+			uploadKeyResult, err := d.resumableUpload(ctx, folderKey, uploadKey, section, unitID, fileHash, filename, file.GetSize(), size)
+			ss.FreeSectionReader(section)
+			if err != nil {
+				return "", err
+			}
+			finalUploadKey = uploadKeyResult
 		}
 
-		if d.isUnitUploaded(intWords, unitID) {
-			continue
-		}
-
-		uploadKeyResult, err := d.resumableUpload(ctx, folderKey, uploadKey, buf, unitID, fileHash, filename, file.GetSize())
-		if err != nil {
-			return "", err
-		}
-
-		finalUploadKey = uploadKeyResult
 	}
 
 	return finalUploadKey, nil
