@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -58,6 +59,7 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 	if err != nil {
 		return err
 	}
+	req.Header.Set("User-Agent", base.UserAgent)
 	if streamPut {
 		req.Header.Set("Range", "bytes=0-")
 	}
