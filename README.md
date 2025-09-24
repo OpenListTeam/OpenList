@@ -65,6 +65,7 @@ Thank you for your support and understanding of the OpenList project.
   - [x] [WebDAV](https://en.wikipedia.org/wiki/WebDAV)
   - [x] Teambition([China](https://www.teambition.com), [International](https://us.teambition.com))
   - [x] [Mediatrack](https://www.mediatrack.cn)
+  - [x] [MediaFire](https://www.mediafire.com)
   - [x] [139yun](https://yun.139.com) (Personal, Family, Group)
   - [x] [YandexDisk](https://disk.yandex.com)
   - [x] [BaiduNetdisk](http://pan.baidu.com)
@@ -93,7 +94,6 @@ Thank you for your support and understanding of the OpenList project.
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [Weiyun](https://www.weiyun.com)
-
 - [x] Easy to deploy and out-of-the-box
 - [x] File preview (PDF, markdown, code, plain text, ...)
 - [x] Image preview in gallery mode
