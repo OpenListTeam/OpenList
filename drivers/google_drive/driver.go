@@ -167,4 +167,36 @@ func (d *GoogleDrive) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 	return err
 }
 
+func (d *GoogleDrive) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if d.DisableDiskUsage {
+		return nil, errs.NotImplement
+	}
+	about, err := d.getAbout()
+	if err != nil {
+		return nil, err
+	}
+	var total, free uint64
+	if about.StorageQuota.Limit == nil {
+		total = 0
+	} else {
+		var totalSigned int
+		totalSigned, err = strconv.Atoi(*about.StorageQuota.Limit)
+		if err != nil {
+			return nil, err
+		}
+		total = uint64(totalSigned)
+	}
+	usedSigned, err := strconv.Atoi(about.StorageQuota.Usage)
+	if err != nil {
+		return nil, err
+	}
+	free = total - uint64(usedSigned)
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  free,
+		},
+	}, nil
+}
+
 var _ driver.Driver = (*GoogleDrive)(nil)
