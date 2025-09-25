@@ -71,7 +71,8 @@ require (
 	golang.org/x/net v0.42.0
 	golang.org/x/oauth2 v0.30.0
 	golang.org/x/time v0.12.0
-	google.golang.org/appengine v1.6.8
+	google.golang.org/appengine v1.6.7
+	google.golang.org/appengine/v2 v2.0.6
 	gopkg.in/ldap.v3 v3.1.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/driver/postgres v1.5.9
@@ -256,7 +257,7 @@ require (
 	go.etcd.io/bbolt v1.4.0 // indirect
 	golang.org/x/arch v0.18.0 // indirect
 	golang.org/x/sync v0.16.0
-	golang.org/x/sys v0.34.0 // indirect
+	golang.org/x/sys v0.34.0
 	golang.org/x/term v0.33.0 // indirect
 	golang.org/x/text v0.27.0
 	golang.org/x/tools v0.34.0 // indirect
