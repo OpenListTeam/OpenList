@@ -122,3 +122,14 @@ type S3PreSignedURLs struct {
 		PreSignedUrls map[string]string `json:"presignedUrls"`
 	} `json:"data"`
 }
+
+type UserInfoResp struct {
+	Data struct {
+		Uid            int64  `json:"UID"`
+		Nickname       string `json:"Nickname"`
+		SpaceUsed      uint64 `json:"SpaceUsed"`
+		SpacePermanent uint64 `json:"SpacePermanent"`
+		SpaceTemp      uint64 `json:"SpaceTemp"`
+		FileCount      int    `json:"FileCount"`
+	} `json:"data"`
+}

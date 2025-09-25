@@ -245,4 +245,17 @@ func (d *Pan115) DeleteOfflineTasks(ctx context.Context, hashes []string, delete
 	return d.client.DeleteOfflineTasks(hashes, deleteFiles)
 }
 
+func (d *Pan115) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	info, err := d.client.GetInfo()
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: uint64(info.SpaceInfo.AllTotal.Size),
+			FreeSpace:  uint64(info.SpaceInfo.AllRemain.Size),
+		},
+	}, nil
+}
+
 var _ driver.Driver = (*Pan115)(nil)

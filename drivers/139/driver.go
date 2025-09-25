@@ -834,4 +834,48 @@ func (d *Yun139) Other(ctx context.Context, args model.OtherArgs) (interface{}, 
 	}
 }
 
+func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if d.UserDomainID == "" {
+		return nil, errs.NotImplement
+	}
+	var total, free uint64
+	if d.isFamily() {
+		diskInfo, err := d.getFamilyDiskInfo()
+		if err != nil {
+			return nil, err
+		}
+		totalMb, err := strconv.Atoi(diskInfo.Data.DiskSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
+		}
+		usedMb, err := strconv.Atoi(diskInfo.Data.UsedSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed convert used size into integer: %+v", err)
+		}
+		total = uint64(totalMb) * 1024 * 1024
+		free = total - (uint64(usedMb) * 1024 * 1024)
+	} else {
+		diskInfo, err := d.getPersonalDiskInfo()
+		if err != nil {
+			return nil, err
+		}
+		totalMb, err := strconv.Atoi(diskInfo.Data.DiskSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
+		}
+		freeMb, err := strconv.Atoi(diskInfo.Data.FreeDiskSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed convert free size into integer: %+v", err)
+		}
+		total = uint64(totalMb) * 1024 * 1024
+		free = uint64(freeMb) * 1024 * 1024
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  free,
+		},
+	}, nil
+}
+
 var _ driver.Driver = (*Yun139)(nil)

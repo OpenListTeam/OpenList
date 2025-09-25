@@ -72,3 +72,15 @@ type Files struct {
 	Value    []File `json:"value"`
 	NextLink string `json:"@odata.nextLink"`
 }
+
+type DriveResp struct {
+	ID        string `json:"id"`
+	DriveType string `json:"driveType"`
+	Quota     struct {
+		Deleted   uint64 `json:"deleted"`
+		Remaining uint64 `json:"remaining"`
+		State     string `json:"state"`
+		Total     uint64 `json:"total"`
+		Used      uint64 `json:"used"`
+	} `json:"quota"`
+}

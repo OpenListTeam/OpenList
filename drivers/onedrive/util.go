@@ -295,3 +295,19 @@ func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.Fil
 	}
 	return nil
 }
+
+func (d *Onedrive) getDrive() (*DriveResp, error) {
+	var api string
+	host, _ := onedriveHostMap[d.Region]
+	if d.IsSharepoint {
+		api = fmt.Sprintf("%s/v1.0/sites/%s/drive", host.Api, d.SiteId)
+	} else {
+		api = fmt.Sprintf("%s/v1.0/me/drive", host.Api)
+	}
+	var resp DriveResp
+	_, err := d.Request(api, http.MethodGet, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

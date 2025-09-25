@@ -107,8 +107,7 @@ func (d *Yun139) refreshToken() error {
 	return nil
 }
 
-func (d *Yun139) request(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	url := "https://yun.139.com" + pathname
+func (d *Yun139) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	req := base.RestyClient.R()
 	randStr := random.String(16)
 	ts := time.Now().Format("2006-01-02 15:04:05")
@@ -219,7 +218,7 @@ func (d *Yun139) requestRoute(data interface{}, resp interface{}) ([]byte, error
 }
 
 func (d *Yun139) post(pathname string, data interface{}, resp interface{}) ([]byte, error) {
-	return d.request(pathname, http.MethodPost, func(req *resty.Request) {
+	return d.request("https://yun.139.com"+pathname, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
 	}, resp)
 }
@@ -669,4 +668,32 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 		}
 	}
 	return nil
+}
+
+func (d *Yun139) getPersonalDiskInfo() (*PersonalDiskInfoResp, error) {
+	data := map[string]interface{}{
+		"userDomainId": d.UserDomainID,
+	}
+	var resp PersonalDiskInfoResp
+	_, err := d.request("https://user-njs.yun.139.com/user/disk/getPersonalDiskInfo", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (d *Yun139) getFamilyDiskInfo() (*FamilyDiskInfoResp, error) {
+	data := map[string]interface{}{
+		"userDomainId": d.UserDomainID,
+	}
+	var resp FamilyDiskInfoResp
+	_, err := d.request("https://user-njs.yun.139.com/user/disk/getFamilyDiskInfo", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

@@ -628,3 +628,13 @@ func (y *Cloud189TV) WaitBatchTask(aType string, taskID string, t time.Duration)
 		time.Sleep(t)
 	}
 }
+
+func (y *Cloud189TV) getCapacityInfo() (*CapacityResp, error) {
+	fullUrl := ApiUrl + "/portal/getUserSizeInfo.action"
+	var resp CapacityResp
+	_, err := y.get(fullUrl, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

@@ -280,3 +280,24 @@ func (y *Cloud189TV) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	return y.OldUpload(ctx, dstDir, stream, up, isFamily, overwrite)
 
 }
+
+func (y *Cloud189TV) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	capacityInfo, err := y.getCapacityInfo()
+	if err != nil {
+		return nil, err
+	}
+	var total, free uint64
+	if y.isFamily() {
+		total = capacityInfo.FamilyCapacityInfo.TotalSize
+		free = capacityInfo.FamilyCapacityInfo.FreeSize
+	} else {
+		total = capacityInfo.CloudCapacityInfo.TotalSize
+		free = capacityInfo.CloudCapacityInfo.FreeSize
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  free,
+		},
+	}, nil
+}

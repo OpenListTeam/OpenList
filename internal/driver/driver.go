@@ -9,8 +9,8 @@ import (
 type Driver interface {
 	Meta
 	Reader
-	//Writer
-	//Other
+	// Writer
+	// Other
 }
 
 type Meta interface {

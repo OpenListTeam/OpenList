@@ -123,7 +123,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	path := dir.GetPath()
 	if utils.PathEqual(path, "/") && !d.autoFlatten {
-		return d.listRoot(), nil
+		return d.listRoot(ctx, args.WithStorageDetails && d.DetailsPassThrough), nil
 	}
 	root, sub := d.getRootAndPath(path)
 	dsts, ok := d.pathMap[root]
@@ -131,9 +131,12 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		return nil, errs.ObjectNotFound
 	}
 	var objs []model.Obj
-	fsArgs := &fs.ListArgs{NoLog: true, Refresh: args.Refresh}
 	for _, dst := range dsts {
-		tmp, err := fs.List(ctx, stdpath.Join(dst, sub), fsArgs)
+		tmp, err := fs.List(ctx, stdpath.Join(dst, sub), &fs.ListArgs{
+			NoLog:              true,
+			Refresh:            args.Refresh,
+			WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
+		})
 		if err == nil {
 			tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
 				thumb, ok := model.GetThumb(obj)

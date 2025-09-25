@@ -616,7 +616,7 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 	if y.ref != nil {
 		return y.ref.refreshTokenWithRetry(retryCount)
 	}
-	
+
 	// 限制重试次数，避免无限递归
 	if retryCount >= 3 {
 		if y.Addition.RefreshToken != "" {
@@ -625,7 +625,7 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 		}
 		return errors.New("refresh token failed after maximum retries")
 	}
-	
+
 	var erron RespErr
 	var tokenInfo AppSessionResp
 	_, err = y.client.R().
@@ -1472,4 +1472,14 @@ func (y *Cloud189PC) getClient() *resty.Client {
 		return y.ref.getClient()
 	}
 	return y.client
+}
+
+func (y *Cloud189PC) getCapacityInfo() (*CapacityResp, error) {
+	fullUrl := API_URL + "/portal/getUserSizeInfo.action"
+	var resp CapacityResp
+	_, err := y.get(fullUrl, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

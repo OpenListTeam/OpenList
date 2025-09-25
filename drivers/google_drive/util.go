@@ -315,3 +315,17 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 	}
 	return nil
 }
+
+func (d *GoogleDrive) getAbout() (*AboutResp, error) {
+	query := map[string]string{
+		"fields": "storageQuota",
+	}
+	var resp AboutResp
+	_, err := d.request("https://www.googleapis.com/drive/v3/about", http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(query)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

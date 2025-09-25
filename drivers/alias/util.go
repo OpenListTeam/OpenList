@@ -2,8 +2,10 @@ package alias
 
 import (
 	"context"
+	"errors"
 	stdpath "path"
 	"strings"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -11,24 +13,58 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	log "github.com/sirupsen/logrus"
 )
 
-func (d *Alias) listRoot() []model.Obj {
+func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 	var objs []model.Obj
-	for k := range d.pathMap {
+	var wg sync.WaitGroup
+	for k, v := range d.pathMap {
 		obj := model.Object{
 			Name:     k,
 			IsFolder: true,
 			Modified: d.Modified,
 		}
+		idx := len(objs)
 		objs = append(objs, &obj)
+		if !withDetails || len(v) != 1 {
+			continue
+		}
+		remoteDriver, err := op.GetStorageByMountPath(v[0])
+		if err != nil {
+			continue
+		}
+		_, ok := remoteDriver.(driver.WithDetails)
+		if !ok {
+			continue
+		}
+		objs[idx] = &model.ObjStorageDetails{
+			Obj: objs[idx],
+			StorageDetailsWithName: model.StorageDetailsWithName{
+				StorageDetails: nil,
+				DriverName:     remoteDriver.Config().Name,
+			},
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			details, e := op.GetStorageDetails(ctx, remoteDriver)
+			if e != nil {
+				if !errors.Is(e, errs.NotImplement) {
+					log.Errorf("failed get %s storage details: %+v", remoteDriver.GetStorage().MountPath, e)
+				}
+				return
+			}
+			objs[idx].(*model.ObjStorageDetails).StorageDetails = details
+		}()
 	}
+	wg.Wait()
 	return objs
 }
 
 // do others that not defined in Driver interface
 func getPair(path string) (string, string) {
-	//path = strings.TrimSpace(path)
+	// path = strings.TrimSpace(path)
 	if strings.Contains(path, ":") {
 		pair := strings.SplitN(path, ":", 2)
 		if !strings.Contains(pair[0], "/") {
