@@ -402,6 +402,21 @@ func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 	}, nil
 }
 
+func (d *ILanZou) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	res, err := d.proved("/user/account/map", http.MethodGet, nil)
+	if err != nil {
+		return nil, err
+	}
+	total := utils.Json.Get(res, "map", "totalSize").ToUint64() * 1024
+	used := utils.Json.Get(res, "map", "usedSize").ToUint64() * 1024
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  total - used,
+		},
+	}, nil
+}
+
 //func (d *ILanZou) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}
