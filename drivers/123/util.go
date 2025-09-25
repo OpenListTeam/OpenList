@@ -282,3 +282,12 @@ func (d *Pan123) getFiles(ctx context.Context, parentId string, name string) ([]
 	}
 	return res, nil
 }
+
+func (d *Pan123) getUserInfo() (*UserInfoResp, error) {
+	var resp UserInfoResp
+	_, err := d.Request(UserInfo, http.MethodGet, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

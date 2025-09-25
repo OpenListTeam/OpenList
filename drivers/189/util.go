@@ -395,3 +395,12 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 	}, nil)
 	return err
 }
+
+func (d *Cloud189) getCapacityInfo() (*CapacityResp, error) {
+	var resp CapacityResp
+	_, err := d.request("https://cloud.189.cn/api/portal/getUserSizeInfo.action", http.MethodGet, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
