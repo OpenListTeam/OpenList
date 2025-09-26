@@ -64,6 +64,7 @@ Thank you for your support and understanding of the OpenList project.
   - [x] [UPYUN Storage Service](https://www.upyun.com/products/file-storage)
   - [x] [WebDAV](https://en.wikipedia.org/wiki/WebDAV)
   - [x] Teambition([China](https://www.teambition.com), [International](https://us.teambition.com))
+  - [x] [MediaFire](https://www.mediafire.com)
   - [x] [Mediatrack](https://www.mediatrack.cn)
   - [x] [139yun](https://yun.139.com) (Personal, Family, Group)
   - [x] [YandexDisk](https://disk.yandex.com)
@@ -93,7 +94,6 @@ Thank you for your support and understanding of the OpenList project.
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [Weiyun](https://www.weiyun.com)
-
 - [x] Easy to deploy and out-of-the-box
 - [x] File preview (PDF, markdown, code, plain text, ...)
 - [x] Image preview in gallery mode
