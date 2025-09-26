@@ -130,6 +130,7 @@ type Config struct {
 	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
 	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
 	LastLaunchedVersion   string      `json:"last_launched_version"`
+	ProxyAddress          string      `json:"proxy_address"`
 }
 
 func DefaultConfig(dataDir string) *Config {
