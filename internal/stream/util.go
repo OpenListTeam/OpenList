@@ -201,6 +201,21 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 }
 
 // 线程不安全
+func (ss *StreamSectionReader) DiscardSection(off int64, length int64) error {
+	if ss.file.GetFile() == nil {
+		if off != ss.off {
+			return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.off)
+		}
+		_, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
+		if err != nil {
+			return fmt.Errorf("failed to skip data: (expect =%d) %w", length, err)
+		}
+	}
+	ss.off += length
+	return nil
+}
+
+// 线程不安全
 func (ss *StreamSectionReader) GetSectionReader(off, length int64) (*SectionReader, error) {
 	var cache io.ReaderAt = ss.file.GetFile()
 	var buf []byte

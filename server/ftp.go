@@ -32,6 +32,7 @@ type FtpMainDriver struct {
 }
 
 func NewMainDriver() (*FtpMainDriver, error) {
+	ftp.InitStage()
 	transferType := ftpserver.TransferTypeASCII
 	if conf.Conf.FTP.DefaultTransferBinary {
 		transferType = ftpserver.TransferTypeBinary
