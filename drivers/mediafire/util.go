@@ -408,86 +408,6 @@ func (d *Mediafire) uploadCheck(ctx context.Context, filename string, filesize i
 	return &resp, nil
 }
 
-func (d *Mediafire) resumableUpload(ctx context.Context, folderKey, uploadKey string, unitData io.ReadSeeker, unitID int, fileHash, filename string, totalFileSize, unitSize int64) (string, error) {
-	actionToken, err := d.getActionToken(ctx)
-	if err != nil {
-		return "", err
-	}
-	if d.limiter != nil {
-		if err := d.limiter.Wait(ctx); err != nil {
-			return "", fmt.Errorf("rate limit wait failed: %w", err)
-		}
-	}
-
-	url := d.apiBase + "/upload/resumable.php"
-	reader := driver.NewLimitedUploadStream(ctx, unitData)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reader)
-	if err != nil {
-		return "", err
-	}
-	unitHash, err := utils.HashReader(utils.SHA256, reader)
-	if err != nil {
-		return "", err
-	}
-	unitData.Seek(0, io.SeekStart)
-
-	q := req.URL.Query()
-	q.Add("folder_key", folderKey)
-	q.Add("response_format", "json")
-	q.Add("session_token", actionToken)
-	q.Add("key", uploadKey)
-	req.URL.RawQuery = q.Encode()
-
-	req.Header.Set("x-filehash", fileHash)
-	req.Header.Set("x-filesize", strconv.FormatInt(totalFileSize, 10))
-	req.Header.Set("x-unit-id", strconv.Itoa(unitID))
-	req.Header.Set("x-unit-size", strconv.FormatInt(unitSize, 10))
-	req.Header.Set("x-unit-hash", unitHash)
-	req.Header.Set("x-filename", filename)
-	req.Header.Set("Content-Type", "application/octet-stream")
-	req.ContentLength = unitSize
-
-	/* fmt.Printf("Debug resumable upload request:\n")
-	fmt.Printf("  URL: %s\n", req.URL.String())
-	fmt.Printf("  Headers: %+v\n", req.Header)
-	fmt.Printf("  Unit ID: %d\n", unitID)
-	fmt.Printf("  Unit Size: %d\n", len(unitData))
-	fmt.Printf("  Upload Key: %s\n", uploadKey)
-	fmt.Printf("  Action Token: %s\n", actionToken) */
-
-	res, err := base.HttpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	// fmt.Printf("MediaFire resumable upload response (status %d): %s\n", res.StatusCode, string(body))
-
-	var uploadResp struct {
-		Response struct {
-			Doupload struct {
-				Key string `json:"key"`
-			} `json:"doupload"`
-			Result string `json:"result"`
-		} `json:"response"`
-	}
-
-	if err := json.Unmarshal(body, &uploadResp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %v", err)
-	}
-
-	if res.StatusCode != 200 {
-		return "", fmt.Errorf("resumable upload failed with status %d", res.StatusCode)
-	}
-
-	return uploadResp.Response.Doupload.Key, nil
-}
-
 func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, checkResp *MediafireCheckResponse, filename, fileHash, folderKey string, up driver.UpdateProgress) (string, error) {
 	unitSize, _ := strconv.ParseInt(checkResp.Response.ResumableUpload.UnitSize, 10, 64)
 	numUnits, _ := strconv.Atoi(checkResp.Response.ResumableUpload.NumberOfUnits)
@@ -539,11 +459,6 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 			break
 		}
 
-		// Skip already uploaded units
-		if d.isUnitUploaded(intWords, unitID) {
-			continue
-		}
-
 		start := int64(unitID) * unitSize
 		size := unitSize
 		if start+size > file.GetSize() {
@@ -551,32 +466,111 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 		}
 
 		var reader *stream.SectionReader
-		//var rateLimitedRd io.Reader
+		var rateLimitedRd io.Reader
+		var unitHash string
 
 		// Use lifecycle pattern for proper resource management
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {
+				// Skip already uploaded units
+				if d.isUnitUploaded(intWords, unitID) {
+					return ss.DiscardSection(start, size)
+				}
+
 				var err error
 				reader, err = ss.GetSectionReader(start, size)
 				if err != nil {
 					return err
 				}
-
-				//rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
-				return nil
-			},
-			Do: func(ctx context.Context) error {
-				reader.Seek(0, io.SeekStart)
-
-				// Perform upload
-				uploadKeyResult, err := d.resumableUpload(ctx, folderKey, uploadKey, reader, unitID, fileHash, filename, file.GetSize(), size)
+				unitHash, err = utils.HashReader(utils.SHA256, reader)
 				if err != nil {
 					return err
 				}
 
+				rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+				return nil
+			},
+			Do: func(ctx context.Context) error {
+				if reader == nil {
+					return nil // Skip if reader is not initialized (already uploaded)
+				}
+				reader.Seek(0, io.SeekStart)
+
+				// Perform upload
+
+				actionToken, err := d.getActionToken(ctx)
+				if err != nil {
+					return err
+				}
+				if d.limiter != nil {
+					if err := d.limiter.Wait(ctx); err != nil {
+						return fmt.Errorf("rate limit wait failed: %w", err)
+					}
+				}
+
+				url := d.apiBase + "/upload/resumable.php"
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, rateLimitedRd)
+				if err != nil {
+					return err
+				}
+
+				q := req.URL.Query()
+				q.Add("folder_key", folderKey)
+				q.Add("response_format", "json")
+				q.Add("session_token", actionToken)
+				q.Add("key", uploadKey)
+				req.URL.RawQuery = q.Encode()
+
+				req.Header.Set("x-filehash", fileHash)
+				req.Header.Set("x-filesize", strconv.FormatInt(fileSize, 10))
+				req.Header.Set("x-unit-id", strconv.Itoa(unitID))
+				req.Header.Set("x-unit-size", strconv.FormatInt(size, 10))
+				req.Header.Set("x-unit-hash", unitHash)
+				req.Header.Set("x-filename", filename)
+				req.Header.Set("Content-Type", "application/octet-stream")
+				req.ContentLength = size
+
+				/* fmt.Printf("Debug resumable upload request:\n")
+				fmt.Printf("  URL: %s\n", req.URL.String())
+				fmt.Printf("  Headers: %+v\n", req.Header)
+				fmt.Printf("  Unit ID: %d\n", unitID)
+				fmt.Printf("  Unit Size: %d\n", len(unitData))
+				fmt.Printf("  Upload Key: %s\n", uploadKey)
+				fmt.Printf("  Action Token: %s\n", actionToken) */
+
+				res, err := base.HttpClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer res.Body.Close()
+
+				body, err := io.ReadAll(res.Body)
+				if err != nil {
+					return fmt.Errorf("failed to read response body: %v", err)
+				}
+
+				// fmt.Printf("MediaFire resumable upload response (status %d): %s\n", res.StatusCode, string(body))
+
+				var uploadResp struct {
+					Response struct {
+						Doupload struct {
+							Key string `json:"key"`
+						} `json:"doupload"`
+						Result string `json:"result"`
+					} `json:"response"`
+				}
+
+				if err := json.Unmarshal(body, &uploadResp); err != nil {
+					return fmt.Errorf("failed to parse response: %v", err)
+				}
+
+				if res.StatusCode != 200 {
+					return fmt.Errorf("resumable upload failed with status %d", res.StatusCode)
+				}
+
 				// Thread-safe update of final upload key
 				keyMutex.Lock()
-				finalUploadKey = uploadKeyResult
+				finalUploadKey = uploadResp.Response.Doupload.Key
 				keyMutex.Unlock()
 
 				return nil
