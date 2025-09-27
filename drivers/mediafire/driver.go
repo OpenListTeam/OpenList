@@ -101,6 +101,10 @@ func (d *Mediafire) WaitLimit(ctx context.Context) error {
 func (d *Mediafire) Drop(ctx context.Context) error {
 	// Clear cached resources
 	d.actionToken = ""
+	if d.cron != nil {
+		d.cron.Stop()
+		d.cron = nil
+	}
 	return nil
 }
 
