@@ -202,8 +202,7 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 
 // 线程不安全
 func (ss *StreamSectionReader) DiscardSection(off int64, length int64) error {
-	var cache io.ReaderAt = ss.file.GetFile()
-	if cache == nil {
+	if ss.file.GetFile() == nil {
 		if off != ss.off {
 			return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.off)
 		}
@@ -216,6 +215,7 @@ func (ss *StreamSectionReader) DiscardSection(off int64, length int64) error {
 	return nil
 }
 
+// 线程不安全
 func (ss *StreamSectionReader) GetSectionReader(off, length int64) (*SectionReader, error) {
 	var cache io.ReaderAt = ss.file.GetFile()
 	var buf []byte
