@@ -523,6 +523,8 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				return "", err
 			}
 			finalUploadKey = uploadKeyResult
+		} else {
+			ss.FreeSectionReader(section)
 		}
 
 	}
