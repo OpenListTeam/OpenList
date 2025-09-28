@@ -478,7 +478,7 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
         param["el"] = "2"
         time.Sleep(time.Second * 2)
 
-        // 通过验证获取直连
+        // 通过验证获取直链
         data, err := d.post(fmt.Sprint(baseUrl, "/ajax.php"), func(req *resty.Request) { req.SetFormData(param) }, nil)
         if err != nil {
             return nil, err
