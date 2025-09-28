@@ -3,6 +3,7 @@ package lanzou
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"runtime"
@@ -430,7 +431,10 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 	file.Time = timeFindReg.FindString(sharePageData)
 
 	// 重定向获取真实链接
-	var res *resty.Response
+	var (
+		res *resty.Response
+		err error
+	)
 	var vs string
 	for i := 0; i < 3; i++ {
 		res, err = base.NoRedirectClient.R().SetHeaders(map[string]string{
@@ -461,31 +465,31 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 	}
 
 	if err != nil {
-        return nil, err
-    }
+		return nil, err
+	}
 
-    file.Url = res.Header().Get("location")
+	file.Url = res.Header().Get("location")
 
-    // 触发验证
-    if res.StatusCode() != 302 {
-        bodyBytes, _ := io.ReadAll(res.RawBody())
-        res.RawBody().Close()
-        rPageData := string(bodyBytes)
-        param, err = htmlJsonToMap(rPageData)
-        if err != nil {
-            return nil, err
-        }
-        param["el"] = "2"
-        time.Sleep(time.Second * 2)
+	// 触发验证
+	if res.StatusCode() != 302 {
+		bodyBytes, _ := io.ReadAll(res.RawBody())
+		res.RawBody().Close()
+		rPageData := string(bodyBytes)
+		param, err = htmlJsonToMap(rPageData)
+		if err != nil {
+			return nil, err
+		}
+		param["el"] = "2"
+		time.Sleep(time.Second * 2)
 
-        // 通过验证获取直链
-        data, err := d.post(fmt.Sprint(baseUrl, "/ajax.php"), func(req *resty.Request) { req.SetFormData(param) }, nil)
-        if err != nil {
-            return nil, err
-        }
-        file.Url = utils.Json.Get(data, "url").ToString()
-    }
-    return &file, nil
+		// 通过验证获取直链
+		data, err := d.post(fmt.Sprint(baseUrl, "/ajax.php"), func(req *resty.Request) { req.SetFormData(param) }, nil)
+		if err != nil {
+			return nil, err
+		}
+		file.Url = utils.Json.Get(data, "url").ToString()
+	}
+	return &file, nil
 }
 
 // 通过分享链接获取文件夹
