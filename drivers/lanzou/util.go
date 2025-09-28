@@ -451,8 +451,10 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 		if res.StatusCode() == 302 {
 			break
 		}
-		bodyBytes, _ := io.ReadAll(res.RawBody())
-		res.RawBody().Close()
+		bodyBytes, err := io.ReadAll(res.RawBody())
+		if err != nil {
+		    return nil, fmt.Errorf("读取响应体失败: %w", err)
+		}
 		bodyStr := string(bodyBytes)
 		if strings.Contains(bodyStr, "acw_sc__v2") {
 			if vs, err = CalcAcwScV2(bodyStr); err != nil {
