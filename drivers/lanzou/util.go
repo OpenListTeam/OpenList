@@ -461,22 +461,31 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 	}
 
 	if err != nil {
-		return nil, err
-	}
+        return nil, err
+    }
 
-	file.Url = res.Header().Get("location")
+    file.Url = res.Header().Get("location")
 
-	// 触发验证
-	if res.StatusCode() != 302 {
-		bodyBytes, _ := io.ReadAll(res.RawBody())
-		res.RawBody().Close()
-		rPageData := string(bodyBytes)
-		param, err = htmlJsonToMap(rPageData)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return &file, nil
+    // 触发验证
+    if res.StatusCode() != 302 {
+        bodyBytes, _ := io.ReadAll(res.RawBody())
+        res.RawBody().Close()
+        rPageData := string(bodyBytes)
+        param, err = htmlJsonToMap(rPageData)
+        if err != nil {
+            return nil, err
+        }
+        param["el"] = "2"
+        time.Sleep(time.Second * 2)
+
+        // 通过验证获取直连
+        data, err := d.post(fmt.Sprint(baseUrl, "/ajax.php"), func(req *resty.Request) { req.SetFormData(param) }, nil)
+        if err != nil {
+            return nil, err
+        }
+        file.Url = utils.Json.Get(data, "url").ToString()
+    }
+    return &file, nil
 }
 
 // 通过分享链接获取文件夹
