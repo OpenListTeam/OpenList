@@ -421,22 +421,8 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 		}
 	}
 
-	// Intelligent buffer sizing for large files
-	bufferSize := int(unitSize)
-	fileSize := file.GetSize()
-
-	// Split in chunks
-	if fileSize > d.ChunkSize*1024*1024 {
-
-		// Large, use ChunkSize (default = 100MB)
-		bufferSize = min(int(fileSize), int(d.ChunkSize)*1024*1024)
-	} else if fileSize > 10*1024*1024 {
-		// Medium, use full file size for concurrent access
-		bufferSize = int(fileSize)
-	}
-
 	// Create stream section reader for efficient chunking
-	ss, err := stream.NewStreamSectionReader(file, bufferSize, &up)
+	ss, err := stream.NewStreamSectionReader(file, int(unitSize), &up)
 	if err != nil {
 		return "", err
 	}
@@ -454,6 +440,7 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 	var finalUploadKey string
 	var keyMutex sync.Mutex
 
+	fileSize := file.GetSize()
 	for unitID := range numUnits {
 		if utils.IsCanceled(uploadCtx) {
 			break
@@ -461,8 +448,8 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 
 		start := int64(unitID) * unitSize
 		size := unitSize
-		if start+size > file.GetSize() {
-			size = file.GetSize() - start
+		if start+size > fileSize {
+			size = fileSize - start
 		}
 
 		var reader *stream.SectionReader
