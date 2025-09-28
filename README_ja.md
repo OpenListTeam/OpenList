@@ -64,7 +64,6 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [UPYUN Storage Service](https://www.upyun.com/products/file-storage)
   - [x] [WebDAV](https://en.wikipedia.org/wiki/WebDAV)
   - [x] Teambition([中国](https://www.teambition.com), [国際](https://us.teambition.com))
-  - [x] [MediaFire](https://www.mediafire.com)
   - [x] [Mediatrack](https://www.mediatrack.cn)
   - [x] [139yun](https://yun.139.com)（個人、家族、グループ）
   - [x] [YandexDisk](https://disk.yandex.com)
