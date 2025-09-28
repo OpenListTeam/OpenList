@@ -436,6 +436,7 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 		err error
 	)
 	var vs string
+	var bodyStr string
 	for i := 0; i < 3; i++ {
 		res, err = base.NoRedirectClient.R().SetHeaders(map[string]string{
 			"accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
@@ -448,14 +449,21 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 		if err != nil {
 			return nil, err
 		}
+
 		if res.StatusCode() == 302 {
+			if res.RawBody() != nil {
+				res.RawBody().Close()
+			}
 			break
 		}
 		bodyBytes, err := io.ReadAll(res.RawBody())
-		if err != nil {
-		    return nil, fmt.Errorf("读取响应体失败: %w", err)
+		if res.RawBody() != nil {
+			res.RawBody().Close()
 		}
-		bodyStr := string(bodyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("读取响应体失败: %w", err)
+		}
+		bodyStr = string(bodyBytes)
 		if strings.Contains(bodyStr, "acw_sc__v2") {
 			if vs, err = CalcAcwScV2(bodyStr); err != nil {
 				log.Errorf("lanzou: err => acw_sc__v2 validation error  ,data => %s\n", bodyStr)
@@ -472,12 +480,9 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 
 	file.Url = res.Header().Get("location")
 
-	// 触发验证
+	// 触发二次验证，也需要处理一下触发acw_sc__v2的情况
 	if res.StatusCode() != 302 {
-		bodyBytes, _ := io.ReadAll(res.RawBody())
-		res.RawBody().Close()
-		rPageData := string(bodyBytes)
-		param, err = htmlJsonToMap(rPageData)
+		param, err = htmlJsonToMap(bodyStr)
 		if err != nil {
 			return nil, err
 		}
@@ -485,7 +490,31 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 		time.Sleep(time.Second * 2)
 
 		// 通过验证获取直链
-		data, err := d.post(fmt.Sprint(baseUrl, "/ajax.php"), func(req *resty.Request) { req.SetFormData(param) }, nil)
+		var data []byte
+		for i := 0; i < 3; i++ {
+			data, err = d.post(fmt.Sprint(baseUrl, "/ajax.php"), func(req *resty.Request) {
+				req.SetFormData(param)
+				if vs != "" {
+					req.SetCookie(&http.Cookie{
+						Name:  "acw_sc__v2",
+						Value: vs,
+					})
+				}
+			}, nil)
+			if err != nil {
+				return nil, err
+			}
+			ajaxBodyStr := string(data)
+			if strings.Contains(ajaxBodyStr, "acw_sc__v2") {
+				if vs, err = CalcAcwScV2(ajaxBodyStr); err != nil {
+					log.Errorf("lanzou: err => acw_sc__v2 validation error  ,data => %s\n", ajaxBodyStr)
+					return nil, err
+				}
+				time.Sleep(time.Second * 2)
+				continue
+			}
+			break
+		}
 		if err != nil {
 			return nil, err
 		}
