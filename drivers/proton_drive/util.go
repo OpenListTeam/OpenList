@@ -83,7 +83,6 @@ func (d *ProtonDrive) searchByPath(ctx context.Context, fullPath string, isFolde
 		entries, err := d.protonDrive.ListDirectory(ctx, currentLink.LinkID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list directory: %w", err)
-
 		}
 
 		found := false
