@@ -233,7 +233,7 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 // 即使被写入的数据量与Buffer.Cap一致，Buffer也会扩大
 
 func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
-	if maxCacheSize > int64(conf.MaxBufferLimit) {
+	if maxCacheSize == -1 || maxCacheSize > int64(conf.MaxBufferLimit) {
 		tmpF, err := utils.CreateTempFile(f.Reader, f.GetSize())
 		if err != nil {
 			return nil, err
