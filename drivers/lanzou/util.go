@@ -430,9 +430,36 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 	file.Time = timeFindReg.FindString(sharePageData)
 
 	// 重定向获取真实链接
-	res, err := base.NoRedirectClient.R().SetHeaders(map[string]string{
-		"accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-	}).Get(downloadUrl)
+	var res *resty.Response
+	var vs string
+	for i := 0; i < 3; i++ {
+		res, err = base.NoRedirectClient.R().SetHeaders(map[string]string{
+			"accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+			"Referer":         baseUrl,
+		}).SetDoNotParseResponse(true).
+			SetCookie(&http.Cookie{
+				Name:  "acw_sc__v2",
+				Value: vs,
+			}).Get(downloadUrl)
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode() == 302 {
+			break
+		}
+		bodyBytes, _ := io.ReadAll(res.RawBody())
+		res.RawBody().Close()
+		bodyStr := string(bodyBytes)
+		if strings.Contains(bodyStr, "acw_sc__v2") {
+			if vs, err = CalcAcwScV2(bodyStr); err != nil {
+				log.Errorf("lanzou: err => acw_sc__v2 validation error  ,data => %s\n", bodyStr)
+				return nil, err
+			}
+			continue
+		}
+		break
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -440,21 +467,14 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 	file.Url = res.Header().Get("location")
 
 	// 触发验证
-	rPageData := res.String()
 	if res.StatusCode() != 302 {
+		bodyBytes, _ := io.ReadAll(res.RawBody())
+		res.RawBody().Close()
+		rPageData := string(bodyBytes)
 		param, err = htmlJsonToMap(rPageData)
 		if err != nil {
 			return nil, err
 		}
-		param["el"] = "2"
-		time.Sleep(time.Second * 2)
-
-		// 通过验证获取直连
-		data, err := d.post(fmt.Sprint(baseUrl, "/ajax.php"), func(req *resty.Request) { req.SetFormData(param) }, nil)
-		if err != nil {
-			return nil, err
-		}
-		file.Url = utils.Json.Get(data, "url").ToString()
 	}
 	return &file, nil
 }
