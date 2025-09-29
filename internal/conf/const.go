@@ -17,10 +17,11 @@ const (
 	AllowMounted = "allow_mounted"
 	RobotsTxt    = "robots_txt"
 
-	Logo               = "logo" // multi-lines text, L1: light, EOL: dark
-	Favicon            = "favicon"
-	MainColor          = "main_color"
-	HideStorageDetails = "hide_storage_details"
+	Logo                           = "logo" // multi-lines text, L1: light, EOL: dark
+	Favicon                        = "favicon"
+	MainColor                      = "main_color"
+	HideStorageDetails             = "hide_storage_details"
+	HideStorageDetailsInManagePage = "hide_storage_details_in_manage_page"
 
 	// preview
 	TextTypes                = "text_types"
@@ -125,13 +126,13 @@ const (
 	QbittorrentSeedtime = "qbittorrent_seedtime"
 
 	// ftp
-	FTPPublicHost        = "ftp_public_host"
-	FTPPasvPortMap       = "ftp_pasv_port_map"
-	FTPProxyUserAgent    = "ftp_proxy_user_agent"
-	FTPMandatoryTLS      = "ftp_mandatory_tls"
-	FTPImplicitTLS       = "ftp_implicit_tls"
-	FTPTLSPrivateKeyPath = "ftp_tls_private_key_path"
-	FTPTLSPublicCertPath = "ftp_tls_public_cert_path"
+	FTPPublicHost            = "ftp_public_host"
+	FTPPasvPortMap           = "ftp_pasv_port_map"
+	FTPMandatoryTLS          = "ftp_mandatory_tls"
+	FTPImplicitTLS           = "ftp_implicit_tls"
+	FTPTLSPrivateKeyPath     = "ftp_tls_private_key_path"
+	FTPTLSPublicCertPath     = "ftp_tls_public_cert_path"
+	SFTPDisablePasswordLogin = "sftp_disable_password_login"
 
 	// traffic
 	TaskOfflineDownloadThreadsNum         = "offline_download_task_threads_num"

@@ -312,3 +312,20 @@ type RefreshTokenResp struct {
 	AccessToken string   `xml:"accessToken"`
 	Desc        string   `xml:"desc"`
 }
+
+type PersonalDiskInfoResp struct {
+	BaseResp
+	Data struct {
+		FreeDiskSize         string `json:"freeDiskSize"`
+		DiskSize             string `json:"diskSize"`
+		IsInfinitePicStorage *bool  `json:"isInfinitePicStorage"`
+	} `json:"data"`
+}
+
+type FamilyDiskInfoResp struct {
+	BaseResp
+	Data struct {
+		UsedSize string `json:"usedSize"`
+		DiskSize string `json:"diskSize"`
+	} `json:"data"`
+}
