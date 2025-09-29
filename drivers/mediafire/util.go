@@ -296,6 +296,7 @@ func (d *Mediafire) apiRequest(ctx context.Context, method, endpoint string, que
 	}
 
 	req := base.RestyClient.R()
+	req.SetContext(ctx)
 	d.setCommonHeaders(req)
 
 	// Set query parameters for GET requests
