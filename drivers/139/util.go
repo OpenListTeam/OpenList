@@ -267,7 +267,7 @@ func (d *Yun139) getFiles(catalogID string) ([]model.Obj, error) {
 					HashInfo: utils.NewHashInfo(utils.MD5, content.Digest),
 				},
 				Thumbnail: model.Thumbnail{Thumbnail: content.ThumbnailURL},
-				//Thumbnail: content.BigthumbnailURL,
+				// Thumbnail: content.BigthumbnailURL,
 			}
 			files = append(files, &f)
 		}
@@ -334,7 +334,7 @@ func (d *Yun139) familyGetFiles(catalogID string) ([]model.Obj, error) {
 					Path:     path, // 文件所在目录的Path
 				},
 				Thumbnail: model.Thumbnail{Thumbnail: content.ThumbnailURL},
-				//Thumbnail: content.BigthumbnailURL,
+				// Thumbnail: content.BigthumbnailURL,
 			}
 			files = append(files, &f)
 		}
@@ -389,7 +389,7 @@ func (d *Yun139) groupGetFiles(catalogID string) ([]model.Obj, error) {
 					Path:     path, // 文件所在目录的Path
 				},
 				Thumbnail: model.Thumbnail{Thumbnail: content.ThumbnailURL},
-				//Thumbnail: content.BigthumbnailURL,
+				// Thumbnail: content.BigthumbnailURL,
 			}
 			files = append(files, &f)
 		}
@@ -417,6 +417,7 @@ func (d *Yun139) getLink(contentId string) (string, error) {
 	}
 	return jsoniter.Get(res, "data", "downloadURL").ToString(), nil
 }
+
 func (d *Yun139) familyGetLink(contentId string, path string) (string, error) {
 	data := d.newJson(base.Json{
 		"contentID": contentId,
@@ -509,6 +510,7 @@ func (d *Yun139) personalRequest(pathname string, method string, callback base.R
 	}
 	return res.Body(), nil
 }
+
 func (d *Yun139) personalPost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
 	return d.personalRequest(pathname, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
@@ -544,7 +546,7 @@ func (d *Yun139) personalGetFiles(fileId string) ([]model.Obj, error) {
 		}
 		nextPageCursor = resp.Data.NextPageCursor
 		for _, item := range resp.Data.Items {
-			var isFolder = (item.Type == "folder")
+			isFolder := (item.Type == "folder")
 			var f model.Obj
 			if isFolder {
 				f = &model.Object{
@@ -556,7 +558,7 @@ func (d *Yun139) personalGetFiles(fileId string) ([]model.Obj, error) {
 					IsFolder: isFolder,
 				}
 			} else {
-				var Thumbnails = item.Thumbnails
+				Thumbnails := item.Thumbnails
 				var ThumbnailUrl string
 				if d.UseLargeThumbnail {
 					for _, thumb := range Thumbnails {
@@ -599,7 +601,7 @@ func (d *Yun139) personalGetLink(fileId string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var cdnUrl = jsoniter.Get(res, "data", "cdnUrl").ToString()
+	cdnUrl := jsoniter.Get(res, "data", "cdnUrl").ToString()
 	if cdnUrl != "" {
 		return cdnUrl, nil
 	} else {
@@ -613,12 +615,14 @@ func (d *Yun139) getAuthorization() string {
 	}
 	return d.Authorization
 }
+
 func (d *Yun139) getAccount() string {
 	if d.ref != nil {
 		return d.ref.getAccount()
 	}
 	return d.Account
 }
+
 func (d *Yun139) getPersonalCloudHost() string {
 	if d.ref != nil {
 		return d.ref.getPersonalCloudHost()
@@ -670,13 +674,14 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 	return nil
 }
 
-func (d *Yun139) getPersonalDiskInfo() (*PersonalDiskInfoResp, error) {
+func (d *Yun139) getPersonalDiskInfo(ctx context.Context) (*PersonalDiskInfoResp, error) {
 	data := map[string]interface{}{
 		"userDomainId": d.UserDomainID,
 	}
 	var resp PersonalDiskInfoResp
 	_, err := d.request("https://user-njs.yun.139.com/user/disk/getPersonalDiskInfo", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
+		req.SetContext(ctx)
 	}, &resp)
 	if err != nil {
 		return nil, err
@@ -684,13 +689,14 @@ func (d *Yun139) getPersonalDiskInfo() (*PersonalDiskInfoResp, error) {
 	return &resp, nil
 }
 
-func (d *Yun139) getFamilyDiskInfo() (*FamilyDiskInfoResp, error) {
+func (d *Yun139) getFamilyDiskInfo(ctx context.Context) (*FamilyDiskInfoResp, error) {
 	data := map[string]interface{}{
 		"userDomainId": d.UserDomainID,
 	}
 	var resp FamilyDiskInfoResp
 	_, err := d.request("https://user-njs.yun.139.com/user/disk/getFamilyDiskInfo", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
+		req.SetContext(ctx)
 	}, &resp)
 	if err != nil {
 		return nil, err

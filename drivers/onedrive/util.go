@@ -296,7 +296,7 @@ func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.Fil
 	return nil
 }
 
-func (d *Onedrive) getDrive() (*DriveResp, error) {
+func (d *Onedrive) getDrive(ctx context.Context) (*DriveResp, error) {
 	var api string
 	host, _ := onedriveHostMap[d.Region]
 	if d.IsSharepoint {
@@ -305,7 +305,9 @@ func (d *Onedrive) getDrive() (*DriveResp, error) {
 		api = fmt.Sprintf("%s/v1.0/me/drive", host.Api)
 	}
 	var resp DriveResp
-	_, err := d.Request(api, http.MethodGet, nil, &resp)
+	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp)
 	if err != nil {
 		return nil, err
 	}

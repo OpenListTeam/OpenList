@@ -213,7 +213,7 @@ func (d *QuarkOrUC) Put(ctx context.Context, dstDir model.Obj, stream model.File
 }
 
 func (d *QuarkOrUC) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	memberInfo, err := d.memberInfo()
+	memberInfo, err := d.memberInfo(ctx)
 	if err != nil {
 		return nil, err
 	}

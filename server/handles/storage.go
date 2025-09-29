@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
@@ -45,7 +46,9 @@ func makeStorageResp(c *gin.Context, storages []model.Storage) []*StorageResp {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			details, err := op.GetStorageDetails(c, d)
+			ctx, cancel := context.WithTimeout(c, time.Second*3)
+			defer cancel()
+			details, err := op.GetStorageDetails(ctx, d)
 			if err != nil {
 				if !errors.Is(err, errs.NotImplement) {
 					log.Errorf("failed get %s details: %+v", s.MountPath, err)

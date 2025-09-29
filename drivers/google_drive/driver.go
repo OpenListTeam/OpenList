@@ -171,7 +171,7 @@ func (d *GoogleDrive) GetDetails(ctx context.Context) (*model.StorageDetails, er
 	if d.DisableDiskUsage {
 		return nil, errs.NotImplement
 	}
-	about, err := d.getAbout()
+	about, err := d.getAbout(ctx)
 	if err != nil {
 		return nil, err
 	}

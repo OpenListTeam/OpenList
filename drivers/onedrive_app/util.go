@@ -210,11 +210,13 @@ func (d *OnedriveAPP) upBig(ctx context.Context, dstDir model.Obj, stream model.
 	return nil
 }
 
-func (d *OnedriveAPP) getDrive() (*DriveResp, error) {
+func (d *OnedriveAPP) getDrive(ctx context.Context) (*DriveResp, error) {
 	host, _ := onedriveHostMap[d.Region]
 	api := fmt.Sprintf("%s/v1.0/users/%s/drive", host.Api, d.Email)
 	var resp DriveResp
-	_, err := d.Request(api, http.MethodGet, nil, &resp)
+	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp)
 	if err != nil {
 		return nil, err
 	}

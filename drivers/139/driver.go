@@ -54,7 +54,8 @@ func (d *Yun139) Init(ctx context.Context) error {
 			"userInfo": base.Json{
 				"userType":    1,
 				"accountType": 1,
-				"accountName": d.Account},
+				"accountName": d.Account,
+			},
 			"modAddrType": 1,
 		}, &resp)
 		if err != nil {
@@ -732,7 +733,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				"manualRename": 2,
 				"operation":    0,
 				"path":         path.Join(dstDir.GetPath(), dstDir.GetID()),
-				"seqNo":        random.String(32), //序列号不能为空
+				"seqNo":        random.String(32), // 序列号不能为空
 				"totalSize":    reportSize,
 				"uploadContentList": []base.Json{{
 					"contentName": stream.GetName(),
@@ -840,7 +841,7 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	}
 	var total, free uint64
 	if d.isFamily() {
-		diskInfo, err := d.getFamilyDiskInfo()
+		diskInfo, err := d.getFamilyDiskInfo(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -855,7 +856,7 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 		total = uint64(totalMb) * 1024 * 1024
 		free = total - (uint64(usedMb) * 1024 * 1024)
 	} else {
-		diskInfo, err := d.getPersonalDiskInfo()
+		diskInfo, err := d.getPersonalDiskInfo(ctx)
 		if err != nil {
 			return nil, err
 		}

@@ -335,7 +335,7 @@ func (d *QuarkOrUC) upFinish(pre UpPreResp) error {
 	return nil
 }
 
-func (d *QuarkOrUC) memberInfo() (*MemberResp, error) {
+func (d *QuarkOrUC) memberInfo(ctx context.Context) (*MemberResp, error) {
 	var resp MemberResp
 	query := map[string]string{
 		"fetch_subscribe": "false",
@@ -344,6 +344,7 @@ func (d *QuarkOrUC) memberInfo() (*MemberResp, error) {
 	}
 	_, err := d.request("/member", http.MethodGet, func(req *resty.Request) {
 		req.SetQueryParams(query)
+		req.SetContext(ctx)
 	}, &resp)
 	if err != nil {
 		return nil, err

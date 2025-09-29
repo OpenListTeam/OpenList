@@ -173,6 +173,7 @@ func (y *Cloud189TV) put(ctx context.Context, url string, headers map[string]str
 	}
 	return body, nil
 }
+
 func (y *Cloud189TV) getFiles(ctx context.Context, fileId string, isFamily bool) ([]model.Obj, error) {
 	fullUrl := ApiUrl
 	if isFamily {
@@ -238,9 +239,8 @@ func (y *Cloud189TV) login() (err error) {
 			req.SetHeaders(y.AppKeySignatureHeader(ApiUrl+"/family/manage/getQrCodeUUID.action",
 				http.MethodGet))
 			_, err = req.Execute(http.MethodGet, ApiUrl+"/family/manage/getQrCodeUUID.action")
-
 			if err != nil {
-				return
+				return err
 			}
 			if erron.HasError() {
 				return &erron
@@ -280,7 +280,7 @@ func (y *Cloud189TV) login() (err error) {
 			req.SetQueryParam("uuid", y.TempUuid)
 			_, err = req.Execute(http.MethodGet, ApiUrl+"/family/manage/qrcodeLoginResult.action")
 			if err != nil {
-				return
+				return err
 			}
 			if erron.HasError() {
 				return &erron
@@ -300,7 +300,7 @@ func (y *Cloud189TV) login() (err error) {
 	reqb.SetQueryParam("e189AccessToken", y.Addition.AccessToken)
 	_, err = reqb.Execute(http.MethodGet, ApiUrl+"/family/manage/loginFamilyMerge.action")
 	if err != nil {
-		return
+		return err
 	}
 
 	if erron.HasError() {
@@ -309,7 +309,7 @@ func (y *Cloud189TV) login() (err error) {
 
 	y.tokenInfo = &tokenInfo
 	op.MustSaveDriverStorage(y)
-	return
+	return err
 }
 
 // refreshSession 尝试使用现有的 AccessToken 刷新会话
@@ -324,7 +324,7 @@ func (y *Cloud189TV) refreshSession() (err error) {
 	reqb.SetQueryParam("e189AccessToken", y.Addition.AccessToken)
 	_, err = reqb.Execute(http.MethodGet, ApiUrl+"/family/manage/loginFamilyMerge.action")
 	if err != nil {
-		return
+		return err
 	}
 
 	if erron.HasError() {
@@ -371,7 +371,7 @@ func (y *Cloud189TV) RapidUpload(ctx context.Context, dstDir model.Obj, stream m
 // 旧版本上传，家庭云不支持覆盖
 func (y *Cloud189TV) OldUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool) (model.Obj, error) {
 	fileMd5 := file.GetHash().GetHash(utils.MD5)
-	var tempFile = file.GetFile()
+	tempFile := file.GetFile()
 	var err error
 	if len(fileMd5) != utils.MD5.Width {
 		tempFile, fileMd5, err = stream.CacheFullAndHash(file, &up, utils.MD5)
@@ -474,7 +474,6 @@ func (y *Cloud189TV) OldUploadCreate(ctx context.Context, parentID string, fileM
 			})
 		}
 	}, &uploadInfo, isFamily)
-
 	if err != nil {
 		return nil, err
 	}
@@ -629,10 +628,12 @@ func (y *Cloud189TV) WaitBatchTask(aType string, taskID string, t time.Duration)
 	}
 }
 
-func (y *Cloud189TV) getCapacityInfo() (*CapacityResp, error) {
+func (y *Cloud189TV) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {
 	fullUrl := ApiUrl + "/portal/getUserSizeInfo.action"
 	var resp CapacityResp
-	_, err := y.get(fullUrl, nil, &resp)
+	_, err := y.get(fullUrl, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp)
 	if err != nil {
 		return nil, err
 	}

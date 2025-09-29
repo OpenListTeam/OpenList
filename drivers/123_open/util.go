@@ -1,6 +1,7 @@
 package _123_open
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/json"
 	"errors"
@@ -18,7 +19,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var ( //不同情况下获取的AccessTokenQPS限制不同 如下模块化易于拓展
+var ( // 不同情况下获取的AccessTokenQPS限制不同 如下模块化易于拓展
 	Api = "https://open-api.123pan.com"
 
 	AccessToken    = InitApiInfo(Api+"/api/v1/access_token", 1)
@@ -82,7 +83,6 @@ func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCall
 			return nil, errors.New(baseResp.Message)
 		}
 	}
-
 }
 
 func (d *Open123) flushAccessToken() error {
@@ -148,21 +148,23 @@ func (d *Open123) SignURL(originURL, privateKey string, uid uint64, validDuratio
 	return objURL.String(), nil
 }
 
-func (d *Open123) getUserInfo() (*UserInfoResp, error) {
+func (d *Open123) getUserInfo(ctx context.Context) (*UserInfoResp, error) {
 	var resp UserInfoResp
 
-	if _, err := d.Request(UserInfo, http.MethodGet, nil, &resp); err != nil {
+	if _, err := d.Request(UserInfo, http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp); err != nil {
 		return nil, err
 	}
 
 	return &resp, nil
 }
 
-func (d *Open123) getUID() (uint64, error) {
+func (d *Open123) getUID(ctx context.Context) (uint64, error) {
 	if d.UID != 0 {
 		return d.UID, nil
 	}
-	resp, err := d.getUserInfo()
+	resp, err := d.getUserInfo(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -184,7 +186,6 @@ func (d *Open123) getFiles(parentFileId int64, limit int, lastFileId int64) (*Fi
 				"searchData":   "",
 			})
 	}, &resp)
-
 	if err != nil {
 		return nil, err
 	}

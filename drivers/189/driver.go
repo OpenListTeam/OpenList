@@ -195,7 +195,7 @@ func (d *Cloud189) Put(ctx context.Context, dstDir model.Obj, stream model.FileS
 }
 
 func (d *Cloud189) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	capacityInfo, err := d.getCapacityInfo()
+	capacityInfo, err := d.getCapacityInfo(ctx)
 	if err != nil {
 		return nil, err
 	}

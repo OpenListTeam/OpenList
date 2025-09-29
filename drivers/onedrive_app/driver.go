@@ -210,7 +210,7 @@ func (d *OnedriveAPP) GetDetails(ctx context.Context) (*model.StorageDetails, er
 	if d.DisableDiskUsage {
 		return nil, errs.NotImplement
 	}
-	drive, err := d.getDrive()
+	drive, err := d.getDrive(ctx)
 	if err != nil {
 		return nil, err
 	}

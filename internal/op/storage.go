@@ -352,7 +352,9 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 				DriverName:     d.Config().Name,
 			},
 		}
-		details, err := GetStorageDetails(ctx, d)
+		timeoutCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		details, err := GetStorageDetails(timeoutCtx, d)
 		if err != nil {
 			if !errors.Is(err, errs.NotImplement) {
 				log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
