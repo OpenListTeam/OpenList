@@ -230,3 +230,17 @@ type MediafireFileSearchResponse struct {
 		CurrentAPIVersion string `json:"current_api_version"`
 	} `json:"response"`
 }
+
+type MediafireUserInfoResponse struct {
+	Response struct {
+		Action   string `json:"action"`
+		UserInfo struct {
+			Email           string `json:"string"`
+			DisplayName     string `json:"display_name"`
+			UsedStorageSize string `json:"used_storage_size"`
+			StorageLimit    string `json:"storage_limit"`
+		} `json:"user_info"`
+		Result            string `json:"result"`
+		CurrentAPIVersion string `json:"current_api_version"`
+	} `json:"response"`
+}
