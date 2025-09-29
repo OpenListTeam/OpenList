@@ -10,18 +10,20 @@ import (
 )
 
 type CacheManager struct {
-	directories *UnifiedCache // Cache for directory listings
-	links       *UnifiedCache // Cache for file links
-	users       *UnifiedCache // Cache for user data
-	settings    *UnifiedCache // Cache for settings
+	directories    *UnifiedCache // Cache for directory listings
+	links          *UnifiedCache // Cache for file links
+	users          *UnifiedCache // Cache for user data
+	settings       *UnifiedCache // Cache for settings
+	storageDetails *UnifiedCache // Cache for storage details
 }
 
 func NewCacheManager() *CacheManager {
 	return &CacheManager{
-		directories: NewUnifiedCache(time.Minute * 5),
-		links:       NewUnifiedCache(time.Minute * 30),
-		users:       NewUnifiedCache(time.Hour),
-		settings:    NewUnifiedCache(time.Hour),
+		directories:    NewUnifiedCache(time.Minute * 5),
+		links:          NewUnifiedCache(time.Minute * 30),
+		users:          NewUnifiedCache(time.Hour),
+		settings:       NewUnifiedCache(time.Hour),
+		storageDetails: NewUnifiedCache(time.Minute * 30),
 	}
 }
 
@@ -172,10 +174,28 @@ func (cm *CacheManager) GetSettingGroup(key string) ([]model.SettingItem, bool) 
 	return nil, false
 }
 
+func (cm *CacheManager) SetStorageDetails(storage driver.Driver, details *model.StorageDetails) {
+	cm.storageDetails.Set(storage.GetStorage().MountPath, details)
+}
+
+func (cm *CacheManager) GetStorageDetails(storage driver.Driver) (*model.StorageDetails, bool) {
+	if data, exists := cm.storageDetails.Get(storage.GetStorage().MountPath); exists {
+		if details, ok := data.(*model.StorageDetails); ok {
+			return details, true
+		}
+	}
+	return nil, false
+}
+
+func (cm *CacheManager) InvalidateStorageDetails(storage driver.Driver) {
+	cm.storageDetails.Delete(storage.GetStorage().MountPath)
+}
+
 // clears all caches
 func (cm *CacheManager) ClearAll() {
 	cm.directories.Clear()
 	cm.links.Clear()
 	cm.users.Clear()
 	cm.settings.Clear()
+	cm.storageDetails.Clear()
 }
