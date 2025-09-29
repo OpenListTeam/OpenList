@@ -9,11 +9,15 @@ D@' 3z K!7 - The King Of Cracking
 
 Modifications by ILoveScratch2<ilovescratch@foxmail.com>
 Date: 2025-09-21
+
+Date: 2025-09-26
+Final opts by @Suyunjing @j2rong4cn @KirCute @Da3zKi7
 */
 
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,6 +26,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"golang.org/x/time/rate"
 )
@@ -29,6 +34,8 @@ import (
 type Mediafire struct {
 	model.Storage
 	Addition
+
+	cron *cron.Cron
 
 	actionToken string
 	limiter     *rate.Limiter
@@ -66,7 +73,18 @@ func (d *Mediafire) Init(ctx context.Context) error {
 	}
 	// Validate and refresh session token if needed
 	if _, err := d.getSessionToken(ctx); err != nil {
-		return d.renewToken(ctx)
+
+		d.renewToken(ctx)
+
+		// Avoids 10 mins token expiry (6- 9)
+		num := rand.Intn(4) + 6
+
+		d.cron = cron.NewCron(time.Minute * time.Duration(num))
+		d.cron.Do(func() {
+			// Crazy, but working way to refresh session token
+			d.renewToken(ctx)
+		})
+
 	}
 
 	return nil
@@ -76,6 +94,10 @@ func (d *Mediafire) Init(ctx context.Context) error {
 func (d *Mediafire) Drop(ctx context.Context) error {
 	// Clear cached resources
 	d.actionToken = ""
+	if d.cron != nil {
+		d.cron.Stop()
+		d.cron = nil
+	}
 	return nil
 }
 

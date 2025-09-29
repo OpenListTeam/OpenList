@@ -9,6 +9,9 @@ D@' 3z K!7 - The King Of Cracking
 
 Modifications by ILoveScratch2<ilovescratch@foxmail.com>
 Date: 2025-09-21
+
+Date: 2025-09-26
+Final opts by @Suyunjing @j2rong4cn @KirCute @Da3zKi7
 */
 
 import (
@@ -26,6 +29,7 @@ type Addition struct {
 	OrderBy        string  `json:"order_by" type:"select" options:"name,time,size" default:"name"`
 	OrderDirection string  `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
 	ChunkSize      int64   `json:"chunk_size" type:"number" default:"100"`
+	UploadThreads  int     `json:"upload_threads" type:"number" default:"3" help:"concurrent upload threads"`
 	LimitRate      float64 `json:"limit_rate" type:"float" default:"2" help:"limit all api request rate ([limit]r/1s)"`
 }
 
