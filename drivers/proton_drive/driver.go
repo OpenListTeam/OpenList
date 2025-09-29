@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -54,11 +53,11 @@ type ProtonDrive struct {
 	tokenMutex     sync.RWMutex
 
 	c *proton.Client
-	//m *proton.Manager
+	// m *proton.Manager
 
 	credentialCacheFile string
 
-	//userKR   *crypto.KeyRing
+	// userKR   *crypto.KeyRing
 	addrKRs  map[string]*crypto.KeyRing
 	addrData map[string]proton.Address
 
@@ -78,7 +77,6 @@ func (d *ProtonDrive) GetAddition() driver.Additional {
 }
 
 func (d *ProtonDrive) Init(ctx context.Context) error {
-
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Printf("ProtonDrive initialization panic: %v", r)
@@ -92,7 +90,7 @@ func (d *ProtonDrive) Init(ctx context.Context) error {
 		return fmt.Errorf("password is required")
 	}
 
-	//fmt.Printf("ProtonDrive Init: Username=%s, TwoFACode=%s", d.Username, d.TwoFACode)
+	// fmt.Printf("ProtonDrive Init: Username=%s, TwoFACode=%s", d.Username, d.TwoFACode)
 
 	if ctx == nil {
 		return fmt.Errorf("context cannot be nil")
@@ -133,7 +131,7 @@ func (d *ProtonDrive) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to create login credentials, FirstLoginCredential cannot be nil")
 	}
 
-	//fmt.Printf("Calling NewProtonDrive...")
+	// fmt.Printf("Calling NewProtonDrive...")
 
 	protonDrive, credentials, err := proton_api_bridge.NewProtonDrive(
 		ctx,
@@ -222,13 +220,13 @@ func (d *ProtonDrive) List(ctx context.Context, dir model.Obj, args model.ListAr
 		return nil, fmt.Errorf("failed to list directory: %w", err)
 	}
 
-	//fmt.Printf("Found %d entries for path %s\n", len(entries), dir.GetPath())
-	//fmt.Printf("Found %d entries\n", len(entries))
+	// fmt.Printf("Found %d entries for path %s\n", len(entries), dir.GetPath())
+	// fmt.Printf("Found %d entries\n", len(entries))
 
 	if len(entries) == 0 {
 		emptySlice := []model.Obj{}
 
-		//fmt.Printf("Returning empty slice (entries): %+v\n", emptySlice)
+		// fmt.Printf("Returning empty slice (entries): %+v\n", emptySlice)
 
 		return emptySlice, nil
 	}
@@ -299,7 +297,6 @@ func (d *ProtonDrive) Move(ctx context.Context, srcObj, dstDir model.Obj) (model
 }
 
 func (d *ProtonDrive) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-
 	if d.protonDrive == nil {
 		return nil, fmt.Errorf("protonDrive bridge is nil")
 	}
@@ -375,13 +372,7 @@ func (d *ProtonDrive) Put(ctx context.Context, dstDir model.Obj, file model.File
 		parentLinkID = link.LinkID
 	}
 
-	tempFile, err := utils.CreateTempFile(file, file.GetSize())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer tempFile.Close()
-
-	err = d.uploadFile(ctx, parentLinkID, file.GetName(), tempFile, file.GetSize(), up)
+	err := d.uploadFile(ctx, parentLinkID, file, up)
 	if err != nil {
 		return nil, err
 	}
@@ -395,26 +386,19 @@ func (d *ProtonDrive) Put(ctx context.Context, dstDir model.Obj, file model.File
 	return uploadedObj, nil
 }
 
-func (d *ProtonDrive) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
-	// TODO get archive file meta-info, return errs.NotImplement to use an internal archive tool, optional
-	return nil, errs.NotImplement
-}
-
-func (d *ProtonDrive) ListArchive(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) ([]model.Obj, error) {
-	// TODO list args.InnerPath in the archive obj, return errs.NotImplement to use an internal archive tool, optional
-	return nil, errs.NotImplement
-}
-
-func (d *ProtonDrive) Extract(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) (*model.Link, error) {
-	// TODO return link of file args.InnerPath in the archive obj, return errs.NotImplement to use an internal archive tool, optional
-	return nil, errs.NotImplement
-}
-
-func (d *ProtonDrive) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) ([]model.Obj, error) {
-	// TODO extract args.InnerPath path in the archive srcObj to the dstDir location, optional
-	// a folder with the same name as the archive file needs to be created to store the extracted results if args.PutIntoNewDir
-	// return errs.NotImplement to use an internal archive tool
-	return nil, errs.NotImplement
+func (d *ProtonDrive) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	about, err := d.protonDrive.About(ctx)
+	if err != nil {
+		return nil, err
+	}
+	total := uint64(about.MaxSpace)
+	free := total - uint64(about.UsedSpace)
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  free,
+		},
+	}, nil
 }
 
 var _ driver.Driver = (*ProtonDrive)(nil)

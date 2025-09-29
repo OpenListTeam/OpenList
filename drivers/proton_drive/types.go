@@ -16,10 +16,8 @@ D@' 3z K!7 - The King Of Cracking
 */
 
 import (
-	"io"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/henrybear327/go-proton-api"
 )
 
@@ -71,13 +69,6 @@ type MoveRequest struct {
 	Hash                    string  `json:"Hash"`
 	OriginalHash            string  `json:"OriginalHash"`
 	ContentHash             *string `json:"ContentHash"` // Maybe null
-}
-
-type progressReader struct {
-	reader   io.Reader
-	total    int64
-	current  int64
-	callback driver.UpdateProgress
 }
 
 type RenameRequest struct {

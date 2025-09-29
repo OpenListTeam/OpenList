@@ -103,63 +103,38 @@ func (d *ProtonDrive) searchByPath(ctx context.Context, fullPath string, isFolde
 	return currentLink, nil
 }
 
-func (pr *progressReader) Read(p []byte) (int, error) {
-	n, err := pr.reader.Read(p)
-	pr.current += int64(n)
-
-	if pr.callback != nil {
-		percentage := float64(pr.current) / float64(pr.total) * 100
-		pr.callback(percentage)
-	}
-
-	return n, err
-}
-
-func (d *ProtonDrive) uploadFile(ctx context.Context, parentLinkID, fileName string, file *os.File, size int64, up driver.UpdateProgress) error {
-
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("failed to get file info: %w", err)
-	}
-
-	_, err = d.protonDrive.GetLink(ctx, parentLinkID)
+func (d *ProtonDrive) uploadFile(ctx context.Context, parentLinkID string, file model.FileStreamer, up driver.UpdateProgress) error {
+	_, err := d.protonDrive.GetLink(ctx, parentLinkID)
 	if err != nil {
 		return fmt.Errorf("failed to get parent link: %w", err)
 	}
 
 	var reader io.Reader
-
 	// Use buffered reader with larger buffer for better performance
 	var bufferSize int
 
 	// File > 100MB (default)
-	if size > d.ChunkSize*1024*1024 {
-
+	if file.GetSize() > d.ChunkSize*1024*1024 {
 		// 256KB for large files
 		bufferSize = 256 * 1024
-
 		// File > 10MB
-	} else if size > 10*1024*1024 {
-
+	} else if file.GetSize() > 10*1024*1024 {
 		// 128KB for medium files
 		bufferSize = 128 * 1024
 	} else {
-
 		// 64KB for small files
 		bufferSize = 64 * 1024
 	}
 
-	//reader = bufio.NewReader(file)
+	// reader = bufio.NewReader(file)
 	reader = bufio.NewReaderSize(file, bufferSize)
-
-	reader = &progressReader{
-		reader:   reader,
-		total:    size,
-		current:  0,
-		callback: up,
+	reader = &driver.ReaderUpdatingProgress{
+		Reader:         file,
+		UpdateProgress: up,
 	}
+	reader = driver.NewLimitedUploadStream(ctx, reader)
 
-	_, _, err = d.protonDrive.UploadFileByReader(ctx, parentLinkID, fileName, fileInfo.ModTime(), reader, 0)
+	_, _, err = d.protonDrive.UploadFileByReader(ctx, parentLinkID, file.GetName(), file.ModTime(), reader, 0)
 	if err != nil {
 		return fmt.Errorf("failed to upload file: %w", err)
 	}
@@ -169,7 +144,6 @@ func (d *ProtonDrive) uploadFile(ctx context.Context, parentLinkID, fileName str
 
 func (d *ProtonDrive) ensureTempServer() error {
 	if d.tempServer != nil {
-
 		// Already running
 		return nil
 	}
@@ -275,7 +249,7 @@ func (d *ProtonDrive) handleTempDownload(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(link.Name)))
 
 	// Setting fileName is needed since ProtonDrive fileName is more like a random string
-	//w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", link.Name))
+	// w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", link.Name))
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", info.FileName))
 
 	w.Header().Set("Accept-Ranges", "bytes")
@@ -300,7 +274,6 @@ func (d *ProtonDrive) generateDownloadToken(linkID, fileName string) string {
 	d.tokenMutex.Unlock()
 
 	go func() {
-
 		// Token expires in 1 hour
 		time.Sleep(1 * time.Hour)
 		d.tokenMutex.Lock()
@@ -379,7 +352,6 @@ func parseRange(rangeHeader string, size int64) ([]httpRange, error) {
 }
 
 func (d *ProtonDrive) encryptFileName(ctx context.Context, name string, parentLinkID string) (string, error) {
-
 	parentLink, err := d.getLink(ctx, parentLinkID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get parent link: %w", err)
@@ -406,7 +378,6 @@ func (d *ProtonDrive) encryptFileName(ctx context.Context, name string, parentLi
 }
 
 func (d *ProtonDrive) generateFileNameHash(ctx context.Context, name string, parentLinkID string) (string, error) {
-
 	parentLink, err := d.getLink(ctx, parentLinkID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get parent link: %w", err)
@@ -500,7 +471,6 @@ var (
 )
 
 func getAccountKRs(ctx context.Context, c *proton.Client, keyPass, saltedKeyPass []byte) (*crypto.KeyRing, map[string]*crypto.KeyRing, map[string]proton.Address, []byte, error) {
-
 	user, err := c.GetUser(ctx)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -535,7 +505,6 @@ func getAccountKRs(ctx context.Context, c *proton.Client, keyPass, saltedKeyPass
 	userKR, addrKRs, err := proton.Unlock(user, addrsArr, saltedKeyPass, nil)
 	if err != nil {
 		return nil, nil, nil, nil, err
-
 	} else if userKR.CountDecryptionEntities() == 0 {
 		return nil, nil, nil, nil, ErrFailedToUnlockUserKeys
 	}
@@ -592,7 +561,7 @@ func (d *ProtonDrive) addKeysFromKR(kr *crypto.KeyRing, newKRs ...*crypto.KeyRin
 }
 
 func (d *ProtonDrive) DirectRename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	//fmt.Printf("DEBUG DirectRename: path=%s, newName=%s", srcObj.GetPath(), newName)
+	// fmt.Printf("DEBUG DirectRename: path=%s, newName=%s", srcObj.GetPath(), newName)
 
 	if d.MainShare == nil || d.DefaultAddrKR == nil {
 		return nil, fmt.Errorf("missing required fields: MainShare=%v, DefaultAddrKR=%v",
@@ -649,7 +618,6 @@ func (d *ProtonDrive) DirectRename(ctx context.Context, srcObj model.Obj, newNam
 }
 
 func (d *ProtonDrive) executeRenameAPI(ctx context.Context, linkID string, req RenameRequest) error {
-
 	renameURL := fmt.Sprintf(d.apiBase+"/drive/v2/volumes/%s/links/%s/rename",
 		d.MainShare.VolumeID, linkID)
 
@@ -694,20 +662,20 @@ func (d *ProtonDrive) executeRenameAPI(ctx context.Context, linkID string, req R
 }
 
 func (d *ProtonDrive) executeMoveAPI(ctx context.Context, linkID string, req MoveRequest) error {
-	//fmt.Printf("DEBUG Move Request - Name: %s\n", req.Name)
-	//fmt.Printf("DEBUG Move Request - Hash: %s\n", req.Hash)
-	//fmt.Printf("DEBUG Move Request - OriginalHash: %s\n", req.OriginalHash)
-	//fmt.Printf("DEBUG Move Request - ParentLinkID: %s\n", req.ParentLinkID)
+	// fmt.Printf("DEBUG Move Request - Name: %s\n", req.Name)
+	// fmt.Printf("DEBUG Move Request - Hash: %s\n", req.Hash)
+	// fmt.Printf("DEBUG Move Request - OriginalHash: %s\n", req.OriginalHash)
+	// fmt.Printf("DEBUG Move Request - ParentLinkID: %s\n", req.ParentLinkID)
 
-	//fmt.Printf("DEBUG Move Request - Name length: %d\n", len(req.Name))
-	//fmt.Printf("DEBUG Move Request - NameSignatureEmail: %s\n", req.NameSignatureEmail)
-	//fmt.Printf("DEBUG Move Request - ContentHash: %v\n", req.ContentHash)
-	//fmt.Printf("DEBUG Move Request - NodePassphrase length: %d\n", len(req.NodePassphrase))
-	//fmt.Printf("DEBUG Move Request - NodePassphraseSignature length: %d\n", len(req.NodePassphraseSignature))
+	// fmt.Printf("DEBUG Move Request - Name length: %d\n", len(req.Name))
+	// fmt.Printf("DEBUG Move Request - NameSignatureEmail: %s\n", req.NameSignatureEmail)
+	// fmt.Printf("DEBUG Move Request - ContentHash: %v\n", req.ContentHash)
+	// fmt.Printf("DEBUG Move Request - NodePassphrase length: %d\n", len(req.NodePassphrase))
+	// fmt.Printf("DEBUG Move Request - NodePassphraseSignature length: %d\n", len(req.NodePassphraseSignature))
 
-	//fmt.Printf("DEBUG Move Request - SrcLinkID: %s\n", linkID)
-	//fmt.Printf("DEBUG Move Request - DstParentLinkID: %s\n", req.ParentLinkID)
-	//fmt.Printf("DEBUG Move Request - ShareID: %s\n", d.MainShare.ShareID)
+	// fmt.Printf("DEBUG Move Request - SrcLinkID: %s\n", linkID)
+	// fmt.Printf("DEBUG Move Request - DstParentLinkID: %s\n", req.ParentLinkID)
+	// fmt.Printf("DEBUG Move Request - ShareID: %s\n", d.MainShare.ShareID)
 
 	srcLink, _ := d.getLink(ctx, linkID)
 	if srcLink != nil && srcLink.ParentLinkID == req.ParentLinkID {
@@ -754,7 +722,7 @@ func (d *ProtonDrive) executeMoveAPI(ctx context.Context, linkID string, req Mov
 }
 
 func (d *ProtonDrive) DirectMove(ctx context.Context, srcObj model.Obj, dstDir model.Obj) (model.Obj, error) {
-	//fmt.Printf("DEBUG DirectMove: srcPath=%s, dstPath=%s", srcObj.GetPath(), dstDir.GetPath())
+	// fmt.Printf("DEBUG DirectMove: srcPath=%s, dstPath=%s", srcObj.GetPath(), dstDir.GetPath())
 
 	srcLink, err := d.searchByPath(ctx, srcObj.GetPath(), srcObj.IsDir())
 	if err != nil {
@@ -773,7 +741,6 @@ func (d *ProtonDrive) DirectMove(ctx context.Context, srcObj model.Obj, dstDir m
 	}
 
 	if srcObj.IsDir() {
-
 		// Check if destination is a descendant of source
 		if err := d.checkCircularMove(ctx, srcLink.LinkID, dstParentLinkID); err != nil {
 			return nil, err
@@ -871,7 +838,6 @@ func (d *ProtonDrive) reencryptNodePassphrase(ctx context.Context, srcLink *prot
 }
 
 func (d *ProtonDrive) generateNameHash(ctx context.Context, name string, parentLinkID string) (string, error) {
-
 	parentLink, err := d.getLink(ctx, parentLinkID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get parent link: %w", err)
