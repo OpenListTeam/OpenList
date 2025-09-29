@@ -845,31 +845,31 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 		if err != nil {
 			return nil, err
 		}
-		totalMb, err := strconv.Atoi(diskInfo.Data.DiskSize)
+		totalMb, err := strconv.ParseUint(diskInfo.Data.DiskSize, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
 		}
-		usedMb, err := strconv.Atoi(diskInfo.Data.UsedSize)
+		usedMb, err := strconv.ParseUint(diskInfo.Data.UsedSize, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed convert used size into integer: %+v", err)
 		}
-		total = uint64(totalMb) * 1024 * 1024
-		free = total - (uint64(usedMb) * 1024 * 1024)
+		total = totalMb * 1024 * 1024
+		free = total - (usedMb * 1024 * 1024)
 	} else {
 		diskInfo, err := d.getPersonalDiskInfo(ctx)
 		if err != nil {
 			return nil, err
 		}
-		totalMb, err := strconv.Atoi(diskInfo.Data.DiskSize)
+		totalMb, err := strconv.ParseUint(diskInfo.Data.DiskSize, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
 		}
-		freeMb, err := strconv.Atoi(diskInfo.Data.FreeDiskSize)
+		freeMb, err := strconv.ParseUint(diskInfo.Data.FreeDiskSize, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed convert free size into integer: %+v", err)
 		}
-		total = uint64(totalMb) * 1024 * 1024
-		free = uint64(freeMb) * 1024 * 1024
+		total = totalMb * 1024 * 1024
+		free = freeMb * 1024 * 1024
 	}
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{

@@ -175,26 +175,23 @@ func (d *GoogleDrive) GetDetails(ctx context.Context) (*model.StorageDetails, er
 	if err != nil {
 		return nil, err
 	}
-	var total, free uint64
+	var total, used uint64
 	if about.StorageQuota.Limit == nil {
 		total = 0
 	} else {
-		var totalSigned int
-		totalSigned, err = strconv.Atoi(*about.StorageQuota.Limit)
+		total, err = strconv.ParseUint(*about.StorageQuota.Limit, 10, 64)
 		if err != nil {
 			return nil, err
 		}
-		total = uint64(totalSigned)
 	}
-	usedSigned, err := strconv.Atoi(about.StorageQuota.Usage)
+	used, err = strconv.ParseUint(about.StorageQuota.Usage, 10, 64)
 	if err != nil {
 		return nil, err
 	}
-	free = total - uint64(usedSigned)
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
 			TotalSpace: total,
-			FreeSpace:  free,
+			FreeSpace:  total - used,
 		},
 	}, nil
 }
