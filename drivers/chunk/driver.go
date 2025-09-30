@@ -9,6 +9,7 @@ import (
 	stdpath "path"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -17,9 +18,11 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/avast/retry-go"
 )
 
 type Chunk struct {
@@ -149,67 +152,81 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		return nil, err
 	}
 	result := make([]model.Obj, 0, len(remoteObjs))
+	var resultMutex sync.Mutex
+	listG, listCtx := errgroup.NewGroupWithContext(ctx, d.NumListWorkers, retry.Attempts(3))
 	for _, obj := range remoteObjs {
+		if utils.IsCanceled(listCtx) {
+			break
+		}
 		rawName := obj.GetName()
 		if obj.IsDir() {
 			if name, ok := strings.CutPrefix(rawName, d.ChunkPrefix); ok {
-				chunkObjs, err := op.List(ctx, remoteStorage, stdpath.Join(remoteActualDir, rawName), model.ListArgs{
-					ReqPath: stdpath.Join(args.ReqPath, rawName),
-					Refresh: args.Refresh,
-				})
-				if err != nil {
-					return nil, err
-				}
-				totalSize := int64(0)
-				h := make(map[*utils.HashType]string)
-				first := obj
-				for _, o := range chunkObjs {
-					if o.IsDir() {
-						continue
+				resultMutex.Lock()
+				resultIdx := len(result)
+				result = append(result, nil)
+				resultMutex.Unlock()
+				listG.Go(func(ctx context.Context) error {
+					chunkObjs, err := op.List(ctx, remoteStorage, stdpath.Join(remoteActualDir, rawName), model.ListArgs{
+						ReqPath: stdpath.Join(args.ReqPath, rawName),
+						Refresh: args.Refresh,
+					})
+					if err != nil {
+						return err
 					}
-					if after, ok := strings.CutPrefix(strings.TrimSuffix(o.GetName(), d.CustomExt), "hash_"); ok {
-						hn, value, ok := strings.Cut(after, "_")
-						if ok {
-							ht, ok := utils.GetHashByName(hn)
-							if ok {
-								h[ht] = value
-							}
+					totalSize := int64(0)
+					h := make(map[*utils.HashType]string)
+					first := obj
+					for _, o := range chunkObjs {
+						if o.IsDir() {
 							continue
 						}
+						if after, ok := strings.CutPrefix(strings.TrimSuffix(o.GetName(), d.CustomExt), "hash_"); ok {
+							hn, value, ok := strings.Cut(after, "_")
+							if ok {
+								ht, ok := utils.GetHashByName(hn)
+								if ok {
+									h[ht] = value
+								}
+								continue
+							}
+						}
+						idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
+						if err != nil {
+							continue
+						}
+						if idx == 0 {
+							first = o
+						}
+						totalSize += o.GetSize()
 					}
-					idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
-					if err != nil {
-						continue
+					objRes := model.Object{
+						Name:     name,
+						Size:     totalSize,
+						Modified: first.ModTime(),
+						Ctime:    first.CreateTime(),
 					}
-					if idx == 0 {
-						first = o
+					if len(h) > 0 {
+						objRes.HashInfo = utils.NewHashInfoByMap(h)
 					}
-					totalSize += o.GetSize()
-				}
-				objRes := model.Object{
-					Name:     name,
-					Size:     totalSize,
-					Modified: first.ModTime(),
-					Ctime:    first.CreateTime(),
-				}
-				if len(h) > 0 {
-					objRes.HashInfo = utils.NewHashInfoByMap(h)
-				}
-				if !d.Thumbnail {
-					result = append(result, &objRes)
-				} else {
-					thumbPath := stdpath.Join(args.ReqPath, ".thumbnails", name+".webp")
-					thumb := fmt.Sprintf("%s/d%s?sign=%s",
-						common.GetApiUrl(ctx),
-						utils.EncodePath(thumbPath, true),
-						sign.Sign(thumbPath))
-					result = append(result, &model.ObjThumb{
-						Object: objRes,
-						Thumbnail: model.Thumbnail{
-							Thumbnail: thumb,
-						},
-					})
-				}
+					resultMutex.Lock()
+					defer resultMutex.Unlock()
+					if !d.Thumbnail {
+						result[resultIdx] = &objRes
+					} else {
+						thumbPath := stdpath.Join(args.ReqPath, ".thumbnails", name+".webp")
+						thumb := fmt.Sprintf("%s/d%s?sign=%s",
+							common.GetApiUrl(ctx),
+							utils.EncodePath(thumbPath, true),
+							sign.Sign(thumbPath))
+						result[resultIdx] = &model.ObjThumb{
+							Object: objRes,
+							Thumbnail: model.Thumbnail{
+								Thumbnail: thumb,
+							},
+						}
+					}
+					return nil
+				})
 				continue
 			}
 		}
@@ -225,6 +242,7 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			IsFolder: obj.IsDir(),
 			HashInfo: obj.GetHash(),
 		}
+		resultMutex.Lock()
 		if !ok {
 			result = append(result, &objRes)
 		} else {
@@ -235,6 +253,10 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 				},
 			})
 		}
+		resultMutex.Unlock()
+	}
+	if err = listG.Wait(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
