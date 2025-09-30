@@ -42,6 +42,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/lanzou"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/lenovonas_share"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/local"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/mediafire"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/mediatrack"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/mega"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/misskey"
