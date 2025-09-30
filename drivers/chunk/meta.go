@@ -31,7 +31,8 @@ func init() {
 	op.RegisterDriver(func() driver.Driver {
 		return &Chunk{
 			Addition: Addition{
-				ChunkPrefix: "[openlist_chunk]",
+				ChunkPrefix:    "[openlist_chunk]",
+				NumListWorkers: 5,
 			},
 		}
 	})
