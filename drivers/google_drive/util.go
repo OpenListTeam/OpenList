@@ -28,16 +28,16 @@ import (
 // do others that not defined in Driver interface
 
 type googleDriveServiceAccount struct {
-	//Type                    string `json:"type"`
-	//ProjectID               string `json:"project_id"`
-	//PrivateKeyID            string `json:"private_key_id"`
+	// Type                    string `json:"type"`
+	// ProjectID               string `json:"project_id"`
+	// PrivateKeyID            string `json:"private_key_id"`
 	PrivateKey  string `json:"private_key"`
 	ClientEMail string `json:"client_email"`
-	//ClientID                string `json:"client_id"`
-	//AuthURI                 string `json:"auth_uri"`
+	// ClientID                string `json:"client_id"`
+	// AuthURI                 string `json:"auth_uri"`
 	TokenURI string `json:"token_uri"`
-	//AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
-	//ClientX509CertURL       string `json:"client_x509_cert_url"`
+	// AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
+	// ClientX509CertURL       string `json:"client_x509_cert_url"`
 }
 
 func (d *GoogleDrive) refreshToken() error {
@@ -255,7 +255,7 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 }
 
 func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, url string, up driver.UpdateProgress) error {
-	var defaultChunkSize = d.ChunkSize * 1024 * 1024
+	defaultChunkSize := d.ChunkSize * 1024 * 1024
 	ss, err := stream.NewStreamSectionReader(file, int(defaultChunkSize), &up)
 	if err != nil {
 		return err
@@ -314,4 +314,19 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 		offset += chunkSize
 	}
 	return nil
+}
+
+func (d *GoogleDrive) getAbout(ctx context.Context) (*AboutResp, error) {
+	query := map[string]string{
+		"fields": "storageQuota",
+	}
+	var resp AboutResp
+	_, err := d.request("https://www.googleapis.com/drive/v3/about", http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(query)
+		req.SetContext(ctx)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

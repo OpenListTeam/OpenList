@@ -1,6 +1,7 @@
 package baidu_netdisk
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -207,7 +208,7 @@ func (d *BaiduNetdisk) linkOfficial(file model.Obj, _ model.LinkArgs) (*model.Li
 	if err != nil {
 		return nil, err
 	}
-	//if res.StatusCode() == 302 {
+	// if res.StatusCode() == 302 {
 	u = res.Header().Get("location")
 	//}
 
@@ -381,9 +382,11 @@ func (d *BaiduNetdisk) getSliceSize(filesize int64) int64 {
 	return maxSliceSize
 }
 
-func (d *BaiduNetdisk) quota() (*model.DiskUsage, error) {
+func (d *BaiduNetdisk) quota(ctx context.Context) (*model.DiskUsage, error) {
 	var resp QuotaResp
-	_, err := d.request("https://pan.baidu.com/api/quota", http.MethodGet, nil, &resp)
+	_, err := d.request("https://pan.baidu.com/api/quota", http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp)
 	if err != nil {
 		return nil, err
 	}

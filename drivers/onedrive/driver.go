@@ -207,4 +207,20 @@ func (d *Onedrive) Put(ctx context.Context, dstDir model.Obj, stream model.FileS
 	return err
 }
 
+func (d *Onedrive) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if d.DisableDiskUsage {
+		return nil, errs.NotImplement
+	}
+	drive, err := d.getDrive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: drive.Quota.Total,
+			FreeSpace:  drive.Quota.Remaining,
+		},
+	}, nil
+}
+
 var _ driver.Driver = (*Onedrive)(nil)
