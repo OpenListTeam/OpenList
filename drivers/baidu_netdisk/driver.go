@@ -212,7 +212,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		lastBlockSize = sliceSize
 	}
 
-	//cal md5 for first 256k data
+	// cal md5 for first 256k data
 	const SliceSize int64 = 256 * utils.KB
 	// cal md5
 	blockList := make([]string, 0, count)
@@ -284,7 +284,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		}
 		log.Debugf("%+v", precreateResp)
 		if precreateResp.ReturnType == 2 {
-			//rapid upload, since got md5 match from baidu server
+			// rapid upload, since got md5 match from baidu server
 			// 修复时间，具体原因见 Put 方法注释的 **注意**
 			precreateResp.File.Ctime = ctime
 			precreateResp.File.Mtime = mtime
@@ -365,7 +365,7 @@ func (d *BaiduNetdisk) uploadSlice(ctx context.Context, params map[string]string
 }
 
 func (d *BaiduNetdisk) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	du, err := d.quota()
+	du, err := d.quota(ctx)
 	if err != nil {
 		return nil, err
 	}
