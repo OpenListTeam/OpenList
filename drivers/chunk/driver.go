@@ -472,11 +472,7 @@ func (d *Chunk) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	if err != nil {
 		return nil, errs.NotImplement
 	}
-	wd, ok := remoteStorage.(driver.WithDetails)
-	if !ok {
-		return nil, errs.NotImplement
-	}
-	remoteDetails, err := wd.GetDetails(ctx)
+	remoteDetails, err := op.GetStorageDetails(ctx, remoteStorage)
 	if err != nil {
 		return nil, err
 	}
