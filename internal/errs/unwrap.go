@@ -3,7 +3,7 @@ package errs
 import "errors"
 
 func UnwrapOrSelf(err error) error {
-	// errors.Unwrap没有fallback机制
+	// errors.Unwrap has no fallback mechanism
 	unwrapped := errors.Unwrap(err)
 	if unwrapped == nil {
 		return err
