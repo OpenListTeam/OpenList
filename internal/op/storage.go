@@ -347,8 +347,8 @@ func GetStorageVirtualFilesByPath(prefix string) []model.Obj {
 	})
 }
 
-func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string, hideDetails ...bool) []model.Obj {
-	if utils.IsBool(hideDetails...) {
+func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string, hideDetails, refresh bool) []model.Obj {
+	if hideDetails {
 		return GetStorageVirtualFilesByPath(prefix)
 	}
 	return getStorageVirtualFilesByPath(prefix, func(d driver.Driver, obj model.Obj) model.Obj {
@@ -361,7 +361,7 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 		}
 		timeoutCtx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
-		details, err := GetStorageDetails(timeoutCtx, d)
+		details, err := GetStorageDetails(timeoutCtx, d, refresh)
 		if err != nil {
 			if !errors.Is(err, errs.NotImplement) {
 				log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
@@ -448,13 +448,15 @@ func GetBalancedStorage(path string) driver.Driver {
 
 var detailsG singleflight.Group[*model.StorageDetails]
 
-func GetStorageDetails(ctx context.Context, storage driver.Driver) (*model.StorageDetails, error) {
-	if ret, ok := cache.Manager.GetStorageDetails(storage); ok {
-		return ret, nil
-	}
+func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bool) (*model.StorageDetails, error) {
 	wd, ok := storage.(driver.WithDetails)
 	if !ok {
 		return nil, errs.NotImplement
+	}
+	if !utils.IsBool(refresh...) {
+		if ret, ok := cache.Manager.GetStorageDetails(storage); ok {
+			return ret, nil
+		}
 	}
 	details, err, _ := detailsG.Do(storage.GetStorage().MountPath, func() (*model.StorageDetails, error) {
 		ret, err := wd.GetDetails(ctx)

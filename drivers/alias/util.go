@@ -16,7 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
+func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model.Obj {
 	var objs []model.Obj
 	var wg sync.WaitGroup
 	for k, v := range d.pathMap {
@@ -48,7 +48,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			details, e := op.GetStorageDetails(ctx, remoteDriver)
+			details, e := op.GetStorageDetails(ctx, remoteDriver, refresh)
 			if e != nil {
 				if !errors.Is(e, errs.NotImplement) {
 					log.Errorf("failed get %s storage details: %+v", remoteDriver.GetStorage().MountPath, e)

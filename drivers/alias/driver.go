@@ -123,7 +123,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	path := dir.GetPath()
 	if utils.PathEqual(path, "/") && !d.autoFlatten {
-		return d.listRoot(ctx, args.WithStorageDetails && d.DetailsPassThrough), nil
+		return d.listRoot(ctx, args.WithStorageDetails && d.DetailsPassThrough, args.Refresh), nil
 	}
 	root, sub := d.getRootAndPath(path)
 	dsts, ok := d.pathMap[root]
