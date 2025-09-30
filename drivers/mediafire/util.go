@@ -302,6 +302,7 @@ func (d *Mediafire) apiRequest(ctx context.Context, method, endpoint string, que
 	}
 
 	req := base.RestyClient.R()
+	req.SetContext(ctx)
 	d.setCommonHeaders(req)
 
 	// Set query parameters for GET requests
@@ -483,17 +484,21 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				if err != nil {
 					return err
 				}
-				unitHash, err = utils.HashReader(utils.SHA256, reader)
-				if err != nil {
-					return err
-				}
-
 				rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
 				return nil
 			},
 			Do: func(ctx context.Context) error {
 				if reader == nil {
 					return nil // Skip if reader is not initialized (already uploaded)
+				}
+
+				if unitHash == "" {
+					reader.Seek(0, io.SeekStart)
+					var err error
+					unitHash, err = utils.HashReader(utils.SHA256, reader)
+					if err != nil {
+						return err
+					}
 				}
 				reader.Seek(0, io.SeekStart)
 
@@ -577,6 +582,7 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				return nil
 			},
 			After: func(err error) {
+				up(float64(threadG.Success()) * 100 / float64(numUnits))
 				if reader != nil {
 					// Cleanup resources
 					ss.FreeSectionReader(reader)

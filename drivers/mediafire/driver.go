@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -89,14 +90,6 @@ func (d *Mediafire) Init(ctx context.Context) error {
 	return nil
 }
 
-// WaitLimit applies rate limiting if configured
-func (d *Mediafire) WaitLimit(ctx context.Context) error {
-	if d.limiter != nil {
-		return d.limiter.Wait(ctx)
-	}
-	return nil
-}
-
 // Drop cleans up driver resources
 func (d *Mediafire) Drop(ctx context.Context) error {
 	// Clear cached resources
@@ -110,9 +103,6 @@ func (d *Mediafire) Drop(ctx context.Context) error {
 
 // List retrieves files and folders from the specified directory
 func (d *Mediafire) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
 	files, err := d.getFiles(ctx, dir.GetID())
 	if err != nil {
 		return nil, err
@@ -124,9 +114,6 @@ func (d *Mediafire) List(ctx context.Context, dir model.Obj, args model.ListArgs
 
 // Link generates a direct download link for the specified file
 func (d *Mediafire) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
 	downloadUrl, err := d.getDirectDownloadLink(ctx, file.GetID())
 	if err != nil {
 		return nil, err
@@ -158,9 +145,6 @@ func (d *Mediafire) Link(ctx context.Context, file model.Obj, args model.LinkArg
 
 // MakeDir creates a new folder in the specified parent directory
 func (d *Mediafire) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
 	data := map[string]string{
 		"session_token":   d.SessionToken,
 		"response_format": "json",
@@ -192,9 +176,6 @@ func (d *Mediafire) MakeDir(ctx context.Context, parentDir model.Obj, dirName st
 
 // Move relocates a file or folder to a different parent directory
 func (d *Mediafire) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
 	var data map[string]string
 	var endpoint string
 
@@ -233,9 +214,6 @@ func (d *Mediafire) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 // Rename changes the name of a file or folder
 func (d *Mediafire) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
 	var data map[string]string
 	var endpoint string
 
@@ -281,9 +259,6 @@ func (d *Mediafire) Rename(ctx context.Context, srcObj model.Obj, newName string
 
 // Copy creates a duplicate of a file or folder in the specified destination directory
 func (d *Mediafire) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
 	var data map[string]string
 	var endpoint string
 
@@ -340,9 +315,6 @@ func (d *Mediafire) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 // Remove deletes a file or folder permanently
 func (d *Mediafire) Remove(ctx context.Context, obj model.Obj) error {
-	if err := d.WaitLimit(ctx); err != nil {
-		return err
-	}
 	var data map[string]string
 	var endpoint string
 
@@ -375,9 +347,6 @@ func (d *Mediafire) Remove(ctx context.Context, obj model.Obj) error {
 
 // Put uploads a file to the specified directory with support for resumable upload and quick upload
 func (d *Mediafire) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
 	fileHash := file.GetHash().GetHash(utils.SHA256)
 	var err error
 
@@ -430,6 +399,32 @@ func (d *Mediafire) Put(ctx context.Context, dstDir model.Obj, file model.FileSt
 		ID:   pollResp.Response.Doupload.QuickKey,
 		Name: file.GetName(),
 		Size: file.GetSize(),
+	}, nil
+}
+
+func (d *Mediafire) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	data := map[string]string{
+		"session_token":   d.SessionToken,
+		"response_format": "json",
+	}
+	var resp MediafireUserInfoResponse
+	_, err := d.postForm(ctx, "/user/get_info.php", data, &resp)
+	if err != nil {
+		return nil, err
+	}
+	used, err := strconv.ParseUint(resp.Response.UserInfo.UsedStorageSize, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	total, err := strconv.ParseUint(resp.Response.UserInfo.StorageLimit, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  total - used,
+		},
 	}, nil
 }
 
