@@ -110,7 +110,7 @@ func (d *LanZou) request(url string, method string, callback base.ReqCallback, u
 		}
 
 		req.SetHeaders(map[string]string{
-			"Referer":	"https://pc.woozooo.com",
+			"Referer":    "https://pc.woozooo.com",
 			"User-Agent": d.UserAgent,
 		})
 
@@ -160,14 +160,14 @@ func (d *LanZou) request(url string, method string, callback base.ReqCallback, u
 func (d *LanZou) Login() ([]*http.Cookie, error) {
 	resp, err := base.NewRestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).
 		R().SetFormData(map[string]string{
-		"task":		 "3",
-		"uid":		  d.Account,
-		"pwd":		  d.Password,
+		"task":         "3",
+		"uid":          d.Account,
+		"pwd":          d.Password,
 		"setSessionId": "",
-		"setSig":	   "",
-		"setScene":	 "",
-		"setTocen":	 "",
-		"formhash":	 "",
+		"setSig":       "",
+		"setScene":     "",
+		"setTocen":     "",
+		"formhash":     "",
 	}).Post("https://up.woozooo.com/mlogin.php")
 	if err != nil {
 		return nil, err
@@ -207,7 +207,7 @@ func (d *LanZou) GetFolders(folderID string) ([]FileOrFolder, error) {
 	var resp RespText[[]FileOrFolder]
 	_, err := d.doupload(func(req *resty.Request) {
 		req.SetFormData(map[string]string{
-			"task":	  "47",
+			"task":      "47",
 			"folder_id": folderID,
 		})
 	}, &resp)
@@ -224,9 +224,9 @@ func (d *LanZou) GetFiles(folderID string) ([]FileOrFolder, error) {
 		var resp RespText[[]FileOrFolder]
 		_, err := d.doupload(func(req *resty.Request) {
 			req.SetFormData(map[string]string{
-				"task":	  "5",
+				"task":      "5",
 				"folder_id": folderID,
-				"pg":		strconv.Itoa(pg),
+				"pg":        strconv.Itoa(pg),
 			})
 		}, &resp)
 		if err != nil {
@@ -245,7 +245,7 @@ func (d *LanZou) getFolderShareUrlByID(fileID string) (*FileShare, error) {
 	var resp RespInfo[FileShare]
 	_, err := d.doupload(func(req *resty.Request) {
 		req.SetFormData(map[string]string{
-			"task":	"18",
+			"task":    "18",
 			"file_id": fileID,
 		})
 	}, &resp)
@@ -260,7 +260,7 @@ func (d *LanZou) getFileShareUrlByID(fileID string) (*FileShare, error) {
 	var resp RespInfo[FileShare]
 	_, err := d.doupload(func(req *resty.Request) {
 		req.SetFormData(map[string]string{
-			"task":	"22",
+			"task":    "22",
 			"file_id": fileID,
 		})
 	}, &resp)
@@ -373,10 +373,10 @@ func (d *LanZou) GetFilesByShareUrl(shareID, pwd string) (file *FileOrFolderBySh
 
 func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (*FileOrFolderByShareUrl, error) {
 	var (
-		param	   map[string]string
+		param       map[string]string
 		downloadUrl string
-		baseUrl	 string
-		file		FileOrFolderByShareUrl
+		baseUrl     string
+		file        FileOrFolderByShareUrl
 	)
 
 	// 删除注释
@@ -470,7 +470,7 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 	for i := 0; i < 3; i++ {
 		res, err = base.NoRedirectClient.R().SetHeaders(map[string]string{
 			"accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-			"Referer":		 baseUrl,
+			"Referer":         baseUrl,
 		}).SetDoNotParseResponse(true).
 			SetCookie(&http.Cookie{
 				Name:  "acw_sc__v2",
@@ -578,7 +578,7 @@ func (d *LanZou) getFolderByShareUrl(pwd string, sharePageData string) ([]FileOr
 		if len(floder) == 3 {
 			files = append(files, FileOrFolderByShareUrl{
 				// Pwd: pwd, // 子文件夹不加密
-				ID:	   floder[1],
+				ID:       floder[1],
 				NameAll:  floder[2],
 				IsFloder: true,
 			})
