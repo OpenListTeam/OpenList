@@ -24,10 +24,13 @@ type Addition struct {
 	driver.RootPath
 	//driver.RootID
 
-	Username  string `json:"username" required:"true" type:"string"`
-	Password  string `json:"password" required:"true" type:"string"`
-	TwoFACode string `json:"two_fa_code,omitempty" type:"string"`
-	ChunkSize int64  `json:"chunk_size" type:"number" default:"100"`
+	Username             string `json:"username" required:"true" type:"string"`
+	Password             string `json:"password" required:"true" type:"string"`
+	TwoFACode            string `json:"two_fa_code,omitempty" type:"string"`
+	ChunkSize            int64  `json:"chunk_size" type:"number" default:"100"`
+	TempServerListenPort int    `json:"temp_server_listen_port" type:"number" default:"0" help:"Internal port for temp server to bind to (0 for auto, preferred = 8080)"`
+	TempServerPublicPort int    `json:"temp_server_public_port" type:"number" default:"0" help:"External port that clients will connect to (0 for auto, preferred = 8080)"`
+	TempServerPublicHost string `json:"temp_server_public_host" type:"string" default:"127.0.0.1" help:"External domain/IP that clients will connect to i.e. 192.168.1.5 (default = 127.0.0.1)"`
 }
 
 type Config struct {
@@ -45,7 +48,7 @@ var config = driver.Config{
 	Name:      "ProtonDrive",
 	LocalSort: false,
 	//OnlyLocal:         false,
-	OnlyProxy:         false,
+	OnlyProxy:         false, //Please leave it disabled, true breaks stream / download
 	NoCache:           false,
 	NoUpload:          false,
 	NeedMs:            false,

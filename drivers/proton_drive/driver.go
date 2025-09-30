@@ -48,7 +48,6 @@ type ProtonDrive struct {
 	webDriveAV string
 
 	tempServer     *http.Server
-	tempServerPort int
 	downloadTokens map[string]*downloadInfo
 	tokenMutex     sync.RWMutex
 
@@ -261,10 +260,56 @@ func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkA
 		URL: fmt.Sprintf("protondrive://download/%s", link.LinkID),
 	}, nil */
 
+	//fmt.Printf("d.TempServerPublicHost: %v\n", d.TempServerPublicHost)
+	//fmt.Printf("d.TempServerPublicPort: %d\n", d.TempServerPublicPort)
+
+	// Use public host and port for the URL returned to clients
 	return &model.Link{
-		URL: fmt.Sprintf("http://localhost:%d/temp/%s", d.tempServerPort, token),
+		URL: fmt.Sprintf("http://%s:%d/temp/%s",
+			d.TempServerPublicHost, d.TempServerPublicPort, token),
 	}, nil
 }
+
+//Causes 500 error, but leave it because is an alternative
+/* func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	link, err := d.searchByPath(ctx, file.GetPath(), false)
+	if err != nil {
+		return nil, err
+	}
+	token := d.generateDownloadToken(link.LinkID, file.GetName())
+	size := file.GetSize()
+
+	rangeReaderFunc := func(rangeCtx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
+		length := httpRange.Length
+		if length < 0 || httpRange.Start+length > size {
+			length = size - httpRange.Start
+		}
+		d.tokenMutex.RLock()
+		info, exists := d.downloadTokens[token]
+		d.tokenMutex.RUnlock()
+		if !exists {
+			return nil, errors.New("invalid or expired token")
+		}
+		link, err := d.protonDrive.GetLink(rangeCtx, info.LinkID)
+		if err != nil {
+			return nil, fmt.Errorf("failed get file link: %+v", err)
+		}
+		reader, _, _, err := d.protonDrive.DownloadFile(rangeCtx, link, httpRange.Start)
+		if err != nil {
+			return nil, fmt.Errorf("failed start download: %+v", err)
+		}
+		return utils.ReadCloser{
+			Reader: io.LimitReader(reader, length),
+			Closer: reader,
+		}, nil
+	}
+
+	return &model.Link{
+		RangeReader: &model.FileRangeReader{
+			RangeReaderIF: stream.RateLimitRangeReaderFunc(rangeReaderFunc),
+		},
+	}, nil
+} */
 
 func (d *ProtonDrive) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	var parentLinkID string

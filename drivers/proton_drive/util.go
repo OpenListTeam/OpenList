@@ -148,11 +148,50 @@ func (d *ProtonDrive) ensureTempServer() error {
 		return nil
 	}
 
-	listener, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return err
+	// Use configured listen port, or auto-assign if 0
+	if d.TempServerListenPort == 0 {
+		// Try preferred port 8080 first
+		listener, err := net.Listen("tcp", ":8080")
+		if err == nil {
+			// Port 8080 is available (default)
+			d.TempServerListenPort = 8080
+			listener.Close()
+		} else {
+			// Port 8080 not available, auto-assign any available port
+			listener, err := net.Listen("tcp", ":0")
+			if err != nil {
+				return fmt.Errorf("failed to get available port: %w", err)
+			}
+			d.TempServerListenPort = listener.Addr().(*net.TCPAddr).Port
+			listener.Close()
+		}
 	}
-	d.tempServerPort = listener.Addr().(*net.TCPAddr).Port
+
+	//If public port is default, use the same port as listen
+	if d.TempServerPublicPort == 0 {
+		d.TempServerPublicPort = d.TempServerListenPort
+	} else {
+		// Validate that the configured public port is available
+		testListener, err := net.Listen("tcp", fmt.Sprintf(":%d", d.TempServerPublicPort))
+		if err != nil {
+			// Public port not available, fall back to listen port
+			fmt.Printf("ProtonDrive: configured public port %d not available, falling back to listen port %d\n",
+				d.TempServerPublicPort, d.TempServerListenPort)
+			d.TempServerPublicPort = d.TempServerListenPort
+
+			fmt.Printf("ProtonDrive: if using container like Docker, NAT env or VM \nplease configure external port forwarding/mapping %d -> %d \n", d.TempServerListenPort, d.TempServerPublicPort)
+		} else {
+			// Port is available, close the listener
+			testListener.Close()
+		}
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", d.TempServerListenPort))
+	if err != nil {
+		return fmt.Errorf("failed to listen on port %d: %w", d.TempServerListenPort, err)
+	}
+
+	//fmt.Printf("d.TempServerListenPort: %d\n", d.TempServerListenPort)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/temp/", d.handleTempDownload)
@@ -162,7 +201,9 @@ func (d *ProtonDrive) ensureTempServer() error {
 	}
 
 	go func() {
-		d.tempServer.Serve(listener)
+		if err := d.tempServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("ProtonDrive temp server error: %v\n", err)
+		}
 	}()
 
 	return nil
