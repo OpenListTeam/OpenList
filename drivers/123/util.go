@@ -43,7 +43,7 @@ const (
 	S3Auth           = MainApi + "/file/s3_upload_object/auth"
 	UploadCompleteV2 = MainApi + "/file/upload_complete/v2"
 	S3Complete       = MainApi + "/file/s3_complete_multipart_upload"
-	//AuthKeySalt      = "8-8D$sL8gPjom7bk#cY"
+	// AuthKeySalt      = "8-8D$sL8gPjom7bk#cY"
 )
 
 func signPath(path string, os string, version string) (k string, v string) {
@@ -281,4 +281,15 @@ func (d *Pan123) getFiles(ctx context.Context, parentId string, name string) ([]
 		log.Warnf("incorrect file count from remote at %s: expected %d, got %d", name, total, len(res))
 	}
 	return res, nil
+}
+
+func (d *Pan123) getUserInfo(ctx context.Context) (*UserInfoResp, error) {
+	var resp UserInfoResp
+	_, err := d.Request(UserInfo, http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

@@ -123,7 +123,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	path := dir.GetPath()
 	if utils.PathEqual(path, "/") && !d.autoFlatten {
-		return d.listRoot(), nil
+		return d.listRoot(ctx, args.WithStorageDetails && d.DetailsPassThrough), nil
 	}
 	root, sub := d.getRootAndPath(path)
 	dsts, ok := d.pathMap[root]
@@ -131,9 +131,12 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		return nil, errs.ObjectNotFound
 	}
 	var objs []model.Obj
-	fsArgs := &fs.ListArgs{NoLog: true, Refresh: args.Refresh}
 	for _, dst := range dsts {
-		tmp, err := fs.List(ctx, stdpath.Join(dst, sub), fsArgs)
+		tmp, err := fs.List(ctx, stdpath.Join(dst, sub), &fs.ListArgs{
+			NoLog:              true,
+			Refresh:            args.Refresh,
+			WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
+		})
 		if err == nil {
 			tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
 				thumb, ok := model.GetThumb(obj)
@@ -250,7 +253,7 @@ func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 		}
 		return err
 	}
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name dirs cannot make sub-dir")
 	}
 	return err
@@ -261,14 +264,14 @@ func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 		return errs.PermissionDenied
 	}
 	srcPath, err := d.getReqPath(ctx, srcObj, false)
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name files cannot be moved")
 	}
 	if err != nil {
 		return err
 	}
 	dstPath, err := d.getReqPath(ctx, dstDir, true)
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name dirs cannot be moved to")
 	}
 	if err != nil {
@@ -296,7 +299,7 @@ func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 		}
 		return err
 	}
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name files cannot be Rename")
 	}
 	return err
@@ -307,14 +310,14 @@ func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 		return errs.PermissionDenied
 	}
 	srcPath, err := d.getReqPath(ctx, srcObj, false)
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name files cannot be copied")
 	}
 	if err != nil {
 		return err
 	}
 	dstPath, err := d.getReqPath(ctx, dstDir, true)
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name dirs cannot be copied to")
 	}
 	if err != nil {
@@ -348,7 +351,7 @@ func (d *Alias) Remove(ctx context.Context, obj model.Obj) error {
 		}
 		return err
 	}
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name files cannot be Delete")
 	}
 	return err
@@ -392,7 +395,7 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 			return err
 		}
 	}
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name dirs cannot be Put")
 	}
 	return err
@@ -409,7 +412,7 @@ func (d *Alias) PutURL(ctx context.Context, dstDir model.Obj, name, url string) 
 		}
 		return err
 	}
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name files cannot offline download")
 	}
 	return err
@@ -482,14 +485,14 @@ func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj,
 		return errs.PermissionDenied
 	}
 	srcPath, err := d.getReqPath(ctx, srcObj, false)
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name files cannot be decompressed")
 	}
 	if err != nil {
 		return err
 	}
 	dstPath, err := d.getReqPath(ctx, dstDir, true)
-	if errs.IsNotImplement(err) {
+	if errs.IsNotImplementError(err) {
 		return errors.New("same-name dirs cannot be decompressed to")
 	}
 	if err != nil {

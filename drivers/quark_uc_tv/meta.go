@@ -8,6 +8,8 @@ import (
 type Addition struct {
 	// Usually one of two
 	driver.RootID
+	OrderBy        string `json:"order_by" type:"select" options:"file_name,updated_at" default:"updated_at"`
+	OrderDirection string `json:"order_direction" type:"select" options:"asc,desc" default:"desc"`
 	// define other
 	RefreshToken string `json:"refresh_token" required:"false" default:""`
 	// 必要且影响登录,由签名决定
