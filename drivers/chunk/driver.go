@@ -9,7 +9,6 @@ import (
 	stdpath "path"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -152,7 +151,6 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		return nil, err
 	}
 	result := make([]model.Obj, 0, len(remoteObjs))
-	var resultMutex sync.Mutex
 	listG, listCtx := errgroup.NewGroupWithContext(ctx, d.NumListWorkers, retry.Attempts(3))
 	for _, obj := range remoteObjs {
 		if utils.IsCanceled(listCtx) {
@@ -161,10 +159,8 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		rawName := obj.GetName()
 		if obj.IsDir() {
 			if name, ok := strings.CutPrefix(rawName, d.ChunkPrefix); ok {
-				resultMutex.Lock()
 				resultIdx := len(result)
 				result = append(result, nil)
-				resultMutex.Unlock()
 				listG.Go(func(ctx context.Context) error {
 					chunkObjs, err := op.List(ctx, remoteStorage, stdpath.Join(remoteActualDir, rawName), model.ListArgs{
 						ReqPath: stdpath.Join(args.ReqPath, rawName),
@@ -208,8 +204,6 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					if len(h) > 0 {
 						objRes.HashInfo = utils.NewHashInfoByMap(h)
 					}
-					resultMutex.Lock()
-					defer resultMutex.Unlock()
 					if !d.Thumbnail {
 						result[resultIdx] = &objRes
 					} else {
@@ -242,7 +236,6 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			IsFolder: obj.IsDir(),
 			HashInfo: obj.GetHash(),
 		}
-		resultMutex.Lock()
 		if !ok {
 			result = append(result, &objRes)
 		} else {
@@ -253,7 +246,6 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 				},
 			})
 		}
-		resultMutex.Unlock()
 	}
 	if err = listG.Wait(); err != nil {
 		return nil, err
