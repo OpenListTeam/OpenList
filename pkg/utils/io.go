@@ -227,9 +227,9 @@ func (c *SyncClosers) Close() error {
 		return nil
 	}
 
-	// 尝试抢占 FinalClose 权限。
-	// 执行到此，ref 必然是 0 或 -1。我们尝试将其原子地转换为 closersClosed 状态。
-	// 只有第一个成功的协程能获得清理权限。
+	// Attempt to acquire FinalClose permission.
+	// At this point, ref must be 0 or -1. We try to atomically change it to the closersClosed state.
+	// Only the first successful goroutine gets the cleanup permission.
 	if !atomic.CompareAndSwapInt32(&c.ref, ref, closersClosed) {
 		return nil
 	}
