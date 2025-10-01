@@ -207,7 +207,7 @@ func (c *SyncClosers) AcquireReference() bool {
 		}
 		newRef := ref + 1
 		if atomic.CompareAndSwapInt32(&c.ref, ref, newRef) {
-			log.Debugf("AcquireReference %p: %d", c, newRef)
+			// log.Debugf("AcquireReference %p: %d", c, newRef)
 			return true
 		}
 	}
@@ -218,7 +218,7 @@ const closersClosed = math.MinInt16
 func (c *SyncClosers) Close() error {
 	ref := atomic.AddInt32(&c.ref, -1)
 	if ref > 0 {
-		log.Debugf("ReleaseReference %p: %d", c, ref)
+		// log.Debugf("ReleaseReference %p: %d", c, ref)
 		return nil
 	}
 
@@ -234,7 +234,7 @@ func (c *SyncClosers) Close() error {
 		return nil
 	}
 
-	log.Debugf("FinalClose %p", c)
+	// log.Debugf("FinalClose %p", c)
 	var errs []error
 	for _, closer := range c.closers {
 		if closer != nil {
