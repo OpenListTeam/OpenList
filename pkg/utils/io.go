@@ -213,19 +213,28 @@ func (c *SyncClosers) AcquireReference() bool {
 	}
 }
 
+const closersClosed = math.MinInt16
+
 func (c *SyncClosers) Close() error {
 	ref := atomic.AddInt32(&c.ref, -1)
-	if ref < -1 {
-		atomic.StoreInt32(&c.ref, math.MinInt16)
-		return nil
-	}
 	if ref > 0 {
 		log.Debugf("ReleaseReference %p: %d", c, ref)
 		return nil
 	}
-	atomic.StoreInt32(&c.ref, math.MinInt16)
-	log.Debugf("FinalClose %p", c)
 
+	if ref < -1 {
+		atomic.StoreInt32(&c.ref, closersClosed)
+		return nil
+	}
+
+	// 尝试抢占 FinalClose 权限。
+	// 执行到此，ref 必然是 0 或 -1。我们尝试将其原子地转换为 closersClosed 状态。
+	// 只有第一个成功的协程能获得清理权限。
+	if !atomic.CompareAndSwapInt32(&c.ref, ref, closersClosed) {
+		return nil
+	}
+
+	log.Debugf("FinalClose %p", c)
 	var errs []error
 	for _, closer := range c.closers {
 		if closer != nil {
