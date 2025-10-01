@@ -19,7 +19,7 @@ import (
 func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 	var objs []model.Obj
 	var wg sync.WaitGroup
-	for k, v := range d.pathMap {
+	for _, k := range d.rootOrder {
 		obj := model.Object{
 			Name:     k,
 			IsFolder: true,
@@ -27,6 +27,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 		}
 		idx := len(objs)
 		objs = append(objs, &obj)
+		v := d.pathMap[k]
 		if !withDetails || len(v) != 1 {
 			continue
 		}

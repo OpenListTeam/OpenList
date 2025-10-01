@@ -23,6 +23,7 @@ import (
 type Alias struct {
 	model.Storage
 	Addition
+	rootOrder   []string
 	pathMap     map[string][]string
 	autoFlatten bool
 	oneKey      string
@@ -40,13 +41,18 @@ func (d *Alias) Init(ctx context.Context) error {
 	if d.Paths == "" {
 		return errors.New("paths is required")
 	}
+	paths := strings.Split(d.Paths, "\n")
+	d.rootOrder = make([]string, 0, len(paths))
 	d.pathMap = make(map[string][]string)
-	for _, path := range strings.Split(d.Paths, "\n") {
+	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
 		}
 		k, v := getPair(path)
+		if _, ok := d.pathMap[k]; !ok {
+			d.rootOrder = append(d.rootOrder, k)
+		}
 		d.pathMap[k] = append(d.pathMap[k], v)
 	}
 	if len(d.pathMap) == 1 {
@@ -62,6 +68,7 @@ func (d *Alias) Init(ctx context.Context) error {
 }
 
 func (d *Alias) Drop(ctx context.Context) error {
+	d.rootOrder = nil
 	d.pathMap = nil
 	return nil
 }
