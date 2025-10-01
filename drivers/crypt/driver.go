@@ -411,7 +411,7 @@ func (d *Crypt) Put(ctx context.Context, dstDir model.Obj, streamer model.FileSt
 }
 
 func (d *Crypt) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	remoteDetails, err := op.GetStorageDetails(ctx, d.remoteStorage, true)
+	remoteDetails, err := op.GetStorageDetails(ctx, d.remoteStorage)
 	if err != nil {
 		return nil, err
 	}

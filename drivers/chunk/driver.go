@@ -472,7 +472,7 @@ func (d *Chunk) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	if err != nil {
 		return nil, errs.NotImplement
 	}
-	remoteDetails, err := op.GetStorageDetails(ctx, remoteStorage, true)
+	remoteDetails, err := op.GetStorageDetails(ctx, remoteStorage)
 	if err != nil {
 		return nil, err
 	}

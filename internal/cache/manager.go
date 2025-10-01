@@ -175,7 +175,11 @@ func (cm *CacheManager) GetSettingGroup(key string) ([]model.SettingItem, bool) 
 }
 
 func (cm *CacheManager) SetStorageDetails(storage driver.Driver, details *model.StorageDetails) {
-	cm.storageDetails.Set(storage.GetStorage().MountPath, details)
+	if storage.Config().NoCache {
+		return
+	}
+	expiration := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
+	cm.storageDetails.SetWithTTL(storage.GetStorage().MountPath, details, expiration)
 }
 
 func (cm *CacheManager) GetStorageDetails(storage driver.Driver) (*model.StorageDetails, bool) {
