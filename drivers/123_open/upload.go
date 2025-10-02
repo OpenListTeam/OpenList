@@ -67,7 +67,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		partNumber := partIndex + 1 // 分片号从1开始
 		offset := partIndex * chunkSize
 		size := min(chunkSize, size-offset)
-		var reader *stream.SectionReader
+		var reader io.ReadSeeker
 		var rateLimitedRd io.Reader
 		sliceMD5 := ""
 		// 表单

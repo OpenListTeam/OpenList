@@ -95,36 +95,66 @@ func (d *LanZou) _post(url string, callback base.ReqCallback, resp interface{}, 
 	}
 }
 
+// 修复点：所有请求都自动处理 acw_sc__v2 验证和 down_ip=1
 func (d *LanZou) request(url string, method string, callback base.ReqCallback, up bool) ([]byte, error) {
 	var req *resty.Request
-	if up {
-		once.Do(func() {
-			upClient = base.NewRestyClient().SetTimeout(120 * time.Second)
+	var vs string
+	for retry := 0; retry < 3; retry++ {
+		if up {
+			once.Do(func() {
+				upClient = base.NewRestyClient().SetTimeout(120 * time.Second)
+			})
+			req = upClient.R()
+		} else {
+			req = base.RestyClient.R()
+		}
+
+		req.SetHeaders(map[string]string{
+			"Referer":    "https://pc.woozooo.com",
+			"User-Agent": d.UserAgent,
 		})
-		req = upClient.R()
-	} else {
-		req = base.RestyClient.R()
-	}
 
-	req.SetHeaders(map[string]string{
-		"Referer":    "https://pc.woozooo.com",
-		"User-Agent": d.UserAgent,
-	})
+		// 下载直链时需要加 down_ip=1
+		if strings.Contains(url, "/file/") {
+			cookie := d.Cookie
+			if cookie != "" {
+				cookie += "; "
+			}
+			cookie += "down_ip=1"
+			if vs != "" {
+				cookie += "; acw_sc__v2=" + vs
+			}
+			req.SetHeader("cookie", cookie)
+		} else if d.Cookie != "" {
+			cookie := d.Cookie
+			if vs != "" {
+				cookie += "; acw_sc__v2=" + vs
+			}
+			req.SetHeader("cookie", cookie)
+		} else if vs != "" {
+			req.SetHeader("cookie", "acw_sc__v2="+vs)
+		}
 
-	if d.Cookie != "" {
-		req.SetHeader("cookie", d.Cookie)
-	}
+		if callback != nil {
+			callback(req)
+		}
 
-	if callback != nil {
-		callback(req)
+		res, err := req.Execute(method, url)
+		if err != nil {
+			return nil, err
+		}
+		bodyStr := res.String()
+		log.Debugf("lanzou request: url=>%s ,stats=>%d ,body => %s\n", res.Request.URL, res.StatusCode(), bodyStr)
+		if strings.Contains(bodyStr, "acw_sc__v2") {
+			vs, err = CalcAcwScV2(bodyStr)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		return res.Body(), err
 	}
-
-	res, err := req.Execute(method, url)
-	if err != nil {
-		return nil, err
-	}
-	log.Debugf("lanzou request: url=>%s ,stats=>%d ,body => %s\n", res.Request.URL, res.StatusCode(), res.String())
-	return res.Body(), err
+	return nil, errors.New("acw_sc__v2 validation error")
 }
 
 func (d *LanZou) Login() ([]*http.Cookie, error) {
@@ -445,7 +475,7 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 			SetCookie(&http.Cookie{
 				Name:  "acw_sc__v2",
 				Value: vs,
-			}).Get(downloadUrl)
+			}).SetHeader("cookie", "down_ip=1").Get(downloadUrl)
 		if err != nil {
 			return nil, err
 		}
@@ -494,6 +524,7 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 		for i := 0; i < 3; i++ {
 			data, err = d.post(fmt.Sprint(baseUrl, "/ajax.php"), func(req *resty.Request) {
 				req.SetFormData(param)
+				req.SetHeader("cookie", "down_ip=1")
 				if vs != "" {
 					req.SetCookie(&http.Cookie{
 						Name:  "acw_sc__v2",
