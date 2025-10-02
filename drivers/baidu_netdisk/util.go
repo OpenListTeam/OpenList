@@ -390,10 +390,7 @@ func (d *BaiduNetdisk) quota(ctx context.Context) (*model.DiskUsage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &model.DiskUsage{
-		TotalSpace: resp.Total,
-		FreeSpace:  resp.Total - resp.Used,
-	}, nil
+	return model.NewDiskUsageFromUsedAndTotal(resp.Used, resp.Total), nil
 }
 
 // func encodeURIComponent(str string) string {

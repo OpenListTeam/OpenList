@@ -61,6 +61,13 @@ type DiskUsage struct {
 	FreeSpace  uint64 `json:"free_space"`
 }
 
+func NewDiskUsageFromUsedAndTotal(used, total uint64) *DiskUsage {
+	return &DiskUsage{
+		TotalSpace: max(used, total),
+		FreeSpace: total - min(used, total),
+	}
+}
+
 type StorageDetails struct {
 	DiskUsage
 }
