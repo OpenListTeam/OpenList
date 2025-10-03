@@ -65,6 +65,7 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [WebDAV](https://en.wikipedia.org/wiki/WebDAV)
   - [x] Teambition([中国](https://www.teambition.com), [国際](https://us.teambition.com))
   - [x] [Mediatrack](https://www.mediatrack.cn)
+  - [x] [ProtonDrive](https://proton.me/drive)
   - [x] [139yun](https://yun.139.com)（個人、家族、グループ）
   - [x] [YandexDisk](https://disk.yandex.com)
   - [x] [BaiduNetdisk](http://pan.baidu.com)
