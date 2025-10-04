@@ -10,11 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/generic_sync"
+	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -239,6 +241,8 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 	if oldStorage.MountPath != storage.MountPath {
 		// mount path renamed, need to drop the storage
 		storagesMap.Delete(oldStorage.MountPath)
+		cache.Manager.InvalidateDirectoryTree(storageDriver, "/")
+		cache.Manager.InvalidateStorageDetails(storageDriver)
 	}
 	if err != nil {
 		return errors.WithMessage(err, "failed get storage driver")
@@ -259,6 +263,7 @@ func DeleteStorageById(ctx context.Context, id uint) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed get storage")
 	}
+	var dropErr error = nil
 	if !storage.Disabled {
 		storageDriver, err := GetStorageByMountPath(storage.MountPath)
 		if err != nil {
@@ -266,17 +271,19 @@ func DeleteStorageById(ctx context.Context, id uint) error {
 		}
 		// drop the storage in the driver
 		if err := storageDriver.Drop(ctx); err != nil {
-			return errors.Wrapf(err, "failed drop storage")
+			dropErr = errors.Wrapf(err, "failed drop storage")
 		}
 		// delete the storage in the memory
 		storagesMap.Delete(storage.MountPath)
+		cache.Manager.InvalidateDirectoryTree(storageDriver, "/")
+		cache.Manager.InvalidateStorageDetails(storageDriver)
 		go callStorageHooks("del", storageDriver)
 	}
 	// delete the storage in the database
 	if err := db.DeleteStorageById(id); err != nil {
 		return errors.WithMessage(err, "failed delete storage in database")
 	}
-	return nil
+	return dropErr
 }
 
 // MustSaveDriverStorage call from specific driver
@@ -340,8 +347,8 @@ func GetStorageVirtualFilesByPath(prefix string) []model.Obj {
 	})
 }
 
-func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string, hideDetails ...bool) []model.Obj {
-	if utils.IsBool(hideDetails...) {
+func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string, hideDetails, refresh bool) []model.Obj {
+	if hideDetails {
 		return GetStorageVirtualFilesByPath(prefix)
 	}
 	return getStorageVirtualFilesByPath(prefix, func(d driver.Driver, obj model.Obj) model.Obj {
@@ -354,7 +361,7 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 		}
 		timeoutCtx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
-		details, err := GetStorageDetails(timeoutCtx, d)
+		details, err := GetStorageDetails(timeoutCtx, d, refresh)
 		if err != nil {
 			if !errors.Is(err, errs.NotImplement) {
 				log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
@@ -439,10 +446,25 @@ func GetBalancedStorage(path string) driver.Driver {
 	}
 }
 
-func GetStorageDetails(ctx context.Context, storage driver.Driver) (*model.StorageDetails, error) {
+var detailsG singleflight.Group[*model.StorageDetails]
+
+func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bool) (*model.StorageDetails, error) {
 	wd, ok := storage.(driver.WithDetails)
 	if !ok {
 		return nil, errs.NotImplement
 	}
-	return wd.GetDetails(ctx)
+	if !utils.IsBool(refresh...) {
+		if ret, ok := cache.Manager.GetStorageDetails(storage); ok {
+			return ret, nil
+		}
+	}
+	details, err, _ := detailsG.Do(storage.GetStorage().MountPath, func() (*model.StorageDetails, error) {
+		ret, err := wd.GetDetails(ctx)
+		if err != nil {
+			return nil, err
+		}
+		cache.Manager.SetStorageDetails(storage, ret)
+		return ret, nil
+	})
+	return details, err
 }
