@@ -70,6 +70,9 @@ func (y *Cloud189TV) request(url, method string, callback base.ReqCallback, para
 }
 
 func (y *Cloud189TV) requestWithRetry(url, method string, callback base.ReqCallback, params map[string]string, resp interface{}, retryCount int, isFamily ...bool) ([]byte, error) {
+	if y.tokenInfo == nil {
+		return nil, fmt.Errorf("login failed")
+	}
 	req := y.client.R().SetQueryParams(clientSuffix())
 
 	if params != nil {
