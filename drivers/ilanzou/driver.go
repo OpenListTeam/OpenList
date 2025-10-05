@@ -412,7 +412,7 @@ func (d *ILanZou) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 	total := utils.Json.Get(res, "map", "totalSize").ToUint64() * 1024
 	used := utils.Json.Get(res, "map", "usedSize").ToUint64() * 1024
 	return &model.StorageDetails{
-		DiskUsage: driver.NewDiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }
 

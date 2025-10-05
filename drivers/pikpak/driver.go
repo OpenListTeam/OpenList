@@ -276,7 +276,7 @@ func (d *PikPak) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 		return nil, err
 	}
 	return &model.StorageDetails{
-		DiskUsage: driver.NewDiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }
 
