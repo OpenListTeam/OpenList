@@ -32,7 +32,7 @@ type Proxy struct {
 	WebdavPolicy string `json:"webdav_policy"`
 	ProxyRange   bool   `json:"proxy_range"`
 	DownProxyURL string `json:"down_proxy_url"`
-	//Disable sign for DownProxyURL
+	// Disable sign for DownProxyURL
 	DisableProxySign bool `json:"disable_proxy_sign"`
 }
 
@@ -59,13 +59,6 @@ func (p Proxy) WebdavProxyURL() bool {
 type DiskUsage struct {
 	TotalSpace uint64 `json:"total_space"`
 	FreeSpace  uint64 `json:"free_space"`
-}
-
-func NewDiskUsageFromUsedAndTotal(used, total uint64) *DiskUsage {
-	return &DiskUsage{
-		TotalSpace: max(used, total),
-		FreeSpace: total - min(used, total),
-	}
 }
 
 type StorageDetails struct {

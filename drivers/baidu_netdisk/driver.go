@@ -369,7 +369,7 @@ func (d *BaiduNetdisk) GetDetails(ctx context.Context) (*model.StorageDetails, e
 	if err != nil {
 		return nil, err
 	}
-	return &model.StorageDetails{DiskUsage: *du}, nil
+	return &model.StorageDetails{DiskUsage: du}, nil
 }
 
 var _ driver.Driver = (*BaiduNetdisk)(nil)
