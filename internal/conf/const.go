@@ -125,6 +125,10 @@ const (
 	QbittorrentUrl      = "qbittorrent_url"
 	QbittorrentSeedtime = "qbittorrent_seedtime"
 
+	// 123 open offline download
+	Pan123OpenOfflineDownloadCallbackUrl = "123_open_callback_url"
+	Pan123OpenTempDir                    = "123_open_temp_dir"
+
 	// ftp
 	FTPPublicHost            = "ftp_public_host"
 	FTPPasvPortMap           = "ftp_pasv_port_map"
