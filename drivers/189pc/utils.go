@@ -90,6 +90,9 @@ func (y *Cloud189PC) EncryptParams(params Params, isFamily bool) string {
 }
 
 func (y *Cloud189PC) request(url, method string, callback base.ReqCallback, params Params, resp interface{}, isFamily ...bool) ([]byte, error) {
+	if y.getTokenInfo() == nil {
+		return nil, fmt.Errorf("login failed")
+	}
 	req := y.getClient().R().SetQueryParams(clientSuffix())
 
 	// 设置params
