@@ -157,6 +157,15 @@ func (tqm *TaskQueueManager) consume() {
 			}
 
 			if !allCompleted {
+				// Re-enqueue the task if not already in queue (avoid overwriting newer snapshots)
+				tqm.mu.Lock()
+				if _, exists := tqm.queue[task.Parent]; !exists {
+					tqm.queue[task.Parent] = task
+					log.Debugf("re-enqueued skipped task for parent %s due to pending tasks", task.Parent)
+				} else {
+					log.Debugf("skipped task for parent %s not re-enqueued (newer task already in queue)", task.Parent)
+				}
+				tqm.mu.Unlock()
 				continue // Skip this task, some previous tasks are still running
 			}
 
