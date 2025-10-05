@@ -1,6 +1,6 @@
 module github.com/OpenListTeam/OpenList/v4
 
-go 1.23.4
+go 1.24.2
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
@@ -89,6 +89,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
+	github.com/halalcloud/golang-sdk-lite v0.0.0-20250915082323-f4a6008ccea4 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect

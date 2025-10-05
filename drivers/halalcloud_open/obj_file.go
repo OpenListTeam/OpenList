@@ -1,0 +1,73 @@
+package halalcloudopen
+
+import (
+	"strconv"
+	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	sdkUserFile "github.com/halalcloud/golang-sdk-lite/halalcloud/services/userfile"
+)
+
+type ObjFile struct {
+	sdkFile    *sdkUserFile.File
+	fileSize   int64
+	modTime    time.Time
+	createTime time.Time
+}
+
+func NewObjFile(f *sdkUserFile.File) model.Obj {
+	ofile := &ObjFile{sdkFile: f}
+	fileSizeParsed, _ := strconv.ParseInt(f.Size, 10, 64)
+	ofile.fileSize = fileSizeParsed
+	modTimeTs, _ := strconv.ParseInt(f.UpdateTs, 10, 64)
+	ofile.modTime = time.UnixMilli(modTimeTs)
+	createTimeTs, _ := strconv.ParseInt(f.CreateTs, 10, 64)
+	ofile.createTime = time.UnixMilli(createTimeTs)
+	return ofile
+}
+
+func (f *ObjFile) GetSize() int64 {
+	return f.fileSize
+}
+
+func (f *ObjFile) GetName() string {
+	return f.sdkFile.Name
+}
+
+func (f *ObjFile) ModTime() time.Time {
+	return f.modTime
+}
+
+func (f *ObjFile) IsDir() bool {
+	return f.sdkFile.Dir
+}
+
+func (f *ObjFile) GetHash() utils.HashInfo {
+	return utils.HashInfo{
+		// TODO: support more hash types
+	}
+}
+
+func (f *ObjFile) GetID() string {
+	return f.sdkFile.Identity
+}
+
+func (f *ObjFile) GetPath() string {
+	return f.sdkFile.Path
+}
+
+func (f *ObjFile) CreateTime() time.Time {
+	return f.createTime
+}
+
+/*
+GetSize() time.Time
+
+	GetHash() utils.HashInfo
+
+	// The internal information of the driver.
+	// If you want to use it, please understand what it means
+	GetID() string
+	GetPath() string
+*/
