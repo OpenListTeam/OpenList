@@ -9,7 +9,7 @@ type Addition struct {
 	// Usually one of two
 	driver.RootPath
 	// define other
-	RefreshToken string `json:"refresh_token" required:"true" help:"login type is refresh_token,this is required"`
+	RefreshToken string `json:"refresh_token" required:"false" help:"If using a personal API approach, the RefreshToken is not required."`
 	UploadThread string `json:"upload_thread" default:"3" help:"1 <= thread <= 32"`
 
 	ClientID     string `json:"client_id" required:"true" default:""`
