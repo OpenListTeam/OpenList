@@ -110,7 +110,7 @@ func (d *Strm) getLink(ctx context.Context, path string) string {
 		signPath := sign.Sign(path)
 		finalPath = fmt.Sprintf("%s?sign=%s", finalPath, signPath)
 	}
-	if d.LocalModel {
+	if d.WithoutUrl {
 		return finalPath
 	}
 	apiUrl := d.SiteUrl
