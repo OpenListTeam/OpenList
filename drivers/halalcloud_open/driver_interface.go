@@ -42,3 +42,7 @@ func (d *HalalCloudOpen) Remove(ctx context.Context, obj model.Obj) error {
 func (d *HalalCloudOpen) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	return d.put(ctx, dstDir, stream, up)
 }
+
+func (d *HalalCloudOpen) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	return d.details(ctx)
+}
