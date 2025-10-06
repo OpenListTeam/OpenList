@@ -260,7 +260,7 @@ func (d *Pan123) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	}
 	total := userInfo.Data.SpacePermanent + userInfo.Data.SpaceTemp
 	return &model.StorageDetails{
-		DiskUsage: *model.NewDiskUsageFromUsedAndTotal(userInfo.Data.SpaceUsed, total),
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(userInfo.Data.SpaceUsed, total),
 	}, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	stdpath "path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -49,9 +50,11 @@ func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			details, e := op.GetStorageDetails(ctx, remoteDriver)
+			c, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			details, e := op.GetStorageDetails(c, remoteDriver)
 			if e != nil {
-				if !errors.Is(e, errs.NotImplement) {
+				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
 					log.Errorf("failed get %s storage details: %+v", remoteDriver.GetStorage().MountPath, e)
 				}
 				return
