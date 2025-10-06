@@ -364,8 +364,8 @@ github.com/gorilla/sessions v1.2.1 h1:DHd3rPN5lE3Ts3D8rKkQ8x/0kqfeNmBAaiSi+o7Fsg
 github.com/gorilla/sessions v1.2.1/go.mod h1:dk2InVEVJ0sfLlnXv9EAgkf6ecYs/i80K/zI+bUmuGM=
 github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
-github.com/halalcloud/golang-sdk-lite v0.0.0-20250915082323-f4a6008ccea4 h1:+jpKFbFH1BRqkTG7t4/4M7O09UT85LiHmozh64ccpLw=
-github.com/halalcloud/golang-sdk-lite v0.0.0-20250915082323-f4a6008ccea4/go.mod h1:X/521t2BJt+B9TPiC0hSmsFs6DKuzMBqcl+19rx/DgA=
+github.com/halalcloud/golang-sdk-lite v0.0.0-20251006100629-ba7a40dce261 h1:47L8SHM80cXszQydLrpp9MhVkFLLWCvrU9XmJ6XtRu0=
+github.com/halalcloud/golang-sdk-lite v0.0.0-20251006100629-ba7a40dce261/go.mod h1:8x1h4rm3s8xMcTyJrq848sQ6BJnKzl57mDY4CNshdPM=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
 github.com/hashicorp/errwrap v1.1.0 h1:OxrOeh75EUXMY8TBjag2fzXGZ40LB6IKw45YeGUDY2I=
 github.com/hashicorp/errwrap v1.1.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=

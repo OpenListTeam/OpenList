@@ -38,6 +38,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/halalcloud/golang-sdk-lite v0.0.0-20251006100629-ba7a40dce261
 	github.com/hekmon/transmissionrpc/v3 v3.0.0
 	github.com/ipfs/go-ipfs-api v0.7.0
 	github.com/itsHenry35/gofakes3 v0.0.8
@@ -89,7 +90,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
-	github.com/halalcloud/golang-sdk-lite v0.0.0-20250915082323-f4a6008ccea4 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect

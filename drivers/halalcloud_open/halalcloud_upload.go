@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
 	"time"
+
+	logus "github.com/sirupsen/logrus"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -147,7 +148,7 @@ func doMakeFile(fileSlice []string, taskID string, uploadAddress string) (*sdkUs
 	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(httpResponse.Body)
 		message := string(b)
-		log.Printf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
+		logus.Errorf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 		return nil, fmt.Errorf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 	}
 	b, _ := io.ReadAll(httpResponse.Body)
@@ -168,7 +169,7 @@ func postFileSlice(ctx context.Context, fileSlice []byte, taskID string, uploadA
 		if ctx.Err() != nil {
 			return cid.Undef, err
 		}
-		log.Printf("upload task [%s] file slice error: %s", taskID, err)
+		logus.Errorf("upload task [%s] file slice error: %s", taskID, err)
 		time.Sleep(time.Second * 120)
 		lastError = err
 	}
@@ -243,7 +244,7 @@ func doPostFileSlice(fileSlice []byte, taskID string, uploadAddress string, prei
 	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(httpResponse.Body)
 		message := string(b)
-		log.Printf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
+		logus.Errorf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 		return cid.Undef, fmt.Errorf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 	}
 	//
