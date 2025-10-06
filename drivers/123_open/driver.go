@@ -229,6 +229,14 @@ func (d *Open123) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 	}, nil
 }
 
+func (d *Open123) OfflineDownload(ctx context.Context, url string, dir model.Obj, callback string) (int, error) {
+	return d.createOfflineDownloadTask(ctx, url, dir.GetID(), callback)
+}
+
+func (d *Open123) OfflineDownloadProcess(ctx context.Context, taskID int) (float64, int, error) {
+	return d.queryOfflineDownloadStatus(ctx, taskID)
+}
+
 var (
 	_ driver.Driver    = (*Open123)(nil)
 	_ driver.PutResult = (*Open123)(nil)

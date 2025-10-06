@@ -146,22 +146,27 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		})
 		if err == nil {
 			tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
-				thumb, ok := model.GetThumb(obj)
 				objRes := model.Object{
 					Name:     obj.GetName(),
 					Size:     obj.GetSize(),
 					Modified: obj.ModTime(),
 					IsFolder: obj.IsDir(),
 				}
-				if !ok {
-					return &objRes, nil
+				if thumb, ok := model.GetThumb(obj); ok {
+					return &model.ObjThumb{
+						Object: objRes,
+						Thumbnail: model.Thumbnail{
+							Thumbnail: thumb,
+						},
+					}, nil
 				}
-				return &model.ObjThumb{
-					Object: objRes,
-					Thumbnail: model.Thumbnail{
-						Thumbnail: thumb,
-					},
-				}, nil
+				if details, ok := model.GetStorageDetails(obj); ok {
+					return &model.ObjStorageDetails{
+						Obj:                    &objRes,
+						StorageDetailsWithName: *details,
+					}, nil
+				}
+				return &objRes, nil
 			})
 		}
 		if err == nil {

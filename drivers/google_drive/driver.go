@@ -189,7 +189,7 @@ func (d *GoogleDrive) GetDetails(ctx context.Context) (*model.StorageDetails, er
 		return nil, err
 	}
 	return &model.StorageDetails{
-		DiskUsage: *model.NewDiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }
 

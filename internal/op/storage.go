@@ -356,7 +356,7 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 		defer cancel()
 		details, err := GetStorageDetails(timeoutCtx, d)
 		if err != nil {
-			if !errors.Is(err, errs.NotImplement) {
+			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.StorageNotInit) {
 				log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
 			}
 			return ret
@@ -440,6 +440,9 @@ func GetBalancedStorage(path string) driver.Driver {
 }
 
 func GetStorageDetails(ctx context.Context, storage driver.Driver) (*model.StorageDetails, error) {
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
 	wd, ok := storage.(driver.WithDetails)
 	if !ok {
 		return nil, errs.NotImplement

@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -382,15 +383,15 @@ func (d *BaiduNetdisk) getSliceSize(filesize int64) int64 {
 	return maxSliceSize
 }
 
-func (d *BaiduNetdisk) quota(ctx context.Context) (*model.DiskUsage, error) {
+func (d *BaiduNetdisk) quota(ctx context.Context) (model.DiskUsage, error) {
 	var resp QuotaResp
 	_, err := d.request("https://pan.baidu.com/api/quota", http.MethodGet, func(req *resty.Request) {
 		req.SetContext(ctx)
 	}, &resp)
 	if err != nil {
-		return nil, err
+		return model.DiskUsage{}, err
 	}
-	return model.NewDiskUsageFromUsedAndTotal(resp.Used, resp.Total), nil
+	return driver.DiskUsageFromUsedAndTotal(resp.Used, resp.Total), nil
 }
 
 // func encodeURIComponent(str string) string {

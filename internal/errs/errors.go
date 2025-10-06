@@ -12,13 +12,12 @@ var (
 	NotSupport   = errors.New("not support")
 	RelativePath = errors.New("using relative path is not allowed")
 
-	MoveBetweenTwoStorages = errors.New("can't move files between two storages, try to copy")
-	UploadNotSupported     = errors.New("upload not supported")
-
-	MetaNotFound     = errors.New("meta not found")
-	StorageNotFound  = errors.New("storage not found")
-	StreamIncomplete = errors.New("upload/download stream incomplete, possible network issue")
-	StreamPeekFail   = errors.New("StreamPeekFail")
+	UploadNotSupported = errors.New("upload not supported")
+	MetaNotFound       = errors.New("meta not found")
+	StorageNotFound    = errors.New("storage not found")
+	StorageNotInit     = errors.New("storage not init")
+	StreamIncomplete   = errors.New("upload/download stream incomplete, possible network issue")
+	StreamPeekFail     = errors.New("StreamPeekFail")
 
 	UnknownArchiveFormat      = errors.New("unknown archive format")
 	WrongArchivePassword      = errors.New("wrong archive password")
