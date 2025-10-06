@@ -55,14 +55,12 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 		Version:  1,
 	}
 	blockSize, _ := strconv.ParseInt(uploadTask.BlockSize, 10, 64)
-	useSingleUpload := false
+	useSingleUpload := true
 	//
 	if fileStream.GetSize() <= int64(blockSize) || d.uploadThread <= 1 {
 		useSingleUpload = true
 	}
-	if true {
-		useSingleUpload = true
-	}
+	// Not sure whether FileStream supports concurrent read and write operations, so currently using single-threaded upload to ensure safety.
 	// read file
 	if useSingleUpload {
 		bufferSize := int(blockSize)
