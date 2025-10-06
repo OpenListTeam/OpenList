@@ -422,6 +422,8 @@ github.com/jinzhu/now v1.1.5 h1:/o9tlHleP7gOFmsnYNz3RGnqzefHA47wQpKrrdTIwXQ=
 github.com/jinzhu/now v1.1.5/go.mod h1:d3SSVoowX0Lcu0IBviAWJpolVfI5UJVZZ7cO71lE/z8=
 github.com/jlaffaye/ftp v0.2.1-0.20240918233326-1b970516f5d3 h1:ZxO6Qr2GOXPdcW80Mcn3nemvilMPvpWqxrNfK2ZnNNs=
 github.com/jlaffaye/ftp v0.2.1-0.20240918233326-1b970516f5d3/go.mod h1:dvLUr/8Fs9a2OBrEnCC5duphbkz/k/mSy5OkXg3PAgI=
+github.com/jlaffaye/ftp v0.2.1-0.20250831012827-3f092e051c94 h1:sBUrMD4Gx91zDgzTqPCr3FqFs2+3wWX7lyUYIP/isuA=
+github.com/jlaffaye/ftp v0.2.1-0.20250831012827-3f092e051c94/go.mod h1:H1+whwD0Qe3YOunlXIWhh3rlvzW5cZfkMDYGQPg+KAM=
 github.com/jmespath/go-jmespath v0.4.0 h1:BEgLn5cpjn8UN1mAw4NjwDrS35OdebyEtFe+9YPoQUg=
 github.com/jmespath/go-jmespath v0.4.0/go.mod h1:T8mJZnbsbmF+m6zOOFylbeCJqk5+pHWvzYPziyZiYoo=
 github.com/jmespath/go-jmespath/internal/testify v1.5.1 h1:shLQSRRSCCPj3f2gpwzGwWFoC7ycTf1rcQZHOlsJ6N8=
@@ -640,6 +642,8 @@ github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o
 github.com/stretchr/testify v1.8.2/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/t3rm1n4l/go-mega v0.0.0-20241213151442-a19cff0ec7b5 h1:Sa+sR8aaAMFwxhXWENEnE6ZpqhZ9d7u1RT2722Rw6hc=
 github.com/t3rm1n4l/go-mega v0.0.0-20241213151442-a19cff0ec7b5/go.mod h1:UdZiFUFu6e2WjjtjxivwXWcwc1N/8zgbkBR9QNucUOY=
 github.com/taruti/bytepool v0.0.0-20160310082835-5e3a9ea56543 h1:6Y51mutOvRGRx6KqyMNo//xk8B8o6zW9/RVmy1VamOs=
