@@ -103,9 +103,6 @@ func (d *HalalCloudOpen) copy(ctx context.Context, obj model.Obj, dir model.Obj)
 
 func (d *HalalCloudOpen) remove(ctx context.Context, obj model.Obj) error {
 	id := obj.GetID()
-	//if len(id) > 0 {
-	//	newPath = ""
-	//}
 	_, err := d.sdkUserFileService.Delete(ctx, &sdkUserFile.BatchOperationRequest{
 		Source: []*sdkUserFile.File{
 			{

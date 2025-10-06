@@ -149,7 +149,7 @@ func doMakeFile(fileSlice []string, taskID string, uploadAddress string) (*sdkUs
 	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(httpResponse.Body)
 		message := string(b)
-		fmt.Printf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
+		log.Printf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 		return nil, fmt.Errorf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 	}
 	b, _ := io.ReadAll(httpResponse.Body)
@@ -245,7 +245,7 @@ func doPostFileSlice(fileSlice []byte, taskID string, uploadAddress string, prei
 	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(httpResponse.Body)
 		message := string(b)
-		fmt.Printf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
+		log.Printf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 		return cid.Undef, fmt.Errorf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 	}
 	//

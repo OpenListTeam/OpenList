@@ -61,13 +61,3 @@ func (f *ObjFile) CreateTime() time.Time {
 	return f.createTime
 }
 
-/*
-GetSize() time.Time
-
-	GetHash() utils.HashInfo
-
-	// The internal information of the driver.
-	// If you want to use it, please understand what it means
-	GetID() string
-	GetPath() string
-*/

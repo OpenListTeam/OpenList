@@ -67,10 +67,8 @@ func (oo *openObject) Read(p []byte) (n int, err error) {
 		}
 	}
 	n = copy(p, *oo.chunk)
+	oo.shaTemp.Write(p[:n])
 	*oo.chunk = (*oo.chunk)[n:]
-
-	oo.shaTemp.Write(*oo.chunk)
-
 	return n, nil
 }
 
@@ -83,7 +81,7 @@ func (oo *openObject) Close() (err error) {
 	}
 	// 校验Sha1
 	if string(oo.shaTemp.Sum(nil)) != oo.sha {
-		return fmt.Errorf("failed to finish download: %w", err)
+		return fmt.Errorf("failed to finish download: SHA mismatch")
 	}
 
 	oo.closed = true
@@ -145,7 +143,7 @@ func getRawFiles(addr *sdkUserFile.SliceDownloadInfo) ([]byte, error) {
 	}
 
 	client := http.Client{
-		Timeout: time.Duration(60 * time.Second), // Set timeout to 5 seconds
+		Timeout: time.Duration(60 * time.Second), // Set timeout to 60 seconds
 	}
 	resp, err := client.Get(addr.DownloadAddress)
 	if err != nil {
