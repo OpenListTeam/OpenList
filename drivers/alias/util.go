@@ -54,7 +54,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails bool) []model.Obj {
 			defer cancel()
 			details, e := op.GetStorageDetails(c, remoteDriver)
 			if e != nil {
-				if !errors.Is(e, errs.NotImplement) {
+				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
 					log.Errorf("failed get %s storage details: %+v", remoteDriver.GetStorage().MountPath, e)
 				}
 				return

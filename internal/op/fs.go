@@ -116,7 +116,7 @@ func Key(storage driver.Driver, path string) string {
 // List files in storage, not contains virtual file
 func List(ctx context.Context, storage driver.Driver, path string, args model.ListArgs) ([]model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
 	log.Debugf("op.List %s", path)
@@ -259,7 +259,7 @@ var errLinkMFileCache = stderrors.New("ErrLinkMFileCache")
 // Link get link, if is an url. should have an expiry time
 func Link(ctx context.Context, storage driver.Driver, path string, args model.LinkArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	var (
 		file model.Obj
@@ -369,7 +369,7 @@ var mkdirG singleflight.Group[interface{}]
 
 func MakeDir(ctx context.Context, storage driver.Driver, path string, lazyCache ...bool) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
 	key := Key(storage, path)
@@ -424,7 +424,7 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string, lazyCache 
 
 func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string, lazyCache ...bool) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
@@ -467,7 +467,7 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 
 func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string, lazyCache ...bool) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	srcPath = utils.FixAndCleanPath(srcPath)
 	srcRawObj, err := Get(ctx, storage, srcPath)
@@ -508,7 +508,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 // Copy Just copy file[s] in a storage
 func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string, lazyCache ...bool) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
@@ -545,7 +545,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 
 func Remove(ctx context.Context, storage driver.Driver, path string) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	if utils.PathEqual(path, "/") {
 		return errors.New("delete root folder is not allowed, please goto the manage page to delete the storage instead")
@@ -586,7 +586,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		}
 	}()
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	// UrlTree PUT
 	if storage.GetStorage().Driver == "UrlTree" {
@@ -678,7 +678,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 
 func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url string, lazyCache ...bool) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	_, err := GetUnwrap(ctx, storage, stdpath.Join(dstDirPath, dstName))

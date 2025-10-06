@@ -50,7 +50,7 @@ func makeStorageResp(c *gin.Context, storages []model.Storage) []*StorageResp {
 			defer cancel()
 			details, err := op.GetStorageDetails(ctx, d)
 			if err != nil {
-				if !errors.Is(err, errs.NotImplement) {
+				if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.StorageNotInit) {
 					log.Errorf("failed get %s details: %+v", s.MountPath, err)
 				}
 				return
