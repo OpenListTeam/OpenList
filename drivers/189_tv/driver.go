@@ -69,7 +69,7 @@ func (y *Cloud189TV) Init(ctx context.Context) (err error) {
 	// 避免重复登陆
 	if !y.isLogin() || y.Addition.AccessToken == "" {
 		if err = y.login(); err != nil {
-			return
+			return err
 		}
 	}
 
@@ -83,7 +83,7 @@ func (y *Cloud189TV) Init(ctx context.Context) (err error) {
 	y.cron = cron.NewCron(time.Minute * 5)
 	y.cron.Do(y.keepAlive)
 
-	return
+	return err
 }
 
 func (y *Cloud189TV) Drop(ctx context.Context) error {
@@ -244,7 +244,6 @@ func (y *Cloud189TV) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 		FileName: srcObj.GetName(),
 		IsFolder: BoolToNumber(srcObj.IsDir()),
 	})
-
 	if err != nil {
 		return err
 	}
@@ -278,5 +277,25 @@ func (y *Cloud189TV) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	}
 
 	return y.OldUpload(ctx, dstDir, stream, up, isFamily, overwrite)
+}
 
+func (y *Cloud189TV) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	capacityInfo, err := y.getCapacityInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var total, free uint64
+	if y.isFamily() {
+		total = capacityInfo.FamilyCapacityInfo.TotalSize
+		free = capacityInfo.FamilyCapacityInfo.FreeSize
+	} else {
+		total = capacityInfo.CloudCapacityInfo.TotalSize
+		free = capacityInfo.CloudCapacityInfo.FreeSize
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  free,
+		},
+	}, nil
 }

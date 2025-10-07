@@ -32,7 +32,7 @@ type Proxy struct {
 	WebdavPolicy string `json:"webdav_policy"`
 	ProxyRange   bool   `json:"proxy_range"`
 	DownProxyURL string `json:"down_proxy_url"`
-	//Disable sign for DownProxyURL
+	// Disable sign for DownProxyURL
 	DisableProxySign bool `json:"disable_proxy_sign"`
 }
 

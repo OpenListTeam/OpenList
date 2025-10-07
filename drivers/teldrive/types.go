@@ -2,6 +2,7 @@ package teldrive
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -50,8 +51,8 @@ type chunkTask struct {
 	chunkIdx  int
 	fileName  string
 	chunkSize int64
-	reader    *stream.SectionReader
-	ss        *stream.StreamSectionReader
+	reader    io.ReadSeeker
+	ss        stream.StreamSectionReaderIF
 }
 
 type CopyManager struct {

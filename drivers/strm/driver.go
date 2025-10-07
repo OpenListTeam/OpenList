@@ -108,7 +108,7 @@ func (d *Strm) Get(ctx context.Context, path string) (model.Obj, error) {
 		if err != nil {
 			continue
 		}
-		// fs.Get 没报错，说明不是strm生成的路径，需要直接返回
+		// fs.Get 没报错，说明不是strm驱动映射的路径，需要直接返回
 		size := int64(0)
 		if !obj.IsDir() {
 			size = obj.GetSize()
@@ -122,6 +122,11 @@ func (d *Strm) Get(ctx context.Context, path string) (model.Obj, error) {
 			IsFolder: obj.IsDir(),
 			HashInfo: obj.GetHash(),
 		}, nil
+	}
+	if strings.HasSuffix(path, ".strm") {
+		// 上面fs.Get都没找到且后缀为.strm
+		// 返回errs.NotSupport使得op.Get尝试从op.List中查找
+		return nil, errs.NotSupport
 	}
 	return nil, errs.ObjectNotFound
 }
