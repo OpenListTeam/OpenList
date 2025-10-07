@@ -119,14 +119,9 @@ func (d *HalalCloudOpen) details(ctx context.Context) (*model.StorageDetails, er
 	if err != nil {
 		return nil, err
 	}
-	total, err := strconv.ParseUint(ret.DiskStatisticsQuota.BytesQuota, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-	free, err := strconv.ParseUint(ret.DiskStatisticsQuota.BytesFree, 10, 64)
-	if err != nil {
-		return nil, err
-	}
+	total := uint64(ret.DiskStatisticsQuota.BytesQuota)
+
+	free := uint64(ret.DiskStatisticsQuota.BytesFree)
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
 			TotalSpace: total,

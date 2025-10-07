@@ -9,7 +9,6 @@ import (
 	"hash"
 	"io"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -115,13 +114,13 @@ func getChunkSizes(sliceSize []*sdkUserFile.SliceSize) (chunks []chunkSize) {
 	chunks = make([]chunkSize, 0)
 	for _, s := range sliceSize {
 		// 对最后一个做特殊处理
-		endIndex, _ := strconv.ParseInt(s.EndIndex, 10, 64)
-		startIndex, _ := strconv.ParseInt(s.StartIndex, 10, 64)
+		endIndex := s.EndIndex
+		startIndex := s.StartIndex
 		if endIndex == 0 {
 			endIndex = startIndex
 		}
 		for j := startIndex; j <= endIndex; j++ {
-			size, _ := strconv.ParseInt(s.Size, 10, 64)
+			size := s.Size
 			chunks = append(chunks, chunkSize{position: j, size: int(size)})
 		}
 	}
@@ -165,7 +164,7 @@ func getRawFiles(addr *sdkUserFile.SliceDownloadInfo) ([]byte, error) {
 			body[idx] = body[idx] ^ cd
 		}
 	}
-	storeType, _ := strconv.ParseInt(addr.StoreType, 10, 64)
+	storeType := addr.StoreType
 	if storeType != 10 {
 
 		sourceCid, err := cid.Decode(addr.Identity)

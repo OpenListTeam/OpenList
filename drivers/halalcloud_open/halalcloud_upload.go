@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,7 +27,7 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 
 	uploadTask, err := d.sdkUserFileService.CreateUploadTask(ctx, &sdkUserFile.File{
 		Path: newPath,
-		Size: strconv.FormatInt(fileStream.GetSize(), 10),
+		Size: fileStream.GetSize(),
 	})
 	if err != nil {
 		return nil, err
@@ -40,11 +39,10 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 
 	slicesList := make([]string, 0)
 	codec := uint64(0x55)
-	blockCodec, _ := strconv.ParseInt(uploadTask.BlockCodec, 10, 64)
-	if blockCodec > 0 {
-		codec = uint64(blockCodec)
+	if uploadTask.BlockCodec > 0 {
+		codec = uint64(uploadTask.BlockCodec)
 	}
-	blockHashType, _ := strconv.ParseInt(uploadTask.BlockHashType, 10, 64)
+	blockHashType := uploadTask.BlockHashType
 	mhType := uint64(0x12)
 	if blockHashType > 0 {
 		mhType = uint64(blockHashType)
@@ -55,7 +53,7 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 		MhType:   mhType,
 		Version:  1,
 	}
-	blockSize, _ := strconv.ParseInt(uploadTask.BlockSize, 10, 64)
+	blockSize := uploadTask.BlockSize
 	useSingleUpload := true
 	//
 	if fileStream.GetSize() <= int64(blockSize) || d.uploadThread <= 1 {

@@ -1,7 +1,6 @@
 package halalcloudopen
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -18,11 +17,10 @@ type ObjFile struct {
 
 func NewObjFile(f *sdkUserFile.File) model.Obj {
 	ofile := &ObjFile{sdkFile: f}
-	fileSizeParsed, _ := strconv.ParseInt(f.Size, 10, 64)
-	ofile.fileSize = fileSizeParsed
-	modTimeTs, _ := strconv.ParseInt(f.UpdateTs, 10, 64)
+	ofile.fileSize = f.Size
+	modTimeTs := f.UpdateTs
 	ofile.modTime = time.UnixMilli(modTimeTs)
-	createTimeTs, _ := strconv.ParseInt(f.CreateTs, 10, 64)
+	createTimeTs := f.CreateTs
 	ofile.createTime = time.UnixMilli(createTimeTs)
 	return ofile
 }
@@ -60,4 +58,3 @@ func (f *ObjFile) GetPath() string {
 func (f *ObjFile) CreateTime() time.Time {
 	return f.createTime
 }
-

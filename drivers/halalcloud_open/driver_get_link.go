@@ -29,7 +29,7 @@ func (d *HalalCloudOpen) getLink(ctx context.Context, file model.Obj, args model
 		if err != nil {
 			return nil, err
 		}
-		expireAt, _ := strconv.ParseInt(fi.ExpireAt, 10, 64)
+		expireAt := fi.ExpireAt
 		duration := time.Until(time.UnixMilli(expireAt))
 		return &model.Link{
 			URL:        fi.DownloadAddress,
