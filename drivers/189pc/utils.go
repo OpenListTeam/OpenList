@@ -90,6 +90,9 @@ func (y *Cloud189PC) EncryptParams(params Params, isFamily bool) string {
 }
 
 func (y *Cloud189PC) request(url, method string, callback base.ReqCallback, params Params, resp interface{}, isFamily ...bool) ([]byte, error) {
+	if y.getTokenInfo() == nil {
+		return nil, fmt.Errorf("login failed")
+	}
 	req := y.getClient().R().SetQueryParams(clientSuffix())
 
 	// 设置params
@@ -189,6 +192,7 @@ func (y *Cloud189PC) put(ctx context.Context, url string, headers map[string]str
 	}
 	return body, nil
 }
+
 func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool) ([]model.Obj, error) {
 	res := make([]model.Obj, 0, 100)
 	for pageNum := 1; ; pageNum++ {
@@ -342,7 +346,7 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 		SetQueryParam("redirectURL", loginresp.ToUrl).
 		Post(API_URL + "/getSessionForPC.action")
 	if err != nil {
-		return
+		return err
 	}
 
 	if erron.HasError() {
@@ -350,12 +354,12 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 	}
 	if tokenInfo.ResCode != 0 {
 		err = fmt.Errorf(tokenInfo.ResMessage)
-		return
+		return err
 	}
 	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
 	op.MustSaveDriverStorage(y)
-	return
+	return err
 }
 
 func (y *Cloud189PC) loginByQRCode() error {
@@ -447,7 +451,6 @@ func (y *Cloud189PC) genQRCode(text string) error {
 	// Create the HTML page
 	qrPage := fmt.Sprintf(qrTemplate, text, qrCodeBase64, y.qrcodeParam.UUID)
 	return fmt.Errorf("need verify: \n%s", qrPage)
-
 }
 
 func (y *Cloud189PC) initBaseParams() (*BaseLoginParam, error) {
@@ -616,7 +619,7 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 	if y.ref != nil {
 		return y.ref.refreshTokenWithRetry(retryCount)
 	}
-	
+
 	// 限制重试次数，避免无限递归
 	if retryCount >= 3 {
 		if y.Addition.RefreshToken != "" {
@@ -625,7 +628,7 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 		}
 		return errors.New("refresh token failed after maximum retries")
 	}
-	
+
 	var erron RespErr
 	var tokenInfo AppSessionResp
 	_, err = y.client.R().
@@ -700,7 +703,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		params.Set("familyId", y.FamilyID)
 		fullUrl += "/family"
 	} else {
-		//params.Set("extend", `{"opScene":"1","relativepath":"","rootfolderid":""}`)
+		// params.Set("extend", `{"opScene":"1","relativepath":"","rootfolderid":""}`)
 		fullUrl += "/person"
 	}
 
@@ -752,7 +755,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 			partSize = lastPartSize
 		}
 		partInfo := ""
-		var reader *stream.SectionReader
+		var reader io.ReadSeeker
 		var rateLimitedRd io.Reader
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {
@@ -876,7 +879,7 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 		lastSliceSize = sliceSize
 	}
 
-	//step.1 优先计算所需信息
+	// step.1 优先计算所需信息
 	byteSize := sliceSize
 	fileMd5 := utils.MD5.NewFunc()
 	sliceMd5 := utils.MD5.NewFunc()
@@ -927,14 +930,14 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 	if isFamily {
 		fullUrl += "/family"
 	} else {
-		//params.Set("extend", `{"opScene":"1","relativepath":"","rootfolderid":""}`)
+		// params.Set("extend", `{"opScene":"1","relativepath":"","rootfolderid":""}`)
 		fullUrl += "/person"
 	}
 
 	// 尝试恢复进度
 	uploadProgress, ok := base.GetUploadProgress[*UploadProgress](y, y.getTokenInfo().SessionKey, fileMd5Hex)
 	if !ok {
-		//step.2 预上传
+		// step.2 预上传
 		params := Params{
 			"parentFolderId": dstDir.GetID(),
 			"fileName":       url.QueryEscape(file.GetName()),
@@ -1163,7 +1166,6 @@ func (y *Cloud189PC) OldUploadCreate(ctx context.Context, parentID string, fileM
 			})
 		}
 	}, &uploadInfo, isFamily)
-
 	if err != nil {
 		return nil, err
 	}
@@ -1472,4 +1474,16 @@ func (y *Cloud189PC) getClient() *resty.Client {
 		return y.ref.getClient()
 	}
 	return y.client
+}
+
+func (y *Cloud189PC) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {
+	fullUrl := API_URL + "/portal/getUserSizeInfo.action"
+	var resp CapacityResp
+	_, err := y.get(fullUrl, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

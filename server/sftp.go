@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -27,7 +28,7 @@ func NewSftpDriver() (*SftpDriver, error) {
 	sftp.InitHostKey()
 	return &SftpDriver{
 		proxyHeader: http.Header{
-			"User-Agent": {setting.GetStr(conf.FTPProxyUserAgent)},
+			"User-Agent": {base.UserAgent},
 		},
 	}, nil
 }
@@ -36,10 +37,14 @@ func (d *SftpDriver) GetConfig() *sftpd.Config {
 	if d.config != nil {
 		return d.config
 	}
+	var pwdAuth func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) = nil
+	if !setting.GetBool(conf.SFTPDisablePasswordLogin) {
+		pwdAuth = d.PasswordAuth
+	}
 	serverConfig := ssh.ServerConfig{
 		NoClientAuth:         true,
 		NoClientAuthCallback: d.NoClientAuth,
-		PasswordCallback:     d.PasswordAuth,
+		PasswordCallback:     pwdAuth,
 		PublicKeyCallback:    d.PublicKeyAuth,
 		AuthLogCallback:      d.AuthLogCallback,
 		BannerCallback:       d.GetBanner,
