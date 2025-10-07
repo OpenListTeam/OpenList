@@ -126,6 +126,7 @@ func InitConfig() {
 		log.Fatalf("create temp dir error: %+v", err)
 	}
 	log.Debugf("config: %+v", conf.Conf)
+	InitProxy()
 	base.InitClient()
 	initURL()
 }
