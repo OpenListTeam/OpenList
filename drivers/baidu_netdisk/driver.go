@@ -178,12 +178,12 @@ func (d *BaiduNetdisk) PutRapid(ctx context.Context, dstDir model.Obj, stream mo
 	return fileToObj(newFile), nil
 }
 
-// Put 文件上传，支持断点续传和 uploadid 过期重试
+// Put
 //
 // **注意**: 截至 2024/04/20 百度云盘 api 接口返回的时间永远是当前时间，而不是文件时间。
 // 而实际上云盘存储的时间是文件时间，所以此处需要覆盖时间，保证缓存与云盘的数据一致
 func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	// rapid upload 尝试秒传
+	// rapid upload
 	if newObj, err := d.PutRapid(ctx, dstDir, stream); err == nil {
 		return newObj, nil
 	}
