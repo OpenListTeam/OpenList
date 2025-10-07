@@ -27,11 +27,11 @@ import (
 
 // do others that not defined in Driver interface
 
-// Google Drive API 字段常量
+// Google Drive API field constants
 const (
-	// 文件列表查询字段
+	// File list query fields
 	FilesListFields = "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken"
-	// 单个文件查询字段
+	// Single file query fields
 	FileInfoFields = "id,name,mimeType,size,md5Checksum,sha1Checksum,sha256Checksum"
 )
 
@@ -258,11 +258,11 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 		}
 		pageToken = resp.NextPageToken
 
-		// 批量处理快捷链接，只对文件快捷方式进行API调用
+		// Batch process shortcuts, API calls only for file shortcuts
 		shortcutTargetIds := make([]string, 0)
 		shortcutIndices := make([]int, 0)
 
-		// 收集所有文件快捷方式的目标ID（跳过文件夹快捷方式）
+		// Collect target IDs of all file shortcuts (skip folder shortcuts)
 		for i := range resp.Files {
 			if resp.Files[i].MimeType == "application/vnd.google-apps.shortcut" &&
 				resp.Files[i].ShortcutDetails.TargetId != "" &&
@@ -272,10 +272,10 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 			}
 		}
 
-		// 批量获取目标文件信息（只对文件快捷方式）
+		// Batch get target file info (only for file shortcuts)
 		if len(shortcutTargetIds) > 0 {
 			targetFiles := d.batchGetTargetFilesInfo(shortcutTargetIds)
-			// 更新快捷方式文件的信息
+			// Update shortcut file info
 			for j, targetId := range shortcutTargetIds {
 				if targetFile, exists := targetFiles[targetId]; exists {
 					fileIndex := shortcutIndices[j]
@@ -300,7 +300,7 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 	return res, nil
 }
 
-// getTargetFileInfo 获取目标文件的详细信息，用于快捷链接
+// getTargetFileInfo gets target file details for shortcuts
 func (d *GoogleDrive) getTargetFileInfo(targetId string) (File, error) {
 	var targetFile File
 	url := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s", targetId)
@@ -316,14 +316,14 @@ func (d *GoogleDrive) getTargetFileInfo(targetId string) (File, error) {
 	return targetFile, nil
 }
 
-// batchGetTargetFilesInfo 批量获取目标文件信息，顺序处理避免并发复杂性
+// batchGetTargetFilesInfo batch gets target file info, sequential processing to avoid concurrency complexity
 func (d *GoogleDrive) batchGetTargetFilesInfo(targetIds []string) map[string]File {
 	if len(targetIds) == 0 {
 		return make(map[string]File)
 	}
 
 	result := make(map[string]File)
-	// 顺序处理，避免并发复杂性
+	// Sequential processing to avoid concurrency complexity
 	for _, targetId := range targetIds {
 		file, err := d.getTargetFileInfo(targetId)
 		if err == nil {
