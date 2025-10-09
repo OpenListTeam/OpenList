@@ -2,6 +2,7 @@ package op_test
 
 import (
 	"context"
+	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/dbengine"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -10,17 +11,16 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	mapset "github.com/deckarep/golang-set/v2"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func init() {
-	dB, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	con, err := dbengine.CreateSqliteCon("file::memory:?cache=shared", &gorm.Config{})
 	if err != nil {
 		panic("failed to connect database")
 	}
 	conf.Conf = conf.DefaultConfig("data")
-	db.Init(dB)
+	db.Init(con)
 }
 
 func TestCreateStorage(t *testing.T) {

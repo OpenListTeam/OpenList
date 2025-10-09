@@ -8,14 +8,14 @@ import (
 
 func GetSharingById(id string) (*model.SharingDB, error) {
 	s := model.SharingDB{ID: id}
-	if err := db.Where(s).First(&s).Error; err != nil {
+	if err := rwDb.R().Where(s).First(&s).Error; err != nil {
 		return nil, errors.Wrapf(err, "failed get sharing")
 	}
 	return &s, nil
 }
 
 func GetSharings(pageIndex, pageSize int) (sharings []model.SharingDB, count int64, err error) {
-	sharingDB := db.Model(&model.SharingDB{})
+	sharingDB := rwDb.R().Model(&model.SharingDB{})
 	if err := sharingDB.Count(&count).Error; err != nil {
 		return nil, 0, errors.Wrapf(err, "failed get sharings count")
 	}
@@ -26,7 +26,7 @@ func GetSharings(pageIndex, pageSize int) (sharings []model.SharingDB, count int
 }
 
 func GetSharingsByCreatorId(creator uint, pageIndex, pageSize int) (sharings []model.SharingDB, count int64, err error) {
-	sharingDB := db.Model(&model.SharingDB{})
+	sharingDB := rwDb.R().Model(&model.SharingDB{})
 	cond := model.SharingDB{CreatorId: creator}
 	if err := sharingDB.Where(cond).Count(&count).Error; err != nil {
 		return nil, 0, errors.Wrapf(err, "failed get sharings count")
@@ -43,9 +43,9 @@ func CreateSharing(s *model.SharingDB) (string, error) {
 		old := model.SharingDB{
 			ID: id,
 		}
-		if err := db.Where(old).First(&old).Error; err != nil {
+		if err := rwDb.R().Where(old).First(&old).Error; err != nil {
 			s.ID = id
-			return id, errors.WithStack(db.Create(s).Error)
+			return id, errors.WithStack(rwDb.W().Create(s).Error)
 		}
 		id += random.String(1)
 	}
@@ -53,10 +53,10 @@ func CreateSharing(s *model.SharingDB) (string, error) {
 }
 
 func UpdateSharing(s *model.SharingDB) error {
-	return errors.WithStack(db.Save(s).Error)
+	return errors.WithStack(rwDb.W().Save(s).Error)
 }
 
 func DeleteSharingById(id string) error {
 	s := model.SharingDB{ID: id}
-	return errors.WithStack(db.Where(s).Delete(&s).Error)
+	return errors.WithStack(rwDb.W().Where(s).Delete(&s).Error)
 }

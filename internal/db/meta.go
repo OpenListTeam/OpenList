@@ -7,7 +7,7 @@ import (
 
 func GetMetaByPath(path string) (*model.Meta, error) {
 	meta := model.Meta{Path: path}
-	if err := db.Where(meta).First(&meta).Error; err != nil {
+	if err := rwDb.R().Where(meta).First(&meta).Error; err != nil {
 		return nil, errors.Wrapf(err, "failed select meta")
 	}
 	return &meta, nil
@@ -15,22 +15,22 @@ func GetMetaByPath(path string) (*model.Meta, error) {
 
 func GetMetaById(id uint) (*model.Meta, error) {
 	var u model.Meta
-	if err := db.First(&u, id).Error; err != nil {
+	if err := rwDb.R().First(&u, id).Error; err != nil {
 		return nil, errors.Wrapf(err, "failed get old meta")
 	}
 	return &u, nil
 }
 
 func CreateMeta(u *model.Meta) error {
-	return errors.WithStack(db.Create(u).Error)
+	return errors.WithStack(rwDb.W().Create(u).Error)
 }
 
 func UpdateMeta(u *model.Meta) error {
-	return errors.WithStack(db.Save(u).Error)
+	return errors.WithStack(rwDb.W().Save(u).Error)
 }
 
 func GetMetas(pageIndex, pageSize int) (metas []model.Meta, count int64, err error) {
-	metaDB := db.Model(&model.Meta{})
+	metaDB := rwDb.R().Model(&model.Meta{})
 	if err = metaDB.Count(&count).Error; err != nil {
 		return nil, 0, errors.Wrapf(err, "failed get metas count")
 	}
@@ -41,5 +41,5 @@ func GetMetas(pageIndex, pageSize int) (metas []model.Meta, count int64, err err
 }
 
 func DeleteMetaById(id uint) error {
-	return errors.WithStack(db.Delete(&model.Meta{}, id).Error)
+	return errors.WithStack(rwDb.W().Delete(&model.Meta{}, id).Error)
 }
