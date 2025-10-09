@@ -27,7 +27,7 @@ var archiveMetaG singleflight.Group[*model.ArchiveMetaProvider]
 
 func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, args model.ArchiveMetaArgs) (*model.ArchiveMetaProvider, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
 	key := Key(storage, path)
@@ -163,7 +163,7 @@ var archiveListG singleflight.Group[[]model.Obj]
 
 func ListArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
 	metaKey := Key(storage, path)
@@ -309,7 +309,7 @@ func splitPath(path string) []string {
 
 func ArchiveGet(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) (model.Obj, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
 	af, err := GetUnwrap(ctx, storage, path)
@@ -364,7 +364,7 @@ var extractG = singleflight.Group[*extractLink]{Remember: true}
 
 func DriverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
 	if link, ok := extractCache.Get(key); ok {
@@ -480,7 +480,7 @@ func InternalExtract(ctx context.Context, storage driver.Driver, path string, ar
 
 func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string, args model.ArchiveDecompressArgs, lazyCache ...bool) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)

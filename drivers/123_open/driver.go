@@ -84,7 +84,7 @@ func (d *Open123) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 			}, nil
 		}
 
-		uid, err := d.getUID()
+		uid, err := d.getUID(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +215,7 @@ func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 }
 
 func (d *Open123) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	userInfo, err := d.getUserInfo()
+	userInfo, err := d.getUserInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -229,5 +229,15 @@ func (d *Open123) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 	}, nil
 }
 
-var _ driver.Driver = (*Open123)(nil)
-var _ driver.PutResult = (*Open123)(nil)
+func (d *Open123) OfflineDownload(ctx context.Context, url string, dir model.Obj, callback string) (int, error) {
+	return d.createOfflineDownloadTask(ctx, url, dir.GetID(), callback)
+}
+
+func (d *Open123) OfflineDownloadProcess(ctx context.Context, taskID int) (float64, int, error) {
+	return d.queryOfflineDownloadStatus(ctx, taskID)
+}
+
+var (
+	_ driver.Driver    = (*Open123)(nil)
+	_ driver.PutResult = (*Open123)(nil)
+)

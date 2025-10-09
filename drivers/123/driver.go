@@ -74,7 +74,6 @@ func (d *Pan123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 			"type":      f.Type,
 		}
 		resp, err := d.Request(DownloadInfo, http.MethodPost, func(req *resty.Request) {
-
 			req.SetBody(data)
 		}, nil)
 		if err != nil {
@@ -252,6 +251,17 @@ func (d *Pan123) APIRateLimit(ctx context.Context, api string) error {
 	limiter := value.(*rate.Limiter)
 
 	return limiter.Wait(ctx)
+}
+
+func (d *Pan123) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	userInfo, err := d.getUserInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	total := userInfo.Data.SpacePermanent + userInfo.Data.SpaceTemp
+	return &model.StorageDetails{
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(userInfo.Data.SpaceUsed, total),
+	}, nil
 }
 
 var _ driver.Driver = (*Pan123)(nil)

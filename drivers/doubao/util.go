@@ -577,7 +577,7 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 		if partIndex == totalParts-1 {
 			size = fileSize - offset
 		}
-		var reader *stream.SectionReader
+		var reader io.ReadSeeker
 		var rateLimitedRd io.Reader
 		crc32Value := ""
 		threadG.GoWithLifecycle(errgroup.Lifecycle{

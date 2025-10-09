@@ -198,7 +198,7 @@ func (d *QuarkOrUC) upHash(md5, sha1, taskId string) (bool, error) {
 }
 
 func (d *QuarkOrUC) upPart(ctx context.Context, pre UpPreResp, mineType string, partNumber int, bytes io.Reader) (string, error) {
-	//func (driver QuarkOrUC) UpPart(pre UpPreResp, mineType string, partNumber int, bytes []byte, account *model.Account, md5Str, sha1Str string) (string, error) {
+	// func (driver QuarkOrUC) UpPart(pre UpPreResp, mineType string, partNumber int, bytes []byte, account *model.Account, md5Str, sha1Str string) (string, error) {
 	timeStr := time.Now().UTC().Format(http.TimeFormat)
 	data := base.Json{
 		"auth_info": pre.Data.AuthInfo,
@@ -333,4 +333,21 @@ func (d *QuarkOrUC) upFinish(pre UpPreResp) error {
 	}
 	time.Sleep(time.Second)
 	return nil
+}
+
+func (d *QuarkOrUC) memberInfo(ctx context.Context) (*MemberResp, error) {
+	var resp MemberResp
+	query := map[string]string{
+		"fetch_subscribe": "false",
+		"_ch":             "home",
+		"fetch_identity":  "false",
+	}
+	_, err := d.request("/member", http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(query)
+		req.SetContext(ctx)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
