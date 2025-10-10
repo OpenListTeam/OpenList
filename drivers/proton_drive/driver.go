@@ -251,11 +251,13 @@ func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkA
 		}, nil
 	}
 
+	expiration := time.Minute
 	return &model.Link{
 		RangeReader: &model.FileRangeReader{
 			RangeReaderIF: stream.RateLimitRangeReaderFunc(rangeReaderFunc),
 		},
 		ContentLength: size,
+		Expiration:    &expiration,
 	}, nil
 }
 
