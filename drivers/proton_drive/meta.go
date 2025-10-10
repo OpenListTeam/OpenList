@@ -24,7 +24,7 @@ type Addition struct {
 	driver.RootID
 	Username             string `json:"username" required:"true" type:"string"`
 	Password             string `json:"password" required:"true" type:"string"`
-	TwoFACode            string `json:"two_fa_code,omitempty" type:"string"`
+	TwoFACode            string `json:"two_fa_code" type:"string"`
 	ChunkSize            int64  `json:"chunk_size" type:"number" default:"100"`
 	TempServerListenPort int    `json:"temp_server_listen_port" type:"number" default:"0" help:"Internal port for temp server to bind to (0 for auto, preferred = 8080)"`
 	TempServerPublicPort int    `json:"temp_server_public_port" type:"number" default:"0" help:"External port that clients will connect to (0 for auto, preferred = 8080)"`

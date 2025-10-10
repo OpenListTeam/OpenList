@@ -229,7 +229,12 @@ func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkA
 	if err != nil {
 		return nil, fmt.Errorf("failed get file link: %+v", err)
 	}
-	size := file.GetSize()
+	fileSystemAttrs, err := d.protonDrive.GetActiveRevisionAttrs(ctx, link)
+	if err != nil {
+		return nil, fmt.Errorf("failed get file revision: %+v", err)
+	}
+	// 解密后的文件大小
+	size := fileSystemAttrs.Size
 
 	rangeReaderFunc := func(rangeCtx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 		length := httpRange.Length
@@ -250,6 +255,7 @@ func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkA
 		RangeReader: &model.FileRangeReader{
 			RangeReaderIF: stream.RateLimitRangeReaderFunc(rangeReaderFunc),
 		},
+		ContentLength: size,
 	}, nil
 }
 
