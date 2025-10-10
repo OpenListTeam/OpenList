@@ -9,7 +9,7 @@ import (
 )
 
 type HalalCloudOpen struct {
-	*HalalCommon
+	*halalCommon
 	model.Storage
 	Addition
 	sdkClient          *sdkClient.Client

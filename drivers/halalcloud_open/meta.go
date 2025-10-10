@@ -10,14 +10,12 @@ type Addition struct {
 	driver.RootPath
 	// define other
 	RefreshToken string `json:"refresh_token" required:"false" help:"If using a personal API approach, the RefreshToken is not required."`
-	UploadThread string `json:"upload_thread" default:"3" help:"1 <= thread <= 32"`
+	UploadThread int    `json:"upload_thread" type:"number" default:"3" help:"1 <= thread <= 32"`
 
 	ClientID     string `json:"client_id" required:"true" default:""`
-	AppVersion   string `json:"app_version" required:"true" default:"1.0.0"`
 	ClientSecret string `json:"client_secret" required:"true" default:""`
-	UserAgent    string `json:"user_agent" required:"true" default:"OpenList/1.0.0"`
-	Host         string `json:"host" required:"true" default:"openapi.2dland.cn"`
-	TimeOut      int    `json:"timeout" default:"60" help:"timeout in seconds"`
+	Host         string `json:"host" required:"false" default:"openapi.2dland.cn"`
+	TimeOut      int    `json:"timeout" type:"number" default:"60" help:"timeout in seconds"`
 }
 
 var config = driver.Config{

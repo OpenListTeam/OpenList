@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,8 +11,6 @@ import (
 	"path"
 	"strings"
 	"time"
-
-	logus "github.com/sirupsen/logrus"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -82,12 +79,25 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 			}
 		}
 	} else {
-		// slicesList, err = multipartUploadFile(ctx, path, fileInfo, uploadTask.BlockSize, uploadTask.Task, uploadTask.UploadAddress, prefix, su.retryTime, su.maxThreadCount)
-		// if err != nil {
-		// 	return nil, err
-		// }
-		// 不确定 fileStream 是不是一个可以重复读取的流，所以只能用单线程上传
-		return nil, errors.New("fileStream is too large, please use a seekable FileStreamer or increase maxThreadCount")
+		// TODO: implement multipart upload, currently using single-threaded upload to ensure safety.
+		bufferSize := int(blockSize)
+		buffer := make([]byte, bufferSize)
+		reader := driver.NewLimitedUploadStream(ctx, fileStream)
+		teeReader := io.TeeReader(reader, driver.NewProgress(fileStream.GetSize(), up))
+		for {
+			n, err := teeReader.Read(buffer)
+			if n > 0 {
+				data := buffer[:n]
+				uploadCid, err := postFileSlice(ctx, data, uploadTask.Task, uploadTask.UploadAddress, prefix, 5)
+				if err != nil {
+					return nil, err
+				}
+				slicesList = append(slicesList, uploadCid.String())
+			}
+			if err == io.EOF || n == 0 {
+				break
+			}
+		}
 	}
 	newFile, err := makeFile(ctx, slicesList, uploadTask.Task, uploadTask.UploadAddress, 5)
 	if err != nil {
@@ -146,7 +156,6 @@ func doMakeFile(fileSlice []string, taskID string, uploadAddress string) (*sdkUs
 	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(httpResponse.Body)
 		message := string(b)
-		logus.Errorf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 		return nil, fmt.Errorf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 	}
 	b, _ := io.ReadAll(httpResponse.Body)
@@ -167,7 +176,6 @@ func postFileSlice(ctx context.Context, fileSlice []byte, taskID string, uploadA
 		if ctx.Err() != nil {
 			return cid.Undef, err
 		}
-		logus.Errorf("upload task [%s] file slice error: %s", taskID, err)
 		time.Sleep(time.Second * 120)
 		lastError = err
 	}
@@ -242,7 +250,6 @@ func doPostFileSlice(fileSlice []byte, taskID string, uploadAddress string, prei
 	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(httpResponse.Body)
 		message := string(b)
-		logus.Errorf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 		return cid.Undef, fmt.Errorf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 	}
 	//
