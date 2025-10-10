@@ -73,16 +73,6 @@ func (d *Onedrive) refreshToken() error {
 }
 
 func (d *Onedrive) _refreshToken() error {
-	if d.ref != nil {
-		err := d.ref._refreshToken()
-		if err != nil {
-			return err
-		}
-		d.AccessToken = d.ref.AccessToken
-		d.RefreshToken = d.ref.RefreshToken
-		return nil
-	}
-
 	// 使用在线API刷新Token，无需ClientID和ClientSecret
 	if d.UseOnlineAPI && len(d.APIAddress) > 0 {
 		u := d.APIAddress
@@ -144,14 +134,11 @@ func (d *Onedrive) _refreshToken() error {
 }
 
 func (d *Onedrive) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
-
-	token := d.AccessToken
 	if d.ref != nil {
-		token = d.ref.AccessToken
+		return d.ref.Request(url, method, callback, resp)
 	}
-
-	req.SetHeader("Authorization", "Bearer "+token)
+	req := base.RestyClient.R()
+	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	if callback != nil {
 		callback(req)
 	}

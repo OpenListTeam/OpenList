@@ -38,8 +38,6 @@ func (d *Onedrive) Init(ctx context.Context) error {
 		d.ChunkSize = 5
 	}
 	if d.ref != nil {
-		d.AccessToken = d.ref.AccessToken
-		d.RefreshToken = d.ref.RefreshToken
 		return nil
 	}
 	return d.refreshToken()
