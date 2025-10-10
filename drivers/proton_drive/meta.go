@@ -21,9 +21,7 @@ import (
 )
 
 type Addition struct {
-	driver.RootPath
-	//driver.RootID
-
+	driver.RootID
 	Username             string `json:"username" required:"true" type:"string"`
 	Password             string `json:"password" required:"true" type:"string"`
 	TwoFACode            string `json:"two_fa_code,omitempty" type:"string"`
@@ -33,29 +31,11 @@ type Addition struct {
 	TempServerPublicHost string `json:"temp_server_public_host" type:"string" default:"127.0.0.1" help:"External domain/IP that clients will connect to i.e. 192.168.1.5 (default = 127.0.0.1)"`
 }
 
-type Config struct {
-	Name        string `json:"name"`
-	LocalSort   bool   `json:"local_sort"`
-	OnlyLocal   bool   `json:"only_local"`
-	OnlyProxy   bool   `json:"only_proxy"`
-	NoCache     bool   `json:"no_cache"`
-	NoUpload    bool   `json:"no_upload"`
-	NeedMs      bool   `json:"need_ms"`
-	DefaultRoot string `json:"default_root"`
-}
-
 var config = driver.Config{
-	Name:      "ProtonDrive",
-	LocalSort: false,
-	//OnlyLocal:         false,
-	OnlyProxy:         false, //Please leave it disabled, true breaks stream / download
-	NoCache:           false,
-	NoUpload:          false,
-	NeedMs:            false,
-	DefaultRoot:       "/",
-	CheckStatus:       false,
-	Alert:             "",
-	NoOverwriteUpload: false,
+	Name:        "ProtonDrive",
+	LocalSort:   true,
+	OnlyProxy:   true,
+	DefaultRoot: "root",
 }
 
 func init() {

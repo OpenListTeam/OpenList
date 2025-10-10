@@ -772,7 +772,7 @@ func (d *ProtonDrive) DirectMove(ctx context.Context, srcObj model.Obj, dstDir m
 
 	var dstParentLinkID string
 	if dstDir.GetPath() == "/" {
-		dstParentLinkID = d.RootLink.LinkID
+		dstParentLinkID = d.RootFolderID
 	} else {
 		dstLink, err := d.searchByPath(ctx, dstDir.GetPath(), true)
 		if err != nil {
@@ -933,7 +933,7 @@ func reencryptKeyPacket(srcKR, dstKR, _ *crypto.KeyRing, passphrase string) (str
 func (d *ProtonDrive) checkCircularMove(ctx context.Context, srcLinkID, dstParentLinkID string) error {
 	currentLinkID := dstParentLinkID
 
-	for currentLinkID != "" && currentLinkID != d.RootLink.LinkID {
+	for currentLinkID != "" && currentLinkID != d.RootFolderID {
 		if currentLinkID == srcLinkID {
 			return fmt.Errorf("cannot move folder into itself or its subfolder")
 		}

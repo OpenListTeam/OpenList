@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/ProtonMail/gopenpgp/v2/crypto"
 	proton_api_bridge "github.com/henrybear327/Proton-API-Bridge"
@@ -61,7 +63,6 @@ type ProtonDrive struct {
 	addrData map[string]proton.Address
 
 	MainShare *proton.Share
-	RootLink  *proton.Link
 
 	DefaultAddrKR *crypto.KeyRing
 	MainShareKR   *crypto.KeyRing
@@ -184,7 +185,9 @@ func (d *ProtonDrive) Init(ctx context.Context) error {
 	}
 
 	d.MainShare = protonDrive.MainShare
-	d.RootLink = protonDrive.RootLink
+	if d.RootFolderID == "root" {
+		d.RootFolderID = protonDrive.RootLink.LinkID
+	}
 	d.MainShareKR = protonDrive.MainShareKR
 	d.DefaultAddrKR = protonDrive.DefaultAddrKR
 	d.addrKRs = addrKRs
@@ -201,38 +204,15 @@ func (d *ProtonDrive) Drop(ctx context.Context) error {
 }
 
 func (d *ProtonDrive) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	var linkID string
-
-	if dir.GetPath() == "/" {
-		linkID = d.protonDrive.RootLink.LinkID
-	} else {
-
-		link, err := d.searchByPath(ctx, dir.GetPath(), true)
-		if err != nil {
-			return nil, err
-		}
-		linkID = link.LinkID
-	}
-
-	entries, err := d.protonDrive.ListDirectory(ctx, linkID)
+	entries, err := d.protonDrive.ListDirectory(ctx, dir.GetID())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list directory: %w", err)
 	}
 
-	// fmt.Printf("Found %d entries for path %s\n", len(entries), dir.GetPath())
-	// fmt.Printf("Found %d entries\n", len(entries))
-
-	if len(entries) == 0 {
-		emptySlice := []model.Obj{}
-
-		// fmt.Printf("Returning empty slice (entries): %+v\n", emptySlice)
-
-		return emptySlice, nil
-	}
-
-	var objects []model.Obj
+	objects := make([]model.Obj, 0, len(entries))
 	for _, entry := range entries {
 		obj := &model.Object{
+			ID:       entry.Link.LinkID,
 			Name:     entry.Name,
 			Size:     entry.Link.Size,
 			Modified: time.Unix(entry.Link.ModifyTime, 0),
@@ -245,54 +225,16 @@ func (d *ProtonDrive) List(ctx context.Context, dir model.Obj, args model.ListAr
 }
 
 func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	link, err := d.searchByPath(ctx, file.GetPath(), false)
+	link, err := d.protonDrive.GetLink(ctx, file.GetID())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed get file link: %+v", err)
 	}
-
-	if err := d.ensureTempServer(); err != nil {
-		return nil, fmt.Errorf("failed to start temp server: %w", err)
-	}
-
-	token := d.generateDownloadToken(link.LinkID, file.GetName())
-
-	/* return &model.Link{
-		URL: fmt.Sprintf("protondrive://download/%s", link.LinkID),
-	}, nil */
-
-	//fmt.Printf("d.TempServerPublicHost: %v\n", d.TempServerPublicHost)
-	//fmt.Printf("d.TempServerPublicPort: %d\n", d.TempServerPublicPort)
-
-	// Use public host and port for the URL returned to clients
-	return &model.Link{
-		URL: fmt.Sprintf("http://%s:%d/temp/%s",
-			d.TempServerPublicHost, d.TempServerPublicPort, token),
-	}, nil
-}
-
-//Causes 500 error, but leave it because is an alternative
-/* func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	link, err := d.searchByPath(ctx, file.GetPath(), false)
-	if err != nil {
-		return nil, err
-	}
-	token := d.generateDownloadToken(link.LinkID, file.GetName())
 	size := file.GetSize()
 
 	rangeReaderFunc := func(rangeCtx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 		length := httpRange.Length
 		if length < 0 || httpRange.Start+length > size {
 			length = size - httpRange.Start
-		}
-		d.tokenMutex.RLock()
-		info, exists := d.downloadTokens[token]
-		d.tokenMutex.RUnlock()
-		if !exists {
-			return nil, errors.New("invalid or expired token")
-		}
-		link, err := d.protonDrive.GetLink(rangeCtx, info.LinkID)
-		if err != nil {
-			return nil, fmt.Errorf("failed get file link: %+v", err)
 		}
 		reader, _, _, err := d.protonDrive.DownloadFile(rangeCtx, link, httpRange.Start)
 		if err != nil {
@@ -309,27 +251,16 @@ func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkA
 			RangeReaderIF: stream.RateLimitRangeReaderFunc(rangeReaderFunc),
 		},
 	}, nil
-} */
+}
 
 func (d *ProtonDrive) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	var parentLinkID string
-
-	if parentDir.GetPath() == "/" {
-		parentLinkID = d.protonDrive.RootLink.LinkID
-	} else {
-		link, err := d.searchByPath(ctx, parentDir.GetPath(), true)
-		if err != nil {
-			return nil, err
-		}
-		parentLinkID = link.LinkID
-	}
-
-	_, err := d.protonDrive.CreateNewFolderByID(ctx, parentLinkID, dirName)
+	id, err := d.protonDrive.CreateNewFolderByID(ctx, parentDir.GetID(), dirName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	newDir := &model.Object{
+		ID:       id,
 		Name:     dirName,
 		IsFolder: true,
 		Modified: time.Now(),
@@ -392,15 +323,10 @@ func (d *ProtonDrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 }
 
 func (d *ProtonDrive) Remove(ctx context.Context, obj model.Obj) error {
-	link, err := d.searchByPath(ctx, obj.GetPath(), obj.IsDir())
-	if err != nil {
-		return err
-	}
-
 	if obj.IsDir() {
-		return d.protonDrive.MoveFolderToTrashByID(ctx, link.LinkID, false)
+		return d.protonDrive.MoveFolderToTrashByID(ctx, obj.GetID(), false)
 	} else {
-		return d.protonDrive.MoveFileToTrashByID(ctx, link.LinkID)
+		return d.protonDrive.MoveFileToTrashByID(ctx, obj.GetID())
 	}
 }
 
