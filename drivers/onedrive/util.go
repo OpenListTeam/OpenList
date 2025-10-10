@@ -134,6 +134,9 @@ func (d *Onedrive) _refreshToken() error {
 }
 
 func (d *Onedrive) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	if d.ref != nil {
+		return d.ref.Request(url, method, callback, resp)
+	}
 	req := base.RestyClient.R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	if callback != nil {
