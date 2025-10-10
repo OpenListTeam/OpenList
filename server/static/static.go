@@ -80,16 +80,17 @@ func initIndex(siteConfig SiteConfig) {
 				utils.Log.Fatalf("index.html not exist, you may forget to put dist of frontend to public/dist")
 			}
 			utils.Log.Fatalf("failed to read index.html: %v", err)
+		}else{
+			defer func() {
+				_ = indexFile.Close()
+			}()
+			index, err := io.ReadAll(indexFile)
+			if err != nil {
+				utils.Log.Fatalf("failed to read dist/index.html")
+			}
+			conf.RawIndexHtml = string(index)
+			utils.Log.Debug("Successfully read index.html from static files system")
 		}
-		defer func() {
-			_ = indexFile.Close()
-		}()
-		index, err := io.ReadAll(indexFile)
-		if err != nil {
-			utils.Log.Fatalf("failed to read dist/index.html")
-		}
-		conf.RawIndexHtml = string(index)
-		utils.Log.Debug("Successfully read index.html from static files system")
 	}
 	utils.Log.Debug("Replacing placeholders in index.html...")
 	// Construct the correct manifest path based on basePath
