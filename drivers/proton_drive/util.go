@@ -26,7 +26,6 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,36 +34,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/ProtonMail/gopenpgp/v2/crypto"
-	"github.com/henrybear327/Proton-API-Bridge/common"
 	"github.com/henrybear327/go-proton-api"
 )
-
-func (d *ProtonDrive) loadCachedCredentials() (*common.ReusableCredentialData, error) {
-	if d.credentialCacheFile == "" {
-		return nil, nil
-	}
-
-	if _, err := os.Stat(d.credentialCacheFile); os.IsNotExist(err) {
-		return nil, nil
-	}
-
-	data, err := os.ReadFile(d.credentialCacheFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read credential cache file: %w", err)
-	}
-
-	var credentials common.ReusableCredentialData
-	if err := json.Unmarshal(data, &credentials); err != nil {
-		return nil, fmt.Errorf("failed to parse cached credentials: %w", err)
-	}
-
-	if credentials.UID == "" || credentials.AccessToken == "" ||
-		credentials.RefreshToken == "" || credentials.SaltedKeyPass == "" {
-		return nil, fmt.Errorf("cached credentials are incomplete")
-	}
-
-	return &credentials, nil
-}
 
 func (d *ProtonDrive) searchByPath(ctx context.Context, fullPath string, isFolder bool) (*proton.Link, error) {
 	if fullPath == "/" {
@@ -676,8 +647,8 @@ func (d *ProtonDrive) executeRenameAPI(ctx context.Context, linkID string, req R
 	httpReq.Header.Set("Accept", d.protonJson)
 	httpReq.Header.Set("X-Pm-Appversion", d.webDriveAV)
 	httpReq.Header.Set("X-Pm-Drive-Sdk-Version", d.sdkVersion)
-	httpReq.Header.Set("X-Pm-Uid", d.credentials.UID)
-	httpReq.Header.Set("Authorization", "Bearer "+d.credentials.AccessToken)
+	httpReq.Header.Set("X-Pm-Uid", d.ReusableCredential.UID)
+	httpReq.Header.Set("Authorization", "Bearer "+d.ReusableCredential.AccessToken)
 
 	client := &http.Client{}
 	resp, err := client.Do(httpReq)
@@ -736,11 +707,11 @@ func (d *ProtonDrive) executeMoveAPI(ctx context.Context, linkID string, req Mov
 		return fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	httpReq.Header.Set("Authorization", "Bearer "+d.credentials.AccessToken)
+	httpReq.Header.Set("Authorization", "Bearer "+d.ReusableCredential.AccessToken)
 	httpReq.Header.Set("Accept", d.protonJson)
 	httpReq.Header.Set("X-Pm-Appversion", d.webDriveAV)
 	httpReq.Header.Set("X-Pm-Drive-Sdk-Version", d.sdkVersion)
-	httpReq.Header.Set("X-Pm-Uid", d.credentials.UID)
+	httpReq.Header.Set("X-Pm-Uid", d.ReusableCredential.UID)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}

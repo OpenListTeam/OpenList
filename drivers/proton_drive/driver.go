@@ -40,7 +40,6 @@ type ProtonDrive struct {
 	Addition
 
 	protonDrive *proton_api_bridge.ProtonDrive
-	credentials *common.ProtonDriveCredential
 
 	apiBase    string
 	appVersion string
@@ -55,8 +54,6 @@ type ProtonDrive struct {
 
 	c *proton.Client
 	// m *proton.Manager
-
-	credentialCacheFile string
 
 	// userKR   *crypto.KeyRing
 	addrKRs  map[string]*crypto.KeyRing
@@ -77,94 +74,47 @@ func (d *ProtonDrive) GetAddition() driver.Additional {
 }
 
 func (d *ProtonDrive) Init(ctx context.Context) error {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Printf("ProtonDrive initialization panic: %v", r)
-		}
-	}()
 
-	if d.Username == "" {
-		return fmt.Errorf("username is required")
+	if d.Email == "" {
+		return fmt.Errorf("email is required")
 	}
 	if d.Password == "" {
 		return fmt.Errorf("password is required")
 	}
 
-	// fmt.Printf("ProtonDrive Init: Username=%s, TwoFACode=%s", d.Username, d.TwoFACode)
-
-	if ctx == nil {
-		return fmt.Errorf("context cannot be nil")
-	}
-
-	cachedCredentials, err := d.loadCachedCredentials()
 	useReusableLogin := false
-	var reusableCredential *common.ReusableCredentialData
+	reusableCredential := &d.ReusableCredential
 
-	if err == nil && cachedCredentials != nil &&
-		cachedCredentials.UID != "" && cachedCredentials.AccessToken != "" &&
-		cachedCredentials.RefreshToken != "" && cachedCredentials.SaltedKeyPass != "" {
+	if d.UseReusableLogin && reusableCredential.UID != "" && reusableCredential.AccessToken != "" &&
+		reusableCredential.RefreshToken != "" && reusableCredential.SaltedKeyPass != "" {
 		useReusableLogin = true
-		reusableCredential = cachedCredentials
-	} else {
-		useReusableLogin = false
-		reusableCredential = &common.ReusableCredentialData{}
 	}
 
 	config := &common.Config{
 		AppVersion: d.appVersion,
 		UserAgent:  d.userAgent,
 		FirstLoginCredential: &common.FirstLoginCredentialData{
-			Username: d.Username,
+			Username: d.Email,
 			Password: d.Password,
 			TwoFA:    d.TwoFACode,
 		},
 		EnableCaching:              true,
 		ConcurrentBlockUploadCount: 5,
 		ConcurrentFileCryptoCount:  2,
-		UseReusableLogin:           false,
+		UseReusableLogin:           useReusableLogin,
 		ReplaceExistingDraft:       true,
 		ReusableCredential:         reusableCredential,
-		CredentialCacheFile:        d.credentialCacheFile,
 	}
 
-	if config.FirstLoginCredential == nil {
-		return fmt.Errorf("failed to create login credentials, FirstLoginCredential cannot be nil")
-	}
-
-	// fmt.Printf("Calling NewProtonDrive...")
-
-	protonDrive, credentials, err := proton_api_bridge.NewProtonDrive(
+	protonDrive, _, err := proton_api_bridge.NewProtonDrive(
 		ctx,
 		config,
 		func(auth proton.Auth) {},
 		func() {},
 	)
 
-	if credentials == nil && !useReusableLogin {
-		return fmt.Errorf("failed to get credentials from NewProtonDrive")
-	}
-
 	if err != nil {
 		return fmt.Errorf("failed to initialize ProtonDrive: %w", err)
-	}
-
-	d.protonDrive = protonDrive
-
-	var finalCredentials *common.ProtonDriveCredential
-
-	if useReusableLogin {
-
-		// For reusable login, create credentials from cached data
-		finalCredentials = &common.ProtonDriveCredential{
-			UID:           reusableCredential.UID,
-			AccessToken:   reusableCredential.AccessToken,
-			RefreshToken:  reusableCredential.RefreshToken,
-			SaltedKeyPass: reusableCredential.SaltedKeyPass,
-		}
-
-		d.credentials = finalCredentials
-	} else {
-		d.credentials = credentials
 	}
 
 	clientOptions := []proton.Option{
@@ -172,9 +122,9 @@ func (d *ProtonDrive) Init(ctx context.Context) error {
 		proton.WithUserAgent(d.userAgent),
 	}
 	manager := proton.New(clientOptions...)
-	d.c = manager.NewClient(d.credentials.UID, d.credentials.AccessToken, d.credentials.RefreshToken)
+	d.c = manager.NewClient(d.ReusableCredential.UID, d.ReusableCredential.AccessToken, d.ReusableCredential.RefreshToken)
 
-	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(d.credentials.SaltedKeyPass)
+	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(d.ReusableCredential.SaltedKeyPass)
 	if err != nil {
 		return fmt.Errorf("failed to decode salted key pass: %w", err)
 	}
@@ -184,6 +134,7 @@ func (d *ProtonDrive) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to get account keyrings: %w", err)
 	}
 
+	d.protonDrive = protonDrive
 	d.MainShare = protonDrive.MainShare
 	if d.RootFolderID == "root" || d.RootFolderID == "" {
 		d.RootFolderID = protonDrive.RootLink.LinkID
