@@ -185,7 +185,7 @@ func (d *ProtonDrive) Init(ctx context.Context) error {
 	}
 
 	d.MainShare = protonDrive.MainShare
-	if d.RootFolderID == "root" {
+	if d.RootFolderID == "root" || d.RootFolderID == "" {
 		d.RootFolderID = protonDrive.RootLink.LinkID
 	}
 	d.MainShareKR = protonDrive.MainShareKR
