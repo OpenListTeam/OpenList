@@ -122,9 +122,9 @@ func (d *ProtonDrive) Init(ctx context.Context) error {
 		proton.WithUserAgent(d.userAgent),
 	}
 	manager := proton.New(clientOptions...)
-	d.c = manager.NewClient(d.ReusableCredential.UID, d.ReusableCredential.AccessToken, d.ReusableCredential.RefreshToken)
+	d.c = manager.NewClient(reusableCredential.UID, reusableCredential.AccessToken, reusableCredential.RefreshToken)
 
-	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(d.ReusableCredential.SaltedKeyPass)
+	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(reusableCredential.SaltedKeyPass)
 	if err != nil {
 		return fmt.Errorf("failed to decode salted key pass: %w", err)
 	}
