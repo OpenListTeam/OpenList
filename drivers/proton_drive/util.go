@@ -27,6 +27,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/ProtonMail/gopenpgp/v2/crypto"
 	"github.com/henrybear327/go-proton-api"
 )
@@ -57,7 +58,10 @@ func (d *ProtonDrive) uploadFile(ctx context.Context, parentLinkID string, file 
 	// reader = bufio.NewReader(file)
 	reader = bufio.NewReaderSize(file, bufferSize)
 	reader = &driver.ReaderUpdatingProgress{
-		Reader:         file,
+		Reader: &stream.SimpleReaderWithSize{
+			Reader: reader,
+			Size:   file.GetSize(),
+		},
 		UpdateProgress: up,
 	}
 	reader = driver.NewLimitedUploadStream(ctx, reader)

@@ -66,10 +66,10 @@ func (d *ProtonDrive) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
-func (d *ProtonDrive) Init(ctx context.Context) error {
+func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 	defer func() {
-		if r := recover(); r != nil {
-			fmt.Printf("ProtonDrive initialization panic: %v", r)
+		if r := recover(); err == nil && r != nil {
+			err = fmt.Errorf("ProtonDrive initialization panic: %v", r)
 		}
 	}()
 
