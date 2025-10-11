@@ -2,6 +2,7 @@ package halalcloudopen
 
 import (
 	"context"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/halalcloud/golang-sdk-lite/halalcloud/apiclient"
@@ -35,7 +36,7 @@ func (d *HalalCloudOpen) Init(ctx context.Context) error {
 		host = "openapi.2dland.cn"
 	}
 
-	client := apiclient.NewClient(nil, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, timeout)
+	client := apiclient.NewClient(nil, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, apiclient.WithTimeout(time.Second*time.Duration(timeout)))
 	d.sdkClient = client
 	d.sdkUserFileService = sdkUserFile.NewUserFileService(client)
 	d.sdkUserService = sdkUser.NewUserService(client)

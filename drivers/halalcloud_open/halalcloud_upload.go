@@ -68,7 +68,7 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 			n, err := teeReader.Read(buffer)
 			if n > 0 {
 				data := buffer[:n]
-				uploadCid, err := postFileSlice(ctx, data, uploadTask.Task, uploadTask.UploadAddress, prefix, 5)
+				uploadCid, err := postFileSlice(ctx, data, uploadTask.Task, uploadTask.UploadAddress, prefix, retryTimes)
 				if err != nil {
 					return nil, err
 				}
@@ -88,7 +88,7 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 			n, err := teeReader.Read(buffer)
 			if n > 0 {
 				data := buffer[:n]
-				uploadCid, err := postFileSlice(ctx, data, uploadTask.Task, uploadTask.UploadAddress, prefix, 5)
+				uploadCid, err := postFileSlice(ctx, data, uploadTask.Task, uploadTask.UploadAddress, prefix, retryTimes)
 				if err != nil {
 					return nil, err
 				}
@@ -99,7 +99,7 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 			}
 		}
 	}
-	newFile, err := makeFile(ctx, slicesList, uploadTask.Task, uploadTask.UploadAddress, 5)
+	newFile, err := makeFile(ctx, slicesList, uploadTask.Task, uploadTask.UploadAddress, retryTimes)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func makeFile(ctx context.Context, fileSlice []string, taskID string, uploadAddr
 			return nil, err
 		}
 		lastError = err
-		time.Sleep(time.Second * 120)
+		time.Sleep(slicePostErrorRetryInterval)
 	}
 	return nil, fmt.Errorf("mk file slice failed after %d times, error: %s", retry, lastError.Error())
 }
@@ -176,7 +176,7 @@ func postFileSlice(ctx context.Context, fileSlice []byte, taskID string, uploadA
 		if ctx.Err() != nil {
 			return cid.Undef, err
 		}
-		time.Sleep(time.Second * 120)
+		time.Sleep(slicePostErrorRetryInterval)
 		lastError = err
 	}
 	return cid.Undef, fmt.Errorf("upload file slice failed after %d times, error: %s", retry, lastError.Error())

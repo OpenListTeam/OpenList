@@ -2,8 +2,14 @@ package halalcloudopen
 
 import (
 	"sync"
+	"time"
 
 	sdkUser "github.com/halalcloud/golang-sdk-lite/halalcloud/services/user"
+)
+
+var (
+	slicePostErrorRetryInterval = time.Second * 120
+	retryTimes                  = 5
 )
 
 type halalCommon struct {
