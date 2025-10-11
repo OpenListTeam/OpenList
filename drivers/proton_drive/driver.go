@@ -20,8 +20,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net/http"
-	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -48,12 +46,7 @@ type ProtonDrive struct {
 	sdkVersion string
 	webDriveAV string
 
-	tempServer     *http.Server
-	downloadTokens map[string]*downloadInfo
-	tokenMutex     sync.RWMutex
-
 	c *proton.Client
-	// m *proton.Manager
 
 	// userKR   *crypto.KeyRing
 	addrKRs  map[string]*crypto.KeyRing
@@ -153,9 +146,6 @@ func (d *ProtonDrive) Init(ctx context.Context) error {
 }
 
 func (d *ProtonDrive) Drop(ctx context.Context) error {
-	if d.tempServer != nil {
-		d.tempServer.Shutdown(ctx)
-	}
 	return nil
 }
 

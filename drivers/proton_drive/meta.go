@@ -23,15 +23,11 @@ import (
 
 type Addition struct {
 	driver.RootID
-	Email                string `json:"email" required:"true" type:"string"`
-	Password             string `json:"password" required:"true" type:"string"`
-	TwoFACode            string `json:"two_fa_code" type:"string"`
-	ChunkSize            int64  `json:"chunk_size" type:"number" default:"100"`
-	UseReusableLogin     bool   `json:"use_reusable_login" type:"bool" default:"true" help:"Use reusable login credentials instead of username/password"`
-	TempServerListenPort int    `json:"temp_server_listen_port" type:"number" default:"0" help:"Internal port for temp server to bind to (0 for auto, preferred = 8080)"`
-	TempServerPublicPort int    `json:"temp_server_public_port" type:"number" default:"0" help:"External port that clients will connect to (0 for auto, preferred = 8080)"`
-	TempServerPublicHost string `json:"temp_server_public_host" type:"string" default:"127.0.0.1" help:"External domain/IP that clients will connect to i.e. 192.168.1.5 (default = 127.0.0.1)"`
-
+	Email              string `json:"email" required:"true" type:"string"`
+	Password           string `json:"password" required:"true" type:"string"`
+	TwoFACode          string `json:"two_fa_code" type:"string"`
+	ChunkSize          int64  `json:"chunk_size" type:"number" default:"100"`
+	UseReusableLogin   bool   `json:"use_reusable_login" type:"bool" default:"true" help:"Use reusable login credentials instead of username/password"`
 	ReusableCredential common.ReusableCredentialData
 }
 
