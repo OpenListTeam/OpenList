@@ -265,25 +265,18 @@ func (d *ProtonDrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 		actualSize = fileSystemAttrs.Size
 	}
 
-	tempFile, err := utils.CreateTempFile(reader, actualSize)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	file := &stream.FileStream{
+		Ctx: ctx,
+		Obj: &model.Object{
+			Name: srcObj.GetName(),
+			// Use the accurate and real size
+			Size:     actualSize,
+			Modified: srcObj.ModTime(),
+		},
+		Reader: reader,
 	}
-	defer tempFile.Close()
-
-	updatedObj := &model.Object{
-		Name: srcObj.GetName(),
-		// Use the accurate and real size
-		Size:     actualSize,
-		Modified: srcObj.ModTime(),
-		IsFolder: false,
-	}
-
-	return d.Put(ctx, dstDir, &stream.FileStream{
-		Ctx:    ctx,
-		Obj:    updatedObj,
-		Reader: tempFile,
-	}, nil)
+	defer file.Close()
+	return d.Put(ctx, dstDir, file, func(percentage float64) {})
 }
 
 func (d *ProtonDrive) Remove(ctx context.Context, obj model.Obj) error {
