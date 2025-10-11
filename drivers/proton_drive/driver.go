@@ -181,7 +181,7 @@ func (d *ProtonDrive) List(ctx context.Context, dir model.Obj, args model.ListAr
 }
 
 func (d *ProtonDrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	link, err := d.protonDrive.GetLink(ctx, file.GetID())
+	link, err := d.getLink(ctx, file.GetID())
 	if err != nil {
 		return nil, fmt.Errorf("failed get file link: %+v", err)
 	}
@@ -249,7 +249,7 @@ func (d *ProtonDrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 		return nil, fmt.Errorf("directory copy not supported")
 	}
 
-	srcLink, err := d.searchByPath(ctx, srcObj.GetPath(), false)
+	srcLink, err := d.getLink(ctx, srcObj.GetID())
 	if err != nil {
 		return nil, err
 	}

@@ -75,7 +75,7 @@ func (d *ProtonDrive) searchByPath(ctx context.Context, fullPath string, isFolde
 }
 
 func (d *ProtonDrive) uploadFile(ctx context.Context, parentLinkID string, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	_, err := d.protonDrive.GetLink(ctx, parentLinkID)
+	_, err := d.getLink(ctx, parentLinkID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get parent link: %w", err)
 	}
@@ -590,7 +590,7 @@ func (d *ProtonDrive) DirectRename(ctx context.Context, srcObj model.Obj, newNam
 		return nil, fmt.Errorf("protonDrive bridge is nil")
 	}
 
-	srcLink, err := d.protonDrive.GetLink(ctx, srcObj.GetID())
+	srcLink, err := d.getLink(ctx, srcObj.GetID())
 	if err != nil {
 		return nil, fmt.Errorf("failed to find source: %w", err)
 	}
@@ -743,21 +743,12 @@ func (d *ProtonDrive) executeMoveAPI(ctx context.Context, linkID string, req Mov
 func (d *ProtonDrive) DirectMove(ctx context.Context, srcObj model.Obj, dstDir model.Obj) (model.Obj, error) {
 	// fmt.Printf("DEBUG DirectMove: srcPath=%s, dstPath=%s", srcObj.GetPath(), dstDir.GetPath())
 
-	srcLink, err := d.searchByPath(ctx, srcObj.GetPath(), srcObj.IsDir())
+	srcLink, err := d.getLink(ctx, srcObj.GetID())
 	if err != nil {
 		return nil, fmt.Errorf("failed to find source: %w", err)
 	}
 
-	var dstParentLinkID string
-	if dstDir.GetPath() == "/" {
-		dstParentLinkID = d.RootFolderID
-	} else {
-		dstLink, err := d.searchByPath(ctx, dstDir.GetPath(), true)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find destination: %w", err)
-		}
-		dstParentLinkID = dstLink.LinkID
-	}
+	dstParentLinkID := dstDir.GetID()
 
 	if srcObj.IsDir() {
 		// Check if destination is a descendant of source
@@ -815,6 +806,7 @@ func (d *ProtonDrive) DirectMove(ctx context.Context, srcObj model.Obj, dstDir m
 	}
 
 	return &model.Object{
+		ID:       srcLink.LinkID,
 		Name:     srcObj.GetName(),
 		Size:     srcObj.GetSize(),
 		Modified: srcObj.ModTime(),
