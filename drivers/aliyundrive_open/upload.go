@@ -247,6 +247,7 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 				rd.Seek(0, io.SeekStart)
 				return d.uploadPart(ctx, rateLimitedRd, createResp.PartInfoList[i])
 			},
+				retry.Context(ctx),
 				retry.Attempts(3),
 				retry.DelayType(retry.BackOffDelay),
 				retry.Delay(time.Second))

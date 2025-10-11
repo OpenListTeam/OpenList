@@ -178,6 +178,9 @@ func (d *QuarkOrUC) Put(ctx context.Context, dstDir model.Obj, stream model.File
 	uploadNums := int((total + partSize - 1) / partSize)
 	md5s := make([]string, 0, uploadNums)
 	for partIndex := range uploadNums {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
+		}
 		offset := int64(partIndex) * partSize
 		size := min(partSize, total-offset)
 		rd, err := ss.GetSectionReader(offset, size)

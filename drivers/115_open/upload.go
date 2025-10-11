@@ -117,6 +117,7 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 			parts[i-1] = part
 			return nil
 		},
+			retry.Context(ctx),
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second))

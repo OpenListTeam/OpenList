@@ -179,6 +179,7 @@ func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file mo
 
 			return nil
 		},
+			retry.Context(ctx),
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second)); err != nil {
