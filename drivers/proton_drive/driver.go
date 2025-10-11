@@ -295,30 +295,7 @@ func (d *ProtonDrive) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *ProtonDrive) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	var parentLinkID string
-
-	if dstDir.GetPath() == "/" {
-		parentLinkID = d.protonDrive.RootLink.LinkID
-	} else {
-		link, err := d.searchByPath(ctx, dstDir.GetPath(), true)
-		if err != nil {
-			return nil, err
-		}
-		parentLinkID = link.LinkID
-	}
-
-	err := d.uploadFile(ctx, parentLinkID, file, up)
-	if err != nil {
-		return nil, err
-	}
-
-	uploadedObj := &model.Object{
-		Name:     file.GetName(),
-		Size:     file.GetSize(),
-		Modified: file.ModTime(),
-		IsFolder: false,
-	}
-	return uploadedObj, nil
+	return d.uploadFile(ctx, dstDir.GetID(), file, up)
 }
 
 func (d *ProtonDrive) GetDetails(ctx context.Context) (*model.StorageDetails, error) {

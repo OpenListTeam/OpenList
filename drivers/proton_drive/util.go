@@ -74,10 +74,10 @@ func (d *ProtonDrive) searchByPath(ctx context.Context, fullPath string, isFolde
 	return currentLink, nil
 }
 
-func (d *ProtonDrive) uploadFile(ctx context.Context, parentLinkID string, file model.FileStreamer, up driver.UpdateProgress) error {
+func (d *ProtonDrive) uploadFile(ctx context.Context, parentLinkID string, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	_, err := d.protonDrive.GetLink(ctx, parentLinkID)
 	if err != nil {
-		return fmt.Errorf("failed to get parent link: %w", err)
+		return nil, fmt.Errorf("failed to get parent link: %w", err)
 	}
 
 	var reader io.Reader
@@ -105,12 +105,18 @@ func (d *ProtonDrive) uploadFile(ctx context.Context, parentLinkID string, file 
 	}
 	reader = driver.NewLimitedUploadStream(ctx, reader)
 
-	_, _, err = d.protonDrive.UploadFileByReader(ctx, parentLinkID, file.GetName(), file.ModTime(), reader, 0)
+	id, _, err := d.protonDrive.UploadFileByReader(ctx, parentLinkID, file.GetName(), file.ModTime(), reader, 0)
 	if err != nil {
-		return fmt.Errorf("failed to upload file: %w", err)
+		return nil, fmt.Errorf("failed to upload file: %w", err)
 	}
 
-	return nil
+	return &model.Object{
+		ID:       id,
+		Name:     file.GetName(),
+		Size:     file.GetSize(),
+		Modified: file.ModTime(),
+		IsFolder: false,
+	}, nil
 }
 
 func (d *ProtonDrive) ensureTempServer() error {
