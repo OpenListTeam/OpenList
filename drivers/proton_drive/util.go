@@ -584,7 +584,7 @@ func (d *ProtonDrive) DirectRename(ctx context.Context, srcObj model.Obj, newNam
 		return nil, fmt.Errorf("protonDrive bridge is nil")
 	}
 
-	srcLink, err := d.searchByPath(ctx, srcObj.GetPath(), srcObj.IsDir())
+	srcLink, err := d.protonDrive.GetLink(ctx, srcObj.GetID())
 	if err != nil {
 		return nil, fmt.Errorf("failed to find source: %w", err)
 	}
@@ -622,6 +622,7 @@ func (d *ProtonDrive) DirectRename(ctx context.Context, srcObj model.Obj, newNam
 	}
 
 	return &model.Object{
+		ID:       srcLink.LinkID,
 		Name:     newName,
 		Size:     srcObj.GetSize(),
 		Modified: srcObj.ModTime(),

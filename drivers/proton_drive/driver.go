@@ -74,6 +74,11 @@ func (d *ProtonDrive) GetAddition() driver.Additional {
 }
 
 func (d *ProtonDrive) Init(ctx context.Context) error {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("ProtonDrive initialization panic: %v", r)
+		}
+	}()
 
 	if d.Email == "" {
 		return fmt.Errorf("email is required")
