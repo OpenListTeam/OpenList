@@ -26,16 +26,16 @@ func (d *HalalCloudOpen) Init(ctx context.Context) error {
 	if d.Addition.RefreshToken != "" {
 		d.halalCommon.SetRefreshToken(d.Addition.RefreshToken)
 	}
-	timout := d.Addition.TimeOut
-	if timout <= 0 {
-		timout = 60
+	timeout := d.Addition.TimeOut
+	if timeout <= 0 {
+		timeout = 60
 	}
 	host := d.Addition.Host
 	if host == "" {
 		host = "openapi.2dland.cn"
 	}
 
-	client := apiclient.NewClient(nil, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon)
+	client := apiclient.NewClient(nil, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, timeout)
 	d.sdkClient = client
 	d.sdkUserFileService = sdkUserFile.NewUserFileService(client)
 	d.sdkUserService = sdkUser.NewUserService(client)
