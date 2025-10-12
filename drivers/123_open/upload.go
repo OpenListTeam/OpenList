@@ -153,7 +153,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 					return fmt.Errorf("slice %d upload failed: %s", partNumber, resp.Message)
 				}
 
-				progress := 10.0 + 85.0*float64(threadG.Success())/float64(uploadNums)
+				progress := 100 * float64(threadG.Success()+1) / float64(uploadNums+1)
 				up(progress)
 				return nil
 			},

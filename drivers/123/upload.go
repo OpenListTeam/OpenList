@@ -172,7 +172,7 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 						}
 						return fmt.Errorf("upload s3 chunk %d failed, status code: %d, body: %s", cur, res.StatusCode, body)
 					}
-					progress := 10.0 + 85.0*float64(threadG.Success())/float64(chunkCount)
+					progress := 100 * float64(threadG.Success()+1) / float64(chunkCount+1)
 					up(progress)
 					return nil
 				},

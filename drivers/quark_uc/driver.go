@@ -208,12 +208,14 @@ func (d *QuarkOrUC) Put(ctx context.Context, dstDir model.Obj, stream model.File
 		if err != nil {
 			return err
 		}
-		up(100 * float64(offset+size) / float64(total))
+		up(95 * float64(offset+size) / float64(total))
 	}
+	up(97)
 	err = d.upCommit(pre, md5s)
 	if err != nil {
 		return err
 	}
+	defer up(100)
 	return d.upFinish(pre)
 }
 

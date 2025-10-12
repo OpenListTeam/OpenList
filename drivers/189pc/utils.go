@@ -787,7 +787,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 				if err != nil {
 					return err
 				}
-				up(float64(threadG.Success()) * 100 / float64(count))
+				up(float64(threadG.Success()+1) * 100 / float64(count+1))
 				return nil
 			},
 			After: func(err error) {
@@ -799,6 +799,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 	if err = threadG.Wait(); err != nil {
 		return nil, err
 	}
+	defer up(100)
 
 	if fileMd5 != nil {
 		fileMd5Hex = strings.ToUpper(hex.EncodeToString(fileMd5.Sum(nil)))
@@ -990,7 +991,7 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 					return err
 				}
 
-				up(float64(threadG.Success()) * 100 / float64(len(uploadUrls)))
+				up(float64(threadG.Success()+1) * 100 / float64(len(uploadUrls)+1))
 				uploadProgress.UploadParts[i] = ""
 				return nil
 			})
@@ -1002,6 +1003,7 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 			}
 			return nil, err
 		}
+		defer up(100)
 	}
 
 	// step.5 提交

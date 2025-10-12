@@ -577,10 +577,10 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				finalUploadKey = uploadResp.Response.Doupload.Key
 				keyMutex.Unlock()
 
+				up(float64(threadG.Success()+1) * 100 / float64(numUnits+1))
 				return nil
 			},
 			After: func(err error) {
-				up(float64(threadG.Success()) * 100 / float64(numUnits))
 				if reader != nil {
 					// Cleanup resources
 					ss.FreeSectionReader(reader)
@@ -592,7 +592,6 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 	if err := threadG.Wait(); err != nil {
 		return "", err
 	}
-
 	return finalUploadKey, nil
 }
 

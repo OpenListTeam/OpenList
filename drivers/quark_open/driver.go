@@ -228,9 +228,10 @@ func (d *QuarkOpen) Put(ctx context.Context, dstDir model.Obj, stream model.File
 			return fmt.Errorf("failed to upload part %d: %w", i, err)
 		}
 
-		up(100 * float64(offset+size) / float64(total))
+		up(95 * float64(offset+size) / float64(total))
 	}
 
+	defer up(100)
 	return d.upFinish(ctx, pre, partInfo, etags)
 }
 

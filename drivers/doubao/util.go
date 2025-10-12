@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"math"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -641,8 +640,8 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 				}
 				partsMutex.Unlock()
 				// 更新进度
-				progress := 10.0 + 90.0*float64(threadG.Success()+1)/float64(totalParts)
-				up(math.Min(progress, 95.0))
+				progress := 95 * float64(threadG.Success()+1) / float64(totalParts)
+				up(progress)
 				return nil
 			},
 			After: func(err error) {
