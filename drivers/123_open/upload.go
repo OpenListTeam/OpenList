@@ -82,7 +82,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				}
 				return nil
 			},
-			Do: func(ctx context.Context) error {
+			Do: func(ctx context.Context) (err error) {
 				reader.Seek(0, io.SeekStart)
 				if sliceMD5 == "" {
 					// 把耗时的计算放在这里，避免阻塞其他协程
