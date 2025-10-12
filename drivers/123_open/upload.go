@@ -74,24 +74,24 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		b := bytes.NewBuffer(make([]byte, 0, 2048))
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {
-				if reader == nil {
-					var err error
-					// 每个分片一个reader
-					reader, err = ss.GetSectionReader(offset, size)
-					if err != nil {
-						return err
-					}
-					// 计算当前分片的MD5
-					sliceMD5, err = utils.HashReader(utils.MD5, reader)
-					if err != nil {
-						return err
-					}
+				var err error
+				// 每个分片一个reader
+				reader, err = ss.GetSectionReader(offset, size)
+				if err != nil {
+					return err
 				}
 				return nil
 			},
 			Do: func(ctx context.Context) error {
-				// 重置分片reader位置，因为HashReader、上一次失败已经读取到分片EOF
 				reader.Seek(0, io.SeekStart)
+				if sliceMD5 == "" {
+					// 把耗时的计算放在这里，避免阻塞其他协程
+					sliceMD5, err = utils.HashReader(utils.MD5, reader)
+					if err != nil {
+						return err
+					}
+					reader.Seek(0, io.SeekStart)
+				}
 
 				b.Reset()
 				w := multipart.NewWriter(b)

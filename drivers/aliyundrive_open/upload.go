@@ -242,10 +242,9 @@ func (d *AliyundriveOpen) upload(ctx context.Context, dstDir model.Obj, stream m
 			if err != nil {
 				return nil, err
 			}
-			rateLimitedRd := driver.NewLimitedUploadStream(ctx, rd)
 			err = retry.Do(func() error {
 				rd.Seek(0, io.SeekStart)
-				return d.uploadPart(ctx, rateLimitedRd, createResp.PartInfoList[i])
+				return d.uploadPart(ctx, driver.NewLimitedUploadStream(ctx, rd), createResp.PartInfoList[i])
 			},
 				retry.Context(ctx),
 				retry.Attempts(3),

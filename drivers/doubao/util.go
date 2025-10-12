@@ -564,7 +564,6 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 
 	var partsMutex sync.Mutex
 	// 并行上传所有分片
-	hash := crc32.NewIEEE()
 	for partIndex := range totalParts {
 		if utils.IsCanceled(uploadCtx) {
 			break
@@ -578,29 +577,34 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 			size = fileSize - offset
 		}
 		var reader io.ReadSeeker
-		var rateLimitedRd io.Reader
 		crc32Value := ""
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {
-				if reader == nil {
-					var err error
-					reader, err = ss.GetSectionReader(offset, size)
-					if err != nil {
-						return err
-					}
-					hash.Reset()
-					w, err := utils.CopyWithBuffer(hash, reader)
-					if w != size {
-						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", size, w, err)
-					}
-					crc32Value = hex.EncodeToString(hash.Sum(nil))
-					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+				var err error
+				reader, err = ss.GetSectionReader(offset, size)
+				if err != nil {
+					return err
 				}
 				return nil
 			},
 			Do: func(ctx context.Context) error {
 				reader.Seek(0, io.SeekStart)
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s?uploadid=%s&part_number=%d&phase=transfer", uploadUrl, uploadID, partNumber), rateLimitedRd)
+				if crc32Value == "" {
+					// 把耗时的计算放在这里，避免阻塞其他协程
+					crc32Hash := crc32.NewIEEE()
+					w, err := utils.CopyWithBuffer(crc32Hash, reader)
+					if w != size {
+						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", size, w, err)
+					}
+					crc32Value = hex.EncodeToString(crc32Hash.Sum(nil))
+					reader.Seek(0, io.SeekStart)
+				}
+				req, err := http.NewRequestWithContext(
+					ctx,
+					http.MethodPost,
+					fmt.Sprintf("%s?uploadid=%s&part_number=%d&phase=transfer", uploadUrl, uploadID, partNumber),
+					driver.NewLimitedUploadStream(ctx, reader),
+				)
 				if err != nil {
 					return err
 				}

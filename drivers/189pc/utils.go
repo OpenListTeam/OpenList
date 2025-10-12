@@ -756,27 +756,22 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		}
 		partInfo := ""
 		var reader io.ReadSeeker
-		var rateLimitedRd io.Reader
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {
-				if reader == nil {
-					var err error
-					reader, err = ss.GetSectionReader(offset, partSize)
-					if err != nil {
-						return err
-					}
-					silceMd5.Reset()
-					w, err := utils.CopyWithBuffer(writers, reader)
-					if w != partSize {
-						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", partSize, w, err)
-					}
-					// 计算块md5并进行hex和base64编码
-					md5Bytes := silceMd5.Sum(nil)
-					silceMd5Hexs = append(silceMd5Hexs, strings.ToUpper(hex.EncodeToString(md5Bytes)))
-					partInfo = fmt.Sprintf("%d-%s", i, base64.StdEncoding.EncodeToString(md5Bytes))
-
-					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+				var err error
+				reader, err = ss.GetSectionReader(offset, partSize)
+				if err != nil {
+					return err
 				}
+				silceMd5.Reset()
+				w, err := utils.CopyWithBuffer(writers, reader)
+				if w != partSize {
+					return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", partSize, w, err)
+				}
+				// 计算块md5并进行hex和base64编码
+				md5Bytes := silceMd5.Sum(nil)
+				silceMd5Hexs = append(silceMd5Hexs, strings.ToUpper(hex.EncodeToString(md5Bytes)))
+				partInfo = fmt.Sprintf("%d-%s", i, base64.StdEncoding.EncodeToString(md5Bytes))
 				return nil
 			},
 			Do: func(ctx context.Context) error {
@@ -788,7 +783,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 
 				// step.4 上传切片
 				uploadUrl := uploadUrls[0]
-				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false, rateLimitedRd, isFamily)
+				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false, driver.NewLimitedUploadStream(ctx, reader), isFamily)
 				if err != nil {
 					return err
 				}

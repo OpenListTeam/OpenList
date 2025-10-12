@@ -468,7 +468,6 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 		}
 
 		var reader io.ReadSeeker
-		var rateLimitedRd io.Reader
 		var unitHash string
 
 		// Use lifecycle pattern for proper resource management
@@ -484,23 +483,22 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				if err != nil {
 					return err
 				}
-				rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
 				return nil
 			},
 			Do: func(ctx context.Context) error {
 				if reader == nil {
 					return nil // Skip if reader is not initialized (already uploaded)
 				}
+				reader.Seek(0, io.SeekStart)
 
 				if unitHash == "" {
-					reader.Seek(0, io.SeekStart)
 					var err error
 					unitHash, err = utils.HashReader(utils.SHA256, reader)
 					if err != nil {
 						return err
 					}
+					reader.Seek(0, io.SeekStart)
 				}
-				reader.Seek(0, io.SeekStart)
 
 				// Perform upload
 
@@ -515,7 +513,7 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				}
 
 				url := d.apiBase + "/upload/resumable.php"
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, rateLimitedRd)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, driver.NewLimitedUploadStream(ctx, reader))
 				if err != nil {
 					return err
 				}

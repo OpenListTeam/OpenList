@@ -107,10 +107,9 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 		if err != nil {
 			return err
 		}
-		rateLimitedRd := driver.NewLimitedUploadStream(ctx, rd)
 		err = retry.Do(func() error {
 			rd.Seek(0, io.SeekStart)
-			part, err := bucket.UploadPart(imur, rateLimitedRd, partSize, int(i))
+			part, err := bucket.UploadPart(imur, driver.NewLimitedUploadStream(ctx, rd), partSize, int(i))
 			if err != nil {
 				return err
 			}

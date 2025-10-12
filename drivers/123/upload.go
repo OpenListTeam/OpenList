@@ -125,16 +125,12 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 				curSize = lastChunkSize
 			}
 			var reader io.ReadSeeker
-			var rateLimitedRd io.Reader
 			threadG.GoWithLifecycle(errgroup.Lifecycle{
 				Before: func(ctx context.Context) error {
-					if reader == nil {
-						var err error
-						reader, err = ss.GetSectionReader(offset, curSize)
-						if err != nil {
-							return err
-						}
-						rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+					var err error
+					reader, err = ss.GetSectionReader(offset, curSize)
+					if err != nil {
+						return err
 					}
 					return nil
 				},
@@ -144,8 +140,7 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 					if uploadUrl == "" {
 						return fmt.Errorf("upload url is empty, s3PreSignedUrls: %+v", s3PreSignedUrls)
 					}
-					reader.Seek(0, io.SeekStart)
-					req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadUrl, rateLimitedRd)
+					req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadUrl, driver.NewLimitedUploadStream(ctx, reader))
 					if err != nil {
 						return err
 					}
