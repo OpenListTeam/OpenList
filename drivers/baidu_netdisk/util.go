@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +102,10 @@ func (d *BaiduNetdisk) request(furl string, method string, callback base.ReqCall
 	var result []byte
 	err := retry.Do(func() error {
 		req := base.RestyClient.R()
+		headers := map[string]string{
+			"Referer": "pan.baidu.com",
+		}
+		req.SetHeaders(headers)
 		req.SetQueryParam("access_token", d.AccessToken)
 		if callback != nil {
 			callback(req)
@@ -435,4 +441,159 @@ func EncryptMd5(originalMd5 string) string {
 		}
 	}
 	return out.String()
+}
+
+func (d *BaiduNetdisk) transfer(t *TransferReq, resp any) ([]byte, error) {
+	params := map[string]string{
+		"method":  "transfer",
+		"shareid": strconv.FormatInt(t.shareID, 10),
+		"from":    strconv.FormatInt(t.uk, 10),
+	}
+
+	ids := make([]string, 0, len(t.fsidList))
+	for _, id := range t.fsidList {
+		ids = append(ids, id)
+	}
+	fsidListStr := "[" + strings.Join(ids, ",") + "]"
+
+	form := map[string]string{
+		"sekey":    t.sekey,
+		"fsidlist": fsidListStr,
+		"path":     t.path,
+	}
+
+	return d.postForm("/xpan/share", params, form, resp)
+}
+
+func (d *BaiduNetdisk) getSurl(t *TransferReq) (bool, error) {
+	reLong := regexp.MustCompile(`https?://pan\.baidu\.com/share/init\?surl=([0-9a-zA-Z_\-]+)(?:&pwd=([0-9a-zA-Z]+))?`)
+	if m := reLong.FindStringSubmatch(t.shareLink); len(m) > 1 {
+		t.surl = m[1]
+		if len(m) > 2 && m[2] != "" {
+			t.pwd = m[2]
+		}
+		return true, nil
+	}
+	client := &http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: nil,
+	}
+
+	req, err := http.NewRequest(http.MethodGet, t.shareLink, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("failed to get share link: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var redirectHistory []*http.Response
+	currentResp := resp
+	for currentResp != nil {
+		redirectHistory = append(redirectHistory, currentResp)
+		currentResp = currentResp.Request.Response
+	}
+
+	if len(redirectHistory) == 0 {
+		return false, fmt.Errorf("the link does not exist: The content shared by this link may be inaccessible due to infringement, pornography, reactionary, vulgar and other information involved")
+	}
+
+	lastRedirect := redirectHistory[len(redirectHistory)-1]
+	loc := lastRedirect.Header.Get("Location")
+	if loc == "" {
+		return false, fmt.Errorf("no Location header in last redirect response")
+	}
+
+	re := regexp.MustCompile(`/share/init\?surl=([0-9A-Za-z_\-]+)(?:&pwd=([0-9A-Za-z]+))?`)
+	match := re.FindStringSubmatch(loc)
+	if len(match) == 0 {
+		return false, fmt.Errorf("invalid Baidu Netdisk sharing link：%s", loc)
+	}
+
+	t.surl = match[1]
+	if len(match) > 2 && match[2] != "" {
+		t.pwd = match[2]
+	}
+
+	return true, nil
+}
+
+func (d *BaiduNetdisk) getSekey(t *TransferReq) (bool, error) {
+	if t.surl == "" {
+		return false, fmt.Errorf("empty surl")
+	}
+
+	params := map[string]string{
+		"method": "verify",
+		"surl":   t.surl,
+	}
+	form := map[string]string{
+		"pwd": t.pwd,
+	}
+
+	var resp struct {
+		Errno  int    `json:"errno"`
+		Randsk string `json:"randsk"`
+	}
+
+	_, err := d.postForm("/xpan/share", params, form, &resp)
+	if err != nil {
+		return false, err
+	}
+	if resp.Errno != 0 {
+		return false, fmt.Errorf("verify failed, errno=%d", resp.Errno)
+	}
+
+	decoded, err := url.QueryUnescape(resp.Randsk)
+	if err != nil {
+		t.sekey = resp.Randsk
+		return true, nil
+	}
+	t.sekey = decoded
+	return true, nil
+}
+
+func (d *BaiduNetdisk) getFileInfo(t *TransferReq) (bool, error) {
+	if t.surl == "" {
+		return false, fmt.Errorf("empty surl")
+	}
+
+	params := map[string]string{
+		"method":   "list",
+		"shorturl": t.surl,
+		"page":     "1",
+		"num":      "100",
+		"root":     "1",
+		"fid":      "0",
+		"sekey":    t.sekey,
+	}
+
+	var resp struct {
+		Errno   int   `json:"errno"`
+		ShareID int64 `json:"share_id"`
+		Uk      int64 `json:"uk"`
+		List    []struct {
+			FsID string `json:"fs_id"`
+		} `json:"list"`
+	}
+
+	_, err := d.get("/xpan/share", params, &resp)
+	if err != nil {
+		return false, err
+	}
+	if resp.Errno != 0 {
+		return false, fmt.Errorf("get share list failed, errno=%d", resp.Errno)
+	}
+
+	t.shareID = resp.ShareID
+	t.uk = resp.Uk
+	t.fsidList = make([]string, 0, len(resp.List))
+	for _, it := range resp.List {
+		t.fsidList = append(t.fsidList, it.FsID)
+	}
+	return true, nil
 }

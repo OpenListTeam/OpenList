@@ -5,11 +5,13 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
 	stdpath "path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -29,6 +31,17 @@ type BaiduNetdisk struct {
 
 	uploadThread int
 	vipType      int // 会员类型，0普通用户(4G/4M)、1普通会员(10G/16M)、2超级会员(20G/32M)
+}
+
+type TransferReq struct {
+	shareLink string
+	surl      string
+	pwd       string
+	sekey     string
+	shareID   int64
+	uk        int64
+	fsidList  []string
+	path      string
 }
 
 func (d *BaiduNetdisk) Config() driver.Config {
@@ -370,6 +383,57 @@ func (d *BaiduNetdisk) GetDetails(ctx context.Context) (*model.StorageDetails, e
 		return nil, err
 	}
 	return &model.StorageDetails{DiskUsage: du}, nil
+}
+
+func (d *BaiduNetdisk) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
+	var resp base.Json
+	var path string
+	data, _ := args.Data.(map[string]interface{})
+	pathParam, _ := data["path"].(string)
+	baiduUrl, _ := data["url"].(string)
+	if strings.HasPrefix(pathParam, d.MountPath) {
+		relativePath := strings.TrimPrefix(pathParam, d.MountPath)
+		path = relativePath
+	} else {
+		path = pathParam
+	}
+	if path == "" {
+		return nil, fmt.Errorf("it should be in the folder")
+	}
+
+	t := &TransferReq{
+		shareLink: baiduUrl,
+		surl:      "",
+		pwd:       "",
+		sekey:     "",
+		shareID:   0,
+		uk:        0,
+		fsidList:  make([]string, 0),
+		path:      path,
+	}
+
+	switch args.Method {
+	case "transfer_file":
+		if _, err := d.getSurl(t); err != nil {
+			return nil, fmt.Errorf("failed to get surl: %v", err)
+		}
+
+		if _, err := d.getSekey(t); err != nil {
+			return nil, fmt.Errorf("failed to get sekey: %v", err)
+		}
+
+		if _, err := d.getFileInfo(t); err != nil {
+			return nil, fmt.Errorf("failed to get getFileInfo: %v", err)
+		}
+
+		_, err := d.transfer(t, &resp)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, errs.NotImplement
+	}
+	return resp, nil
 }
 
 var _ driver.Driver = (*BaiduNetdisk)(nil)
