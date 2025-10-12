@@ -126,15 +126,11 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 			}
 			var reader io.ReadSeeker
 			threadG.GoWithLifecycle(errgroup.Lifecycle{
-				Before: func(ctx context.Context) error {
-					var err error
+				Before: func(ctx context.Context) (err error) {
 					reader, err = ss.GetSectionReader(offset, curSize)
-					if err != nil {
-						return err
-					}
-					return nil
+					return
 				},
-				Do: func(ctx context.Context) error {
+				Do: func(ctx context.Context) (err error) {
 					reader.Seek(0, io.SeekStart)
 					uploadUrl := s3PreSignedUrls.Data.PreSignedUrls[strconv.Itoa(cur)]
 					if uploadUrl == "" {

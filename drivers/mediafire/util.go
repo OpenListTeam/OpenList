@@ -472,20 +472,15 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 
 		// Use lifecycle pattern for proper resource management
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
+			Before: func(ctx context.Context) (err error) {
 				// Skip already uploaded units
 				if d.isUnitUploaded(intWords, unitID) {
 					return ss.DiscardSection(start, size)
 				}
-
-				var err error
 				reader, err = ss.GetSectionReader(start, size)
-				if err != nil {
-					return err
-				}
-				return nil
+				return
 			},
-			Do: func(ctx context.Context) error {
+			Do: func(ctx context.Context) (err error) {
 				if reader == nil {
 					return nil // Skip if reader is not initialized (already uploaded)
 				}

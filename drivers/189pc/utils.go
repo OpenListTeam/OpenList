@@ -757,8 +757,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		partInfo := ""
 		var reader io.ReadSeeker
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
-				var err error
+			Before: func(ctx context.Context) (err error) {
 				reader, err = ss.GetSectionReader(offset, partSize)
 				if err != nil {
 					return err
@@ -774,7 +773,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 				partInfo = fmt.Sprintf("%d-%s", i, base64.StdEncoding.EncodeToString(md5Bytes))
 				return nil
 			},
-			Do: func(ctx context.Context) error {
+			Do: func(ctx context.Context) (err error) {
 				reader.Seek(0, io.SeekStart)
 				uploadUrls, err := y.GetMultiUploadUrls(ctx, isFamily, initMultiUpload.Data.UploadFileID, partInfo)
 				if err != nil {

@@ -578,15 +578,11 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 		var reader io.ReadSeeker
 		crc32Value := ""
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
-				var err error
+			Before: func(ctx context.Context) (err error) {
 				reader, err = ss.GetSectionReader(offset, size)
-				if err != nil {
-					return err
-				}
-				return nil
+				return
 			},
-			Do: func(ctx context.Context) error {
+			Do: func(ctx context.Context) (err error) {
 				reader.Seek(0, io.SeekStart)
 				if crc32Value == "" {
 					// 把耗时的计算放在这里，避免阻塞其他协程

@@ -73,14 +73,9 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		// 表单
 		b := bytes.NewBuffer(make([]byte, 0, 2048))
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
-				var err error
-				// 每个分片一个reader
+			Before: func(ctx context.Context) (err error) {
 				reader, err = ss.GetSectionReader(offset, size)
-				if err != nil {
-					return err
-				}
-				return nil
+				return
 			},
 			Do: func(ctx context.Context) (err error) {
 				reader.Seek(0, io.SeekStart)
