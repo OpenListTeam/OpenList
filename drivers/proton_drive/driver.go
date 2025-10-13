@@ -81,14 +81,6 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 		return fmt.Errorf("password is required")
 	}
 
-	useReusableLogin := false
-	reusableCredential := &d.ReusableCredential
-
-	if d.UseReusableLogin && reusableCredential.UID != "" && reusableCredential.AccessToken != "" &&
-		reusableCredential.RefreshToken != "" && reusableCredential.SaltedKeyPass != "" {
-		useReusableLogin = true
-	}
-
 	config := &common.Config{
 		AppVersion: d.appVersion,
 		UserAgent:  d.userAgent,
@@ -100,40 +92,32 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 		EnableCaching:              true,
 		ConcurrentBlockUploadCount: 5,
 		ConcurrentFileCryptoCount:  2,
-		UseReusableLogin:           useReusableLogin,
+		UseReusableLogin:           d.UseReusableLogin && d.ReusableCredential != (common.ReusableCredentialData{}),
 		ReplaceExistingDraft:       true,
-		ReusableCredential:         reusableCredential,
+		ReusableCredential:         &d.ReusableCredential,
 	}
 
-	protonDrive, updatedCredentials, err := proton_api_bridge.NewProtonDrive(
+	protonDrive, _, err := proton_api_bridge.NewProtonDrive(
 		ctx,
 		config,
 		func(auth proton.Auth) {},
 		func() {},
 	)
 
-	if err != nil && useReusableLogin {
+	if err != nil && config.UseReusableLogin {
 		config.UseReusableLogin = false
-		protonDrive, updatedCredentials, err = proton_api_bridge.NewProtonDrive(ctx,
+		protonDrive, _, err = proton_api_bridge.NewProtonDrive(ctx,
 			config,
 			func(auth proton.Auth) {},
 			func() {},
 		)
+		if err == nil {
+			op.MustSaveDriverStorage(d)
+		}
 	}
 
 	if err != nil {
 		return fmt.Errorf("failed to initialize ProtonDrive: %w", err)
-	}
-
-	if updatedCredentials != nil {
-		reusableCredential = &common.ReusableCredentialData{
-			UID:           updatedCredentials.UID,
-			AccessToken:   updatedCredentials.AccessToken,
-			RefreshToken:  updatedCredentials.RefreshToken,
-			SaltedKeyPass: updatedCredentials.SaltedKeyPass,
-		}
-		d.ReusableCredential = *reusableCredential
-		op.MustSaveDriverStorage(d)
 	}
 
 	clientOptions := []proton.Option{
@@ -141,9 +125,9 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 		proton.WithUserAgent(d.userAgent),
 	}
 	manager := proton.New(clientOptions...)
-	d.c = manager.NewClient(reusableCredential.UID, reusableCredential.AccessToken, reusableCredential.RefreshToken)
+	d.c = manager.NewClient(d.ReusableCredential.UID, d.ReusableCredential.AccessToken, d.ReusableCredential.RefreshToken)
 
-	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(reusableCredential.SaltedKeyPass)
+	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(d.ReusableCredential.SaltedKeyPass)
 	if err != nil {
 		return fmt.Errorf("failed to decode salted key pass: %w", err)
 	}
