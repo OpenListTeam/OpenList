@@ -24,6 +24,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -104,15 +105,35 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 		ReusableCredential:         reusableCredential,
 	}
 
-	protonDrive, _, err := proton_api_bridge.NewProtonDrive(
+	protonDrive, updatedCredentials, err := proton_api_bridge.NewProtonDrive(
 		ctx,
 		config,
 		func(auth proton.Auth) {},
 		func() {},
 	)
 
+	if err != nil && useReusableLogin {
+		config.UseReusableLogin = false
+		protonDrive, updatedCredentials, err = proton_api_bridge.NewProtonDrive(ctx,
+			config,
+			func(auth proton.Auth) {},
+			func() {},
+		)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to initialize ProtonDrive: %w", err)
+	}
+
+	if updatedCredentials != nil {
+		reusableCredential = &common.ReusableCredentialData{
+			UID:           updatedCredentials.UID,
+			AccessToken:   updatedCredentials.AccessToken,
+			RefreshToken:  updatedCredentials.RefreshToken,
+			SaltedKeyPass: updatedCredentials.SaltedKeyPass,
+		}
+		d.ReusableCredential = *reusableCredential
+		op.MustSaveDriverStorage(d)
 	}
 
 	clientOptions := []proton.Option{
