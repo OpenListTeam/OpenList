@@ -84,8 +84,8 @@ func (d *HalalCloudOpen) getLink(ctx context.Context, file model.Obj, args model
 		oo := &openObject{
 			ctx:     ctx,
 			d:       fileAddrs,
-			chunk:   &[]byte{},
-			chunks:  &chunks,
+			chunk:   []byte{},
+			chunks:  chunks,
 			skip:    httpRange.Start,
 			sha:     result.Sha1,
 			shaTemp: sha1.New(),

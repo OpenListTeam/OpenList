@@ -19,7 +19,7 @@ import (
 
 // get the next chunk
 func (oo *openObject) getChunk(_ context.Context) (err error) {
-	if oo.id >= len(*oo.chunks) {
+	if oo.id >= len(oo.chunks) {
 		return io.EOF
 	}
 	var chunk []byte
@@ -31,7 +31,7 @@ func (oo *openObject) getChunk(_ context.Context) (err error) {
 		return err
 	}
 	oo.id++
-	oo.chunk = &chunk
+	oo.chunk = chunk
 	return nil
 }
 
@@ -55,19 +55,19 @@ func (oo *openObject) Read(p []byte) (n int, err error) {
 		oo.id++
 		oo.skip -= int64(size)
 	}
-	if len(*oo.chunk) == 0 {
+	if len(oo.chunk) == 0 {
 		err = oo.getChunk(oo.ctx)
 		if err != nil {
 			return 0, err
 		}
 		if oo.skip > 0 {
-			*oo.chunk = (*oo.chunk)[oo.skip:]
+			oo.chunk = (oo.chunk)[oo.skip:]
 			oo.skip = 0
 		}
 	}
-	n = copy(p, *oo.chunk)
+	n = copy(p, oo.chunk)
 	oo.shaTemp.Write(p[:n])
-	*oo.chunk = (*oo.chunk)[n:]
+	oo.chunk = (oo.chunk)[n:]
 	return n, nil
 }
 
@@ -103,8 +103,8 @@ type openObject struct {
 	d       []*sdkUserFile.SliceDownloadInfo
 	id      int
 	skip    int64
-	chunk   *[]byte
-	chunks  *[]chunkSize
+	chunk   []byte
+	chunks  []chunkSize
 	closed  bool
 	sha     string
 	shaTemp hash.Hash
@@ -128,11 +128,11 @@ func getChunkSizes(sliceSize []*sdkUserFile.SliceSize) (chunks []chunkSize) {
 }
 
 func (oo *openObject) ChunkLocation(id int) (position int64, size int, err error) {
-	if id < 0 || id >= len(*oo.chunks) {
+	if id < 0 || id >= len(oo.chunks) {
 		return 0, 0, errors.New("invalid arguments")
 	}
 
-	return (*oo.chunks)[id].position, (*oo.chunks)[id].size, nil
+	return (oo.chunks)[id].position, (oo.chunks)[id].size, nil
 }
 
 func getRawFiles(addr *sdkUserFile.SliceDownloadInfo) ([]byte, error) {
