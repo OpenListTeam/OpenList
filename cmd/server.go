@@ -93,8 +93,10 @@ the address is defined in config file`,
 				fmt.Printf("start HTTP3 (quic) server @ %s\n", httpsBase)
 				utils.Log.Infof("start HTTP3 (quic) server @ %s", httpsBase)
 				r.Use(func(c *gin.Context) {
-					port := conf.Conf.Scheme.HttpsPort
-					c.Header("Alt-Svc", fmt.Sprintf("h3=\":%d\"; ma=86400", port))
+					if c.Request.TLS != nil {
+						port := conf.Conf.Scheme.HttpsPort
+						c.Header("Alt-Svc", fmt.Sprintf("h3=\":%d\"; ma=86400", port))
+					}
 					c.Next()
 				})
 				quicSrv = &http3.Server{Addr: httpsBase, Handler: r}
