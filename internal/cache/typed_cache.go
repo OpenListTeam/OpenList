@@ -28,6 +28,7 @@ func (c *TypedCache[T]) SetTypeWithTTL(key, typeKey string, value T, ttl time.Du
 	cache, exists := c.entries[key]
 	if !exists {
 		cache = make(map[string]*CacheEntry[T])
+		c.entries[key] = cache
 	}
 
 	cache[typeKey] = &CacheEntry[T]{
@@ -61,7 +62,7 @@ func (c *TypedCache[T]) GetType(key, typeKey string) (T, bool) {
 	c.mu.Lock()
 	// Re-check in case another goroutine already deleted or updated it
 	if cache[typeKey] == entry {
-		delete(cache, key)
+		delete(cache, typeKey)
 		if len(cache) == 0 {
 			delete(c.entries, key)
 		}
