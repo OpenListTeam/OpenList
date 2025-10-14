@@ -82,7 +82,7 @@ the address is defined in config file`,
 			httpsBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpsPort)
 			fmt.Printf("start HTTPS server @ %s\n", httpsBase)
 			utils.Log.Infof("start HTTPS server @ %s", httpsBase)
-			httpsSrv = &http.Server{Addr: httpsBase, Handler: httpHandler}
+			httpsSrv = &http.Server{Addr: httpsBase, Handler: r}
 			go func() {
 				err := httpsSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -91,7 +91,7 @@ the address is defined in config file`,
 			}()
 			fmt.Printf("start HTTP3 (quic) server @ %s\n", httpsBase)
 			utils.Log.Infof("start HTTP3 (quic) server @ %s", httpsBase)
-			quicSrv = &http3.Server{Addr: httpsBase, Handler: httpHandler}
+			quicSrv = &http3.Server{Addr: httpsBase, Handler: r}
 			go func() {
 				err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
