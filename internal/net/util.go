@@ -15,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -358,6 +359,9 @@ func SetProxyIfConfigured(transport *http.Transport) {
 	if conf.Conf.ProxyAddress != "" {
 		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
 			transport.Proxy = http.ProxyURL(proxyURL)
+			log.Debugf("HTTP Transport proxy set to: %s", conf.Conf.ProxyAddress)
+		} else {
+			log.Errorf("Invalid proxy address format: %s, error: %v", conf.Conf.ProxyAddress, err)
 		}
 	}
 }
@@ -366,10 +370,13 @@ func SetProxyIfConfigured(transport *http.Transport) {
 func SetRestyProxyIfConfigured(client interface{}) {
 	if conf.Conf.ProxyAddress != "" {
 		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
-			// 使用类型断言来调用SetProxy方法
-			if restyClient, ok := client.(interface{ SetProxy(string) }); ok {
+			// 直接调用SetProxy方法，因为传入的client就是*resty.Client
+			if restyClient, ok := client.(*resty.Client); ok {
 				restyClient.SetProxy(proxyURL.String())
+				log.Debugf("Resty client proxy set to: %s", conf.Conf.ProxyAddress)
 			}
+		} else {
+			log.Errorf("Invalid proxy address format: %s, error: %v", conf.Conf.ProxyAddress, err)
 		}
 	}
 }

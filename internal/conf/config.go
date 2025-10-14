@@ -245,5 +245,6 @@ func DefaultConfig(dataDir string) *Config {
 			Listen: ":5222",
 		},
 		LastLaunchedVersion: "",
+		ProxyAddress:        "",
 	}
 }
