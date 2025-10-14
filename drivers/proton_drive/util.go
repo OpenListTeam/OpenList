@@ -635,6 +635,16 @@ func (d *ProtonDrive) authHandler(auth proton.Auth) {
 		d.ReusableCredential.UID = auth.UID
 		d.ReusableCredential.AccessToken = auth.AccessToken
 		d.ReusableCredential.RefreshToken = auth.RefreshToken
+		d.initClient()
 		op.MustSaveDriverStorage(d)
 	}
+}
+
+func (d *ProtonDrive) initClient() {
+	clientOptions := []proton.Option{
+		proton.WithAppVersion(d.appVersion),
+		proton.WithUserAgent(d.userAgent),
+	}
+	manager := proton.New(clientOptions...)
+	d.c = manager.NewClient(d.ReusableCredential.UID, d.ReusableCredential.AccessToken, d.ReusableCredential.RefreshToken)
 }

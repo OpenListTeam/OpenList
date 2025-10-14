@@ -120,18 +120,12 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to initialize ProtonDrive: %w", err)
 	}
 
-	clientOptions := []proton.Option{
-		proton.WithAppVersion(d.appVersion),
-		proton.WithUserAgent(d.userAgent),
-	}
-	manager := proton.New(clientOptions...)
-	d.c = manager.NewClient(d.ReusableCredential.UID, d.ReusableCredential.AccessToken, d.ReusableCredential.RefreshToken)
-
 	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(d.ReusableCredential.SaltedKeyPass)
 	if err != nil {
 		return fmt.Errorf("failed to decode salted key pass: %w", err)
 	}
 
+	d.initClient()
 	_, addrKRs, addrs, _, err := getAccountKRs(ctx, d.c, nil, saltedKeyPassBytes)
 	if err != nil {
 		return fmt.Errorf("failed to get account keyrings: %w", err)
