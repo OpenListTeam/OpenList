@@ -356,35 +356,21 @@ func GetRangedHttpReader(readCloser io.ReadCloser, offset, length int64) (io.Rea
 
 // SetProxyIfConfigured 为HTTP Transport设置代理（如果配置了的话）
 func SetProxyIfConfigured(transport *http.Transport) {
-	log.Infof("SetProxyIfConfigured called, ProxyAddress: %s", conf.Conf.ProxyAddress)
 	if conf.Conf.ProxyAddress != "" {
 		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
 			transport.Proxy = http.ProxyURL(proxyURL)
-			log.Infof("HTTP Transport proxy set to: %s", conf.Conf.ProxyAddress)
-		} else {
-			log.Errorf("Invalid proxy address format: %s, error: %v", conf.Conf.ProxyAddress, err)
 		}
-	} else {
-		log.Infof("No proxy address configured")
 	}
 }
 
 // SetRestyProxyIfConfigured 为Resty客户端设置代理（如果配置了的话）
 func SetRestyProxyIfConfigured(client interface{}) {
-	log.Infof("SetRestyProxyIfConfigured called, ProxyAddress: %s", conf.Conf.ProxyAddress)
 	if conf.Conf.ProxyAddress != "" {
 		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
 			// 直接调用SetProxy方法，因为传入的client就是*resty.Client
 			if restyClient, ok := client.(*resty.Client); ok {
 				restyClient.SetProxy(proxyURL.String())
-				log.Infof("Resty client proxy set to: %s", conf.Conf.ProxyAddress)
-			} else {
-				log.Errorf("Failed to cast client to *resty.Client")
 			}
-		} else {
-			log.Errorf("Invalid proxy address format: %s, error: %v", conf.Conf.ProxyAddress, err)
 		}
-	} else {
-		log.Infof("No proxy address configured for Resty client")
 	}
 }

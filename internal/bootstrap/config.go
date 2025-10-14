@@ -126,6 +126,10 @@ func InitConfig() {
 		log.Fatalf("create temp dir error: %+v", err)
 	}
 	log.Debugf("config: %+v", conf.Conf)
+
+	// 验证并显示代理配置状态
+	validateProxyConfig()
+
 	base.InitClient()
 	initURL()
 }
@@ -162,6 +166,17 @@ func CleanTempDir() {
 	for _, file := range files {
 		if err := os.RemoveAll(filepath.Join(conf.Conf.TempDir, file.Name())); err != nil {
 			log.Errorln("failed delete temp file: ", err)
+		}
+	}
+}
+
+// validateProxyConfig 验证代理配置并在启动时显示状态
+func validateProxyConfig() {
+	if conf.Conf.ProxyAddress != "" {
+		if _, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
+			log.Infof("Proxy enabled: %s", conf.Conf.ProxyAddress)
+		} else {
+			log.Errorf("Invalid proxy address format: %s, error: %v", conf.Conf.ProxyAddress, err)
 		}
 	}
 }
