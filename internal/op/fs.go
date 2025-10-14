@@ -468,10 +468,11 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	}
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
-	srcObj, err := GetUnwrap(ctx, storage, srcPath)
+	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
 	}
+	srcObj := model.UnwrapObj(srcRawObj)
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get dst dir")
@@ -487,8 +488,8 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			} else if !utils.IsBool(lazyCache...) {
 				DeleteCache(storage, dstDirPath)
 			}
-			if !srcObj.IsDir() {
-				cache.Manager.DelLink(Key(storage, stdpath.Join(dstDirPath, srcObj.GetName())))
+			if !srcRawObj.IsDir() {
+				cache.Manager.DelLink(Key(storage, stdpath.Join(dstDirPath, srcRawObj.GetName())))
 			}
 		}
 	case driver.Copy:
@@ -497,8 +498,8 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			if !utils.IsBool(lazyCache...) {
 				DeleteCache(storage, dstDirPath)
 			}
-			if !srcObj.IsDir() {
-				cache.Manager.DelLink(Key(storage, stdpath.Join(dstDirPath, srcObj.GetName())))
+			if !srcRawObj.IsDir() {
+				cache.Manager.DelLink(Key(storage, stdpath.Join(dstDirPath, srcRawObj.GetName())))
 			}
 		}
 	default:
