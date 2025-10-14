@@ -632,6 +632,7 @@ func (d *ProtonDrive) checkCircularMove(ctx context.Context, srcLinkID, dstParen
 
 func (d *ProtonDrive) authHandler(auth proton.Auth) {
 	if auth.AccessToken != d.ReusableCredential.AccessToken || auth.RefreshToken != d.ReusableCredential.RefreshToken {
+		d.ReusableCredential.UID = auth.UID
 		d.ReusableCredential.AccessToken = auth.AccessToken
 		d.ReusableCredential.RefreshToken = auth.RefreshToken
 		op.MustSaveDriverStorage(d)
