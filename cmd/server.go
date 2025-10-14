@@ -27,6 +27,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+
+	"github.com/quic-go/quic-go/http3"
 )
 
 // ServerCmd represents the server command
@@ -63,6 +65,7 @@ the address is defined in config file`,
 			httpHandler = h2c.NewHandler(r, &http2.Server{})
 		}
 		var httpSrv, httpsSrv, unixSrv *http.Server
+		var quicSrv *http3.Server
 		if conf.Conf.Scheme.HttpPort != -1 {
 			httpBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpPort)
 			fmt.Printf("start HTTP server @ %s\n", httpBase)
@@ -79,11 +82,20 @@ the address is defined in config file`,
 			httpsBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpsPort)
 			fmt.Printf("start HTTPS server @ %s\n", httpsBase)
 			utils.Log.Infof("start HTTPS server @ %s", httpsBase)
-			httpsSrv = &http.Server{Addr: httpsBase, Handler: r}
+			httpsSrv = &http.Server{Addr: httpsBase, Handler: httpHandler}
 			go func() {
 				err := httpsSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					utils.Log.Fatalf("failed to start https: %s", err.Error())
+				}
+			}()
+			fmt.Printf("start HTTP3 (quic) server @ %s\n", httpsBase)
+			utils.Log.Infof("start HTTP3 (quic) server @ %s", httpsBase)
+			quicSrv = &http3.Server{Addr: httpsBase, Handler: httpHandler}
+			go func() {
+				err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					utils.Log.Fatalf("failed to start http3 (quic): %s", err.Error())
 				}
 			}()
 		}
@@ -201,6 +213,13 @@ the address is defined in config file`,
 				defer wg.Done()
 				if err := httpsSrv.Shutdown(ctx); err != nil {
 					utils.Log.Fatal("HTTPS server shutdown err: ", err)
+				}
+			}()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := quicSrv.Close(); err != nil {
+					utils.Log.Fatal("HTTP3 (quic) server shutdown err: ", err)
 				}
 			}()
 		}

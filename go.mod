@@ -52,6 +52,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.9
 	github.com/pquerna/otp v1.5.0
+	github.com/quic-go/quic-go v0.54.1
 	github.com/rclone/rclone v1.70.3
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d
 	github.com/shirou/gopsutil/v4 v4.25.5
@@ -102,7 +103,10 @@ require (
 	github.com/minio/xxml v0.0.3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/otiai10/mint v1.6.3 // indirect
+	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	go.uber.org/mock v0.5.0 // indirect
+	golang.org/x/mod v0.27.0 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 )
 
@@ -267,7 +271,7 @@ require (
 	golang.org/x/sys v0.34.0
 	golang.org/x/term v0.33.0 // indirect
 	golang.org/x/text v0.27.0
-	golang.org/x/tools v0.34.0 // indirect
+	golang.org/x/tools v0.35.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/grpc v1.73.0
 	google.golang.org/protobuf v1.36.6 // indirect
