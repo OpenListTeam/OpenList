@@ -218,7 +218,7 @@ the address is defined in config file`,
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := quicSrv.Close(); err != nil {
+				if err := quicSrv.Shutdown(ctx); err != nil {
 					utils.Log.Fatal("HTTP3 (quic) server shutdown err: ", err)
 				}
 			}()
