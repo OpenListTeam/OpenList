@@ -10,20 +10,20 @@ import (
 )
 
 type CacheManager struct {
-	directories    *UnifiedCache // Cache for directory listings
-	links          *UnifiedCache // Cache for file links
-	users          *UnifiedCache // Cache for user data
-	settings       *UnifiedCache // Cache for settings
-	storageDetails *UnifiedCache // Cache for storage details
+	directories    *KeyedCache // Cache for directory listings
+	links          *TypedCache // Cache for file links
+	users          *KeyedCache // Cache for user data
+	settings       *KeyedCache // Cache for settings
+	storageDetails *KeyedCache // Cache for storage details
 }
 
 func NewCacheManager() *CacheManager {
 	return &CacheManager{
-		directories:    NewUnifiedCache(time.Minute * 5),
-		links:          NewUnifiedCache(time.Minute * 30),
-		users:          NewUnifiedCache(time.Hour),
-		settings:       NewUnifiedCache(time.Hour),
-		storageDetails: NewUnifiedCache(time.Minute * 30),
+		directories:    NewKeyedCache(time.Minute * 5),
+		links:          NewTypedCache(time.Minute * 30),
+		users:          NewKeyedCache(time.Hour),
+		settings:       NewKeyedCache(time.Hour),
+		storageDetails: NewKeyedCache(time.Minute * 30),
 	}
 }
 
@@ -100,13 +100,13 @@ func (cm *CacheManager) InvalidateDirectoryTree(storage driver.Driver, dirPath s
 }
 
 // cache a file link
-func (cm *CacheManager) SetLink(key string, link *model.Link, expiration time.Duration) {
-	cm.links.SetWithTTL(key, link, expiration)
+func (cm *CacheManager) SetLink(key, typo string, link *model.Link, expiration time.Duration) {
+	cm.links.SetTypeWithTTL(key, typo, link, expiration)
 }
 
 // cached file link
-func (cm *CacheManager) GetLink(key string) (*model.Link, bool) {
-	if data, exists := cm.links.Get(key); exists {
+func (cm *CacheManager) GetLink(key, typo string) (*model.Link, bool) {
+	if data, exists := cm.links.GetType(key, typo); exists {
 		if link, ok := data.(*model.Link); ok {
 			return link, true
 		}
@@ -116,12 +116,12 @@ func (cm *CacheManager) GetLink(key string) (*model.Link, bool) {
 
 // remove a specific link from cache
 func (cm *CacheManager) InvalidateLink(key string) {
-	cm.links.Delete(key)
+	cm.links.DeleteKey(key)
 }
 
 // remove a specific link from cache
 func (cm *CacheManager) DelLink(key string) {
-	cm.links.Delete(key)
+	cm.links.DeleteKey(key)
 }
 
 // cache user data

@@ -238,8 +238,8 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return nil, nil, errors.WithStack(errs.NotFile)
 	}
 
-	key := stdpath.Join(Key(storage, path), args.Type)
-	if link, exists := cache.Manager.GetLink(key); exists {
+	key := Key(storage, path)
+	if link, exists := cache.Manager.GetLink(key, args.Type); exists {
 		return link, file, nil
 	}
 
@@ -255,7 +255,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errLinkMFileCache
 		}
 		if link.Expiration != nil {
-			cache.Manager.SetLink(key, link, *link.Expiration)
+			cache.Manager.SetLink(key, args.Type, link, *link.Expiration)
 		}
 		link.AddIfCloser(forget)
 		return link, nil
@@ -269,16 +269,17 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return link, file, err
 	}
 
+	keyG := key + "|" + args.Type
 	forget = utils.CloseFunc(func() error {
 		if forget != nil {
 			forget = nil
-			linkG.Forget(key)
+			linkG.Forget(keyG)
 		}
 		return nil
 	})
-	link, err, _ := linkG.Do(key, fn)
+	link, err, _ := linkG.Do(keyG, fn)
 	for err == nil && !link.AcquireReference() {
-		link, err, _ = linkG.Do(key, fn)
+		link, err, _ = linkG.Do(keyG, fn)
 	}
 
 	if err == errLinkMFileCache {
@@ -397,12 +398,18 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			} else {
 				cache.Manager.InvalidateDirectory(storage, dstDirPath)
 			}
+			if !srcRawObj.IsDir() {
+				cache.Manager.DelLink(Key(storage, srcPath))
+			}
 		}
 	case driver.Move:
 		err = s.Move(ctx, srcObj, dstDir)
 		if err == nil {
 			updateCache(storage, srcDirPath, srcRawObj.GetName(), nil) // Remove from source
 			cache.Manager.InvalidateDirectory(storage, dstDirPath)
+			if !srcRawObj.IsDir() {
+				cache.Manager.DelLink(Key(storage, srcPath))
+			}
 		}
 	default:
 		return errs.NotImplement
@@ -433,6 +440,8 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 				DeleteCache(storage, srcDirPath)
 				if srcRawObj.IsDir() {
 					ClearCache(storage, srcPath)
+				} else {
+					cache.Manager.DelLink(Key(storage, srcPath))
 				}
 			}
 		}
@@ -442,6 +451,8 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 			DeleteCache(storage, srcDirPath)
 			if srcRawObj.IsDir() {
 				ClearCache(storage, srcPath)
+			} else {
+				cache.Manager.DelLink(Key(storage, srcPath))
 			}
 		}
 	default:
@@ -476,11 +487,19 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			} else if !utils.IsBool(lazyCache...) {
 				DeleteCache(storage, dstDirPath)
 			}
+			if !srcObj.IsDir() {
+				cache.Manager.DelLink(Key(storage, stdpath.Join(dstDirPath, srcObj.GetName())))
+			}
 		}
 	case driver.Copy:
 		err = s.Copy(ctx, srcObj, dstDir)
-		if err == nil && !utils.IsBool(lazyCache...) {
-			DeleteCache(storage, dstDirPath)
+		if err == nil {
+			if !utils.IsBool(lazyCache...) {
+				DeleteCache(storage, dstDirPath)
+			}
+			if !srcObj.IsDir() {
+				cache.Manager.DelLink(Key(storage, stdpath.Join(dstDirPath, srcObj.GetName())))
+			}
 		}
 	default:
 		return errs.NotImplement
@@ -515,6 +534,8 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 			// clear folder cache recursively
 			if rawObj.IsDir() {
 				ClearCache(storage, path)
+			} else {
+				cache.Manager.DelLink(Key(storage, path))
 			}
 		}
 	default:
@@ -590,11 +611,15 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			} else if !utils.IsBool(lazyCache...) {
 				DeleteCache(storage, dstDirPath)
 			}
+			cache.Manager.DelLink(Key(storage, dstPath))
 		}
 	case driver.Put:
 		err = s.Put(ctx, parentDir, file, up)
-		if err == nil && !utils.IsBool(lazyCache...) {
-			DeleteCache(storage, dstDirPath)
+		if err == nil {
+			if !utils.IsBool(lazyCache...) {
+				DeleteCache(storage, dstDirPath)
+			}
+			cache.Manager.DelLink(Key(storage, dstPath))
 		}
 	default:
 		return errs.NotImplement
@@ -609,13 +634,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			}
 		} else {
 			// upload success, remove old obj
-			err := Remove(ctx, storage, tempPath)
-			if err != nil {
-				return err
-			} else {
-				key := Key(storage, stdpath.Join(dstDirPath, file.GetName()))
-				cache.Manager.DelLink(key)
-			}
+			err = Remove(ctx, storage, tempPath)
 		}
 	}
 	return errors.WithStack(err)
