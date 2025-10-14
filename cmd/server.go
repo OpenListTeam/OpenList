@@ -89,15 +89,17 @@ the address is defined in config file`,
 					utils.Log.Fatalf("failed to start https: %s", err.Error())
 				}
 			}()
-			fmt.Printf("start HTTP3 (quic) server @ %s\n", httpsBase)
-			utils.Log.Infof("start HTTP3 (quic) server @ %s", httpsBase)
-			quicSrv = &http3.Server{Addr: httpsBase, Handler: r}
-			go func() {
-				err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
-				if err != nil && !errors.Is(err, http.ErrServerClosed) {
-					utils.Log.Fatalf("failed to start http3 (quic): %s", err.Error())
-				}
-			}()
+			if conf.Conf.Scheme.EnableH3 {
+				fmt.Printf("start HTTP3 (quic) server @ %s\n", httpsBase)
+				utils.Log.Infof("start HTTP3 (quic) server @ %s", httpsBase)
+				quicSrv = &http3.Server{Addr: httpsBase, Handler: r}
+				go func() {
+					err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+					if err != nil && !errors.Is(err, http.ErrServerClosed) {
+						utils.Log.Fatalf("failed to start http3 (quic): %s", err.Error())
+					}
+				}()
+			}
 		}
 		if conf.Conf.Scheme.UnixFile != "" {
 			fmt.Printf("start unix server @ %s\n", conf.Conf.Scheme.UnixFile)
@@ -215,13 +217,15 @@ the address is defined in config file`,
 					utils.Log.Fatal("HTTPS server shutdown err: ", err)
 				}
 			}()
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if err := quicSrv.Shutdown(ctx); err != nil {
-					utils.Log.Fatal("HTTP3 (quic) server shutdown err: ", err)
-				}
-			}()
+			if conf.Conf.Scheme.EnableH3 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if err := quicSrv.Shutdown(ctx); err != nil {
+						utils.Log.Fatal("HTTP3 (quic) server shutdown err: ", err)
+					}
+				}()
+			}
 		}
 		if conf.Conf.Scheme.UnixFile != "" {
 			wg.Add(1)
