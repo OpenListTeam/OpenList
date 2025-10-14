@@ -90,6 +90,9 @@ func (y *Cloud189PC) EncryptParams(params Params, isFamily bool) string {
 }
 
 func (y *Cloud189PC) request(url, method string, callback base.ReqCallback, params Params, resp interface{}, isFamily ...bool) ([]byte, error) {
+	if y.getTokenInfo() == nil {
+		return nil, fmt.Errorf("login failed")
+	}
 	req := y.getClient().R().SetQueryParams(clientSuffix())
 
 	// 设置params
@@ -752,7 +755,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 			partSize = lastPartSize
 		}
 		partInfo := ""
-		var reader *stream.SectionReader
+		var reader io.ReadSeeker
 		var rateLimitedRd io.Reader
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
 			Before: func(ctx context.Context) error {

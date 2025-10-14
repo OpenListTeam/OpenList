@@ -111,6 +111,9 @@ outer:
 	if t.tool.Name() == "115 Open" {
 		return nil
 	}
+	if t.tool.Name() == "123 Open" {
+		return nil
+	}
 	t.Status = "offline download completed, maybe transferring"
 	// hack for qBittorrent
 	if t.tool.Name() == "qBittorrent" {
@@ -174,7 +177,7 @@ func (t *DownloadTask) Update() (bool, error) {
 
 func (t *DownloadTask) Transfer() error {
 	toolName := t.tool.Name()
-	if toolName == "115 Cloud" || toolName == "115 Open" || toolName == "PikPak" || toolName == "Thunder" || toolName == "ThunderX" || toolName == "ThunderBrowser" {
+	if toolName == "115 Cloud" || toolName == "115 Open" || toolName == "123 Open" || toolName == "PikPak" || toolName == "Thunder" || toolName == "ThunderX" || toolName == "ThunderBrowser" {
 		// 如果不是直接下载到目标路径，则进行转存
 		if t.TempDir != t.DstDirPath {
 			return transferObj(t.Ctx(), t.TempDir, t.DstDirPath, t.DeletePolicy)

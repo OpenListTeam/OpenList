@@ -23,6 +23,7 @@ import (
 type Alias struct {
 	model.Storage
 	Addition
+	rootOrder   []string
 	pathMap     map[string][]string
 	autoFlatten bool
 	oneKey      string
@@ -40,13 +41,18 @@ func (d *Alias) Init(ctx context.Context) error {
 	if d.Paths == "" {
 		return errors.New("paths is required")
 	}
+	paths := strings.Split(d.Paths, "\n")
+	d.rootOrder = make([]string, 0, len(paths))
 	d.pathMap = make(map[string][]string)
-	for _, path := range strings.Split(d.Paths, "\n") {
+	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
 		}
 		k, v := getPair(path)
+		if _, ok := d.pathMap[k]; !ok {
+			d.rootOrder = append(d.rootOrder, k)
+		}
 		d.pathMap[k] = append(d.pathMap[k], v)
 	}
 	if len(d.pathMap) == 1 {
@@ -62,6 +68,7 @@ func (d *Alias) Init(ctx context.Context) error {
 }
 
 func (d *Alias) Drop(ctx context.Context) error {
+	d.rootOrder = nil
 	d.pathMap = nil
 	return nil
 }
@@ -139,22 +146,27 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		})
 		if err == nil {
 			tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
-				thumb, ok := model.GetThumb(obj)
 				objRes := model.Object{
 					Name:     obj.GetName(),
 					Size:     obj.GetSize(),
 					Modified: obj.ModTime(),
 					IsFolder: obj.IsDir(),
 				}
-				if !ok {
-					return &objRes, nil
+				if thumb, ok := model.GetThumb(obj); ok {
+					return &model.ObjThumb{
+						Object: objRes,
+						Thumbnail: model.Thumbnail{
+							Thumbnail: thumb,
+						},
+					}, nil
 				}
-				return &model.ObjThumb{
-					Object: objRes,
-					Thumbnail: model.Thumbnail{
-						Thumbnail: thumb,
-					},
-				}, nil
+				if details, ok := model.GetStorageDetails(obj); ok {
+					return &model.ObjStorageDetails{
+						Obj:                    &objRes,
+						StorageDetailsWithName: *details,
+					}, nil
+				}
+				return &objRes, nil
 			})
 		}
 		if err == nil {

@@ -19,7 +19,7 @@ import (
 func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model.Obj {
 	var objs []model.Obj
 	var wg sync.WaitGroup
-	for k, v := range d.pathMap {
+	for _, k := range d.rootOrder {
 		obj := model.Object{
 			Name:     k,
 			IsFolder: true,
@@ -27,6 +27,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 		}
 		idx := len(objs)
 		objs = append(objs, &obj)
+		v := d.pathMap[k]
 		if !withDetails || len(v) != 1 {
 			continue
 		}
@@ -50,7 +51,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 			defer wg.Done()
 			details, e := op.GetStorageDetails(ctx, remoteDriver, refresh)
 			if e != nil {
-				if !errors.Is(e, errs.NotImplement) {
+				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
 					log.Errorf("failed get %s storage details: %+v", remoteDriver.GetStorage().MountPath, e)
 				}
 				return
