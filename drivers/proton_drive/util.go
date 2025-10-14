@@ -27,6 +27,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/ProtonMail/gopenpgp/v2/crypto"
 	"github.com/henrybear327/go-proton-api"
@@ -627,4 +628,12 @@ func (d *ProtonDrive) checkCircularMove(ctx context.Context, srcLinkID, dstParen
 	}
 
 	return nil
+}
+
+func (d *ProtonDrive) authHandler(auth proton.Auth) {
+	if auth.AccessToken != d.ReusableCredential.AccessToken || auth.RefreshToken != d.ReusableCredential.RefreshToken {
+		d.ReusableCredential.AccessToken = auth.AccessToken
+		d.ReusableCredential.RefreshToken = auth.RefreshToken
+		op.MustSaveDriverStorage(d)
+	}
 }
