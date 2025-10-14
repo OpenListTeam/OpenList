@@ -5,50 +5,50 @@ import (
 	"time"
 )
 
-type TypedCache struct {
-	entries map[string]map[string]*CacheEntry
+type TypedCache[T any] struct {
+	entries map[string]map[string]*CacheEntry[T]
 	mu      sync.RWMutex
 	ttl     time.Duration
 }
 
-func NewTypedCache(ttl time.Duration) *TypedCache {
-	return &TypedCache{
-		entries: make(map[string]map[string]*CacheEntry),
+func NewTypedCache[T any](ttl time.Duration) *TypedCache[T] {
+	return &TypedCache[T]{
+		entries: make(map[string]map[string]*CacheEntry[T]),
 		ttl:     ttl,
 	}
 }
 
-func (c *TypedCache) SetType(key, typeKey string, value interface{}) {
+func (c *TypedCache[T]) SetType(key, typeKey string, value T) {
 	c.SetTypeWithTTL(key, typeKey, value, c.ttl)
 }
 
-func (c *TypedCache) SetTypeWithTTL(key, typeKey string, value interface{}, ttl time.Duration) {
+func (c *TypedCache[T]) SetTypeWithTTL(key, typeKey string, value T, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cache, exists := c.entries[key]
 	if !exists {
-		cache = make(map[string]*CacheEntry)
+		cache = make(map[string]*CacheEntry[T])
 	}
 
-	cache[typeKey] = &CacheEntry{
+	cache[typeKey] = &CacheEntry[T]{
 		data:    value,
 		expires: time.Now().Add(ttl),
 		dirty:   false,
 	}
 }
 
-func (c *TypedCache) GetType(key, typeKey string) (interface{}, bool) {
+func (c *TypedCache[T]) GetType(key, typeKey string) (T, bool) {
 	now := time.Now()
 	c.mu.RLock()
 	cache, exists := c.entries[key]
 	if !exists {
 		c.mu.RUnlock()
-		return nil, false
+		return *new(T), false
 	}
 	entry, exists := cache[typeKey]
 	if !exists {
 		c.mu.RUnlock()
-		return nil, false
+		return *new(T), false
 	}
 
 	expired := now.After(entry.expires)
@@ -60,26 +60,26 @@ func (c *TypedCache) GetType(key, typeKey string) (interface{}, bool) {
 
 	c.mu.Lock()
 	// Re-check in case another goroutine already deleted or updated it
-	if c.entries[key] != nil && cache[typeKey] == entry {
+	if cache[typeKey] == entry {
 		delete(cache, key)
 		if len(cache) == 0 {
 			delete(c.entries, key)
 		}
 		c.mu.Unlock()
-		return nil, false
+		return *new(T), false
 	}
 	c.mu.Unlock()
-	return nil, false
+	return *new(T), false
 }
 
-func (c *TypedCache) DeleteKey(key string) {
+func (c *TypedCache[T]) DeleteKey(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, key)
 }
 
-func (c *TypedCache) Clear() {
+func (c *TypedCache[T]) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries = make(map[string]map[string]*CacheEntry)
+	c.entries = make(map[string]map[string]*CacheEntry[T])
 }

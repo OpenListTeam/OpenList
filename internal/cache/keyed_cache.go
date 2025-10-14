@@ -5,47 +5,47 @@ import (
 	"time"
 )
 
-type CacheEntry struct {
-	data    interface{}
+type CacheEntry[T any] struct {
+	data    T
 	expires time.Time
 	dirty   bool
 }
 
-type KeyedCache struct {
-	entries map[string]*CacheEntry
+type KeyedCache[T any] struct {
+	entries map[string]*CacheEntry[T]
 	mu      sync.RWMutex
 	ttl     time.Duration
 }
 
-func NewKeyedCache(ttl time.Duration) *KeyedCache {
-	return &KeyedCache{
-		entries: make(map[string]*CacheEntry),
+func NewKeyedCache[T any](ttl time.Duration) *KeyedCache[T] {
+	return &KeyedCache[T]{
+		entries: make(map[string]*CacheEntry[T]),
 		ttl:     ttl,
 	}
 }
 
-func (c *KeyedCache) Set(key string, value interface{}) {
+func (c *KeyedCache[T]) Set(key string, value T) {
 	c.SetWithTTL(key, value, c.ttl)
 }
 
-func (c *KeyedCache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
+func (c *KeyedCache[T]) SetWithTTL(key string, value T, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.entries[key] = &CacheEntry{
+	c.entries[key] = &CacheEntry[T]{
 		data:    value,
 		expires: time.Now().Add(ttl),
 		dirty:   false,
 	}
 }
 
-func (c *KeyedCache) Get(key string) (interface{}, bool) {
+func (c *KeyedCache[T]) Get(key string) (T, bool) {
 	now := time.Now()
 	c.mu.RLock()
 	entry, exists := c.entries[key]
 	if !exists {
 		c.mu.RUnlock()
-		return nil, false
+		return *new(T), false
 	}
 
 	expired := now.After(entry.expires)
@@ -60,21 +60,21 @@ func (c *KeyedCache) Get(key string) (interface{}, bool) {
 	if c.entries[key] == entry {
 		delete(c.entries, key)
 		c.mu.Unlock()
-		return nil, false
+		return *new(T), false
 	}
 	c.mu.Unlock()
-	return nil, false
+	return *new(T), false
 }
 
-func (c *KeyedCache) Delete(key string) {
+func (c *KeyedCache[T]) Delete(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	delete(c.entries, key)
 }
 
-func (c *KeyedCache) Clear() {
+func (c *KeyedCache[T]) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries = make(map[string]*CacheEntry)
+	c.entries = make(map[string]*CacheEntry[T])
 }

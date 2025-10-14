@@ -10,20 +10,20 @@ import (
 )
 
 type CacheManager struct {
-	directories    *KeyedCache // Cache for directory listings
-	links          *TypedCache // Cache for file links
-	users          *KeyedCache // Cache for user data
-	settings       *KeyedCache // Cache for settings
-	storageDetails *KeyedCache // Cache for storage details
+	directories    *KeyedCache[*DirectoryCache]       // Cache for directory listings
+	links          *TypedCache[*model.Link]           // Cache for file links
+	users          *KeyedCache[*model.User]           // Cache for user data
+	settings       *KeyedCache[any]                   // Cache for settings
+	storageDetails *KeyedCache[*model.StorageDetails] // Cache for storage details
 }
 
 func NewCacheManager() *CacheManager {
 	return &CacheManager{
-		directories:    NewKeyedCache(time.Minute * 5),
-		links:          NewTypedCache(time.Minute * 30),
-		users:          NewKeyedCache(time.Hour),
-		settings:       NewKeyedCache(time.Hour),
-		storageDetails: NewKeyedCache(time.Minute * 30),
+		directories:    NewKeyedCache[*DirectoryCache](time.Minute * 5),
+		links:          NewTypedCache[*model.Link](time.Minute * 30),
+		users:          NewKeyedCache[*model.User](time.Hour),
+		settings:       NewKeyedCache[any](time.Hour),
+		storageDetails: NewKeyedCache[*model.StorageDetails](time.Minute * 30),
 	}
 }
 
@@ -39,9 +39,7 @@ func makeDirectoryKey(storage driver.Driver, dirPath string) string {
 func (cm *CacheManager) GetDirectoryListing(storage driver.Driver, dirPath string) (*DirectoryCache, bool) {
 	key := makeDirectoryKey(storage, dirPath)
 	if data, exists := cm.directories.Get(key); exists {
-		if dirCache, ok := data.(*DirectoryCache); ok {
-			return dirCache, true
-		}
+		return data, true
 	}
 	return nil, false
 }
@@ -53,21 +51,15 @@ func (cm *CacheManager) SetDirectoryListing(storage driver.Driver, dirPath strin
 	}
 
 	key := makeDirectoryKey(storage, dirPath)
-	dirCache := NewDirectoryCache()
-	for _, obj := range objects {
-		dirCache.AddObject(obj)
-	}
 	expiration := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
-	cm.directories.SetWithTTL(key, dirCache, expiration)
+	cm.directories.SetWithTTL(key, &DirectoryCache{objs: objects}, expiration)
 }
 
 // update a obj in a cached directory
 func (cm *CacheManager) UpdateDirectoryObject(storage driver.Driver, dirPath string, obj model.Obj) {
 	key := makeDirectoryKey(storage, dirPath)
 	if data, exists := cm.directories.Get(key); exists {
-		if dirCache, ok := data.(*DirectoryCache); ok {
-			dirCache.AddObject(obj)
-		}
+		data.AddObject(obj)
 	}
 }
 
@@ -75,9 +67,7 @@ func (cm *CacheManager) UpdateDirectoryObject(storage driver.Driver, dirPath str
 func (cm *CacheManager) RemoveDirectoryObject(storage driver.Driver, dirPath string, objName string) {
 	key := makeDirectoryKey(storage, dirPath)
 	if data, exists := cm.directories.Get(key); exists {
-		if dirCache, ok := data.(*DirectoryCache); ok {
-			dirCache.RemoveObject(objName)
-		}
+		data.RemoveObject(objName)
 	}
 }
 
@@ -89,7 +79,7 @@ func (cm *CacheManager) InvalidateDirectory(storage driver.Driver, dirPath strin
 
 func (cm *CacheManager) InvalidateDirectoryTree(storage driver.Driver, dirPath string) {
 	if dirCache, exists := cm.GetDirectoryListing(storage, dirPath); exists {
-		for _, obj := range dirCache.GetSortedObjects() {
+		for _, obj := range dirCache.objs {
 			if obj.IsDir() {
 				subPath := path.Join(dirPath, obj.GetName())
 				cm.InvalidateDirectoryTree(storage, subPath)
@@ -100,18 +90,13 @@ func (cm *CacheManager) InvalidateDirectoryTree(storage driver.Driver, dirPath s
 }
 
 // cache a file link
-func (cm *CacheManager) SetLink(key, typo string, link *model.Link, expiration time.Duration) {
-	cm.links.SetTypeWithTTL(key, typo, link, expiration)
+func (cm *CacheManager) SetLink(key, typeKey string, link *model.Link, expiration time.Duration) {
+	cm.links.SetTypeWithTTL(key, typeKey, link, expiration)
 }
 
 // cached file link
-func (cm *CacheManager) GetLink(key, typo string) (*model.Link, bool) {
-	if data, exists := cm.links.GetType(key, typo); exists {
-		if link, ok := data.(*model.Link); ok {
-			return link, true
-		}
-	}
-	return nil, false
+func (cm *CacheManager) GetLink(key, typeKey string) (*model.Link, bool) {
+	return cm.links.GetType(key, typeKey)
 }
 
 // remove a specific link from cache
@@ -131,12 +116,7 @@ func (cm *CacheManager) SetUser(username string, user *model.User) {
 
 // cached user data
 func (cm *CacheManager) GetUser(username string) (*model.User, bool) {
-	if data, exists := cm.users.Get(username); exists {
-		if user, ok := data.(*model.User); ok {
-			return user, true
-		}
-	}
-	return nil, false
+	return cm.users.Get(username)
 }
 
 // remove user data from cache
@@ -183,12 +163,7 @@ func (cm *CacheManager) SetStorageDetails(storage driver.Driver, details *model.
 }
 
 func (cm *CacheManager) GetStorageDetails(storage driver.Driver) (*model.StorageDetails, bool) {
-	if data, exists := cm.storageDetails.Get(storage.GetStorage().MountPath); exists {
-		if details, ok := data.(*model.StorageDetails); ok {
-			return details, true
-		}
-	}
-	return nil, false
+	return cm.storageDetails.Get(storage.GetStorage().MountPath)
 }
 
 func (cm *CacheManager) InvalidateStorageDetails(storage driver.Driver) {

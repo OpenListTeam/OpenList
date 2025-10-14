@@ -69,10 +69,7 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 	if !args.Refresh {
 		if dirCache, exists := cache.Manager.GetDirectoryListing(storage, path); exists {
 			log.Debugf("use cache when list %s", path)
-			objects := dirCache.GetSortedObjects()
-			if storage.Config().LocalSort {
-				model.SortFiles(objects, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
-			}
+			objects := dirCache.GetSortedObjects(storage)
 			return objects, nil
 		}
 	}
