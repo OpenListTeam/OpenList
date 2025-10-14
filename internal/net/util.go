@@ -7,9 +7,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -349,4 +351,25 @@ func GetRangedHttpReader(readCloser io.ReadCloser, offset, length int64) (io.Rea
 
 	// return an io.ReadCloser that is limited to `length` bytes.
 	return &LimitedReadCloser{readCloser, length_int}, nil
+}
+
+// SetProxyIfConfigured 为HTTP Transport设置代理（如果配置了的话）
+func SetProxyIfConfigured(transport *http.Transport) {
+	if conf.Conf.ProxyAddress != "" {
+		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+}
+
+// SetRestyProxyIfConfigured 为Resty客户端设置代理（如果配置了的话）
+func SetRestyProxyIfConfigured(client interface{}) {
+	if conf.Conf.ProxyAddress != "" {
+		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
+			// 使用类型断言来调用SetProxy方法
+			if restyClient, ok := client.(interface{ SetProxy(string) }); ok {
+				restyClient.SetProxy(proxyURL.String())
+			}
+		}
+	}
 }
