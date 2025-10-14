@@ -97,7 +97,7 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 		ReusableCredential:         &d.ReusableCredential,
 	}
 
-	protonDrive, _, err := proton_api_bridge.NewProtonDrive(
+	protonDrive, updatedCredentials, err := proton_api_bridge.NewProtonDrive(
 		ctx,
 		config,
 		func(auth proton.Auth) {},
@@ -105,19 +105,27 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 	)
 
 	if err != nil && config.UseReusableLogin {
+		fmt.Printf("ProtonDrive: Reusable login failed, falling back to fresh login: %v\n", err)
 		config.UseReusableLogin = false
-		protonDrive, _, err = proton_api_bridge.NewProtonDrive(ctx,
+		protonDrive, updatedCredentials, err = proton_api_bridge.NewProtonDrive(ctx,
 			config,
 			func(auth proton.Auth) {},
 			func() {},
 		)
-		if err == nil {
-			op.MustSaveDriverStorage(d)
-		}
 	}
 
 	if err != nil {
 		return fmt.Errorf("failed to initialize ProtonDrive: %w", err)
+	}
+
+	if updatedCredentials != nil {
+		d.ReusableCredential = common.ReusableCredentialData{
+			UID:           updatedCredentials.UID,
+			AccessToken:   updatedCredentials.AccessToken,
+			RefreshToken:  updatedCredentials.RefreshToken,
+			SaltedKeyPass: updatedCredentials.SaltedKeyPass,
+		}
+		op.MustSaveDriverStorage(d)
 	}
 
 	clientOptions := []proton.Option{
