@@ -354,8 +354,12 @@ func GetRangedHttpReader(readCloser io.ReadCloser, offset, length int64) (io.Rea
 	return &LimitedReadCloser{readCloser, length_int}, nil
 }
 
-// SetProxyIfConfigured 为HTTP Transport设置代理（如果配置了的话）
+// SetProxyIfConfigured sets proxy for HTTP Transport if configured
 func SetProxyIfConfigured(transport *http.Transport) {
+	// Default to environment variables
+	transport.Proxy = http.ProxyFromEnvironment
+
+	// If proxy address is configured, override environment variable settings
 	if conf.Conf.ProxyAddress != "" {
 		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
 			transport.Proxy = http.ProxyURL(proxyURL)
@@ -363,14 +367,15 @@ func SetProxyIfConfigured(transport *http.Transport) {
 	}
 }
 
-// SetRestyProxyIfConfigured 为Resty客户端设置代理（如果配置了的话）
-func SetRestyProxyIfConfigured(client interface{}) {
+// SetRestyProxyIfConfigured sets proxy for Resty client if configured
+func SetRestyProxyIfConfigured(client *resty.Client) {
+	// Default to environment variables (let resty use default environment variable handling)
+	client.SetProxy("")
+
+	// If proxy address is configured, override environment variable settings
 	if conf.Conf.ProxyAddress != "" {
 		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
-			// 直接调用SetProxy方法，因为传入的client就是*resty.Client
-			if restyClient, ok := client.(*resty.Client); ok {
-				restyClient.SetProxy(proxyURL.String())
-			}
+			client.SetProxy(proxyURL.String())
 		}
 	}
 }
