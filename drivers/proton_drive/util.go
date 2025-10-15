@@ -19,6 +19,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -635,16 +636,35 @@ func (d *ProtonDrive) authHandler(auth proton.Auth) {
 		d.ReusableCredential.UID = auth.UID
 		d.ReusableCredential.AccessToken = auth.AccessToken
 		d.ReusableCredential.RefreshToken = auth.RefreshToken
-		d.initClient()
+
+		if err := d.initClient(context.Background()); err != nil {
+			fmt.Printf("ProtonDrive: failed to reinitialize client after auth refresh: %v\n", err)
+		}
+
 		op.MustSaveDriverStorage(d)
 	}
 }
 
-func (d *ProtonDrive) initClient() {
+func (d *ProtonDrive) initClient(ctx context.Context) error {
 	clientOptions := []proton.Option{
 		proton.WithAppVersion(d.appVersion),
 		proton.WithUserAgent(d.userAgent),
 	}
 	manager := proton.New(clientOptions...)
 	d.c = manager.NewClient(d.ReusableCredential.UID, d.ReusableCredential.AccessToken, d.ReusableCredential.RefreshToken)
+
+	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(d.ReusableCredential.SaltedKeyPass)
+	if err != nil {
+		return fmt.Errorf("failed to decode salted key pass: %w", err)
+	}
+
+	_, addrKRs, addrs, _, err := getAccountKRs(ctx, d.c, nil, saltedKeyPassBytes)
+	if err != nil {
+		return fmt.Errorf("failed to get account keyrings: %w", err)
+	}
+
+	d.addrKRs = addrKRs
+	d.addrData = addrs
+
+	return nil
 }

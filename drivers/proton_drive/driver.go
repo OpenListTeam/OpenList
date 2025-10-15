@@ -17,7 +17,6 @@ D@' 3z K!7 - The King Of Cracking
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"time"
@@ -120,15 +119,8 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to initialize ProtonDrive: %w", err)
 	}
 
-	saltedKeyPassBytes, err := base64.StdEncoding.DecodeString(d.ReusableCredential.SaltedKeyPass)
-	if err != nil {
-		return fmt.Errorf("failed to decode salted key pass: %w", err)
-	}
-
-	d.initClient()
-	_, addrKRs, addrs, _, err := getAccountKRs(ctx, d.c, nil, saltedKeyPassBytes)
-	if err != nil {
-		return fmt.Errorf("failed to get account keyrings: %w", err)
+	if err := d.initClient(ctx); err != nil {
+		return err
 	}
 
 	d.protonDrive = protonDrive
@@ -138,8 +130,6 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 	}
 	d.MainShareKR = protonDrive.MainShareKR
 	d.DefaultAddrKR = protonDrive.DefaultAddrKR
-	d.addrKRs = addrKRs
-	d.addrData = addrs
 
 	return nil
 }
