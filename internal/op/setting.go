@@ -3,6 +3,7 @@ package op
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
@@ -127,13 +128,11 @@ func GetSettingItemsByGroup(group int) ([]model.SettingItem, error) {
 }
 
 func GetSettingItemsInGroups(groups []int) ([]model.SettingItem, error) {
-	sortedGroups := make([]int, len(groups))
-	copy(sortedGroups, groups)
-	sort.Ints(sortedGroups)
+	sort.Ints(groups)
 
-	var keyParts []string
-	for _, g := range sortedGroups {
-		keyParts = append(keyParts, fmt.Sprintf("%d", g))
+	keyParts := make([]string, 0, len(groups))
+	for _, g := range groups {
+		keyParts = append(keyParts, strconv.Itoa(g))
 	}
 	key := "GROUPS_" + strings.Join(keyParts, "_")
 

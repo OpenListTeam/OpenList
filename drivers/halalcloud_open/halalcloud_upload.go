@@ -141,7 +141,7 @@ func doMakeFile(fileSlice []string, taskID string, uploadAddress string) (*sdkUs
 		Header: map[string][]string{
 			"Accept":       {"application/json"},
 			"Content-Type": {"application/json"},
-			//"Content-Length": {fmt.Sprintf("%d", len(n))},
+			//"Content-Length": {strconv.Itoa(len(n))},
 		},
 		Body: io.NopCloser(bytes.NewReader(n)),
 	}
@@ -238,7 +238,7 @@ func doPostFileSlice(fileSlice []byte, taskID string, uploadAddress string, prei
 		Header: map[string][]string{
 			"Accept":       {"application/json"},
 			"Content-Type": {"application/octet-stream"},
-			// "Content-Length": {fmt.Sprintf("%d", len(fileSlice))},
+			// "Content-Length": {strconv.Itoa(len(fileSlice))},
 		},
 		Body: io.NopCloser(bytes.NewReader(fileSlice)),
 	}

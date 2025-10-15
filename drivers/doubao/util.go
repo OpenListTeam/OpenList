@@ -486,7 +486,7 @@ func (d *Doubao) Upload(ctx context.Context, config *UploadConfig, dstDir model.
 			"Authorization":       {storeInfo.Auth},
 			"Content-Type":        {"application/octet-stream"},
 			"Content-Crc32":       {crc32Value},
-			"Content-Length":      {fmt.Sprintf("%d", file.GetSize())},
+			"Content-Length":      {strconv.FormatInt(file.GetSize(), 10)},
 			"Content-Disposition": {fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI))},
 		}
 		res, err := base.HttpClient.Do(req)
@@ -612,7 +612,7 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 					"Authorization":       {storeInfo.Auth},
 					"Content-Type":        {"application/octet-stream"},
 					"Content-Crc32":       {crc32Value},
-					"Content-Length":      {fmt.Sprintf("%d", size)},
+					"Content-Length":      {strconv.FormatInt(size, 10)},
 					"Content-Disposition": {fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI))},
 				}
 				res, err := base.HttpClient.Do(req)
