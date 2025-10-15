@@ -198,7 +198,7 @@ func GetUnwrap(ctx context.Context, storage driver.Driver, path string) (model.O
 	return model.UnwrapObj(obj), err
 }
 
-var linkG = singleflight.Group[*model.Link]{Remember: true}
+var linkG = singleflight.Group[*objWithLink]{Remember: true}
 var errLinkMFileCache = stderrors.New("ErrLinkMFileCache")
 
 // Link get link, if is an url. should have an expiry time
@@ -220,29 +220,38 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 
 	var forget any
-	var linkM *model.Link
-	fn := func() (*model.Link, error) {
+	var olM *objWithLink
+	fn := func() (*objWithLink, error) {
+		file, err := GetUnwrap(ctx, storage, path)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to get file")
+		}
+		if file.IsDir() {
+			return nil, errors.WithStack(errs.NotFile)
+		}
+
 		link, err := storage.Link(ctx, file, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed get link")
 		}
+		ol := &objWithLink{link: link, obj: file}
 		if link.MFile != nil && forget != nil {
-			linkM = link
+			olM = ol
 			return nil, errLinkMFileCache
 		}
 		if link.Expiration != nil {
 			cache.Manager.SetLink(key, args.Type, link, *link.Expiration)
 		}
 		link.AddIfCloser(forget)
-		return link, nil
+		return ol, nil
 	}
 
 	if storage.Config().OnlyLinkMFile {
-		link, err := fn()
+		ol, err := fn()
 		if err != nil {
 			return nil, nil, err
 		}
-		return link, file, err
+		return ol.link, ol.obj, err
 	}
 
 	keyG := key + "/" + args.Type
@@ -253,23 +262,23 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 		return nil
 	})
-	link, err, _ := linkG.Do(keyG, fn)
-	for err == nil && !link.AcquireReference() {
-		link, err, _ = linkG.Do(keyG, fn)
+	ol, err, _ := linkG.Do(keyG, fn)
+	for err == nil && !ol.link.AcquireReference() {
+		ol, err, _ = linkG.Do(keyG, fn)
 	}
 
 	if err == errLinkMFileCache {
-		if linkM != nil {
-			return linkM, file, nil
+		if olM != nil {
+			return olM.link, olM.obj, nil
 		}
 		forget = nil
-		link, err = fn()
+		ol, err = fn()
 	}
 
 	if err != nil {
 		return nil, nil, err
 	}
-	return link, file, nil
+	return ol.link, ol.obj, nil
 }
 
 // Other api

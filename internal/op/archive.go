@@ -354,13 +354,13 @@ func ArchiveGet(ctx context.Context, storage driver.Driver, path string, args mo
 	return nil, nil, errors.WithStack(errs.ObjectNotFound)
 }
 
-type extractLink struct {
-	*model.Link
-	Obj model.Obj
+type objWithLink struct {
+	link *model.Link
+	obj  model.Obj
 }
 
-var extractCache = cache.NewMemCache(cache.WithShards[*extractLink](16))
-var extractG = singleflight.Group[*extractLink]{Remember: true}
+var extractCache = cache.NewMemCache(cache.WithShards[*objWithLink](16))
+var extractG = singleflight.Group[*objWithLink]{Remember: true}
 
 func DriverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -368,33 +368,33 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
 	if link, ok := extractCache.Get(key); ok {
-		return link.Link, link.Obj, nil
+		return link.link, link.obj, nil
 	}
 
 	var forget any
-	var linkM *extractLink
-	fn := func() (*extractLink, error) {
-		link, err := driverExtract(ctx, storage, path, args)
+	var olM *objWithLink
+	fn := func() (*objWithLink, error) {
+		ol, err := driverExtract(ctx, storage, path, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
-		if link.MFile != nil && forget != nil {
-			linkM = link
+		if ol.link.MFile != nil && forget != nil {
+			olM = ol
 			return nil, errLinkMFileCache
 		}
-		if link.Link.Expiration != nil {
-			extractCache.Set(key, link, cache.WithEx[*extractLink](*link.Link.Expiration))
+		if ol.link.Expiration != nil {
+			extractCache.Set(key, ol, cache.WithEx[*objWithLink](*ol.link.Expiration))
 		}
-		link.AddIfCloser(forget)
-		return link, nil
+		ol.link.AddIfCloser(forget)
+		return ol, nil
 	}
 
 	if storage.Config().OnlyLinkMFile {
-		link, err := fn()
+		ol, err := fn()
 		if err != nil {
 			return nil, nil, err
 		}
-		return link.Link, link.Obj, nil
+		return ol.link, ol.obj, nil
 	}
 
 	forget = utils.CloseFunc(func() error {
@@ -404,25 +404,25 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		}
 		return nil
 	})
-	link, err, _ := extractG.Do(key, fn)
-	for err == nil && !link.AcquireReference() {
-		link, err, _ = extractG.Do(key, fn)
+	ol, err, _ := extractG.Do(key, fn)
+	for err == nil && !ol.link.AcquireReference() {
+		ol, err, _ = extractG.Do(key, fn)
 	}
 	if err == errLinkMFileCache {
-		if linkM != nil {
-			return linkM.Link, linkM.Obj, nil
+		if olM != nil {
+			return olM.link, olM.obj, nil
 		}
 		forget = nil
-		link, err = fn()
+		ol, err = fn()
 	}
 
 	if err != nil {
 		return nil, nil, err
 	}
-	return link.Link, link.Obj, nil
+	return ol.link, ol.obj, nil
 }
 
-func driverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*extractLink, error) {
+func driverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*objWithLink, error) {
 	storageAr, ok := storage.(driver.ArchiveReader)
 	if !ok {
 		return nil, errs.DriverExtractNotSupported
@@ -438,7 +438,7 @@ func driverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return nil, errors.WithStack(errs.NotFile)
 	}
 	link, err := storageAr.Extract(ctx, archiveFile, args)
-	return &extractLink{Link: link, Obj: extracted}, err
+	return &objWithLink{link: link, obj: extracted}, err
 }
 
 type streamWithParent struct {
