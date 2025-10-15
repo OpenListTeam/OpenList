@@ -66,13 +66,15 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 		model.ExtractFolder(files, storage.GetStorage().ExtractFolder)
 
-		if len(files) > 0 {
-			log.Debugf("set cache: %s => %+v", key, files)
-			ttl := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
-			Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), ttl)
-		} else {
-			log.Debugf("invalidate cache: %s", key)
-			Cache.dirCache.Delete(key)
+		if !storage.Config().NoCache {
+			if len(files) > 0 {
+				log.Debugf("set cache: %s => %+v", key, files)
+				ttl := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
+				Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), ttl)
+			} else {
+				log.Debugf("del cache: %s", key)
+				Cache.deleteDirectoryTree(key)
+			}
 		}
 		return files, nil
 	})
