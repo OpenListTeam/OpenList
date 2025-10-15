@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -241,8 +240,8 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 	if oldStorage.MountPath != storage.MountPath {
 		// mount path renamed, need to drop the storage
 		storagesMap.Delete(oldStorage.MountPath)
-		cache.Manager.InvalidateDirectoryTree(storageDriver, "/")
-		cache.Manager.InvalidateStorageDetails(storageDriver)
+		Cache.DeleteDirectoryTree(storageDriver, "/")
+		Cache.InvalidateStorageDetails(storageDriver)
 	}
 	if err != nil {
 		return errors.WithMessage(err, "failed get storage driver")
@@ -275,8 +274,8 @@ func DeleteStorageById(ctx context.Context, id uint) error {
 		}
 		// delete the storage in the memory
 		storagesMap.Delete(storage.MountPath)
-		cache.Manager.InvalidateDirectoryTree(storageDriver, "/")
-		cache.Manager.InvalidateStorageDetails(storageDriver)
+		Cache.DeleteDirectoryTree(storageDriver, "/")
+		Cache.InvalidateStorageDetails(storageDriver)
 		go callStorageHooks("del", storageDriver)
 	}
 	// delete the storage in the database
@@ -454,7 +453,7 @@ func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bo
 		return nil, errs.NotImplement
 	}
 	if !utils.IsBool(refresh...) {
-		if ret, ok := cache.Manager.GetStorageDetails(storage); ok {
+		if ret, ok := Cache.GetStorageDetails(storage); ok {
 			return ret, nil
 		}
 	}
@@ -463,7 +462,7 @@ func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bo
 		if err != nil {
 			return nil, err
 		}
-		cache.Manager.SetStorageDetails(storage, ret)
+		Cache.SetStorageDetails(storage, ret)
 		return ret, nil
 	})
 	return details, err

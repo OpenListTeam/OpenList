@@ -139,7 +139,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 			if taskType == move {
 				task_group.RefreshAndRemove(dstDirPath, task_group.SrcPathToRemove(srcObjPath))
 			} else {
-				op.DeleteCache(t.DstStorage, dstDirActualPath)
+				op.Cache.DeleteDirectory(t.DstStorage, dstDirActualPath)
 			}
 		}
 		return nil, err
@@ -173,7 +173,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		dstActualPath := stdpath.Join(t.DstActualPath, srcObj.GetName())
 		if t.TaskType == copy {
 			if t.Ctx().Value(conf.NoTaskKey) != nil {
-				defer op.DeleteCache(t.DstStorage, dstActualPath)
+				defer op.Cache.DeleteDirectory(t.DstStorage, dstActualPath)
 			} else {
 				task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToRefresh(dstActualPath))
 			}

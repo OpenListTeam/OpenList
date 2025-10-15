@@ -1,7 +1,6 @@
 package op
 
 import (
-	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -43,7 +42,7 @@ func GetUserByName(username string) (*model.User, error) {
 	if username == "" {
 		return nil, errs.EmptyUsername
 	}
-	if user, exists := cache.Manager.GetUser(username); exists {
+	if user, exists := Cache.GetUser(username); exists {
 		return user, nil
 	}
 	user, err, _ := userG.Do(username, func() (*model.User, error) {
@@ -51,7 +50,7 @@ func GetUserByName(username string) (*model.User, error) {
 		if err != nil {
 			return nil, err
 		}
-		cache.Manager.SetUser(username, _user)
+		Cache.SetUser(username, _user)
 		return _user, nil
 	})
 	return user, err
@@ -78,7 +77,7 @@ func DeleteUserById(id uint) error {
 	if old.IsAdmin() || old.IsGuest() {
 		return errs.DeleteAdminOrGuest
 	}
-	cache.Manager.InvalidateUser(old.Username)
+	Cache.DeleteUser(old.Username)
 	return db.DeleteUserById(id)
 }
 
@@ -93,7 +92,7 @@ func UpdateUser(u *model.User) error {
 	if u.IsGuest() {
 		guestUser = nil
 	}
-	cache.Manager.InvalidateUser(old.Username)
+	Cache.DeleteUser(old.Username)
 	u.BasePath = utils.FixAndCleanPath(u.BasePath)
 	return db.UpdateUser(u)
 }
@@ -122,6 +121,6 @@ func DelUserCache(username string) error {
 	if user.IsGuest() {
 		guestUser = nil
 	}
-	cache.Manager.InvalidateUser(username)
+	Cache.DeleteUser(username)
 	return nil
 }

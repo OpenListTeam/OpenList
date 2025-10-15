@@ -73,6 +73,16 @@ func (c *KeyedCache[T]) Delete(key string) {
 	delete(c.entries, key)
 }
 
+func (c *KeyedCache[T]) Take(key string) (T, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entry, exists := c.entries[key]; exists {
+		delete(c.entries, key)
+		return entry.data, true
+	}
+	return *new(T), false
+}
+
 func (c *KeyedCache[T]) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

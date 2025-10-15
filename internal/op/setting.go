@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
@@ -14,12 +13,12 @@ import (
 
 var settingG singleflight.Group[*model.SettingItem]
 var settingCacheF = func(item *model.SettingItem) {
-	cache.Manager.SetSetting(item.Key, item)
+	Cache.SetSetting(item.Key, item)
 }
 
 var settingGroupG singleflight.Group[[]model.SettingItem]
 var settingGroupCacheF = func(key string, items []model.SettingItem) {
-	cache.Manager.SetSettingGroup(key, items)
+	Cache.SetSettingGroup(key, items)
 }
 
 var settingChangingCallbacks = make([]func(), 0)
@@ -29,7 +28,7 @@ func RegisterSettingChangingCallback(f func()) {
 }
 
 func SettingCacheUpdate() {
-	cache.Manager.ClearAll()
+	Cache.ClearAll()
 	for _, cb := range settingChangingCallbacks {
 		cb()
 	}
@@ -54,7 +53,7 @@ func GetSettingsMap() map[string]string {
 }
 
 func GetSettingItems() ([]model.SettingItem, error) {
-	if items, exists := cache.Manager.GetSettingGroup("ALL_SETTING_ITEMS"); exists {
+	if items, exists := Cache.GetSettingGroup("ALL_SETTING_ITEMS"); exists {
 		return items, nil
 	}
 	items, err, _ := settingGroupG.Do("ALL_SETTING_ITEMS", func() ([]model.SettingItem, error) {
@@ -69,7 +68,7 @@ func GetSettingItems() ([]model.SettingItem, error) {
 }
 
 func GetPublicSettingItems() ([]model.SettingItem, error) {
-	if items, exists := cache.Manager.GetSettingGroup("ALL_PUBLIC_SETTING_ITEMS"); exists {
+	if items, exists := Cache.GetSettingGroup("ALL_PUBLIC_SETTING_ITEMS"); exists {
 		return items, nil
 	}
 	items, err, _ := settingGroupG.Do("ALL_PUBLIC_SETTING_ITEMS", func() ([]model.SettingItem, error) {
@@ -84,7 +83,7 @@ func GetPublicSettingItems() ([]model.SettingItem, error) {
 }
 
 func GetSettingItemByKey(key string) (*model.SettingItem, error) {
-	if item, exists := cache.Manager.GetSetting(key); exists {
+	if item, exists := Cache.GetSetting(key); exists {
 		return item, nil
 	}
 
@@ -113,7 +112,7 @@ func GetSettingItemInKeys(keys []string) ([]model.SettingItem, error) {
 
 func GetSettingItemsByGroup(group int) ([]model.SettingItem, error) {
 	key := fmt.Sprintf("GROUP_%d", group)
-	if items, exists := cache.Manager.GetSettingGroup(key); exists {
+	if items, exists := Cache.GetSettingGroup(key); exists {
 		return items, nil
 	}
 	items, err, _ := settingGroupG.Do(key, func() ([]model.SettingItem, error) {
@@ -138,7 +137,7 @@ func GetSettingItemsInGroups(groups []int) ([]model.SettingItem, error) {
 	}
 	key := "GROUPS_" + strings.Join(keyParts, "_")
 
-	if items, exists := cache.Manager.GetSettingGroup(key); exists {
+	if items, exists := Cache.GetSettingGroup(key); exists {
 		return items, nil
 	}
 	items, err, _ := settingGroupG.Do(key, func() ([]model.SettingItem, error) {
