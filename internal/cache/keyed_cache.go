@@ -5,12 +5,6 @@ import (
 	"time"
 )
 
-type CacheEntry[T any] struct {
-	data    T
-	expires time.Time
-	dirty   bool
-}
-
 type KeyedCache[T any] struct {
 	entries map[string]*CacheEntry[T]
 	mu      sync.RWMutex
@@ -25,22 +19,25 @@ func NewKeyedCache[T any](ttl time.Duration) *KeyedCache[T] {
 }
 
 func (c *KeyedCache[T]) Set(key string, value T) {
-	c.SetWithTTL(key, value, c.ttl)
+	c.SetWithExpirable(key, value, ExpirationTime(time.Now().Add(c.ttl)))
 }
 
 func (c *KeyedCache[T]) SetWithTTL(key string, value T, ttl time.Duration) {
+	c.SetWithExpirable(key, value, ExpirationTime(time.Now().Add(ttl)))
+}
+
+func (c *KeyedCache[T]) SetWithExpirable(key string, value T, exp Expirable) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.entries[key] = &CacheEntry[T]{
-		data:    value,
-		expires: time.Now().Add(ttl),
-		dirty:   false,
+		data:      value,
+		Expirable: exp,
+		dirty:     false,
 	}
 }
 
 func (c *KeyedCache[T]) Get(key string) (T, bool) {
-	now := time.Now()
 	c.mu.RLock()
 	entry, exists := c.entries[key]
 	if !exists {
@@ -48,7 +45,7 @@ func (c *KeyedCache[T]) Get(key string) (T, bool) {
 		return *new(T), false
 	}
 
-	expired := now.After(entry.expires)
+	expired := entry.Expired()
 	c.mu.RUnlock()
 
 	if !expired {

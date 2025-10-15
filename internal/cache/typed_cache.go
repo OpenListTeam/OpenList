@@ -19,10 +19,14 @@ func NewTypedCache[T any](ttl time.Duration) *TypedCache[T] {
 }
 
 func (c *TypedCache[T]) SetType(key, typeKey string, value T) {
-	c.SetTypeWithTTL(key, typeKey, value, c.ttl)
+	c.SetTypeWithExpirable(key, typeKey, value, ExpirationTime(time.Now().Add(c.ttl)))
 }
 
 func (c *TypedCache[T]) SetTypeWithTTL(key, typeKey string, value T, ttl time.Duration) {
+	c.SetTypeWithExpirable(key, typeKey, value, ExpirationTime(time.Now().Add(ttl)))
+}
+
+func (c *TypedCache[T]) SetTypeWithExpirable(key, typeKey string, value T, exp Expirable) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cache, exists := c.entries[key]
@@ -32,14 +36,13 @@ func (c *TypedCache[T]) SetTypeWithTTL(key, typeKey string, value T, ttl time.Du
 	}
 
 	cache[typeKey] = &CacheEntry[T]{
-		data:    value,
-		expires: time.Now().Add(ttl),
-		dirty:   false,
+		data:      value,
+		Expirable: exp,
+		dirty:     false,
 	}
 }
 
 func (c *TypedCache[T]) GetType(key, typeKey string) (T, bool) {
-	now := time.Now()
 	c.mu.RLock()
 	cache, exists := c.entries[key]
 	if !exists {
@@ -52,7 +55,7 @@ func (c *TypedCache[T]) GetType(key, typeKey string) (T, bool) {
 		return *new(T), false
 	}
 
-	expired := now.After(entry.expires)
+	expired := entry.Expired()
 	c.mu.RUnlock()
 
 	if !expired {

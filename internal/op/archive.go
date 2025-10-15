@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -17,12 +18,12 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/go-cache"
+	gocache "github.com/OpenListTeam/go-cache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
-var archiveMetaCache = cache.NewMemCache(cache.WithShards[*model.ArchiveMetaProvider](64))
+var archiveMetaCache = gocache.NewMemCache(gocache.WithShards[*model.ArchiveMetaProvider](64))
 var archiveMetaG singleflight.Group[*model.ArchiveMetaProvider]
 
 func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, args model.ArchiveMetaArgs) (*model.ArchiveMetaProvider, error) {
@@ -37,7 +38,7 @@ func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 			return nil, errors.Wrapf(err, "failed to get %s archive met: %+v", path, err)
 		}
 		if m.Expiration != nil {
-			archiveMetaCache.Set(key, m, cache.WithEx[*model.ArchiveMetaProvider](*m.Expiration))
+			archiveMetaCache.Set(key, m, gocache.WithEx[*model.ArchiveMetaProvider](*m.Expiration))
 		}
 		return m, nil
 	}
@@ -158,7 +159,7 @@ func getArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 	return obj, archiveMetaProvider, err
 }
 
-var archiveListCache = cache.NewMemCache(cache.WithShards[[]model.Obj](64))
+var archiveListCache = gocache.NewMemCache(gocache.WithShards[[]model.Obj](64))
 var archiveListG singleflight.Group[[]model.Obj]
 
 func ListArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
@@ -199,7 +200,7 @@ func ListArchive(ctx context.Context, storage driver.Driver, path string, args m
 		if !storage.Config().NoCache {
 			if len(files) > 0 {
 				log.Debugf("set cache: %s => %+v", key, files)
-				archiveListCache.Set(key, files, cache.WithEx[[]model.Obj](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
+				archiveListCache.Set(key, files, gocache.WithEx[[]model.Obj](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
 			} else {
 				log.Debugf("del cache: %s", key)
 				archiveListCache.Del(key)
@@ -359,33 +360,36 @@ type objWithLink struct {
 	obj  model.Obj
 }
 
-var extractCache = cache.NewMemCache(cache.WithShards[*objWithLink](16))
-var extractG = singleflight.Group[*objWithLink]{Remember: true}
+var extractCache = cache.NewKeyedCache[*objWithLink](5 * time.Minute)
+var extractG = singleflight.Group[*objWithLink]{}
 
 func DriverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
-	if link, ok := extractCache.Get(key); ok {
-		return link.link, link.obj, nil
+	if ol, ok := extractCache.Get(key); ok {
+		if ol.link.AcquireReference() {
+			return ol.link, ol.obj, nil
+		}
 	}
 
-	var forget any
+	onlyLinkMFile := storage.Config().OnlyLinkMFile
 	var olM *objWithLink
 	fn := func() (*objWithLink, error) {
 		ol, err := driverExtract(ctx, storage, path, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
-		if ol.link.MFile != nil && forget != nil {
+		if ol.link.MFile != nil && !onlyLinkMFile {
 			olM = ol
 			return nil, errLinkMFileCache
 		}
 		if ol.link.Expiration != nil {
-			extractCache.Set(key, ol, cache.WithEx[*objWithLink](*ol.link.Expiration))
+			extractCache.SetWithTTL(key, ol, *ol.link.Expiration)
+		} else {
+			Cache.linkCache.SetTypeWithExpirable(key, args.Type, ol, &ol.link.SyncClosers)
 		}
-		ol.link.AddIfCloser(forget)
 		return ol, nil
 	}
 
@@ -397,26 +401,21 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return ol.link, ol.obj, nil
 	}
 
-	forget = utils.CloseFunc(func() error {
-		if forget != nil {
-			forget = nil
-			linkG.Forget(key)
-		}
-		return nil
-	})
 	ol, err, _ := extractG.Do(key, fn)
-	for err == nil && !ol.link.AcquireReference() {
-		ol, err, _ = extractG.Do(key, fn)
-	}
-	if err == errLinkMFileCache {
+	switch err {
+	case nil:
+		if !ol.link.AcquireReference() {
+			panic("this should not happen")
+		}
+	case errLinkMFileCache:
 		if olM != nil {
 			return olM.link, olM.obj, nil
 		}
-		forget = nil
-		ol, err = fn()
-	}
-
-	if err != nil {
+		onlyLinkMFile = true
+		if ol, err = fn(); err != nil {
+			return nil, nil, err
+		}
+	default:
 		return nil, nil, err
 	}
 	return ol.link, ol.obj, nil

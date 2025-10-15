@@ -160,7 +160,7 @@ func GetUnwrap(ctx context.Context, storage driver.Driver, path string) (model.O
 	return model.UnwrapObj(obj), err
 }
 
-var linkG = singleflight.Group[*objWithLink]{Remember: true}
+var linkG = singleflight.Group[*objWithLink]{}
 var errLinkMFileCache = stderrors.New("ErrLinkMFileCache")
 
 // Link get link, if is an url. should have an expiry time
@@ -171,10 +171,12 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 	key := Key(storage, path)
 	if ol, exists := Cache.linkCache.GetType(key, args.Type); exists {
-		return ol.link, ol.obj, nil
+		if ol.link.AcquireReference() {
+			return ol.link, ol.obj, nil
+		}
 	}
 
-	var forget any
+	onlyLinkMFile := storage.Config().OnlyLinkMFile
 	var olM *objWithLink
 	fn := func() (*objWithLink, error) {
 		file, err := GetUnwrap(ctx, storage, path)
@@ -190,18 +192,19 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errors.Wrapf(err, "failed get link")
 		}
 		ol := &objWithLink{link: link, obj: file}
-		if link.MFile != nil && forget != nil {
+		if link.MFile != nil && !onlyLinkMFile {
 			olM = ol
 			return nil, errLinkMFileCache
 		}
 		if link.Expiration != nil {
 			Cache.linkCache.SetTypeWithTTL(key, args.Type, ol, *link.Expiration)
+		} else {
+			Cache.linkCache.SetTypeWithExpirable(key, args.Type, ol, &link.SyncClosers)
 		}
-		link.AddIfCloser(forget)
 		return ol, nil
 	}
 
-	if storage.Config().OnlyLinkMFile {
+	if onlyLinkMFile {
 		ol, err := fn()
 		if err != nil {
 			return nil, nil, err
@@ -210,27 +213,21 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 
 	keyG := key + "/" + args.Type
-	forget = utils.CloseFunc(func() error {
-		if forget != nil {
-			forget = nil
-			linkG.Forget(keyG)
-		}
-		return nil
-	})
 	ol, err, _ := linkG.Do(keyG, fn)
-	for err == nil && !ol.link.AcquireReference() {
-		ol, err, _ = linkG.Do(keyG, fn)
-	}
-
-	if err == errLinkMFileCache {
+	switch err {
+	case nil:
+		if !ol.link.AcquireReference() {
+			panic("this should not happen")
+		}
+	case errLinkMFileCache:
 		if olM != nil {
 			return olM.link, olM.obj, nil
 		}
-		forget = nil
-		ol, err = fn()
-	}
-
-	if err != nil {
+		onlyLinkMFile = true
+		if ol, err = fn(); err != nil {
+			return nil, nil, err
+		}
+	default:
 		return nil, nil, err
 	}
 	return ol.link, ol.obj, nil

@@ -187,17 +187,12 @@ func NewClosers(c ...io.Closer) Closers {
 	return Closers(c)
 }
 
-type SyncClosersIF interface {
-	ClosersIF
-	AcquireReference() bool
-}
-
 type SyncClosers struct {
 	closers []io.Closer
 	ref     int32
 }
 
-var _ SyncClosersIF = (*SyncClosers)(nil)
+var _ ClosersIF = (*SyncClosers)(nil)
 
 func (c *SyncClosers) AcquireReference() bool {
 	for {
@@ -211,6 +206,11 @@ func (c *SyncClosers) AcquireReference() bool {
 			return true
 		}
 	}
+}
+
+// 实现cache.Expirable接口
+func (c *SyncClosers) Expired() bool {
+	return atomic.LoadInt32(&c.ref) < 0
 }
 
 const closersClosed = math.MinInt16
