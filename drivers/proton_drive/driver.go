@@ -21,9 +21,11 @@ import (
 	"io"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -89,11 +91,11 @@ func (d *ProtonDrive) Init(ctx context.Context) (err error) {
 			TwoFA:    d.TwoFACode,
 		},
 		EnableCaching:              true,
-		ConcurrentBlockUploadCount: 5,
-		ConcurrentFileCryptoCount:  2,
-		UseReusableLogin:           d.UseReusableLogin && d.ReusableCredential != (common.ReusableCredentialData{}),
-		ReplaceExistingDraft:       true,
-		ReusableCredential:         &d.ReusableCredential,
+		ConcurrentBlockUploadCount: setting.GetInt(conf.TaskUploadThreadsNum, conf.Conf.Tasks.Upload.Workers),
+		//ConcurrentFileCryptoCount:  2,
+		UseReusableLogin:     d.UseReusableLogin && d.ReusableCredential != (common.ReusableCredentialData{}),
+		ReplaceExistingDraft: true,
+		ReusableCredential:   &d.ReusableCredential,
 	}
 
 	protonDrive, _, err := proton_api_bridge.NewProtonDrive(
