@@ -284,6 +284,7 @@ func HttpClient() *http.Client {
 
 func NewHttpClient() *http.Client {
 	transport := &http.Transport{
+		Proxy:           http.ProxyFromEnvironment,
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
 	}
 

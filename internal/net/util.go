@@ -356,9 +356,6 @@ func GetRangedHttpReader(readCloser io.ReadCloser, offset, length int64) (io.Rea
 
 // SetProxyIfConfigured sets proxy for HTTP Transport if configured
 func SetProxyIfConfigured(transport *http.Transport) {
-	// Default to environment variables
-	transport.Proxy = http.ProxyFromEnvironment
-
 	// If proxy address is configured, override environment variable settings
 	if conf.Conf.ProxyAddress != "" {
 		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
@@ -369,9 +366,6 @@ func SetProxyIfConfigured(transport *http.Transport) {
 
 // SetRestyProxyIfConfigured sets proxy for Resty client if configured
 func SetRestyProxyIfConfigured(client *resty.Client) {
-	// Default to environment variables (let resty use default environment variable handling)
-	client.SetProxy("")
-
 	// If proxy address is configured, override environment variable settings
 	if conf.Conf.ProxyAddress != "" {
 		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
