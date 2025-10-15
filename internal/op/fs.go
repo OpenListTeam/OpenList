@@ -4,7 +4,6 @@ import (
 	"context"
 	stderrors "errors"
 	stdpath "path"
-	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -207,29 +206,9 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
-	var (
-		file model.Obj
-		err  error
-	)
-	// use cache directly
-	dir, name := stdpath.Split(stdpath.Join(storage.GetStorage().MountPath, path))
-	dirPath := strings.TrimSuffix(dir, "/")
-	if dirCache, exists := cache.Manager.GetDirectoryListing(storage, dirPath); exists {
-		if obj, found := dirCache.GetObject(name); found {
-			file = model.UnwrapObj(obj)
-		}
-	} else {
-		if g, ok := storage.(driver.GetObjInfo); ok {
-			file, err = g.GetObjInfo(ctx, path)
-		} else {
-			file, err = GetUnwrap(ctx, storage, path)
-		}
-	}
-	if file == nil {
-		if err != nil {
-			return nil, nil, errors.WithMessage(err, "failed to get file")
-		}
-		return nil, nil, errors.WithStack(errs.ObjectNotFound)
+	file, err := GetUnwrap(ctx, storage, path)
+	if err != nil {
+		return nil, nil, errors.WithMessage(err, "failed to get file")
 	}
 	if file.IsDir() {
 		return nil, nil, errors.WithStack(errs.NotFile)
@@ -266,7 +245,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return link, file, err
 	}
 
-	keyG := key + "|" + args.Type
+	keyG := key + "/" + args.Type
 	forget = utils.CloseFunc(func() error {
 		if forget != nil {
 			forget = nil
