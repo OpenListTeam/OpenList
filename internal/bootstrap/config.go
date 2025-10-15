@@ -127,7 +127,7 @@ func InitConfig() {
 	}
 	log.Debugf("config: %+v", conf.Conf)
 
-	// 验证并显示代理配置状态
+	// Validate and display proxy configuration status
 	validateProxyConfig()
 
 	base.InitClient()
@@ -170,7 +170,7 @@ func CleanTempDir() {
 	}
 }
 
-// validateProxyConfig 验证代理配置并在启动时显示状态
+// validateProxyConfig validates proxy configuration and displays status at startup
 func validateProxyConfig() {
 	if conf.Conf.ProxyAddress != "" {
 		if _, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
