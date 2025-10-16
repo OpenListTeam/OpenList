@@ -29,7 +29,7 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 	if !args.Refresh {
 		if dirCache, exists := Cache.dirCache.Get(key); exists {
 			log.Debugf("use cache when list %s", path)
-			return dirCache.GetSortedObjects(storage), nil
+			return dirCache.GetSortedObjects(storage.GetStorage()), nil
 		}
 	}
 
@@ -350,20 +350,17 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		var newObj model.Obj
 		newObj, err = s.Move(ctx, srcObj, dstDir)
 		if err == nil {
+			Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
 			if newObj != nil {
-				Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
 				Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
-			} else {
-				Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
-				if !utils.IsBool(lazyCache...) {
-					Cache.DeleteDirectory(storage, dstDirPath)
-				}
+			} else if !utils.IsBool(lazyCache...) {
+				Cache.DeleteDirectory(storage, dstDirPath)
 			}
 		}
 	case driver.Move:
 		err = s.Move(ctx, srcObj, dstDir)
 		if err == nil {
-			Cache.removeDirectoryObject(storage, stdpath.Dir(srcPath), srcRawObj)
+			Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
 			if !utils.IsBool(lazyCache...) {
 				Cache.DeleteDirectory(storage, dstDirPath)
 			}

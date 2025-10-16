@@ -185,9 +185,15 @@ func (cm *CacheManager) ClearAll() {
 type directoryCache struct {
 	objs   []model.Obj
 	sorted []model.Obj
-	dirty  bool
 	mu     sync.RWMutex
+
+	dirtyFlags uint8
 }
+
+const (
+	dirtyUpdated  uint8 = 1 << iota // 对象被更新或删除：刷新 sorted 副本，但不需要 full sort/extract
+	dirtyAppended                   // 新对象追加：需要执行 full sort + extract
+)
 
 func newDirectoryCache(objs []model.Obj) *directoryCache {
 	sorted := make([]model.Obj, len(objs))
@@ -204,7 +210,7 @@ func (dc *directoryCache) RemoveObject(name string) {
 	for i, obj := range dc.objs {
 		if obj.GetName() == name {
 			dc.objs = append(dc.objs[:i], dc.objs[i+1:]...)
-			dc.dirty = true
+			dc.dirtyFlags |= dirtyUpdated
 			break
 		}
 	}
@@ -217,29 +223,18 @@ func (dc *directoryCache) UpdateObject(oldName string, newObj model.Obj) {
 		for i, obj := range dc.objs {
 			if obj.GetName() == oldName {
 				dc.objs[i] = newObj
-				dc.dirty = true
+				dc.dirtyFlags |= dirtyUpdated
 				return
 			}
 		}
 	}
 	dc.objs = append(dc.objs, newObj)
-	dc.dirty = true
+	dc.dirtyFlags |= dirtyAppended
 }
 
-// func (dc *directoryCache) GetObject(name string) (model.Obj, bool) {
-// 	dc.mu.RLock()
-// 	defer dc.mu.RUnlock()
-// 	for _, obj := range dc.objs {
-// 		if obj.GetName() == name {
-// 			return obj, true
-// 		}
-// 	}
-// 	return nil, false
-// }
-
-func (dc *directoryCache) GetSortedObjects(storage driver.Driver) []model.Obj {
+func (dc *directoryCache) GetSortedObjects(storage *model.Storage) []model.Obj {
 	dc.mu.RLock()
-	if !dc.dirty {
+	if dc.dirtyFlags == 0 {
 		dc.mu.RUnlock()
 		return dc.sorted
 	}
@@ -250,10 +245,10 @@ func (dc *directoryCache) GetSortedObjects(storage driver.Driver) []model.Obj {
 	sorted := make([]model.Obj, len(dc.objs))
 	copy(sorted, dc.objs)
 	dc.sorted = sorted
-	if storage.Config().LocalSort {
-		model.SortFiles(sorted, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
+	if dc.dirtyFlags&dirtyAppended != 0 {
+		model.SortFiles(sorted, storage.OrderBy, storage.OrderDirection)
+		model.ExtractFolder(sorted, storage.ExtractFolder)
 	}
-	model.ExtractFolder(sorted, storage.GetStorage().ExtractFolder)
-	dc.dirty = false
+	dc.dirtyFlags = 0
 	return sorted
 }
