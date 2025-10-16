@@ -53,7 +53,6 @@ func (c *KeyedCache[T]) Get(key string) (T, bool) {
 	}
 
 	c.mu.Lock()
-	// Re-check in case another goroutine already deleted or updated it
 	if c.entries[key] == entry {
 		delete(c.entries, key)
 		c.mu.Unlock()

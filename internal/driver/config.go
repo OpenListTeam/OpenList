@@ -19,7 +19,11 @@ type Config struct {
 	NoLinkURL bool `json:"-"`
 	// disable singleflight for Link generation.
 	// if the driver returns Link with MFile, this should be set to trueks
-	NoLinkSF bool `json:"only_local"`
+	NoLinkSF bool `json:"-"`
+	// LinkCacheType=1 add IP to cache key
+	//
+	// LinkCacheType=2 add UserAgent to cache key
+	LinkCacheType uint8 `json:"-"`
 }
 
 func (c Config) MustProxy() bool {

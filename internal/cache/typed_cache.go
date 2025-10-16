@@ -42,19 +42,27 @@ func (c *TypedCache[T]) SetTypeWithExpirable(key, typeKey string, value T, exp E
 	}
 }
 
-func (c *TypedCache[T]) GetType(key, typeKey string) (T, bool) {
+// GetType tries typeKeys first, falls back to fallbackTypeKey if empty
+func (c *TypedCache[T]) GetType(key, fallbackTypeKey string, typeKeys ...string) (T, bool) {
 	c.mu.RLock()
 	cache, exists := c.entries[key]
 	if !exists {
 		c.mu.RUnlock()
 		return *new(T), false
 	}
-	entry, exists := cache[typeKey]
+	entry, exists := cache[fallbackTypeKey]
+	if len(typeKeys) > 0 {
+		for _, tk := range typeKeys {
+			if entry, exists = cache[tk]; exists {
+				fallbackTypeKey = tk
+				break
+			}
+		}
+	}
 	if !exists {
 		c.mu.RUnlock()
 		return *new(T), false
 	}
-
 	expired := entry.Expired()
 	c.mu.RUnlock()
 
@@ -63,9 +71,8 @@ func (c *TypedCache[T]) GetType(key, typeKey string) (T, bool) {
 	}
 
 	c.mu.Lock()
-	// Re-check in case another goroutine already deleted or updated it
-	if cache[typeKey] == entry {
-		delete(cache, typeKey)
+	if cache[fallbackTypeKey] == entry {
+		delete(cache, fallbackTypeKey)
 		if len(cache) == 0 {
 			delete(c.entries, key)
 		}

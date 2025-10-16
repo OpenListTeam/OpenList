@@ -169,8 +169,23 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 
+	typeKey := args.Type
+	var typeKeys []string
+	switch storage.Config().LinkCacheType {
+	case 1:
+		if args.IP != "" {
+			typeKey += "/" + args.IP
+			typeKeys = []string{typeKey}
+		}
+	case 2:
+		if ua := args.Header.Get("User-Agent"); ua != "" {
+			typeKey += "/" + ua
+			typeKeys = []string{typeKey}
+		}
+	}
+
 	key := Key(storage, path)
-	if ol, exists := Cache.linkCache.GetType(key, args.Type); exists {
+	if ol, exists := Cache.linkCache.GetType(key, args.Type, typeKeys...); exists {
 		if ol.link.Expiration != nil || ol.link.AcquireReference() {
 			return ol.link, ol.obj, nil
 		}
@@ -197,9 +212,9 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errLinkMFileCache
 		}
 		if link.Expiration != nil {
-			Cache.linkCache.SetTypeWithTTL(key, args.Type, ol, *link.Expiration)
+			Cache.linkCache.SetTypeWithTTL(key, typeKey, ol, *link.Expiration)
 		} else {
-			Cache.linkCache.SetTypeWithExpirable(key, args.Type, ol, &link.SyncClosers)
+			Cache.linkCache.SetTypeWithExpirable(key, typeKey, ol, &link.SyncClosers)
 		}
 		return ol, nil
 	}
@@ -212,8 +227,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return ol.link, ol.obj, err
 	}
 
-	keyG := key + "/" + args.Type
-	ol, err, _ := linkG.Do(keyG, fn)
+	ol, err, _ := linkG.Do(key+"/"+typeKey, fn)
 	switch err {
 	case nil:
 		if !ol.link.AcquireReference() {
