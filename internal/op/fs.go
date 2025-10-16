@@ -333,7 +333,7 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcDirPath := stdpath.Dir(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == srcDirPath {
-		return errors.WithMessage(errs.NotSupport, "move in palce")
+		return stderrors.New("move in palce")
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
@@ -423,7 +423,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == stdpath.Dir(srcPath) {
-		return errors.WithMessage(errs.NotSupport, "copy in place")
+		return stderrors.New("copy in place")
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
