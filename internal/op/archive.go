@@ -369,7 +369,7 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
 	if ol, ok := extractCache.Get(key); ok {
-		if ol.link.AcquireReference() {
+		if ol.link.Expiration != nil || ol.link.AcquireReference() {
 			return ol.link, ol.obj, nil
 		}
 	}

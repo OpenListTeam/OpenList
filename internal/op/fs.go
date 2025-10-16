@@ -171,7 +171,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 	key := Key(storage, path)
 	if ol, exists := Cache.linkCache.GetType(key, args.Type); exists {
-		if ol.link.AcquireReference() {
+		if ol.link.Expiration != nil || ol.link.AcquireReference() {
 			return ol.link, ol.obj, nil
 		}
 	}
