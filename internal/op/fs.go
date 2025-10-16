@@ -176,7 +176,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 	}
 
-	onlyLinkMFile := storage.Config().OnlyLinkMFile
+	noLinkSF := storage.Config().NoLinkSF
 	var olM *objWithLink
 	fn := func() (*objWithLink, error) {
 		file, err := GetUnwrap(ctx, storage, path)
@@ -192,7 +192,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errors.Wrapf(err, "failed get link")
 		}
 		ol := &objWithLink{link: link, obj: file}
-		if link.MFile != nil && !onlyLinkMFile {
+		if link.MFile != nil && !noLinkSF {
 			olM = ol
 			return nil, errLinkMFileCache
 		}
@@ -204,7 +204,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return ol, nil
 	}
 
-	if onlyLinkMFile {
+	if noLinkSF {
 		ol, err := fn()
 		if err != nil {
 			return nil, nil, err
@@ -223,7 +223,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if olM != nil {
 			return olM.link, olM.obj, nil
 		}
-		onlyLinkMFile = true
+		noLinkSF = true
 		if ol, err = fn(); err != nil {
 			return nil, nil, err
 		}

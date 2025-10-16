@@ -15,14 +15,14 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:          "Strm",
-	LocalSort:     true,
-	NoCache:       true,
-	NoUpload:      true,
-	DefaultRoot:   "/",
-	OnlyLinkMFile: true,
-	OnlyProxy:     true,
-	NoLinkURL:     true,
+	Name:        "Strm",
+	LocalSort:   true,
+	OnlyProxy:   true,
+	NoCache:     true,
+	NoUpload:    true,
+	DefaultRoot: "/",
+	NoLinkURL:   true,
+	NoLinkSF:    true,
 }
 
 func init() {

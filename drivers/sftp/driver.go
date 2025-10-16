@@ -69,7 +69,7 @@ func (d *SFTP) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 		Limiter: stream.ServerDownloadLimit,
 		Ctx:     ctx,
 	}
-	if !d.Config().OnlyLinkMFile {
+	if !d.Config().NoLinkSF {
 		return &model.Link{
 			RangeReader: stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
 			SyncClosers: utils.NewSyncClosers(remoteFile),

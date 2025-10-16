@@ -16,12 +16,13 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:          "SFTP",
-	LocalSort:     true,
-	OnlyLinkMFile: false,
-	DefaultRoot:   "/",
-	CheckStatus:   true,
-	NoLinkURL:     true,
+	Name:        "SFTP",
+	LocalSort:   true,
+	OnlyProxy:   true,
+	DefaultRoot: "/",
+	CheckStatus: true,
+	NoLinkURL:   true,
+	NoLinkSF:    false,
 }
 
 func init() {

@@ -42,10 +42,10 @@ func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 		}
 		return m, nil
 	}
-	if storage.Config().OnlyLinkMFile {
-		meta, err := fn()
-		return meta, err
-	}
+	// if storage.Config().NoLinkSingleflight {
+	// 	meta, err := fn()
+	// 	return meta, err
+	// }
 	if !args.Refresh {
 		if meta, ok := archiveMetaCache.Get(key); ok {
 			log.Debugf("use cache when get %s archive meta", path)
@@ -374,14 +374,14 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		}
 	}
 
-	onlyLinkMFile := storage.Config().OnlyLinkMFile
+	noLinkSF := storage.Config().NoLinkSF
 	var olM *objWithLink
 	fn := func() (*objWithLink, error) {
 		ol, err := driverExtract(ctx, storage, path, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
-		if ol.link.MFile != nil && !onlyLinkMFile {
+		if ol.link.MFile != nil && !noLinkSF {
 			olM = ol
 			return nil, errLinkMFileCache
 		}
@@ -393,7 +393,7 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return ol, nil
 	}
 
-	if storage.Config().OnlyLinkMFile {
+	if noLinkSF {
 		ol, err := fn()
 		if err != nil {
 			return nil, nil, err
@@ -411,7 +411,7 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		if olM != nil {
 			return olM.link, olM.obj, nil
 		}
-		onlyLinkMFile = true
+		noLinkSF = true
 		if ol, err = fn(); err != nil {
 			return nil, nil, err
 		}
