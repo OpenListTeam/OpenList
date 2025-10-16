@@ -38,7 +38,6 @@ func (c *TypedCache[T]) SetTypeWithExpirable(key, typeKey string, value T, exp E
 	cache[typeKey] = &CacheEntry[T]{
 		data:      value,
 		Expirable: exp,
-		dirty:     false,
 	}
 }
 

@@ -33,7 +33,6 @@ func (c *KeyedCache[T]) SetWithExpirable(key string, value T, exp Expirable) {
 	c.entries[key] = &CacheEntry[T]{
 		data:      value,
 		Expirable: exp,
-		dirty:     false,
 	}
 }
 
