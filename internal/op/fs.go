@@ -294,7 +294,11 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string, lazyCache 
 					newObj, err = s.MakeDir(ctx, parentDir, dirName)
 					if err == nil {
 						if newObj != nil {
-							Cache.addDirectoryObject(storage, parentPath, model.WrapObjName(newObj))
+							if !storage.Config().NoCache {
+								if dirCache, exist := Cache.dirCache.Get(Key(storage, parentPath)); exist {
+									dirCache.UpdateObject("", newObj)
+								}
+							}
 						} else if !utils.IsBool(lazyCache...) {
 							Cache.DeleteDirectory(storage, parentPath)
 						}
@@ -326,7 +330,11 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	srcPath = utils.FixAndCleanPath(srcPath)
+	srcDirPath := stdpath.Dir(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
+	if dstDirPath == srcDirPath {
+		return errors.WithMessage(errs.NotSupport, "move in palce")
+	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
@@ -342,14 +350,9 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		var newObj model.Obj
 		newObj, err = s.Move(ctx, srcObj, dstDir)
 		if err == nil {
-			srcDirPath := stdpath.Dir(srcPath)
 			if newObj != nil {
-				if srcDirPath == dstDirPath {
-					Cache.updateDirectoryObject(storage, dstDirPath, srcRawObj, model.WrapObjName(newObj))
-				} else if !utils.IsBool(lazyCache...) {
-					Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
-					Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
-				}
+				Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
+				Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
 			} else {
 				Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
 				if !utils.IsBool(lazyCache...) {
@@ -394,9 +397,6 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 				Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
 				if !utils.IsBool(lazyCache...) {
 					Cache.DeleteDirectory(storage, srcDirPath)
-					if srcRawObj.IsDir() {
-						Cache.DeleteDirectoryTree(storage, srcPath)
-					}
 				}
 			}
 		}
@@ -407,9 +407,6 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 			Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
 			if !utils.IsBool(lazyCache...) {
 				Cache.DeleteDirectory(storage, srcDirPath)
-				if srcRawObj.IsDir() {
-					Cache.DeleteDirectoryTree(storage, srcPath)
-				}
 			}
 		}
 	default:
@@ -425,6 +422,9 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	}
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
+	if dstDirPath == stdpath.Dir(srcPath) {
+		return errors.WithMessage(errs.NotSupport, "copy in place")
+	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
@@ -451,9 +451,6 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		if err == nil {
 			if !utils.IsBool(lazyCache...) {
 				Cache.DeleteDirectory(storage, dstDirPath)
-			}
-			if !srcRawObj.IsDir() {
-				Cache.linkCache.DeleteKey(Key(storage, stdpath.Join(dstDirPath, srcRawObj.GetName())))
 			}
 		}
 	default:
@@ -486,9 +483,6 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 		err = s.Remove(ctx, model.UnwrapObj(rawObj))
 		if err == nil {
 			Cache.removeDirectoryObject(storage, dirPath, rawObj)
-			if rawObj.IsDir() {
-				Cache.DeleteDirectoryTree(storage, path)
-			}
 		}
 	default:
 		return errs.NotImplement
@@ -558,6 +552,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		var newObj model.Obj
 		newObj, err = s.Put(ctx, parentDir, file, up)
 		if err == nil {
+			Cache.linkCache.DeleteKey(Key(storage, dstPath))
 			if newObj != nil {
 				Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
 			} else if !utils.IsBool(lazyCache...) {
@@ -566,10 +561,12 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		}
 	case driver.Put:
 		err = s.Put(ctx, parentDir, file, up)
-		if err == nil && !utils.IsBool(lazyCache...) {
-			Cache.DeleteDirectory(storage, dstDirPath)
+		if err == nil {
+			Cache.linkCache.DeleteKey(Key(storage, dstPath))
+			if !utils.IsBool(lazyCache...) {
+				Cache.DeleteDirectory(storage, dstDirPath)
+			}
 		}
-
 	default:
 		return errs.NotImplement
 	}
@@ -594,7 +591,8 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
-	_, err := GetUnwrap(ctx, storage, stdpath.Join(dstDirPath, dstName))
+	dstPath := stdpath.Join(dstDirPath, dstName)
+	_, err := GetUnwrap(ctx, storage, dstPath)
 	if err == nil {
 		return errors.New("obj already exists")
 	}
@@ -611,6 +609,7 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 		var newObj model.Obj
 		newObj, err = s.PutURL(ctx, dstDir, dstName, url)
 		if err == nil {
+			Cache.linkCache.DeleteKey(Key(storage, dstPath))
 			if newObj != nil {
 				Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
 			} else if !utils.IsBool(lazyCache...) {
@@ -619,8 +618,11 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 		}
 	case driver.PutURL:
 		err = s.PutURL(ctx, dstDir, dstName, url)
-		if err == nil && !utils.IsBool(lazyCache...) {
-			Cache.DeleteDirectory(storage, dstDirPath)
+		if err == nil {
+			Cache.linkCache.DeleteKey(Key(storage, dstPath))
+			if !utils.IsBool(lazyCache...) {
+				Cache.DeleteDirectory(storage, dstDirPath)
+			}
 		}
 	default:
 		return errs.NotImplement
