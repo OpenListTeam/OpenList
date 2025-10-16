@@ -26,6 +26,11 @@ type OpenList struct {
 }
 
 func (d *OpenList) Config() driver.Config {
+	if d.PassUAToUpsteam {
+		c := config
+		c.LinkCacheType = 2 // add User-Agent to cache key
+		return c
+	}
 	return config
 }
 
