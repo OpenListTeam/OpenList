@@ -48,6 +48,19 @@ func (t *FileTransferTask) Run() error {
 	if err := t.ReinitCtx(); err != nil {
 		return err
 	}
+	if t.SrcStorage == nil {
+		if srcStorage, _, err := op.GetStorageAndActualPath(t.SrcStorageMp); err == nil {
+			t.SrcStorage = srcStorage
+		} else {
+			return err
+		}
+		if dstStorage, _, err := op.GetStorageAndActualPath(t.DstStorageMp); err == nil {
+			t.DstStorage = dstStorage
+		} else {
+			return err
+		}
+	}
+
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
@@ -76,23 +89,6 @@ func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
 	if retry == 0 &&
 		(len(t.groupID) == 0 || // 重启恢复
 			(t.GetErr() == nil && t.GetState() != tache.StatePending)) { // 手动重试
-
-		// 修复存储驱动，防止重启后空指针异常
-		if t.SrcStorage == nil {
-			if srcStorage, _, err := op.GetStorageAndActualPath(stdpath.Join(t.SrcStorageMp, t.SrcActualPath)); err == nil {
-				t.SrcStorage = srcStorage
-			} else {
-				return
-			}
-		}
-		if t.DstStorage == nil {
-			if dstStorage, _, err := op.GetStorageAndActualPath(stdpath.Join(t.DstStorageMp, t.DstActualPath)); err == nil {
-				t.DstStorage = dstStorage
-			} else {
-				return
-			}
-		}
-
 		t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
 		var payload any
 		if t.TaskType == move {
