@@ -227,18 +227,18 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return ol.link, ol.obj, err
 	}
 
-	i := 0
+	retry := 0
 	for {
 		ol, err, _ := linkG.Do(key+"/"+typeKey, fn)
 		switch err {
 		case nil:
 			if ol.link.AcquireReference() {
-				if i > 1 {
-					log.Warnf("Link retry successed after %d times: %s %s", i, key, typeKey)
+				if retry > 2 {
+					log.Warnf("Link retry successed after %d times: %s %s", retry, key, typeKey)
 				}
 				return ol.link, ol.obj, nil
 			}
-			i++
+			retry++
 		case errLinkMFileCache:
 			if olM != nil {
 				return olM.link, olM.obj, nil
