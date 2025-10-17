@@ -169,7 +169,7 @@ func GetStorage(c *gin.Context) {
 }
 
 func LoadAllStorages(c *gin.Context) {
-	if !conf.StoragesLoaded() {
+	if !conf.StoragesLoaded {
 		select {
 		case <-conf.StoragesLoadSignal():
 			common.SuccessResp(c)
@@ -205,7 +205,7 @@ func LoadAllStorages(c *gin.Context) {
 			log.Infof("success load storage: [%s], driver: [%s]",
 				storage.MountPath, storage.Driver)
 		}
-		conf.SendStoragesLoadSignal()
+		conf.SendStoragesLoadedSignal()
 	}(storages)
 	common.SuccessResp(c)
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func StoragesLoaded(c *gin.Context) {
-	if !conf.StoragesLoaded() {
+	if !conf.StoragesLoaded {
 		if utils.SliceContains([]string{"", "/", "/favicon.ico"}, c.Request.URL.Path) {
 			c.Next()
 			return

@@ -25,6 +25,6 @@ func LoadStorages() {
 					storages[i].MountPath, storages[i].Driver, storages[i].Order)
 			}
 		}
-		conf.SendStoragesLoadSignal()
+		conf.SendStoragesLoadedSignal()
 	}(storages)
 }

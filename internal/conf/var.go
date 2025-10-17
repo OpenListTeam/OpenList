@@ -23,6 +23,8 @@ var FilenameCharMap = make(map[string]string)
 var PrivacyReg []*regexp.Regexp
 
 var (
+	// StoragesLoaded loaded success if empty
+	StoragesLoaded = false
 	// 单个Buffer最大限制
 	MaxBufferLimit = 16 * 1024 * 1024
 	// 超过该阈值的Buffer将使用 mmap 分配，可主动释放内存
@@ -37,22 +39,16 @@ var storagesLoadSignal chan struct{} = make(chan struct{}) // 存储加载完成
 func StoragesLoadSignal() <-chan struct{} {
 	return storagesLoadSignal
 }
-func SendStoragesLoadSignal() {
+func SendStoragesLoadedSignal() {
 	close(storagesLoadSignal)
+	StoragesLoaded = true
 }
 func ResetStoragesLoadSignal() {
 	select {
 	case <-storagesLoadSignal:
 		storagesLoadSignal = make(chan struct{})
+		StoragesLoaded = false
 	default:
 		return
-	}
-}
-func StoragesLoaded() bool {
-	select {
-	case <-storagesLoadSignal:
-		return true
-	default:
-		return false
 	}
 }
