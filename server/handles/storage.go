@@ -169,13 +169,23 @@ func GetStorage(c *gin.Context) {
 }
 
 func LoadAllStorages(c *gin.Context) {
+	if !conf.StoragesLoaded() {
+		select {
+		case <-conf.StoragesLoadSignal():
+			common.SuccessResp(c)
+			return
+		case <-c.Request.Context().Done():
+			c.Abort()
+			return
+		}
+	}
 	storages, err := db.GetEnabledStorages()
 	if err != nil {
 		log.Errorf("failed get enabled storages: %+v", err)
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	conf.StoragesLoaded = false
+	conf.ResetStoragesLoadSignal()
 	go func(storages []model.Storage) {
 		for _, storage := range storages {
 			storageDriver, err := op.GetStorageByMountPath(storage.MountPath)
@@ -195,7 +205,7 @@ func LoadAllStorages(c *gin.Context) {
 			log.Infof("success load storage: [%s], driver: [%s]",
 				storage.MountPath, storage.Driver)
 		}
-		conf.StoragesLoaded = true
+		conf.SendStoragesLoadSignal()
 	}(storages)
 	common.SuccessResp(c)
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func StoragesLoaded(c *gin.Context) {
-	if !conf.StoragesLoaded {
+	if !conf.StoragesLoaded() {
 		if utils.SliceContains([]string{"", "/", "/favicon.ico"}, c.Request.URL.Path) {
 			c.Next()
 			return
@@ -22,9 +22,12 @@ func StoragesLoaded(c *gin.Context) {
 				return
 			}
 		}
-		common.ErrorStrResp(c, "Loading storage, please wait", 500)
-		c.Abort()
-		return
+		select {
+		case <-conf.StoragesLoadSignal():
+		case <-c.Request.Context().Done():
+			c.Abort()
+			return
+		}
 	}
 	common.GinWithValue(c,
 		conf.ApiUrlKey, common.GetApiUrlFromRequest(c.Request),
