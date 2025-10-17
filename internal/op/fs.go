@@ -29,7 +29,7 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 	if !args.Refresh {
 		if dirCache, exists := Cache.dirCache.Get(key); exists {
 			log.Debugf("use cache when list %s", path)
-			return dirCache.GetSortedObjects(storage.GetStorage()), nil
+			return dirCache.GetSortedObjects(storage), nil
 		}
 	}
 
@@ -333,7 +333,7 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcDirPath := stdpath.Dir(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == srcDirPath {
-		return stderrors.New("move in palce")
+		return stderrors.New("move in place")
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {

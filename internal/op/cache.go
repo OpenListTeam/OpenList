@@ -232,7 +232,7 @@ func (dc *directoryCache) UpdateObject(oldName string, newObj model.Obj) {
 	dc.dirtyFlags |= dirtyAppended
 }
 
-func (dc *directoryCache) GetSortedObjects(storage *model.Storage) []model.Obj {
+func (dc *directoryCache) GetSortedObjects(meta driver.Meta) []model.Obj {
 	dc.mu.RLock()
 	if dc.dirtyFlags == 0 {
 		dc.mu.RUnlock()
@@ -246,8 +246,11 @@ func (dc *directoryCache) GetSortedObjects(storage *model.Storage) []model.Obj {
 	copy(sorted, dc.objs)
 	dc.sorted = sorted
 	if dc.dirtyFlags&dirtyAppended != 0 {
-		model.SortFiles(sorted, storage.OrderBy, storage.OrderDirection)
-		model.ExtractFolder(sorted, storage.ExtractFolder)
+		if meta.Config().LocalSort {
+			storage := meta.GetStorage()
+			model.SortFiles(sorted, storage.OrderBy, storage.OrderDirection)
+			model.ExtractFolder(sorted, storage.ExtractFolder)
+		}
 	}
 	dc.dirtyFlags = 0
 	return sorted
