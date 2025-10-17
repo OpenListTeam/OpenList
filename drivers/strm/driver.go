@@ -58,7 +58,7 @@ func (d *Strm) Init(ctx context.Context) error {
 		d.autoFlatten = false
 	}
 
-	d.supportSuffix = supportSuffix()
+	d.supportSuffix = make(map[string]struct{})
 	if d.FilterFileTypes != "" {
 		types := strings.Split(d.FilterFileTypes, ",")
 		for _, ext := range types {
@@ -67,6 +67,12 @@ func (d *Strm) Init(ctx context.Context) error {
 				d.supportSuffix[ext] = struct{}{}
 			}
 		}
+	} else {
+		var types []string
+		for t := range supportSuffix() {
+			types = append(types, t)
+		}
+		d.FilterFileTypes = strings.Join(types, ",")
 	}
 
 	d.downloadSuffix = downloadSuffix()
