@@ -59,20 +59,21 @@ func (d *Strm) Init(ctx context.Context) error {
 	}
 
 	d.supportSuffix = make(map[string]struct{})
+	var types []string
 	if d.FilterFileTypes != "" {
-		types := strings.Split(d.FilterFileTypes, ",")
-		for _, ext := range types {
-			ext = strings.ToLower(strings.TrimSpace(ext))
-			if ext != "" {
-				d.supportSuffix[ext] = struct{}{}
-			}
-		}
+		types = strings.Split(d.FilterFileTypes, ",")
 	} else {
-		var types []string
 		for t := range supportSuffix() {
 			types = append(types, t)
 		}
 		d.FilterFileTypes = strings.Join(types, ",")
+	}
+
+	for _, ext := range types {
+		ext = strings.ToLower(strings.TrimSpace(ext))
+		if ext != "" {
+			d.supportSuffix[ext] = struct{}{}
+		}
 	}
 
 	d.downloadSuffix = downloadSuffix()
