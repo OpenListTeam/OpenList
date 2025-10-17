@@ -227,24 +227,31 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return ol.link, ol.obj, err
 	}
 
-	ol, err, _ := linkG.Do(key+"/"+typeKey, fn)
-	switch err {
-	case nil:
-		if !ol.link.AcquireReference() {
-			panic("this should not happen")
-		}
-	case errLinkMFileCache:
-		if olM != nil {
-			return olM.link, olM.obj, nil
-		}
-		noLinkSF = true
-		if ol, err = fn(); err != nil {
+	i := 0
+	for {
+		ol, err, _ := linkG.Do(key+"/"+typeKey, fn)
+		switch err {
+		case nil:
+			if ol.link.AcquireReference() {
+				if i > 1 {
+					log.Warnf("Link retry successed after %d times: %s %s", i, key, typeKey)
+				}
+				return ol.link, ol.obj, nil
+			}
+			i++
+		case errLinkMFileCache:
+			if olM != nil {
+				return olM.link, olM.obj, nil
+			}
+			noLinkSF = true
+			if ol, err = fn(); err != nil {
+				return nil, nil, err
+			}
+			return ol.link, ol.obj, nil
+		default:
 			return nil, nil, err
 		}
-	default:
-		return nil, nil, err
 	}
-	return ol.link, ol.obj, nil
 }
 
 // Other api

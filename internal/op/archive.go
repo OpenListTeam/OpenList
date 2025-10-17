@@ -401,24 +401,26 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return ol.link, ol.obj, nil
 	}
 
-	ol, err, _ := extractG.Do(key, fn)
-	switch err {
-	case nil:
-		if !ol.link.AcquireReference() {
-			panic("this should not happen")
-		}
-	case errLinkMFileCache:
-		if olM != nil {
-			return olM.link, olM.obj, nil
-		}
-		noLinkSF = true
-		if ol, err = fn(); err != nil {
+	for {
+		ol, err, _ := linkG.Do(key, fn)
+		switch err {
+		case nil:
+			if ol.link.AcquireReference() {
+				return ol.link, ol.obj, nil
+			}
+		case errLinkMFileCache:
+			if olM != nil {
+				return olM.link, olM.obj, nil
+			}
+			noLinkSF = true
+			if ol, err = fn(); err != nil {
+				return nil, nil, err
+			}
+			return ol.link, ol.obj, nil
+		default:
 			return nil, nil, err
 		}
-	default:
-		return nil, nil, err
 	}
-	return ol.link, ol.obj, nil
 }
 
 func driverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*objWithLink, error) {
