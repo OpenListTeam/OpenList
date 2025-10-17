@@ -195,17 +195,13 @@ type SyncClosers struct {
 var _ ClosersIF = (*SyncClosers)(nil)
 
 func (c *SyncClosers) AcquireReference() bool {
-	for {
-		ref := atomic.LoadInt32(&c.ref)
-		if ref < 0 {
-			return false
-		}
-		newRef := ref + 1
-		if atomic.CompareAndSwapInt32(&c.ref, ref, newRef) {
-			// log.Debugf("AcquireReference %p: %d", c, newRef)
-			return true
-		}
+	ref := atomic.AddInt32(&c.ref, 1)
+	if ref > 0 {
+		// log.Debugf("AcquireReference %p: %d", c, ref)
+		return true
 	}
+	atomic.StoreInt32(&c.ref, closersClosed)
+	return false
 }
 
 // 实现cache.Expirable接口
@@ -216,22 +212,19 @@ func (c *SyncClosers) Expired() bool {
 const closersClosed = math.MinInt16
 
 func (c *SyncClosers) Close() error {
-	ref := atomic.AddInt32(&c.ref, -1)
-	if ref > 0 {
-		// log.Debugf("ReleaseReference %p: %d", c, ref)
-		return nil
-	}
-
-	if ref < -1 {
-		atomic.StoreInt32(&c.ref, closersClosed)
-		return nil
-	}
-
-	// Attempt to acquire FinalClose permission.
-	// At this point, ref must be 0 or -1. We try to atomically change it to the closersClosed state.
-	// Only the first successful goroutine gets the cleanup permission.
-	if !atomic.CompareAndSwapInt32(&c.ref, ref, closersClosed) {
-		return nil
+	for {
+		ref := atomic.LoadInt32(&c.ref)
+		if ref < 0 {
+			return nil
+		}
+		if ref > 1 {
+			if atomic.CompareAndSwapInt32(&c.ref, ref, ref-1) {
+				// log.Debugf("ReleaseReference %p: %d", c, ref)
+				return nil
+			}
+		} else if atomic.CompareAndSwapInt32(&c.ref, ref, closersClosed) {
+			break
+		}
 	}
 
 	// log.Debugf("FinalClose %p", c)
