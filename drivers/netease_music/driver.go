@@ -42,14 +42,14 @@ func (d *NeteaseMusic) Drop(ctx context.Context) error {
 	return nil
 }
 
-func (d *NeteaseMusic) Get(ctx context.Context, path string) (model.Obj, error) {
-	if path == "/" {
-		return &model.Object{
-			IsFolder: true,
-			Path:     path,
-		}, nil
-	}
+func (d *NeteaseMusic) GetRoot(ctx context.Context) (model.Obj, error) {
+	return &model.Object{
+		IsFolder: true,
+		Path:     "/",
+	}, nil
+}
 
+func (d *NeteaseMusic) Get(ctx context.Context, path string) (model.Obj, error) {
 	fragments := strings.Split(path, "/")
 	if len(fragments) > 1 {
 		fileName := fragments[1]
