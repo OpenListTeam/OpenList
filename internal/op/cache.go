@@ -191,8 +191,8 @@ type directoryCache struct {
 }
 
 const (
-	dirtyUpdated  uint8 = 1 << iota // 对象被更新或删除：刷新 sorted 副本，但不需要 full sort/extract
-	dirtyAppended                   // 新对象追加：需要执行 full sort + extract
+	dirtyRemove uint8 = 1 << iota // 对象删除：刷新 sorted 副本，但不需要 full sort/extract
+	dirtyUpdate                   // 对象更新：需要执行 full sort + extract
 )
 
 func newDirectoryCache(objs []model.Obj) *directoryCache {
@@ -210,7 +210,7 @@ func (dc *directoryCache) RemoveObject(name string) {
 	for i, obj := range dc.objs {
 		if obj.GetName() == name {
 			dc.objs = append(dc.objs[:i], dc.objs[i+1:]...)
-			dc.dirtyFlags |= dirtyUpdated
+			dc.dirtyFlags |= dirtyRemove
 			break
 		}
 	}
@@ -223,13 +223,13 @@ func (dc *directoryCache) UpdateObject(oldName string, newObj model.Obj) {
 		for i, obj := range dc.objs {
 			if obj.GetName() == oldName {
 				dc.objs[i] = newObj
-				dc.dirtyFlags |= dirtyUpdated
+				dc.dirtyFlags |= dirtyUpdate
 				return
 			}
 		}
 	}
 	dc.objs = append(dc.objs, newObj)
-	dc.dirtyFlags |= dirtyAppended
+	dc.dirtyFlags |= dirtyUpdate
 }
 
 func (dc *directoryCache) GetSortedObjects(meta driver.Meta) []model.Obj {
@@ -245,12 +245,12 @@ func (dc *directoryCache) GetSortedObjects(meta driver.Meta) []model.Obj {
 	sorted := make([]model.Obj, len(dc.objs))
 	copy(sorted, dc.objs)
 	dc.sorted = sorted
-	if dc.dirtyFlags&dirtyAppended != 0 {
+	if dc.dirtyFlags&dirtyUpdate != 0 {
+		storage := meta.GetStorage()
 		if meta.Config().LocalSort {
-			storage := meta.GetStorage()
 			model.SortFiles(sorted, storage.OrderBy, storage.OrderDirection)
-			model.ExtractFolder(sorted, storage.ExtractFolder)
 		}
+		model.ExtractFolder(sorted, storage.ExtractFolder)
 	}
 	dc.dirtyFlags = 0
 	return sorted
