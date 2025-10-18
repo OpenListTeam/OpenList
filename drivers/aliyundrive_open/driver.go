@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	stdpath "path"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -52,6 +54,34 @@ func (d *AliyundriveOpen) Init(ctx context.Context) error {
 	userid := utils.Json.Get(res, "user_id").ToString()
 	d.limiter.free()
 	d.limiter = getLimiterForUser(userid) // Allocate a corresponding limiter for each user.
+
+	d.buildRootPath(ctx)
+	return nil
+}
+
+func (d *AliyundriveOpen) buildRootPath(ctx context.Context) error {
+	d.RootPath = "/"
+	if d.RootFolderID == "root" {
+		return nil
+	}
+	currentFileId := d.RootFolderID
+	var pathSegments []string
+	for currentFileId != "root" {
+		var resp File
+		_, err := d.request(ctx, limiterOther, "/adrive/v1.0/openFile/get", http.MethodPost, func(req *resty.Request) {
+			req.SetBody(base.Json{
+				"drive_id": d.DriveId,
+				"file_id":  currentFileId,
+			}).SetResult(&resp)
+		})
+		if err != nil {
+			return err
+		}
+		pathSegments = append(pathSegments, resp.Name)
+		currentFileId = resp.ParentFileId
+	}
+	slices.Reverse(pathSegments)
+	d.RootPath = stdpath.Join(d.RootPath, stdpath.Join(pathSegments...))
 	return nil
 }
 
@@ -84,8 +114,11 @@ func (d *AliyundriveOpen) GetRoot(ctx context.Context) (model.Obj, error) {
 }
 
 func (d *AliyundriveOpen) Get(ctx context.Context, path string) (model.Obj, error) {
+	if d.RootPath != "/" {
+		path = stdpath.Join(d.RootPath, path)
+	}
 	var resp File
-	_, err := d.request(ctx, limiterLink, "/adrive/v1.0/openFile/get_by_path", http.MethodPost, func(req *resty.Request) {
+	_, err := d.request(ctx, limiterOther, "/adrive/v1.0/openFile/get_by_path", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(base.Json{
 			"drive_id":  d.DriveId,
 			"file_path": path,
