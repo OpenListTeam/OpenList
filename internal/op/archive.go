@@ -369,7 +369,7 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
 	if ol, ok := extractCache.Get(key); ok {
-		if ol.link.Expiration != nil || ol.link.AcquireReference() {
+		if ol.link.Expiration != nil || ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
 			return ol.link, ol.obj, nil
 		}
 	}
@@ -388,7 +388,7 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		if ol.link.Expiration != nil {
 			extractCache.SetWithTTL(key, ol, *ol.link.Expiration)
 		} else {
-			Cache.linkCache.SetTypeWithExpirable(key, args.Type, ol, &ol.link.SyncClosers)
+			extractCache.SetWithExpirable(key, ol, &ol.link.SyncClosers)
 		}
 		return ol, nil
 	}
@@ -402,10 +402,10 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 	}
 
 	for {
-		ol, err, _ := linkG.Do(key, fn)
+		ol, err, _ := extractG.Do(key, fn)
 		switch err {
 		case nil:
-			if ol.link.AcquireReference() {
+			if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
 				return ol.link, ol.obj, nil
 			}
 		case errLinkMFileCache:

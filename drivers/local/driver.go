@@ -274,9 +274,10 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		link.ContentLength = file.GetSize()
 		link.MFile = open
 	}
-	link.AddIfCloser(link.MFile)
+	link.SyncClosers.AddIfCloser(link.MFile)
 	if !d.Config().NoLinkSF {
 		link.RangeReader = stream.GetRangeReaderFromMFile(link.ContentLength, link.MFile)
+		link.RequireReference = link.SyncClosers.Length() > 0
 		link.MFile = nil
 	}
 	return link, nil

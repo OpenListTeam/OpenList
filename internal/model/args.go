@@ -38,6 +38,8 @@ type Link struct {
 	ContentLength int64 `json:"-"` // 转码视频、缩略图
 
 	utils.SyncClosers `json:"-"`
+	// 如果SyncClosers中的资源被关闭后Link将不可用，则此值应为 true
+	RequireReference bool `json:"-"`
 }
 
 type OtherArgs struct {

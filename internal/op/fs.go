@@ -186,7 +186,8 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 	key := Key(storage, path)
 	if ol, exists := Cache.linkCache.GetType(key, args.Type, typeKeys...); exists {
-		if ol.link.Expiration != nil || ol.link.AcquireReference() {
+		if ol.link.Expiration != nil ||
+			ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
 			return ol.link, ol.obj, nil
 		}
 	}
@@ -232,8 +233,8 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		ol, err, _ := linkG.Do(key+"/"+typeKey, fn)
 		switch err {
 		case nil:
-			if ol.link.AcquireReference() {
-				if retry > 2 {
+			if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+				if retry > 1 {
 					log.Warnf("Link retry successed after %d times: %s %s", retry, key, typeKey)
 				}
 				return ol.link, ol.obj, nil
