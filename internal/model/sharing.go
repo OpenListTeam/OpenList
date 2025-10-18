@@ -33,7 +33,7 @@ func (s *Sharing) Valid() bool {
 	if len(s.Files) == 0 {
 		return false
 	}
-	if !s.Creator.CanShare() {
+	if s.Creator == nil || !s.Creator.CanShare() {
 		return false
 	}
 	if s.Expires != nil && !s.Expires.IsZero() && s.Expires.Before(time.Now()) {

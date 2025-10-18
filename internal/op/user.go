@@ -6,6 +6,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/pkg/errors"
 )
 
 var userG singleflight.Group[*model.User]
@@ -78,6 +79,9 @@ func DeleteUserById(id uint) error {
 		return errs.DeleteAdminOrGuest
 	}
 	Cache.DeleteUser(old.Username)
+	if err := DeleteSharingsByCreatorId(id); err != nil {
+		return errors.WithMessage(err, "failed to delete user's sharings")
+	}
 	return db.DeleteUserById(id)
 }
 
