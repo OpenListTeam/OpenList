@@ -169,16 +169,6 @@ func GetStorage(c *gin.Context) {
 }
 
 func LoadAllStorages(c *gin.Context) {
-	if !conf.StoragesLoaded {
-		select {
-		case <-conf.StoragesLoadSignal():
-			common.SuccessResp(c)
-			return
-		case <-c.Request.Context().Done():
-			c.Abort()
-			return
-		}
-	}
 	storages, err := db.GetEnabledStorages()
 	if err != nil {
 		log.Errorf("failed get enabled storages: %+v", err)
