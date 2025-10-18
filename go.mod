@@ -14,7 +14,7 @@ require (
 	github.com/SheltonZhu/115driver v1.1.1
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/avast/retry-go v3.0.0+incompatible
-	github.com/aws/aws-sdk-go v1.55.7
+	github.com/aws/aws-sdk-go v1.55.8
 	github.com/blevesearch/bleve/v2 v2.5.2
 	github.com/caarlos0/env/v9 v9.0.0
 	github.com/charmbracelet/bubbles v0.21.0
