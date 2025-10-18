@@ -6,6 +6,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/go-cache"
+	"github.com/pkg/errors"
 )
 
 var userG singleflight.Group[*model.User]
@@ -77,7 +79,14 @@ func DeleteUserById(id uint) error {
 	if old.IsAdmin() || old.IsGuest() {
 		return errs.DeleteAdminOrGuest
 	}
+<<<<<<< HEAD
 	Cache.DeleteUser(old.Username)
+=======
+	if err := DeleteSharingsByCreatorId(id); err != nil {
+		return errors.WithMessage(err, "failed to delete user's sharings")
+	}
+	userCache.Del(old.Username)
+>>>>>>> f4701215 (fix(share): remove share when user delete)
 	return db.DeleteUserById(id)
 }
 
