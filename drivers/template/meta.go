@@ -25,7 +25,6 @@ var config = driver.Config{
 	Alert:             "",
 	NoOverwriteUpload: false,
 	NoLinkURL:         false,
-	NoLinkSF:          false,
 }
 
 func init() {

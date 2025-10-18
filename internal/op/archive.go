@@ -387,14 +387,6 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return ol, nil
 	}
 
-	if storage.Config().NoLinkSF {
-		ol, err := fn()
-		if err != nil {
-			return nil, nil, err
-		}
-		return ol.link, ol.obj, nil
-	}
-
 	for {
 		ol, err, _ := extractG.Do(key, fn)
 		if err != nil {

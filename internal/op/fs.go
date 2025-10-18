@@ -212,15 +212,6 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 		return ol, nil
 	}
-
-	if storage.Config().NoLinkSF {
-		ol, err := fn()
-		if err != nil {
-			return nil, nil, err
-		}
-		return ol.link, ol.obj, err
-	}
-
 	retry := 0
 	for {
 		ol, err, _ := linkG.Do(key+"/"+typeKey, fn)

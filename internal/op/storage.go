@@ -448,6 +448,9 @@ func GetBalancedStorage(path string) driver.Driver {
 var detailsG singleflight.Group[*model.StorageDetails]
 
 func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bool) (*model.StorageDetails, error) {
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
 	wd, ok := storage.(driver.WithDetails)
 	if !ok {
 		return nil, errs.NotImplement

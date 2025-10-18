@@ -17,9 +17,6 @@ type Config struct {
 	ProxyRangeOption  bool `json:"-"`
 	// if the driver returns Link without URL, this should be set to true
 	NoLinkURL bool `json:"-"`
-	// disable singleflight for Link generation.
-	// if the driver returns Link with MFile, this should be set to true
-	NoLinkSF bool `json:"-"`
 	// LinkCacheType=1 add IP to cache key
 	//
 	// LinkCacheType=2 add UserAgent to cache key
