@@ -12,10 +12,12 @@ type TypedCache[T any] struct {
 }
 
 func NewTypedCache[T any](ttl time.Duration) *TypedCache[T] {
-	return &TypedCache[T]{
+	c := &TypedCache[T]{
 		entries: make(map[string]map[string]*CacheEntry[T]),
 		ttl:     ttl,
 	}
+	gcFuncs = append(gcFuncs, c.GC)
+	return c
 }
 
 func (c *TypedCache[T]) SetType(key, typeKey string, value T) {
@@ -92,4 +94,29 @@ func (c *TypedCache[T]) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = make(map[string]map[string]*CacheEntry[T])
+}
+
+func (c *TypedCache[T]) GC() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	expiredKeys := make(map[string][]string)
+	for tk, entries := range c.entries {
+		for key, entry := range entries {
+			if !entry.Expired() {
+				continue
+			}
+			if _, ok := expiredKeys[tk]; !ok {
+				expiredKeys[tk] = make([]string, 0, len(entries))
+			}
+			expiredKeys[tk] = append(expiredKeys[tk], key)
+		}
+	}
+	for tk, keys := range expiredKeys {
+		for _, key := range keys {
+			delete(c.entries[tk], key)
+		}
+		if len(c.entries[tk]) == 0 {
+			delete(c.entries, tk)
+		}
+	}
 }
