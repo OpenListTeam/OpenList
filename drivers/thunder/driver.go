@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -68,6 +69,7 @@ func (x *Thunder) Init(ctx context.Context) (err error) {
 				PackageName:       "com.xunlei.downloadprovider",
 				UserAgent:         "ANDROID-com.xunlei.downloadprovider/8.31.0.9726 netWorkType/5G appid/40 deviceName/Xiaomi_M2004j7ac deviceModel/M2004J7AC OSVersion/12 protocolVersion/301 platformVersion/10 sdkVersion/512000 Oauth2Client/0.9 (Linux 4_14_186-perf-gddfs8vbb238b) (JAVA 0)",
 				DownloadUserAgent: "Dalvik/2.1.0 (Linux; U; Android 12; M2004J7AC Build/SP1A.210812.016)",
+				Space:             x.Space,
 				refreshCTokenCk: func(token string) {
 					x.CaptchaToken = token
 					op.MustSaveDriverStorage(x)
@@ -167,6 +169,7 @@ func (x *ThunderExpert) Init(ctx context.Context) (err error) {
 				UserAgent:         x.UserAgent,
 				DownloadUserAgent: x.DownloadUserAgent,
 				UseVideoUrl:       x.UseVideoUrl,
+				Space:             x.Space,
 
 				refreshCTokenCk: func(token string) {
 					x.CaptchaToken = token
@@ -281,7 +284,7 @@ func (xc *XunLeiCommon) Link(ctx context.Context, file model.Obj, args model.Lin
 	_, err := xc.Request(FILE_API_URL+"/{fileID}", http.MethodGet, func(r *resty.Request) {
 		r.SetContext(ctx)
 		r.SetPathParam("fileID", file.GetID())
-		//r.SetQueryParam("space", "")
+		r.SetQueryParam("space", xc.Space)
 	}, &lFile)
 	if err != nil {
 		return nil, err
@@ -322,6 +325,7 @@ func (xc *XunLeiCommon) MakeDir(ctx context.Context, parentDir model.Obj, dirNam
 			"kind":      FOLDER,
 			"name":      dirName,
 			"parent_id": parentDir.GetID(),
+			"space":     xc.Space,
 		})
 	}, nil)
 	return err
@@ -331,8 +335,9 @@ func (xc *XunLeiCommon) Move(ctx context.Context, srcObj, dstDir model.Obj) erro
 	_, err := xc.Request(FILE_API_URL+":batchMove", http.MethodPost, func(r *resty.Request) {
 		r.SetContext(ctx)
 		r.SetBody(&base.Json{
-			"to":  base.Json{"parent_id": dstDir.GetID()},
-			"ids": []string{srcObj.GetID()},
+			"to":    base.Json{"parent_id": dstDir.GetID()},
+			"ids":   []string{srcObj.GetID()},
+			"space": xc.Space,
 		})
 	}, nil)
 	return err
@@ -342,7 +347,10 @@ func (xc *XunLeiCommon) Rename(ctx context.Context, srcObj model.Obj, newName st
 	_, err := xc.Request(FILE_API_URL+"/{fileID}", http.MethodPatch, func(r *resty.Request) {
 		r.SetContext(ctx)
 		r.SetPathParam("fileID", srcObj.GetID())
-		r.SetBody(&base.Json{"name": newName})
+		r.SetBody(&base.Json{
+			"name":  newName,
+			"space": xc.Space,
+		})
 	}, nil)
 	return err
 }
@@ -351,8 +359,9 @@ func (xc *XunLeiCommon) Copy(ctx context.Context, srcObj, dstDir model.Obj) erro
 	_, err := xc.Request(FILE_API_URL+":batchCopy", http.MethodPost, func(r *resty.Request) {
 		r.SetContext(ctx)
 		r.SetBody(&base.Json{
-			"to":  base.Json{"parent_id": dstDir.GetID()},
-			"ids": []string{srcObj.GetID()},
+			"to":    base.Json{"parent_id": dstDir.GetID()},
+			"ids":   []string{srcObj.GetID()},
+			"space": xc.Space,
 		})
 	}, nil)
 	return err
@@ -362,6 +371,7 @@ func (xc *XunLeiCommon) Remove(ctx context.Context, obj model.Obj) error {
 	_, err := xc.Request(FILE_API_URL+"/{fileID}/trash", http.MethodPatch, func(r *resty.Request) {
 		r.SetContext(ctx)
 		r.SetPathParam("fileID", obj.GetID())
+		r.SetQueryParam("space", xc.Space)
 		r.SetBody("{}")
 	}, nil)
 	return err
@@ -387,6 +397,7 @@ func (xc *XunLeiCommon) Put(ctx context.Context, dstDir model.Obj, file model.Fi
 			"size":        file.GetSize(),
 			"hash":        gcid,
 			"upload_type": UPLOAD_TYPE_RESUMABLE,
+			"space":       xc.Space,
 		})
 	}, &resp)
 	if err != nil {
@@ -430,7 +441,7 @@ func (xc *XunLeiCommon) getFiles(ctx context.Context, folderId string) ([]model.
 		_, err := xc.Request(FILE_API_URL, http.MethodGet, func(r *resty.Request) {
 			r.SetContext(ctx)
 			r.SetQueryParams(map[string]string{
-				"space":      "",
+				"space":      xc.Space,
 				"__type":     "drive",
 				"refresh":    "true",
 				"__sync":     "true",
@@ -440,6 +451,17 @@ func (xc *XunLeiCommon) getFiles(ctx context.Context, folderId string) ([]model.
 				"limit":      "100",
 				"filters":    `{"phase":{"eq":"PHASE_TYPE_COMPLETE"},"trashed":{"eq":false}}`,
 			})
+			// 获取硬盘挂载目录等
+			if xc.Space != "" {
+				r.SetQueryParamsFromValues(url.Values{
+					"with": []string{
+						"withCategoryDiskMountPath",
+						"withCategoryDriveCachePath",
+						"withCategoryHistoryDownloadPath",
+						"withReadOnlyFS",
+					},
+				})
+			}
 		}, &fileList)
 		if err != nil {
 			return nil, err
@@ -576,6 +598,7 @@ func (xc *XunLeiCommon) OfflineDownload(ctx context.Context, fileUrl string, par
 			"name":        fileName,
 			"parent_id":   parentDir.GetID(),
 			"upload_type": UPLOAD_TYPE_URL,
+			"space":       xc.Space,
 			"url": base.Json{
 				"url": fileUrl,
 			},
@@ -602,6 +625,7 @@ func (xc *XunLeiCommon) OfflineList(ctx context.Context, nextPageToken string) (
 				"type":       "offline",
 				"limit":      "10000",
 				"page_token": nextPageToken,
+				"space":      xc.Space,
 			})
 	}, &resp)
 
@@ -618,6 +642,7 @@ func (xc *XunLeiCommon) DeleteOfflineTasks(ctx context.Context, taskIDs []string
 			SetQueryParams(map[string]string{
 				"task_ids":     strings.Join(taskIDs, ","),
 				"delete_files": strconv.FormatBool(deleteFiles),
+				"space":        xc.Space,
 			})
 	}, nil)
 	if err != nil {
