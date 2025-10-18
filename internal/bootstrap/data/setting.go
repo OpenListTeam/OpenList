@@ -132,7 +132,8 @@ func InitialSettings() []model.SettingItem {
 		"Google":"https://docs.google.com/gview?url=$e_url&embedded=true"
 	},
 	"pdf": {
-		"PDF.js":"https://res.oplist.org/pdf.js/web/viewer.html?file=$e_url"
+		"PDF.js":"https://res.oplist.org/pdf.js/web/viewer.html?file=$e_url",
+		"Browser":"$url?inline_preview=true"
 	},
 	"epub": {
 		"EPUB.js":"https://res.oplist.org/epub.js/viewer.html?url=$e_url"

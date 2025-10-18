@@ -18,14 +18,18 @@ import (
 )
 
 func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.Obj) error {
+
+	// check if query param "inline_preview" is true
+	inlinePreview := r.URL.Query().Get("inline_preview") == "true"
+
 	if link.MFile != nil {
-		attachHeader(w, file, link)
+		attachHeader(w, file, link, inlinePreview)
 		http.ServeContent(w, r, file.GetName(), file.ModTime(), link.MFile)
 		return nil
 	}
 
 	if link.Concurrency > 0 || link.PartSize > 0 {
-		attachHeader(w, file, link)
+		attachHeader(w, file, link, inlinePreview)
 		size := link.ContentLength
 		if size <= 0 {
 			size = file.GetSize()
@@ -40,7 +44,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 	}
 
 	if link.RangeReader != nil {
-		attachHeader(w, file, link)
+		attachHeader(w, file, link, inlinePreview)
 		size := link.ContentLength
 		if size <= 0 {
 			size = file.GetSize()
@@ -70,9 +74,11 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 	})
 	return err
 }
-func attachHeader(w http.ResponseWriter, file model.Obj, link *model.Link) {
+func attachHeader(w http.ResponseWriter, file model.Obj, link *model.Link, inlinePreview bool) {
 	fileName := file.GetName()
-	w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(fileName))
+	if !inlinePreview {
+		w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(fileName))
+	}
 	w.Header().Set("Content-Type", utils.GetMimeType(fileName))
 	size := link.ContentLength
 	if size <= 0 {
