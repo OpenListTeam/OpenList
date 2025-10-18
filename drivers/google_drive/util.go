@@ -304,6 +304,7 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 			up(float64(offset+chunkSize) / float64(file.GetSize()) * 100)
 			return nil
 		},
+			retry.Context(ctx),
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second))
