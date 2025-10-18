@@ -374,16 +374,10 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		}
 	}
 
-	noLinkSF := storage.Config().NoLinkSF
-	var olM *objWithLink
 	fn := func() (*objWithLink, error) {
 		ol, err := driverExtract(ctx, storage, path, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
-		}
-		if ol.link.MFile != nil && !noLinkSF {
-			olM = ol
-			return nil, errLinkMFileCache
 		}
 		if ol.link.Expiration != nil {
 			extractCache.SetWithTTL(key, ol, *ol.link.Expiration)
@@ -393,7 +387,7 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return ol, nil
 	}
 
-	if noLinkSF {
+	if storage.Config().NoLinkSF {
 		ol, err := fn()
 		if err != nil {
 			return nil, nil, err
@@ -403,22 +397,11 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 
 	for {
 		ol, err, _ := extractG.Do(key, fn)
-		switch err {
-		case nil:
-			if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
-				return ol.link, ol.obj, nil
-			}
-		case errLinkMFileCache:
-			if olM != nil {
-				return olM.link, olM.obj, nil
-			}
-			noLinkSF = true
-			if ol, err = fn(); err != nil {
-				return nil, nil, err
-			}
-			return ol.link, ol.obj, nil
-		default:
+		if err != nil {
 			return nil, nil, err
+		}
+		if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+			return ol.link, ol.obj, nil
 		}
 	}
 }

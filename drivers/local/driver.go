@@ -235,6 +235,7 @@ func (d *Local) Get(ctx context.Context, path string) (model.Obj, error) {
 func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	fullPath := file.GetPath()
 	link := &model.Link{}
+	var MFile model.File
 	if args.Type == "thumb" && utils.Ext(file.GetName()) != "svg" {
 		var buf *bytes.Buffer
 		var thumbPath *string
@@ -261,9 +262,9 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 				return nil, err
 			}
 			link.ContentLength = int64(stat.Size())
-			link.MFile = open
+			MFile = open
 		} else {
-			link.MFile = bytes.NewReader(buf.Bytes())
+			MFile = bytes.NewReader(buf.Bytes())
 			link.ContentLength = int64(buf.Len())
 		}
 	} else {
@@ -272,14 +273,11 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 			return nil, err
 		}
 		link.ContentLength = file.GetSize()
-		link.MFile = open
+		MFile = open
 	}
-	link.SyncClosers.AddIfCloser(link.MFile)
-	if !d.Config().NoLinkSF {
-		link.RangeReader = stream.GetRangeReaderFromMFile(link.ContentLength, link.MFile)
-		link.RequireReference = link.SyncClosers.Length() > 0
-		link.MFile = nil
-	}
+	link.SyncClosers.AddIfCloser(MFile)
+	link.RangeReader = stream.GetRangeReaderFromMFile(link.ContentLength, MFile)
+	link.RequireReference = link.SyncClosers.Length() > 0
 	return link, nil
 }
 

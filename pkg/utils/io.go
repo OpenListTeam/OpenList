@@ -203,7 +203,7 @@ func (c *SyncClosers) AcquireReference() bool {
 	return false
 }
 
-const closersClosed = math.MinInt16
+const closersClosed = math.MinInt32
 
 func (c *SyncClosers) Close() error {
 	for {

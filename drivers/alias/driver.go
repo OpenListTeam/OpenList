@@ -211,9 +211,6 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		if resultLink.ContentLength == 0 {
 			resultLink.ContentLength = fi.GetSize()
 		}
-		if resultLink.MFile != nil {
-			return &resultLink, nil
-		}
 		if d.DownloadConcurrency > 0 {
 			resultLink.Concurrency = d.DownloadConcurrency
 		}

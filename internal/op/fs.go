@@ -161,7 +161,6 @@ func GetUnwrap(ctx context.Context, storage driver.Driver, path string) (model.O
 }
 
 var linkG = singleflight.Group[*objWithLink]{}
-var errLinkMFileCache = stderrors.New("ErrLinkMFileCache")
 
 // Link get link, if is an url. should have an expiry time
 func Link(ctx context.Context, storage driver.Driver, path string, args model.LinkArgs) (*model.Link, model.Obj, error) {
@@ -192,8 +191,6 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 	}
 
-	noLinkSF := storage.Config().NoLinkSF
-	var olM *objWithLink
 	fn := func() (*objWithLink, error) {
 		file, err := GetUnwrap(ctx, storage, path)
 		if err != nil {
@@ -208,10 +205,6 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errors.Wrapf(err, "failed get link")
 		}
 		ol := &objWithLink{link: link, obj: file}
-		if link.MFile != nil && !noLinkSF {
-			olM = ol
-			return nil, errLinkMFileCache
-		}
 		if link.Expiration != nil {
 			Cache.linkCache.SetTypeWithTTL(key, typeKey, ol, *link.Expiration)
 		} else {
@@ -220,7 +213,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return ol, nil
 	}
 
-	if noLinkSF {
+	if storage.Config().NoLinkSF {
 		ol, err := fn()
 		if err != nil {
 			return nil, nil, err
@@ -231,27 +224,16 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	retry := 0
 	for {
 		ol, err, _ := linkG.Do(key+"/"+typeKey, fn)
-		switch err {
-		case nil:
-			if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
-				if retry > 1 {
-					log.Warnf("Link retry successed after %d times: %s %s", retry, key, typeKey)
-				}
-				return ol.link, ol.obj, nil
-			}
-			retry++
-		case errLinkMFileCache:
-			if olM != nil {
-				return olM.link, olM.obj, nil
-			}
-			noLinkSF = true
-			if ol, err = fn(); err != nil {
-				return nil, nil, err
-			}
-			return ol.link, ol.obj, nil
-		default:
+		if err != nil {
 			return nil, nil, err
 		}
+		if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+			if retry > 1 {
+				log.Warnf("Link retry successed after %d times: %s %s", retry, key, typeKey)
+			}
+			return ol.link, ol.obj, nil
+		}
+		retry++
 	}
 }
 

@@ -36,7 +36,6 @@ var config = driver.Config{
 	OnlyProxy:   true,
 	DefaultRoot: "/",
 	NoLinkURL:   true,
-	NoLinkSF:    false,
 }
 
 func init() {

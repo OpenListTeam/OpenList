@@ -20,7 +20,6 @@ var config = driver.Config{
 	DefaultRoot: ".",
 	NoCache:     true,
 	NoLinkURL:   true,
-	NoLinkSF:    false,
 }
 
 func init() {

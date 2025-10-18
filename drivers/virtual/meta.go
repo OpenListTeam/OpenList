@@ -19,7 +19,6 @@ var config = driver.Config{
 	OnlyProxy: true,
 	NeedMs:    true,
 	NoLinkURL: true,
-	NoLinkSF:  true,
 }
 
 func init() {

@@ -27,9 +27,6 @@ func (f RangeReaderFunc) RangeRead(ctx context.Context, httpRange http_range.Ran
 }
 
 func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, error) {
-	if link.MFile != nil {
-		return GetRangeReaderFromMFile(size, link.MFile), nil
-	}
 	if link.Concurrency > 0 || link.PartSize > 0 {
 		down := net.NewDownloader(func(d *net.Downloader) {
 			d.Concurrency = link.Concurrency

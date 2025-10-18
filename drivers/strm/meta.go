@@ -22,7 +22,6 @@ var config = driver.Config{
 	NoUpload:    true,
 	DefaultRoot: "/",
 	NoLinkURL:   true,
-	NoLinkSF:    true,
 }
 
 func init() {

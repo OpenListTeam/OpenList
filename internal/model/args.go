@@ -28,7 +28,6 @@ type Link struct {
 	URL         string        `json:"url"`    // most common way
 	Header      http.Header   `json:"header"` // needed header (for url)
 	RangeReader RangeReaderIF `json:"-"`      // recommended way if can't use URL
-	MFile       File          `json:"-"`      // best for local,smb... file system, which exposes MFile
 
 	Expiration *time.Duration // local cache expire Duration
 

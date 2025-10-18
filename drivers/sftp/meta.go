@@ -22,7 +22,6 @@ var config = driver.Config{
 	DefaultRoot: "/",
 	CheckStatus: true,
 	NoLinkURL:   true,
-	NoLinkSF:    false,
 }
 
 func init() {
