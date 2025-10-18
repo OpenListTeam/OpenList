@@ -283,11 +283,15 @@ func HttpClient() *http.Client {
 }
 
 func NewHttpClient() *http.Client {
+	transport := &http.Transport{
+		Proxy:           http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
+	}
+
+	SetProxyIfConfigured(transport)
+
 	return &http.Client{
-		Timeout: time.Hour * 48,
-		Transport: &http.Transport{
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
-		},
+		Timeout:   time.Hour * 48,
+		Transport: transport,
 	}
 }

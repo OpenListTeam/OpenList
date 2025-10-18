@@ -25,6 +25,7 @@ func InitClient() {
 		}),
 	).SetTLSClientConfig(&tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify})
 	NoRedirectClient.SetHeader("user-agent", UserAgent)
+	net.SetRestyProxyIfConfigured(NoRedirectClient)
 
 	RestyClient = NewRestyClient()
 	HttpClient = net.NewHttpClient()
@@ -37,5 +38,7 @@ func NewRestyClient() *resty.Client {
 		SetRetryResetReaders(true).
 		SetTimeout(DefaultTimeout).
 		SetTLSClientConfig(&tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify})
+
+	net.SetRestyProxyIfConfigured(client)
 	return client
 }
