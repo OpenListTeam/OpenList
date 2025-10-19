@@ -17,9 +17,8 @@ type Config struct {
 	ProxyRangeOption  bool `json:"-"`
 	// if the driver returns Link without URL, this should be set to true
 	NoLinkURL bool `json:"-"`
-	// LinkCacheType=1 add IP to cache key
-	//
-	// LinkCacheType=2 add UserAgent to cache key
+	// LinkCacheType=0x01 add IP to cache key
+	// LinkCacheType=0x10 add UserAgent to cache key
 	LinkCacheType uint8 `json:"-"`
 }
 

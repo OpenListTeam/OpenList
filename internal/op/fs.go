@@ -170,17 +170,17 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 	typeKey := args.Type
 	var typeKeys []string
-	switch storage.Config().LinkCacheType {
-	case 1:
-		if args.IP != "" {
-			typeKey += "/" + args.IP
-			typeKeys = []string{typeKey}
-		}
-	case 2:
+	cacheType := storage.Config().LinkCacheType
+	if cacheType&1 != 0 && args.IP != "" {
+		typeKey += "/" + args.IP
+	}
+	if cacheType&2 != 0 {
 		if ua := args.Header.Get("User-Agent"); ua != "" {
 			typeKey += "/" + ua
-			typeKeys = []string{typeKey}
 		}
+	}
+	if typeKey != args.Type {
+		typeKeys = []string{typeKey}
 	}
 
 	key := Key(storage, path)
