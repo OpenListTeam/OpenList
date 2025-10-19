@@ -27,8 +27,15 @@ type OpenList struct {
 
 func (d *OpenList) Config() driver.Config {
 	if d.PassUAToUpsteam {
+		var cacheType uint8
+		if d.PassIPToUpsteam {
+			cacheType |= 1
+		}
+		if d.PassUAToUpsteam {
+			cacheType |= 2
+		}
 		c := config
-		c.LinkCacheType = 2 // add User-Agent to cache key
+		c.LinkCacheType = cacheType
 		return c
 	}
 	return config
@@ -115,19 +122,29 @@ func (d *OpenList) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 
 func (d *OpenList) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp common.Resp[FsGetResp]
+	headers := map[string]string{
+		"User-Agent": base.UserAgent,
+	}
 	// if PassUAToUpsteam is true, then pass the user-agent to the upstream
-	userAgent := base.UserAgent
 	if d.PassUAToUpsteam {
-		userAgent = args.Header.Get("user-agent")
-		if userAgent == "" {
-			userAgent = base.UserAgent
+		userAgent := args.Header.Get("user-agent")
+		if userAgent != "" {
+			headers["User-Agent"] = base.UserAgent
+		}
+	}
+	// if PassIPToUpsteam is true, then pass the ip address to the upstream
+	if d.PassUAToUpsteam {
+		ip := args.IP
+		if ip != "" {
+			headers["X-Forwarded-For"] = ip
+			headers["X-Real-Ip"] = ip
 		}
 	}
 	_, _, err := d.request("/fs/get", http.MethodPost, func(req *resty.Request) {
 		req.SetResult(&resp).SetBody(FsGetReq{
 			Path:     file.GetPath(),
 			Password: d.MetaPassword,
-		}).SetHeader("user-agent", userAgent)
+		}).SetHeaders(headers)
 	})
 	if err != nil {
 		return nil, err
