@@ -368,10 +368,10 @@ func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.O
 func (d *OpenList) ResolveLinkCacheMode(_ string) driver.LinkCacheMode {
 	var mode driver.LinkCacheMode
 	if d.PassIPToUpsteam {
-		mode |= driver.LinkCacheUA
+		mode |= driver.LinkCacheIP
 	}
 	if d.PassUAToUpsteam {
-		mode |= driver.LinkCacheIP
+		mode |= driver.LinkCacheUA
 	}
 	return mode
 }

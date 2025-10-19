@@ -535,11 +535,11 @@ func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 		if err == nil {
 			continue
 		}
-		cacheType := storage.Config().LinkCacheMode
-		if cacheType == -1 {
+		mode := storage.Config().LinkCacheMode
+		if mode == -1 {
 			return storage.(driver.LinkCacheModeResolver).ResolveLinkCacheMode(actualPath)
 		} else {
-			return cacheType
+			return mode
 		}
 	}
 	return 0
