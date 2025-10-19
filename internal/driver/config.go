@@ -17,9 +17,13 @@ type Config struct {
 	ProxyRangeOption  bool `json:"-"`
 	// if the driver returns Link without URL, this should be set to true
 	NoLinkURL bool `json:"-"`
-	// LinkCacheType=0x01 add IP to cache key
-	// LinkCacheType=0x10 add UserAgent to cache key
-	LinkCacheType uint8 `json:"-"`
+	// LinkCacheType
+	//  =-1 use LinkCacheTypeGetter interface get the value
+	//  =0  no extra info added to cache key (default)
+	//  =1  add IP to cache key
+	//  =2  add UserAgent to cache key
+	//  =3  add IP and UserAgent to cache key
+	LinkCacheType int8 `json:"-"`
 }
 
 func (c Config) MustProxy() bool {

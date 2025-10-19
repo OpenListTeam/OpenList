@@ -213,3 +213,8 @@ type WithDetails interface {
 type Reference interface {
 	InitReference(storage Driver) error
 }
+
+type LinkCacheTypeGetter interface {
+	// GetLinkCacheType get the LinkCacheType for the driver
+	GetLinkCacheType(path string) int8
+}

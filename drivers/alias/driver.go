@@ -524,4 +524,25 @@ func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj,
 	}
 }
 
+func (d *Alias) GetLinkCacheType(path string) int8 {
+	root, sub := d.getRootAndPath(path)
+	dsts, ok := d.pathMap[root]
+	if !ok {
+		return 0
+	}
+	for _, dst := range dsts {
+		storage, actualPath, err := op.GetStorageAndActualPath(stdpath.Join(dst, sub))
+		if err == nil {
+			continue
+		}
+		cacheType := storage.Config().LinkCacheType
+		if cacheType == -1 {
+			return storage.(driver.LinkCacheTypeGetter).GetLinkCacheType(actualPath)
+		} else {
+			return cacheType
+		}
+	}
+	return 0
+}
+
 var _ driver.Driver = (*Alias)(nil)

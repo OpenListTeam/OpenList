@@ -171,6 +171,9 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	typeKey := args.Type
 	var typeKeys []string
 	cacheType := storage.Config().LinkCacheType
+	if cacheType == -1 {
+		cacheType = storage.(driver.LinkCacheTypeGetter).GetLinkCacheType(path)
+	}
 	if cacheType&1 != 0 && args.IP != "" {
 		typeKey += "/" + args.IP
 	}

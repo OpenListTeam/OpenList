@@ -26,18 +26,6 @@ type OpenList struct {
 }
 
 func (d *OpenList) Config() driver.Config {
-	if d.PassUAToUpsteam {
-		var cacheType uint8
-		if d.PassIPToUpsteam {
-			cacheType |= 1
-		}
-		if d.PassUAToUpsteam {
-			cacheType |= 2
-		}
-		c := config
-		c.LinkCacheType = cacheType
-		return c
-	}
 	return config
 }
 
@@ -133,7 +121,7 @@ func (d *OpenList) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 		}
 	}
 	// if PassIPToUpsteam is true, then pass the ip address to the upstream
-	if d.PassUAToUpsteam {
+	if d.PassIPToUpsteam {
 		ip := args.IP
 		if ip != "" {
 			headers["X-Forwarded-For"] = ip
@@ -377,8 +365,15 @@ func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.O
 	return err
 }
 
-//func (d *OpenList) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
-//	return nil, errs.NotSupport
-//}
+func (d *OpenList) GetLinkCacheType(_ string) uint8 {
+	var cacheType uint8
+	if d.PassIPToUpsteam {
+		cacheType |= 0b1
+	}
+	if d.PassUAToUpsteam {
+		cacheType |= 0b10
+	}
+	return cacheType
+}
 
 var _ driver.Driver = (*OpenList)(nil)
