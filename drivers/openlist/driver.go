@@ -365,15 +365,15 @@ func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.O
 	return err
 }
 
-func (d *OpenList) GetLinkCacheType(_ string) uint8 {
-	var cacheType uint8
+func (d *OpenList) ResolveLinkCacheMode(_ string) driver.LinkCacheMode {
+	var mode driver.LinkCacheMode
 	if d.PassIPToUpsteam {
-		cacheType |= 0b1
+		mode |= driver.LinkCacheUA
 	}
 	if d.PassUAToUpsteam {
-		cacheType |= 0b10
+		mode |= driver.LinkCacheIP
 	}
-	return cacheType
+	return mode
 }
 
 var _ driver.Driver = (*OpenList)(nil)

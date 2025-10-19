@@ -43,23 +43,14 @@ func (c *TypedCache[T]) SetTypeWithExpirable(key, typeKey string, value T, exp E
 	}
 }
 
-// Prefer to use typeKeys for lookup; if none match, use fallbackTypeKey for lookup
-func (c *TypedCache[T]) GetType(key, fallbackTypeKey string, typeKeys ...string) (T, bool) {
+func (c *TypedCache[T]) GetType(key, typeKey string) (T, bool) {
 	c.mu.RLock()
 	cache, exists := c.entries[key]
 	if !exists {
 		c.mu.RUnlock()
 		return *new(T), false
 	}
-	entry, exists := cache[fallbackTypeKey]
-	if len(typeKeys) > 0 {
-		for _, tk := range typeKeys {
-			if entry, exists = cache[tk]; exists {
-				fallbackTypeKey = tk
-				break
-			}
-		}
-	}
+	entry, exists := cache[typeKey]
 	if !exists {
 		c.mu.RUnlock()
 		return *new(T), false
@@ -72,8 +63,8 @@ func (c *TypedCache[T]) GetType(key, fallbackTypeKey string, typeKeys ...string)
 	}
 
 	c.mu.Lock()
-	if cache[fallbackTypeKey] == entry {
-		delete(cache, fallbackTypeKey)
+	if cache[typeKey] == entry {
+		delete(cache, typeKey)
 		if len(cache) == 0 {
 			delete(c.entries, key)
 		}

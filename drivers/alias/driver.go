@@ -524,7 +524,7 @@ func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj,
 	}
 }
 
-func (d *Alias) GetLinkCacheType(path string) int8 {
+func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 	root, sub := d.getRootAndPath(path)
 	dsts, ok := d.pathMap[root]
 	if !ok {
@@ -535,9 +535,9 @@ func (d *Alias) GetLinkCacheType(path string) int8 {
 		if err == nil {
 			continue
 		}
-		cacheType := storage.Config().LinkCacheType
+		cacheType := storage.Config().LinkCacheMode
 		if cacheType == -1 {
-			return storage.(driver.LinkCacheTypeGetter).GetLinkCacheType(actualPath)
+			return storage.(driver.LinkCacheModeResolver).ResolveLinkCacheMode(actualPath)
 		} else {
 			return cacheType
 		}

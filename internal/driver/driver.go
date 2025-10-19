@@ -214,7 +214,7 @@ type Reference interface {
 	InitReference(storage Driver) error
 }
 
-type LinkCacheTypeGetter interface {
-	// GetLinkCacheType get the LinkCacheType for the driver
-	GetLinkCacheType(path string) int8
+type LinkCacheModeResolver interface {
+	// ResolveLinkCacheMode returns the LinkCacheMode for the given path.
+	ResolveLinkCacheMode(path string) LinkCacheMode
 }

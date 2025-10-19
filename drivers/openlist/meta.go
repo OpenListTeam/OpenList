@@ -23,7 +23,7 @@ var config = driver.Config{
 	DefaultRoot:      "/",
 	CheckStatus:      true,
 	ProxyRangeOption: true,
-	LinkCacheType:    -1,
+	LinkCacheMode:    driver.LinkCacheAuto,
 }
 
 func init() {

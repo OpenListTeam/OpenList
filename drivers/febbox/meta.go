@@ -19,7 +19,7 @@ var config = driver.Config{
 	Name:          "FebBox",
 	NoUpload:      true,
 	DefaultRoot:   "0",
-	LinkCacheType: 1,
+	LinkCacheMode: driver.LinkCacheIP,
 }
 
 func init() {

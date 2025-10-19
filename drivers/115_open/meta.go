@@ -19,7 +19,7 @@ type Addition struct {
 var config = driver.Config{
 	Name:          "115 Open",
 	DefaultRoot:   "0",
-	LinkCacheType: 2,
+	LinkCacheMode: driver.LinkCacheUA,
 }
 
 func init() {
