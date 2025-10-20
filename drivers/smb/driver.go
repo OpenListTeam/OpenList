@@ -11,7 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 
-	"github.com/hirochachacha/go-smb2"
+	"github.com/cloudsoda/go-smb2"
 )
 
 type SMB struct {
@@ -33,7 +33,7 @@ func (d *SMB) Init(ctx context.Context) error {
 	if !strings.Contains(d.Addition.Address, ":") {
 		d.Addition.Address = d.Addition.Address + ":445"
 	}
-	return d._initFS()
+	return d._initFS(ctx)
 }
 
 func (d *SMB) Drop(ctx context.Context) error {
@@ -44,7 +44,7 @@ func (d *SMB) Drop(ctx context.Context) error {
 }
 
 func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return nil, err
 	}
 	fullPath := dir.GetPath()
@@ -71,7 +71,7 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 }
 
 func (d *SMB) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return nil, err
 	}
 	fullPath := file.GetPath()
@@ -86,20 +86,15 @@ func (d *SMB) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		Limiter: stream.ServerDownloadLimit,
 		Ctx:     ctx,
 	}
-	if !d.Config().OnlyLinkMFile {
-		return &model.Link{
-			RangeReader: stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
-			SyncClosers: utils.NewSyncClosers(remoteFile),
-		}, nil
-	}
 	return &model.Link{
-		MFile:       mFile,
-		SyncClosers: utils.NewSyncClosers(remoteFile),
+		RangeReader:      stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
+		SyncClosers:      utils.NewSyncClosers(remoteFile),
+		RequireReference: true,
 	}, nil
 }
 
 func (d *SMB) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return err
 	}
 	fullPath := filepath.Join(parentDir.GetPath(), dirName)
@@ -113,7 +108,7 @@ func (d *SMB) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) 
 }
 
 func (d *SMB) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return err
 	}
 	srcPath := srcObj.GetPath()
@@ -128,7 +123,7 @@ func (d *SMB) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *SMB) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return err
 	}
 	srcPath := srcObj.GetPath()
@@ -143,7 +138,7 @@ func (d *SMB) Rename(ctx context.Context, srcObj model.Obj, newName string) erro
 }
 
 func (d *SMB) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return err
 	}
 	srcPath := srcObj.GetPath()
@@ -163,7 +158,7 @@ func (d *SMB) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *SMB) Remove(ctx context.Context, obj model.Obj) error {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return err
 	}
 	var err error
@@ -182,7 +177,7 @@ func (d *SMB) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return err
 	}
 	fullPath := filepath.Join(dstDir.GetPath(), stream.GetName())
@@ -206,7 +201,7 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 }
 
 func (d *SMB) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	if err := d.checkConn(); err != nil {
+	if err := d.checkConn(ctx); err != nil {
 		return nil, err
 	}
 	stat, err := d.fs.Statfs(d.RootFolderPath)

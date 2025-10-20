@@ -386,7 +386,7 @@ func Link(c *gin.Context) {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	if storage.Config().NoLinkURL || storage.Config().OnlyLinkMFile {
+	if storage.Config().NoLinkURL {
 		common.SuccessResp(c, model.Link{
 			URL: fmt.Sprintf("%s/p%s?d&sign=%s",
 				common.GetApiUrl(c),

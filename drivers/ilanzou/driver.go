@@ -97,13 +97,13 @@ func (d *ILanZou) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 		}
 		obj := model.Object{
 			ID: strconv.FormatInt(f.FileId, 10),
-			//Path:     "",
+			// Path:     "",
 			Name:     f.FileName,
 			Size:     f.FileSize * 1024,
 			Modified: updTime,
 			Ctime:    updTime,
 			IsFolder: false,
-			//HashInfo: utils.HashInfo{},
+			// HashInfo: utils.HashInfo{},
 		}
 		if f.FileType == 2 {
 			obj.IsFolder = true
@@ -185,13 +185,13 @@ func (d *ILanZou) MakeDir(ctx context.Context, parentDir model.Obj, dirName stri
 	}
 	return &model.Object{
 		ID: utils.Json.Get(res, "list", 0, "id").ToString(),
-		//Path:     "",
+		// Path:     "",
 		Name:     dirName,
 		Size:     0,
 		Modified: time.Now(),
 		Ctime:    time.Now(),
 		IsFolder: true,
-		//HashInfo: utils.HashInfo{},
+		// HashInfo: utils.HashInfo{},
 	}, nil
 }
 
@@ -239,7 +239,7 @@ func (d *ILanZou) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 	}
 	return &model.Object{
 		ID: srcObj.GetID(),
-		//Path:     "",
+		// Path:     "",
 		Name:     newName,
 		Size:     srcObj.GetSize(),
 		Modified: time.Now(),
@@ -392,13 +392,29 @@ func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 	}
 	return &model.Object{
 		ID: strconv.FormatInt(file.FileId, 10),
-		//Path:     ,
+		// Path:     ,
 		Name:     file.FileName,
 		Size:     s.GetSize(),
 		Modified: s.ModTime(),
 		Ctime:    s.CreateTime(),
 		IsFolder: false,
 		HashInfo: utils.NewHashInfo(utils.MD5, etag),
+	}, nil
+}
+
+func (d *ILanZou) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	res, err := d.proved("/user/account/map", http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	totalSize := utils.Json.Get(res, "map", "totalSize").ToUint64() * 1024
+	rewardSize := utils.Json.Get(res, "map", "rewardSize").ToUint64() * 1024
+	total := totalSize + rewardSize
+	used := utils.Json.Get(res, "map", "usedSize").ToUint64() * 1024
+	return &model.StorageDetails{
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }
 

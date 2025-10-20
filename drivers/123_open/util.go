@@ -1,6 +1,7 @@
 package _123_open
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/json"
 	"errors"
@@ -18,7 +19,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var ( //不同情况下获取的AccessTokenQPS限制不同 如下模块化易于拓展
+var ( // 不同情况下获取的AccessTokenQPS限制不同 如下模块化易于拓展
 	Api = "https://open-api.123pan.com"
 
 	AccessToken    = InitApiInfo(Api+"/api/v1/access_token", 1)
@@ -33,6 +34,9 @@ var ( //不同情况下获取的AccessTokenQPS限制不同 如下模块化易于
 	Trash          = InitApiInfo(Api+"/api/v1/file/trash", 2)
 	UploadCreate   = InitApiInfo(Api+"/upload/v2/file/create", 2)
 	UploadComplete = InitApiInfo(Api+"/upload/v2/file/upload_complete", 0)
+
+	OfflineDownload        = InitApiInfo(Api+"/api/v1/offline/download", 1)
+	OfflineDownloadProcess = InitApiInfo(Api+"/api/v1/offline/download/process", 5)
 )
 
 func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
@@ -82,7 +86,6 @@ func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCall
 			return nil, errors.New(baseResp.Message)
 		}
 	}
-
 }
 
 func (d *Open123) flushAccessToken() error {
@@ -148,21 +151,23 @@ func (d *Open123) SignURL(originURL, privateKey string, uid uint64, validDuratio
 	return objURL.String(), nil
 }
 
-func (d *Open123) getUserInfo() (*UserInfoResp, error) {
+func (d *Open123) getUserInfo(ctx context.Context) (*UserInfoResp, error) {
 	var resp UserInfoResp
 
-	if _, err := d.Request(UserInfo, http.MethodGet, nil, &resp); err != nil {
+	if _, err := d.Request(UserInfo, http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp); err != nil {
 		return nil, err
 	}
 
 	return &resp, nil
 }
 
-func (d *Open123) getUID() (uint64, error) {
+func (d *Open123) getUID(ctx context.Context) (uint64, error) {
 	if d.UID != 0 {
 		return d.UID, nil
 	}
-	resp, err := d.getUserInfo()
+	resp, err := d.getUserInfo(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -184,7 +189,6 @@ func (d *Open123) getFiles(parentFileId int64, limit int, lastFileId int64) (*Fi
 				"searchData":   "",
 			})
 	}, &resp)
-
 	if err != nil {
 		return nil, err
 	}
@@ -275,4 +279,35 @@ func (d *Open123) trash(fileId int64) error {
 	}
 
 	return nil
+}
+
+func (d *Open123) createOfflineDownloadTask(ctx context.Context, url string, dirID, callback string) (taskID int, err error) {
+	body := base.Json{
+		"url":   url,
+		"dirID": dirID,
+	}
+	if len(callback) > 0 {
+		body["callBackUrl"] = callback
+	}
+	var resp OfflineDownloadResp
+	_, err = d.Request(OfflineDownload, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(body)
+	}, &resp)
+	if err != nil {
+		return 0, err
+	}
+	return resp.Data.TaskID, nil
+}
+
+func (d *Open123) queryOfflineDownloadStatus(ctx context.Context, taskID int) (process float64, status int, err error) {
+	var resp OfflineDownloadProcessResp
+	_, err = d.Request(OfflineDownloadProcess, http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(map[string]string{
+			"taskID": strconv.Itoa(taskID),
+		})
+	}, &resp)
+	if err != nil {
+		return .0, 0, err
+	}
+	return resp.Data.Process, resp.Data.Status, nil
 }

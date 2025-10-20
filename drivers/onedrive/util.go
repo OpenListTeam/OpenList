@@ -134,6 +134,9 @@ func (d *Onedrive) _refreshToken() error {
 }
 
 func (d *Onedrive) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	if d.ref != nil {
+		return d.ref.Request(url, method, callback, resp)
+	}
 	req := base.RestyClient.R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	if callback != nil {
@@ -294,4 +297,22 @@ func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.Fil
 		up(float64(finish) * 100 / float64(stream.GetSize()))
 	}
 	return nil
+}
+
+func (d *Onedrive) getDrive(ctx context.Context) (*DriveResp, error) {
+	var api string
+	host, _ := onedriveHostMap[d.Region]
+	if d.IsSharepoint {
+		api = fmt.Sprintf("%s/v1.0/sites/%s/drive", host.Api, d.SiteId)
+	} else {
+		api = fmt.Sprintf("%s/v1.0/me/drive", host.Api)
+	}
+	var resp DriveResp
+	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

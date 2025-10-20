@@ -9,8 +9,8 @@ import (
 type Driver interface {
 	Meta
 	Reader
-	//Writer
-	//Other
+	// Writer
+	// Other
 }
 
 type Meta interface {
@@ -45,11 +45,6 @@ type GetRooter interface {
 type Getter interface {
 	// Get file by path, the path haven't been joined with root path
 	Get(ctx context.Context, path string) (model.Obj, error)
-}
-
-type GetObjInfo interface {
-	// GetObjInfo get file info by path
-	GetObjInfo(ctx context.Context, path string) (model.Obj, error)
 }
 
 //type Writer interface {
@@ -217,4 +212,9 @@ type WithDetails interface {
 
 type Reference interface {
 	InitReference(storage Driver) error
+}
+
+type LinkCacheModeResolver interface {
+	// ResolveLinkCacheMode returns the LinkCacheMode for the given path.
+	ResolveLinkCacheMode(path string) LinkCacheMode
 }

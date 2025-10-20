@@ -137,3 +137,7 @@ func DeleteSharing(sid string) error {
 	sharingCache.Del(sid)
 	return db.DeleteSharingById(sid)
 }
+
+func DeleteSharingsByCreatorId(creatorId uint) error {
+	return db.DeleteSharingsByCreatorId(creatorId)
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
@@ -147,7 +148,7 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 	if Writer.IsWritten() {
 		log.Errorf("%s %s local proxy error: %+v", c.Request.Method, c.Request.URL.Path, err)
 	} else {
-		if statusCode, ok := errors.Unwrap(err).(net.HttpStatusCodeError); ok {
+		if statusCode, ok := errs.UnwrapOrSelf(err).(net.HttpStatusCodeError); ok {
 			common.ErrorPage(c, err, int(statusCode), true)
 		} else {
 			common.ErrorPage(c, err, 500, true)

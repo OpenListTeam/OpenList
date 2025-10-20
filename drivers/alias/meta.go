@@ -16,6 +16,7 @@ type Addition struct {
 	DownloadPartSize    int    `json:"download_part_size" default:"0" type:"number" required:"false" help:"Need to enable proxy. Unit: KB"`
 	Writable            bool   `json:"writable" type:"bool" default:"false"`
 	ProviderPassThrough bool   `json:"provider_pass_through" type:"bool" default:"false"`
+	DetailsPassThrough  bool   `json:"details_pass_through" type:"bool" default:"false"`
 }
 
 var config = driver.Config{
@@ -25,6 +26,7 @@ var config = driver.Config{
 	NoUpload:         false,
 	DefaultRoot:      "/",
 	ProxyRangeOption: true,
+	LinkCacheMode:    driver.LinkCacheAuto,
 }
 
 func init() {

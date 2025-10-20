@@ -19,6 +19,7 @@ func (a *ApiInfo) Require() {
 		a.token <- struct{}{}
 	}
 }
+
 func (a *ApiInfo) Release() {
 	if a.qps > 0 {
 		time.AfterFunc(time.Second, func() {
@@ -26,13 +27,16 @@ func (a *ApiInfo) Release() {
 		})
 	}
 }
+
 func (a *ApiInfo) SetQPS(qps int) {
 	a.qps = qps
 	a.token = make(chan struct{}, qps)
 }
+
 func (a *ApiInfo) NowLen() int {
 	return len(a.token)
 }
+
 func InitApiInfo(url string, qps int) *ApiInfo {
 	return &ApiInfo{
 		url:   url,
@@ -183,5 +187,20 @@ type UploadCompleteResp struct {
 	Data struct {
 		Completed bool  `json:"completed"`
 		FileID    int64 `json:"fileID"`
+	} `json:"data"`
+}
+
+type OfflineDownloadResp struct {
+	BaseResp
+	Data struct {
+		TaskID int `json:"taskID"`
+	} `json:"data"`
+}
+
+type OfflineDownloadProcessResp struct {
+	BaseResp
+	Data struct {
+		Process float64 `json:"process"`
+		Status  int     `json:"status"`
 	} `json:"data"`
 }

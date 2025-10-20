@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 )
@@ -113,7 +114,7 @@ func (d *Strm) Get(ctx context.Context, path string) (model.Obj, error) {
 		if err != nil {
 			continue
 		}
-		// fs.Get 没报错，说明不是strm生成的路径，需要直接返回
+		// fs.Get 没报错，说明不是strm驱动映射的路径，需要直接返回
 		size := int64(0)
 		if !obj.IsDir() {
 			size = obj.GetSize()
@@ -127,6 +128,11 @@ func (d *Strm) Get(ctx context.Context, path string) (model.Obj, error) {
 			IsFolder: obj.IsDir(),
 			HashInfo: obj.GetHash(),
 		}, nil
+	}
+	if strings.HasSuffix(path, ".strm") {
+		// 上面fs.Get都没找到且后缀为.strm
+		// 返回errs.NotSupport使得op.Get尝试从op.List中查找
+		return nil, errs.NotSupport
 	}
 	return nil, errs.ObjectNotFound
 }
@@ -156,7 +162,7 @@ func (d *Strm) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 	if file.GetID() == "strm" {
 		link := d.getLink(ctx, file.GetPath())
 		return &model.Link{
-			MFile: strings.NewReader(link),
+			RangeReader: stream.GetRangeReaderFromMFile(int64(len(link)), strings.NewReader(link)),
 		}, nil
 	}
 	// ftp,s3

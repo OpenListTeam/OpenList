@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -17,17 +18,17 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/go-cache"
+	gocache "github.com/OpenListTeam/go-cache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
-var archiveMetaCache = cache.NewMemCache(cache.WithShards[*model.ArchiveMetaProvider](64))
+var archiveMetaCache = gocache.NewMemCache(gocache.WithShards[*model.ArchiveMetaProvider](64))
 var archiveMetaG singleflight.Group[*model.ArchiveMetaProvider]
 
 func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, args model.ArchiveMetaArgs) (*model.ArchiveMetaProvider, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
 	key := Key(storage, path)
@@ -37,14 +38,14 @@ func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 			return nil, errors.Wrapf(err, "failed to get %s archive met: %+v", path, err)
 		}
 		if m.Expiration != nil {
-			archiveMetaCache.Set(key, m, cache.WithEx[*model.ArchiveMetaProvider](*m.Expiration))
+			archiveMetaCache.Set(key, m, gocache.WithEx[*model.ArchiveMetaProvider](*m.Expiration))
 		}
 		return m, nil
 	}
-	if storage.Config().OnlyLinkMFile {
-		meta, err := fn()
-		return meta, err
-	}
+	// if storage.Config().NoLinkSingleflight {
+	// 	meta, err := fn()
+	// 	return meta, err
+	// }
 	if !args.Refresh {
 		if meta, ok := archiveMetaCache.Get(key); ok {
 			log.Debugf("use cache when get %s archive meta", path)
@@ -158,12 +159,12 @@ func getArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 	return obj, archiveMetaProvider, err
 }
 
-var archiveListCache = cache.NewMemCache(cache.WithShards[[]model.Obj](64))
+var archiveListCache = gocache.NewMemCache(gocache.WithShards[[]model.Obj](64))
 var archiveListG singleflight.Group[[]model.Obj]
 
 func ListArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
 	metaKey := Key(storage, path)
@@ -199,7 +200,7 @@ func ListArchive(ctx context.Context, storage driver.Driver, path string, args m
 		if !storage.Config().NoCache {
 			if len(files) > 0 {
 				log.Debugf("set cache: %s => %+v", key, files)
-				archiveListCache.Set(key, files, cache.WithEx[[]model.Obj](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
+				archiveListCache.Set(key, files, gocache.WithEx[[]model.Obj](time.Minute*time.Duration(storage.GetStorage().CacheExpiration)))
 			} else {
 				log.Debugf("del cache: %s", key)
 				archiveListCache.Del(key)
@@ -309,7 +310,7 @@ func splitPath(path string) []string {
 
 func ArchiveGet(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) (model.Obj, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
 	af, err := GetUnwrap(ctx, storage, path)
@@ -354,75 +355,50 @@ func ArchiveGet(ctx context.Context, storage driver.Driver, path string, args mo
 	return nil, nil, errors.WithStack(errs.ObjectNotFound)
 }
 
-type extractLink struct {
-	*model.Link
-	Obj model.Obj
+type objWithLink struct {
+	link *model.Link
+	obj  model.Obj
 }
 
-var extractCache = cache.NewMemCache(cache.WithShards[*extractLink](16))
-var extractG = singleflight.Group[*extractLink]{Remember: true}
+var extractCache = cache.NewKeyedCache[*objWithLink](5 * time.Minute)
+var extractG = singleflight.Group[*objWithLink]{}
 
 func DriverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, nil, errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
-	if link, ok := extractCache.Get(key); ok {
-		return link.Link, link.Obj, nil
+	if ol, ok := extractCache.Get(key); ok {
+		if ol.link.Expiration != nil || ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+			return ol.link, ol.obj, nil
+		}
 	}
 
-	var forget any
-	var linkM *extractLink
-	fn := func() (*extractLink, error) {
-		link, err := driverExtract(ctx, storage, path, args)
+	fn := func() (*objWithLink, error) {
+		ol, err := driverExtract(ctx, storage, path, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
-		if link.MFile != nil && forget != nil {
-			linkM = link
-			return nil, errLinkMFileCache
+		if ol.link.Expiration != nil {
+			extractCache.SetWithTTL(key, ol, *ol.link.Expiration)
+		} else {
+			extractCache.SetWithExpirable(key, ol, &ol.link.SyncClosers)
 		}
-		if link.Link.Expiration != nil {
-			extractCache.Set(key, link, cache.WithEx[*extractLink](*link.Link.Expiration))
-		}
-		link.AddIfCloser(forget)
-		return link, nil
+		return ol, nil
 	}
 
-	if storage.Config().OnlyLinkMFile {
-		link, err := fn()
+	for {
+		ol, err, _ := extractG.Do(key, fn)
 		if err != nil {
 			return nil, nil, err
 		}
-		return link.Link, link.Obj, nil
-	}
-
-	forget = utils.CloseFunc(func() error {
-		if forget != nil {
-			forget = nil
-			linkG.Forget(key)
+		if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+			return ol.link, ol.obj, nil
 		}
-		return nil
-	})
-	link, err, _ := extractG.Do(key, fn)
-	for err == nil && !link.AcquireReference() {
-		link, err, _ = extractG.Do(key, fn)
 	}
-	if err == errLinkMFileCache {
-		if linkM != nil {
-			return linkM.Link, linkM.Obj, nil
-		}
-		forget = nil
-		link, err = fn()
-	}
-
-	if err != nil {
-		return nil, nil, err
-	}
-	return link.Link, link.Obj, nil
 }
 
-func driverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*extractLink, error) {
+func driverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*objWithLink, error) {
 	storageAr, ok := storage.(driver.ArchiveReader)
 	if !ok {
 		return nil, errs.DriverExtractNotSupported
@@ -438,7 +414,7 @@ func driverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return nil, errors.WithStack(errs.NotFile)
 	}
 	link, err := storageAr.Extract(ctx, archiveFile, args)
-	return &extractLink{Link: link, Obj: extracted}, err
+	return &objWithLink{link: link, obj: extracted}, err
 }
 
 type streamWithParent struct {
@@ -480,7 +456,7 @@ func InternalExtract(ctx context.Context, storage driver.Driver, path string, ar
 
 func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string, args model.ArchiveDecompressArgs, lazyCache ...bool) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return errors.Errorf("storage not init: %s", storage.GetStorage().Status)
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
@@ -500,16 +476,16 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		if err == nil {
 			if len(newObjs) > 0 {
 				for _, newObj := range newObjs {
-					addCacheObj(storage, dstDirPath, model.WrapObjName(newObj))
+					Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
 				}
 			} else if !utils.IsBool(lazyCache...) {
-				DeleteCache(storage, dstDirPath)
+				Cache.DeleteDirectory(storage, dstDirPath)
 			}
 		}
 	case driver.ArchiveDecompress:
 		err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
 		if err == nil && !utils.IsBool(lazyCache...) {
-			DeleteCache(storage, dstDirPath)
+			Cache.DeleteDirectory(storage, dstDirPath)
 		}
 	default:
 		return errs.NotImplement
