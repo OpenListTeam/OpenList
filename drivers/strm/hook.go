@@ -2,73 +2,141 @@ package strm
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	stdpath "path"
 	"strings"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
+	"github.com/tchap/go-patricia/v2/patricia"
 )
 
-var strmMap = make(map[uint]*Strm)
+var strmTrie = patricia.NewTrie()
 
-func UpdateLocalStrm(ctx context.Context, parent string, objs []model.Obj) {
-	storage, _, err := op.GetStorageAndActualPath(parent)
+func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
+	updateLocal := func(driver *Strm, basePath string, objs []model.Obj) {
+		relParent := strings.TrimPrefix(basePath, driver.MountPath)
+		localParentPath := stdpath.Join(driver.SaveStrmLocalPath, relParent)
+		for _, obj := range objs {
+			localPath := stdpath.Join(localParentPath, obj.GetName())
+			link := driver.getLink(ctx, stdpath.Join(basePath, obj.GetName()))
+			generateStrm(localPath, link)
+		}
+		deleteExtraFiles(localParentPath, objs)
+	}
+	storage, _, err := op.GetStorageAndActualPath(path)
 	if err != nil {
 		return
 	}
-	if d, ok := storage.(*Strm); !ok {
-		// 判断非strm驱动的路径是否被strm驱动挂载
-		for id := range strmMap {
-			strmDriver := strmMap[id]
-			if !strmDriver.SaveStrmToLocal {
+
+	// 如果 path 本身是 Strm 驱动
+	if d, ok := storage.(*Strm); ok && d.SaveStrmToLocal {
+		updateLocal(d, path, objs)
+		return
+	}
+
+	strmList := FindAllStrmForPath(path)
+	if strmList == nil || len(strmList) == 0 {
+		return
+	}
+
+	for _, strmDriver := range strmList {
+		if !strmDriver.SaveStrmToLocal {
+			continue
+		}
+		for _, needPath := range strings.Split(strmDriver.Paths, "\n") {
+			needPath = strings.TrimSpace(needPath)
+			if needPath == "" {
 				continue
 			}
-			for _, path := range strings.Split(strmDriver.Paths, "\n") {
-				path = strings.TrimSpace(path)
-				if path == "" {
-					continue
+			if path == needPath || strings.HasPrefix(path, needPath) || strings.HasPrefix(path, needPath+"/") {
+				var strmObjs []model.Obj
+				for _, obj := range objs {
+					strmObj := strmDriver.convert2strmObj(ctx, path, obj)
+					strmObjs = append(strmObjs, &strmObj)
 				}
-				// 如果被挂载则访问strm对应路径触发更新
-				if strings.HasPrefix(parent, path) || strings.HasPrefix(parent, path+"/") || parent == path {
-					path = strings.TrimRight(path, "/")
-					strmPath := path[strings.LastIndex(path, "/"):]
-					relPath := stdpath.Join(strmDriver.MountPath, strmPath, strings.TrimPrefix(parent, path))
-					if len(relPath) > 0 {
-						_, _ = fs.List(ctx, relPath, &fs.ListArgs{Refresh: false, NoLog: true})
-					}
-				}
+				updateLocal(strmDriver, stdpath.Join(stdpath.Base(needPath), strings.TrimPrefix(path, needPath)), strmObjs)
+				break
 			}
-		}
-	} else {
-		if d.SaveStrmToLocal {
-			relParent := strings.TrimPrefix(parent, d.MountPath)
-			localParentPath := stdpath.Join(d.SaveStrmLocalPath, relParent)
-
-			generateStrm(ctx, d, localParentPath, objs)
-			deleteExtraFiles(localParentPath, objs)
-
-			log.Infof("Updating Strm Path %s", localParentPath)
 		}
 	}
 }
 
-func getLocalFiles(localPath string) ([]string, error) {
-	var files []string
-	entries, err := os.ReadDir(localPath)
+func FindAllStrmForPath(target string) []*Strm {
+	target = strings.TrimRight(target, "/")
+	var matches []*Strm
+	err := strmTrie.VisitPrefixes(patricia.Prefix(target), func(prefix patricia.Prefix, item patricia.Item) error {
+		if lst, ok := item.([]*Strm); ok {
+			matches = append(matches, lst...)
+		}
+		return nil
+	})
+
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			files = append(files, stdpath.Join(localPath, entry.Name()))
+	return matches
+}
+
+func InsertStrm(dstPath string, d *Strm) error {
+	prefix := patricia.Prefix(strings.TrimRight(dstPath, "/"))
+	existing := strmTrie.Get(prefix)
+
+	if existing == nil {
+		if !strmTrie.Insert(prefix, []*Strm{d}) {
+			return errors.New("failed to insert strm")
+		}
+		return nil
+	}
+	if lst, ok := existing.([]*Strm); ok {
+		strmTrie.Set(prefix, append(lst, d))
+	} else {
+		return errors.New("invalid trie item type")
+	}
+
+	return nil
+}
+
+func RemoveStrm(dstPath string, d *Strm) {
+	prefix := patricia.Prefix(strings.TrimRight(dstPath, "/"))
+	existing := strmTrie.Get(prefix)
+	if existing == nil {
+		return
+	}
+	lst, ok := existing.([]*Strm)
+	if !ok {
+		return
+	}
+	if len(lst) == 1 && lst[0] == d {
+		strmTrie.Delete(prefix)
+		return
+	}
+
+	for i, di := range lst {
+		if di == d {
+			newList := append(lst[:i], lst[i+1:]...)
+			strmTrie.Set(prefix, newList)
+			return
 		}
 	}
-	return files, nil
+}
+
+func generateStrm(localPath, link string) {
+	file, err := utils.CreateNestedFile(localPath)
+	if err != nil {
+		log.Warnf("skip obj %s: failed to create file: %v", localPath, err)
+		return
+	}
+
+	if _, err := io.Copy(file, strings.NewReader(link)); err != nil {
+		log.Warnf("copy failed for obj %s: %v", localPath, err)
+	}
+	_ = file.Close()
+
 }
 
 func deleteExtraFiles(localPath string, objs []model.Obj) {
@@ -98,29 +166,18 @@ func deleteExtraFiles(localPath string, objs []model.Obj) {
 	}
 }
 
-func generateStrm(ctx context.Context, d *Strm, localParentPath string, objs []model.Obj) {
-	for _, obj := range objs {
-		if obj.IsDir() {
-			continue
-		}
-		link, linkErr := d.Link(ctx, obj, model.LinkArgs{})
-		if linkErr != nil {
-			log.Errorf("get link failed, %s", linkErr)
-			continue
-		}
-		localPath := stdpath.Join(localParentPath, obj.GetName())
-		file, createErr := utils.CreateNestedFile(localPath)
-		if createErr != nil {
-			log.Errorf("create nested file failed, %s", createErr)
-			continue
-		}
-		_, copyErr := io.Copy(file, link.MFile)
-		if copyErr != nil {
-			log.Errorf("copy nested file failed: %s", copyErr)
-			continue
-		}
-		_ = file.Close()
+func getLocalFiles(localPath string) ([]string, error) {
+	var files []string
+	entries, err := os.ReadDir(localPath)
+	if err != nil {
+		return nil, err
 	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			files = append(files, stdpath.Join(localPath, entry.Name()))
+		}
+	}
+	return files, nil
 }
 
 func init() {
