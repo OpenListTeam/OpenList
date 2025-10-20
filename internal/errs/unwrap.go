@@ -1,12 +1,11 @@
 package errs
 
-import "errors"
-
 func UnwrapOrSelf(err error) error {
-	// errors.Unwrap has no fallback mechanism
-	unwrapped := errors.Unwrap(err)
-	if unwrapped == nil {
+	u, ok := err.(interface {
+		Unwrap() error
+	})
+	if !ok {
 		return err
 	}
-	return unwrapped
+	return u.Unwrap()
 }

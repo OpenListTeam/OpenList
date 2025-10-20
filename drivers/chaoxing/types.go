@@ -258,7 +258,7 @@ type UploadDoneParam struct {
 func fileToObj(f File) *model.Object {
 	if len(f.Content.FolderName) > 0 {
 		return &model.Object{
-			ID:       fmt.Sprintf("%d", f.ID),
+			ID:       strconv.Itoa(f.ID),
 			Name:     f.Content.FolderName,
 			Size:     0,
 			Modified: time.UnixMilli(f.Inserttime),
