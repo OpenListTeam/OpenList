@@ -31,11 +31,11 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:          "FTP",
-	LocalSort:     true,
-	OnlyLinkMFile: false,
-	DefaultRoot:   "/",
-	NoLinkURL:     true,
+	Name:        "FTP",
+	LocalSort:   true,
+	OnlyProxy:   true,
+	DefaultRoot: "/",
+	NoLinkURL:   true,
 }
 
 func init() {

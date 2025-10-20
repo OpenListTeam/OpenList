@@ -1,17 +1,14 @@
 package op
 
 import (
-	"time"
-
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/go-cache"
+	"github.com/pkg/errors"
 )
 
-var userCache = cache.NewMemCache(cache.WithShards[*model.User](2))
 var userG singleflight.Group[*model.User]
 var guestUser *model.User
 var adminUser *model.User
@@ -46,7 +43,7 @@ func GetUserByName(username string) (*model.User, error) {
 	if username == "" {
 		return nil, errs.EmptyUsername
 	}
-	if user, ok := userCache.Get(username); ok {
+	if user, exists := Cache.GetUser(username); exists {
 		return user, nil
 	}
 	user, err, _ := userG.Do(username, func() (*model.User, error) {
@@ -54,7 +51,7 @@ func GetUserByName(username string) (*model.User, error) {
 		if err != nil {
 			return nil, err
 		}
-		userCache.Set(username, _user, cache.WithEx[*model.User](time.Hour))
+		Cache.SetUser(username, _user)
 		return _user, nil
 	})
 	return user, err
@@ -81,7 +78,10 @@ func DeleteUserById(id uint) error {
 	if old.IsAdmin() || old.IsGuest() {
 		return errs.DeleteAdminOrGuest
 	}
-	userCache.Del(old.Username)
+	Cache.DeleteUser(old.Username)
+	if err := DeleteSharingsByCreatorId(id); err != nil {
+		return errors.WithMessage(err, "failed to delete user's sharings")
+	}
 	return db.DeleteUserById(id)
 }
 
@@ -96,7 +96,7 @@ func UpdateUser(u *model.User) error {
 	if u.IsGuest() {
 		guestUser = nil
 	}
-	userCache.Del(old.Username)
+	Cache.DeleteUser(old.Username)
 	u.BasePath = utils.FixAndCleanPath(u.BasePath)
 	return db.UpdateUser(u)
 }
@@ -125,6 +125,6 @@ func DelUserCache(username string) error {
 	if user.IsGuest() {
 		guestUser = nil
 	}
-	userCache.Del(username)
+	Cache.DeleteUser(username)
 	return nil
 }

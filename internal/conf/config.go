@@ -35,6 +35,7 @@ type Scheme struct {
 	UnixFile     string `json:"unix_file" env:"UNIX_FILE"`
 	UnixFilePerm string `json:"unix_file_perm" env:"UNIX_FILE_PERM"`
 	EnableH2c    bool   `json:"enable_h2c" env:"ENABLE_H2C"`
+	EnableH3     bool   `json:"enable_h3" env:"ENABLE_H3"`
 }
 
 type LogConfig struct {

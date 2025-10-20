@@ -34,6 +34,20 @@ func (t *TransferTask) Run() error {
 	if err := t.ReinitCtx(); err != nil {
 		return err
 	}
+	if t.SrcStorage == nil && t.SrcStorageMp != "" {
+		if srcStorage, _, err := op.GetStorageAndActualPath(t.SrcStorageMp); err == nil {
+			t.SrcStorage = srcStorage
+		} else {
+			return err
+		}
+		if t.DstStorage == nil {
+			if dstStorage, _, err := op.GetStorageAndActualPath(t.DstStorageMp); err == nil {
+				t.DstStorage = dstStorage
+			} else {
+				return err
+			}
+		}
+	}
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
@@ -64,9 +78,8 @@ func (t *TransferTask) Run() error {
 			return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress)
 		}
 		return transferStdPath(t)
-	} else {
-		return transferObjPath(t)
 	}
+	return transferObjPath(t)
 }
 
 func (t *TransferTask) GetName() string {
