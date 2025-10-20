@@ -19,6 +19,7 @@ import (
 var strmTrie = patricia.NewTrie()
 
 func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
+	path = utils.FixAndCleanPath(path)
 	updateLocal := func(driver *Strm, basePath string, objs []model.Obj) {
 		relParent := strings.TrimPrefix(basePath, driver.MountPath)
 		localParentPath := stdpath.Join(driver.SaveStrmLocalPath, relParent)
@@ -28,57 +29,23 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 		}
 		deleteExtraFiles(localParentPath, objs)
 	}
-	storage, _, err := op.GetStorageAndActualPath(path)
-	if err != nil {
-		return
-	}
 
-	// 如果 path 本身是 Strm 驱动
-	if d, ok := storage.(*Strm); ok && d.SaveStrmToLocal {
-		updateLocal(d, path, objs)
-		return
-	}
-
-	strmList := FindAllStrmForPath(path)
-	if strmList == nil || len(strmList) == 0 {
-		return
-	}
-
-	for _, strmDriver := range strmList {
-		if !strmDriver.SaveStrmToLocal {
-			continue
+	_ = strmTrie.VisitPrefixes(patricia.Prefix(path), func(needPathPrefix patricia.Prefix, item patricia.Item) error {
+		strmDrivers := item.([]*Strm)
+		needPath := string(needPathPrefix)
+		restPath := strings.TrimPrefix(path, needPath)
+		if len(restPath) > 0 && restPath[0] != '/' {
+			return nil
 		}
-		for _, needPath := range strings.Split(strmDriver.Paths, "\n") {
-			needPath = strings.TrimSpace(needPath)
-			if needPath == "" {
-				continue
-			}
-			if path == needPath || strings.HasPrefix(path, needPath) || strings.HasPrefix(path, needPath+"/") {
-				var strmObjs []model.Obj
-				for _, obj := range objs {
-					strmObj := strmDriver.convert2strmObj(ctx, path, obj)
-					strmObjs = append(strmObjs, &strmObj)
-				}
-				updateLocal(strmDriver, stdpath.Join(stdpath.Base(needPath), strings.TrimPrefix(path, needPath)), strmObjs)
-				break
-			}
-		}
-	}
-}
-
-func FindAllStrmForPath(target string) []*Strm {
-	target = strings.TrimRight(target, "/")
-	var matches []*Strm
-	err := strmTrie.VisitPrefixes(patricia.Prefix(target), func(prefix patricia.Prefix, item patricia.Item) error {
-		if lst, ok := item.([]*Strm); ok {
-			matches = append(matches, lst...)
+		for _, strmDriver := range strmDrivers {
+			strmObjs, _ := utils.SliceConvert(objs, func(obj model.Obj) (model.Obj, error) {
+				ret := strmDriver.convert2strmObj(ctx, path, obj)
+				return &ret, nil
+			})
+			updateLocal(strmDriver, stdpath.Join(stdpath.Base(needPath), restPath), strmObjs)
 		}
 		return nil
 	})
-	if err != nil {
-		return nil
-	}
-	return matches
 }
 
 func InsertStrm(dstPath string, d *Strm) error {
