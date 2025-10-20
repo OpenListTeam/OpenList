@@ -10,6 +10,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/tchap/go-patricia/v2/patricia"
@@ -23,8 +24,7 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 		localParentPath := stdpath.Join(driver.SaveStrmLocalPath, relParent)
 		for _, obj := range objs {
 			localPath := stdpath.Join(localParentPath, obj.GetName())
-			link := driver.getLink(ctx, stdpath.Join(basePath, obj.GetName()))
-			generateStrm(localPath, link)
+			generateStrm(ctx, driver, obj, localPath)
 		}
 		deleteExtraFiles(localParentPath, objs)
 	}
@@ -125,18 +125,25 @@ func RemoveStrm(dstPath string, d *Strm) {
 	}
 }
 
-func generateStrm(localPath, link string) {
+func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
 	file, err := utils.CreateNestedFile(localPath)
 	if err != nil {
 		log.Warnf("skip obj %s: failed to create file: %v", localPath, err)
 		return
 	}
-
-	if _, err := io.Copy(file, strings.NewReader(link)); err != nil {
+	link, err := driver.Link(ctx, obj, model.LinkArgs{})
+	if err != nil {
+		log.Warnf("skip obj %s: failed to link: %v", localPath, err)
+		return
+	}
+	seekableStream, err := stream.NewSeekableStream(&stream.FileStream{
+		Obj: obj,
+		Ctx: ctx,
+	}, link)
+	if _, err := io.Copy(file, seekableStream); err != nil {
 		log.Warnf("copy failed for obj %s: %v", localPath, err)
 	}
 	_ = file.Close()
-
 }
 
 func deleteExtraFiles(localPath string, objs []model.Obj) {
