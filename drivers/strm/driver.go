@@ -59,42 +59,50 @@ func (d *Strm) Init(ctx context.Context) error {
 		d.autoFlatten = false
 	}
 
-	d.supportSuffix = make(map[string]struct{})
-	var types []string
-	if d.FilterFileTypes != "" {
-		types = strings.Split(d.FilterFileTypes, ",")
+	var supportTypes []string
+	if d.FilterFileTypes == "" {
+		d.FilterFileTypes = "mp4,mkv,flv,avi,wmv,ts,rmvb,webm,mp3,flac,aac,wav,ogg,m4a,wma,alac"
 	}
-	if d.FilterFileTypes == "" || d.Version == 0 {
-		for t := range supportSuffix() {
-			types = append(types, t)
-		}
-		d.Version = 1
-	}
-
-	uniqueTypes := make(map[string]struct{})
-	var cleaned []string
-	for _, ext := range types {
+	supportTypes = strings.Split(d.FilterFileTypes, ",")
+	d.supportSuffix = map[string]struct{}{}
+	for _, ext := range supportTypes {
 		ext = strings.ToLower(strings.TrimSpace(ext))
-		if ext == "" {
-			continue
+		if ext != "" {
+			d.supportSuffix[ext] = struct{}{}
 		}
-		if _, exists := uniqueTypes[ext]; !exists {
-			uniqueTypes[ext] = struct{}{}
-			cleaned = append(cleaned, ext)
-		}
-		d.supportSuffix[ext] = struct{}{}
 	}
-	d.FilterFileTypes = strings.Join(cleaned, ",")
 
-	d.downloadSuffix = downloadSuffix()
-	if d.DownloadFileTypes != "" {
-		downloadTypes := strings.Split(d.DownloadFileTypes, ",")
-		for _, ext := range downloadTypes {
-			ext = strings.ToLower(strings.TrimSpace(ext))
-			if ext != "" {
-				d.downloadSuffix[ext] = struct{}{}
+	var downloadTypes []string
+	if d.DownloadFileTypes == "" {
+		d.DownloadFileTypes = "ass,srt,vtt,sub,strm"
+	}
+	downloadTypes = strings.Split(d.DownloadFileTypes, ",")
+	d.downloadSuffix = map[string]struct{}{}
+	for _, ext := range downloadTypes {
+		ext = strings.ToLower(strings.TrimSpace(ext))
+		if ext != "" {
+			d.downloadSuffix[ext] = struct{}{}
+		}
+	}
+
+	if d.Version != 2 {
+		types := strings.Split("mp4,mkv,flv,avi,wmv,ts,rmvb,webm,mp3,flac,aac,wav,ogg,m4a,wma,alac", ",")
+		for _, ext := range types {
+			if _, ok := d.supportSuffix[ext]; !ok {
+				d.supportSuffix[ext] = struct{}{}
+				supportTypes = append(supportTypes, ext)
 			}
 		}
+
+		types = strings.Split("ass,srt,vtt,sub,strm", ",")
+		for _, ext := range types {
+			if _, ok := d.downloadSuffix[ext]; !ok {
+				d.supportSuffix[ext] = struct{}{}
+				downloadTypes = append(downloadTypes, ext)
+			}
+		}
+		d.DownloadFileTypes = strings.Join(downloadTypes, ",")
+		d.Version = 2
 	}
 	return nil
 }
