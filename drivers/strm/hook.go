@@ -125,12 +125,6 @@ func RemoveStrm(dstPath string, d *Strm) {
 }
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
-	file, err := utils.CreateNestedFile(localPath)
-	if err != nil {
-		log.Warnf("failed to generate strm of obj %s: failed to create file: %v", localPath, err)
-		return
-	}
-	defer file.Close()
 	link, err := driver.Link(ctx, obj, model.LinkArgs{})
 	if err != nil {
 		log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
@@ -142,10 +136,16 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 	}, link)
 	if err != nil {
 		_ = link.Close()
-		log.Warnf("failed to generate strm of obj %s, failed to get seekable stream: %v", localPath, err)
+		log.Warnf("failed to generate strm of obj %s: failed to get seekable stream: %v", localPath, err)
 		return
 	}
 	defer seekableStream.Close()
+	file, err := utils.CreateNestedFile(localPath)
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
+		return
+	}
+	defer file.Close()
 	if _, err := io.Copy(file, seekableStream); err != nil {
 		log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
 	}
