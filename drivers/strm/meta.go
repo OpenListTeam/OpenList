@@ -12,6 +12,7 @@ type Addition struct {
 	DownloadFileTypes string `json:"downloadFileTypes" type:"text" default:"ass" required:"false" help:"Files need to download with strm (usally subtitles)"`
 	EncodePath        bool   `json:"encodePath" default:"true" required:"true" help:"encode the path in the strm file"`
 	LocalModel        bool   `json:"localModel" default:"false" help:"enable local mode"`
+	Version           int
 }
 
 var config = driver.Config{

@@ -62,19 +62,28 @@ func (d *Strm) Init(ctx context.Context) error {
 	var types []string
 	if d.FilterFileTypes != "" {
 		types = strings.Split(d.FilterFileTypes, ",")
-	} else {
+	}
+	if d.FilterFileTypes == "" || d.Version == 0 {
 		for t := range supportSuffix() {
 			types = append(types, t)
 		}
-		d.FilterFileTypes = strings.Join(types, ",")
+		d.Version = 1
 	}
 
+	uniqueTypes := make(map[string]struct{})
+	var cleaned []string
 	for _, ext := range types {
 		ext = strings.ToLower(strings.TrimSpace(ext))
-		if ext != "" {
-			d.supportSuffix[ext] = struct{}{}
+		if ext == "" {
+			continue
 		}
+		if _, exists := uniqueTypes[ext]; !exists {
+			uniqueTypes[ext] = struct{}{}
+			cleaned = append(cleaned, ext)
+		}
+		d.supportSuffix[ext] = struct{}{}
 	}
+	d.FilterFileTypes = strings.Join(cleaned, ",")
 
 	d.downloadSuffix = downloadSuffix()
 	if d.DownloadFileTypes != "" {
