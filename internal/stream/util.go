@@ -122,8 +122,7 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 	return RangeReaderFunc(rangeReader), nil
 }
 
-// RangeReaderIF.RangeRead返回的io.ReadCloser保留file的签名。
-func GetRangeReaderFromMFile(size int64, file model.File) model.RangeReaderIF {
+func GetRangeReaderFromMFile(size int64, file model.File) *model.FileRangeReader {
 	return &model.FileRangeReader{
 		RangeReaderIF: RangeReaderFunc(func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 			length := httpRange.Length

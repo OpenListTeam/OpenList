@@ -27,6 +27,8 @@ func (f *FileCloser) Close() error {
 	return errors.Join(errs...)
 }
 
+// FileRangeReader 是对 RangeReaderIF 的轻量包装，表明由 RangeReaderIF.RangeRead
+// 返回的 io.ReadCloser 同时实现了 model.File（即支持 Read/ReadAt/Seek）。
 type FileRangeReader struct {
 	RangeReaderIF
 }
