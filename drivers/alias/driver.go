@@ -50,6 +50,10 @@ func (d *Alias) Init(ctx context.Context) error {
 			continue
 		}
 		k, v := getPair(path)
+		_, _, err := op.GetStorageAndActualPath(v)
+		if err != nil {
+			return err
+		}
 		if _, ok := d.pathMap[k]; !ok {
 			d.rootOrder = append(d.rootOrder, k)
 		}
@@ -532,7 +536,7 @@ func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 	}
 	for _, dst := range dsts {
 		storage, actualPath, err := op.GetStorageAndActualPath(stdpath.Join(dst, sub))
-		if err == nil {
+		if err != nil {
 			continue
 		}
 		mode := storage.Config().LinkCacheMode
