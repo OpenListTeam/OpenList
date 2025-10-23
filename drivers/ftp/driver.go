@@ -113,9 +113,7 @@ func (d *FTP) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 	}
 
 	return &model.Link{
-		RangeReader: &model.FileRangeReader{
-			RangeReaderIF: stream.RateLimitRangeReaderFunc(resultRangeReader),
-		},
+		RangeReader: stream.RateLimitRangeReaderFunc(resultRangeReader),
 		SyncClosers: utils.NewSyncClosers(utils.CloseFunc(conn.Quit)),
 	}, nil
 }
