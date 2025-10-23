@@ -229,25 +229,30 @@ x-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit
 	//	}
 	//}
 	u := fmt.Sprintf("https://%s.%s/%s", pre.Data.Bucket, pre.Data.UploadUrl[7:], pre.Data.ObjKey)
-	res, err := base.RestyClient.R().SetContext(ctx).
-		SetHeaders(map[string]string{
-			"Authorization":    resp.Data.AuthKey,
-			"Content-Type":     mineType,
-			"Referer":          "https://pan.quark.cn/",
-			"x-oss-date":       timeStr,
-			"x-oss-user-agent": "aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit",
-		}).
-		SetQueryParams(map[string]string{
-			"partNumber": strconv.Itoa(partNumber),
-			"uploadId":   pre.Data.UploadId,
-		}).SetBody(bytes).Put(u)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes)
 	if err != nil {
 		return "", err
 	}
-	if res.StatusCode() != 200 {
-		return "", fmt.Errorf("up status: %d, error: %s", res.StatusCode(), res.String())
+	req.Header.Set("Authorization", resp.Data.AuthKey)
+	req.Header.Set("Content-Type", mineType)
+	req.Header.Set("Referer", "https://pan.quark.cn/")
+	req.Header.Set("x-oss-date", timeStr)
+	req.Header.Set("x-oss-user-agent", "aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit")
+	q := req.URL.Query()
+	q.Add("partNumber", strconv.Itoa(partNumber))
+	q.Add("uploadId", pre.Data.UploadId)
+	req.URL.RawQuery = q.Encode()
+	res, err := base.HttpClient.Do(req)
+	if err != nil {
+		return "", err
 	}
-	return res.Header().Get("Etag"), nil
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		respBody, _ := io.ReadAll(res.Body)
+		return "", fmt.Errorf("up status: %d, error: %s", res.StatusCode, string(respBody))
+	}
+	return res.Header.Get("Etag"), nil
 }
 
 func (d *QuarkOrUC) upCommit(pre UpPreResp, md5s []string) error {

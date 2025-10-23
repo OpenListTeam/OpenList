@@ -29,6 +29,7 @@ func NewGroupWithContext(ctx context.Context, limit int, retryOpts ...retry.Opti
 }
 
 // OrderedGroup
+// 使得Lifecycle.Before是有序且线程安全
 func NewOrderedGroupWithContext(ctx context.Context, limit int, retryOpts ...retry.Option) (*Group, context.Context) {
 	group, ctx := NewGroupWithContext(ctx, limit, retryOpts...)
 	group.startChan = make(chan token, 1)
@@ -53,11 +54,11 @@ func (g *Group) Go(do func(ctx context.Context) error) {
 }
 
 type Lifecycle struct {
-	// Before在OrderedGroup是线程安全的。
+	// Before在OrderedGroup是有序且线程安全的
 	// 只会被调用一次
-	Before func(ctx context.Context) error
+	Before func(ctx context.Context) (err error)
 	// 如果Before返回err就不调用Do
-	Do func(ctx context.Context) error
+	Do func(ctx context.Context) (err error)
 	// 最后调用一次After
 	After func(err error)
 }

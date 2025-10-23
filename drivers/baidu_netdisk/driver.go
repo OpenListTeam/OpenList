@@ -320,7 +320,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 			if err != nil {
 				return err
 			}
-			up(float64(threadG.Success()) * 100 / float64(len(precreateResp.BlockList)))
+			up(float64(threadG.Success()+1) * 100 / float64(len(precreateResp.BlockList)+1))
 			precreateResp.BlockList[i] = -1
 			return nil
 		})
@@ -333,6 +333,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		}
 		return nil, err
 	}
+	defer up(100)
 
 	// step.3 创建文件
 	var newFile File
