@@ -27,6 +27,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+
+	"github.com/quic-go/quic-go/http3"
 )
 
 // ServerCmd represents the server command
@@ -63,6 +65,7 @@ the address is defined in config file`,
 			httpHandler = h2c.NewHandler(r, &http2.Server{})
 		}
 		var httpSrv, httpsSrv, unixSrv *http.Server
+		var quicSrv *http3.Server
 		if conf.Conf.Scheme.HttpPort != -1 {
 			httpBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpPort)
 			fmt.Printf("start HTTP server @ %s\n", httpBase)
@@ -86,6 +89,24 @@ the address is defined in config file`,
 					utils.Log.Fatalf("failed to start https: %s", err.Error())
 				}
 			}()
+			if conf.Conf.Scheme.EnableH3 {
+				fmt.Printf("start HTTP3 (quic) server @ %s\n", httpsBase)
+				utils.Log.Infof("start HTTP3 (quic) server @ %s", httpsBase)
+				r.Use(func(c *gin.Context) {
+					if c.Request.TLS != nil {
+						port := conf.Conf.Scheme.HttpsPort
+						c.Header("Alt-Svc", fmt.Sprintf("h3=\":%d\"; ma=86400", port))
+					}
+					c.Next()
+				})
+				quicSrv = &http3.Server{Addr: httpsBase, Handler: r}
+				go func() {
+					err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+					if err != nil && !errors.Is(err, http.ErrServerClosed) {
+						utils.Log.Fatalf("failed to start http3 (quic): %s", err.Error())
+					}
+				}()
+			}
 		}
 		if conf.Conf.Scheme.UnixFile != "" {
 			fmt.Printf("start unix server @ %s\n", conf.Conf.Scheme.UnixFile)
@@ -203,6 +224,15 @@ the address is defined in config file`,
 					utils.Log.Fatal("HTTPS server shutdown err: ", err)
 				}
 			}()
+			if conf.Conf.Scheme.EnableH3 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if err := quicSrv.Shutdown(ctx); err != nil {
+						utils.Log.Fatal("HTTP3 (quic) server shutdown err: ", err)
+					}
+				}()
+			}
 		}
 		if conf.Conf.Scheme.UnixFile != "" {
 			wg.Add(1)

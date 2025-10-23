@@ -41,6 +41,18 @@ func (t *ArchiveDownloadTask) Run() error {
 	if err := t.ReinitCtx(); err != nil {
 		return err
 	}
+	if t.SrcStorage == nil {
+		if srcStorage, _, err := op.GetStorageAndActualPath(t.SrcStorageMp); err == nil {
+			t.SrcStorage = srcStorage
+		} else {
+			return err
+		}
+		if dstStorage, _, err := op.GetStorageAndActualPath(t.DstStorageMp); err == nil {
+			t.DstStorage = dstStorage
+		} else {
+			return err
+		}
+	}
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()

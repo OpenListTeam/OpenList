@@ -36,7 +36,6 @@ type Addition struct {
 var config = driver.Config{
 	Name:              "MediaFire",
 	LocalSort:         false,
-	OnlyLinkMFile:     false,
 	OnlyProxy:         false,
 	NoCache:           false,
 	NoUpload:          false,

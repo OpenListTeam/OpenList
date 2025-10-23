@@ -317,7 +317,8 @@ func (d *Crypt) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 			}
 			return readSeeker, nil
 		}),
-		SyncClosers: utils.NewSyncClosers(remoteLink),
+		SyncClosers:      utils.NewSyncClosers(remoteLink),
+		RequireReference: remoteLink.RequireReference,
 	}, nil
 }
 
