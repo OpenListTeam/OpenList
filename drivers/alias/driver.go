@@ -50,10 +50,6 @@ func (d *Alias) Init(ctx context.Context) error {
 			continue
 		}
 		k, v := getPair(path)
-		_, _, err := op.GetStorageAndActualPath(v)
-		if err != nil {
-			return err
-		}
 		if _, ok := d.pathMap[k]; !ok {
 			d.rootOrder = append(d.rootOrder, k)
 		}
