@@ -1,6 +1,7 @@
 package db
 
 import (
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/pkg/errors"
 )
@@ -30,6 +31,7 @@ func GetTaskDataFunc(type_s string, enabled bool) func() ([]byte, error) {
 		return nil
 	}
 	return func() ([]byte, error) {
+		<-conf.StoragesLoadSignal()
 		return []byte(task.PersistData), nil
 	}
 }

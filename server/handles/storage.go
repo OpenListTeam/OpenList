@@ -175,7 +175,7 @@ func LoadAllStorages(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	conf.StoragesLoaded = false
+	conf.ResetStoragesLoadSignal()
 	go func(storages []model.Storage) {
 		for _, storage := range storages {
 			storageDriver, err := op.GetStorageByMountPath(storage.MountPath)
@@ -195,7 +195,7 @@ func LoadAllStorages(c *gin.Context) {
 			log.Infof("success load storage: [%s], driver: [%s]",
 				storage.MountPath, storage.Driver)
 		}
-		conf.StoragesLoaded = true
+		conf.SendStoragesLoadedSignal()
 	}(storages)
 	common.SuccessResp(c)
 }

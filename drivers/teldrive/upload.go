@@ -164,7 +164,7 @@ func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file mo
 			if err := d.singleUploadRequest(fileId, func(req *resty.Request) {
 				uploadParams := map[string]string{
 					"partName": func() string {
-						digits := len(fmt.Sprintf("%d", totalParts))
+						digits := len(strconv.Itoa(totalParts))
 						return file.GetName() + fmt.Sprintf(".%0*d", digits, 1)
 					}(),
 					"partNo":   strconv.Itoa(1),
@@ -333,7 +333,7 @@ func (d *Teldrive) uploadSingleChunk(ctx context.Context, fileId string, task ch
 		err := d.singleUploadRequest(fileId, func(req *resty.Request) {
 			uploadParams := map[string]string{
 				"partName": func() string {
-					digits := len(fmt.Sprintf("%d", totalParts))
+					digits := len(strconv.Itoa(totalParts))
 					return task.fileName + fmt.Sprintf(".%0*d", digits, task.chunkIdx)
 				}(),
 				"partNo":   strconv.Itoa(task.chunkIdx),

@@ -235,6 +235,7 @@ func (d *Local) Get(ctx context.Context, path string) (model.Obj, error) {
 func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	fullPath := file.GetPath()
 	link := &model.Link{}
+	var MFile model.File
 	if args.Type == "thumb" && utils.Ext(file.GetName()) != "svg" {
 		var buf *bytes.Buffer
 		var thumbPath *string
@@ -261,9 +262,9 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 				return nil, err
 			}
 			link.ContentLength = int64(stat.Size())
-			link.MFile = open
+			MFile = open
 		} else {
-			link.MFile = bytes.NewReader(buf.Bytes())
+			MFile = bytes.NewReader(buf.Bytes())
 			link.ContentLength = int64(buf.Len())
 		}
 	} else {
@@ -272,13 +273,11 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 			return nil, err
 		}
 		link.ContentLength = file.GetSize()
-		link.MFile = open
+		MFile = open
 	}
-	link.AddIfCloser(link.MFile)
-	if !d.Config().OnlyLinkMFile {
-		link.RangeReader = stream.GetRangeReaderFromMFile(link.ContentLength, link.MFile)
-		link.MFile = nil
-	}
+	link.SyncClosers.AddIfCloser(MFile)
+	link.RangeReader = stream.GetRangeReaderFromMFile(link.ContentLength, MFile)
+	link.RequireReference = link.SyncClosers.Length() > 0
 	return link, nil
 }
 
@@ -375,18 +374,26 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 			err = os.Remove(obj.GetPath())
 		}
 	} else {
-		if !utils.Exists(d.RecycleBinPath) {
-			err = os.MkdirAll(d.RecycleBinPath, 0o755)
+		objPath := obj.GetPath()
+		objName := obj.GetName()
+		var relPath string
+		relPath, err = filepath.Rel(d.GetRootPath(), filepath.Dir(objPath))
+		if err != nil {
+			return err
+		}
+		recycleBinPath := filepath.Join(d.RecycleBinPath, relPath)
+		if !utils.Exists(recycleBinPath) {
+			err = os.MkdirAll(recycleBinPath, 0o755)
 			if err != nil {
 				return err
 			}
 		}
 
-		dstPath := filepath.Join(d.RecycleBinPath, obj.GetName())
+		dstPath := filepath.Join(recycleBinPath, objName)
 		if utils.Exists(dstPath) {
-			dstPath = filepath.Join(d.RecycleBinPath, obj.GetName()+"_"+time.Now().Format("20060102150405"))
+			dstPath = filepath.Join(recycleBinPath, objName+"_"+time.Now().Format("20060102150405"))
 		}
-		err = os.Rename(obj.GetPath(), dstPath)
+		err = os.Rename(objPath, dstPath)
 	}
 	if err != nil {
 		return err

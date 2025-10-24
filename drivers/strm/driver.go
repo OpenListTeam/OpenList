@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 )
@@ -156,7 +157,7 @@ func (d *Strm) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 	if file.GetID() == "strm" {
 		link := d.getLink(ctx, file.GetPath())
 		return &model.Link{
-			MFile: strings.NewReader(link),
+			RangeReader: stream.GetRangeReaderFromMFile(int64(len(link)), strings.NewReader(link)),
 		}, nil
 	}
 	// ftp,s3

@@ -131,23 +131,6 @@ func (d *Open115) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	}, nil
 }
 
-func (d *Open115) GetObjInfo(ctx context.Context, path string) (model.Obj, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
-	resp, err := d.client.GetFolderInfoByPath(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-	return &Obj{
-		Fid:  resp.FileID,
-		Fn:   resp.FileName,
-		Fc:   resp.FileCategory,
-		Sha1: resp.Sha1,
-		Pc:   resp.PickCode,
-	}, nil
-}
-
 func (d *Open115) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	if err := d.WaitLimit(ctx); err != nil {
 		return nil, err
