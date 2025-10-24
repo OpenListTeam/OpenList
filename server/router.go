@@ -211,6 +211,9 @@ func _fs(g *gin.RouterGroup) {
 	// g.POST("/add_transmission", handles.SetTransmission)
 	g.POST("/add_offline_download", handles.AddOfflineDownload)
 	g.POST("/archive/decompress", handles.FsArchiveDecompress)
+	// Direct upload for OneDrive
+	g.GET("/check_direct_upload", handles.FsCheckDirectUpload)
+	g.POST("/get_direct_upload_url", middlewares.FsUp, handles.FsGetDirectUploadURL)
 }
 
 func _task(g *gin.RouterGroup) {

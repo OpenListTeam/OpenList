@@ -19,6 +19,7 @@ type Addition struct {
 	ChunkSize        int64  `json:"chunk_size" type:"number" default:"5"`
 	CustomHost       string `json:"custom_host" help:"Custom host for onedrive download link"`
 	DisableDiskUsage bool   `json:"disable_disk_usage" default:"false"`
+	EnableDirectUpload bool `json:"enable_direct_upload" default:"false" help:"Enable direct upload from client to OneDrive"`
 }
 
 var config = driver.Config{

@@ -316,3 +316,39 @@ func (d *Onedrive) getDrive(ctx context.Context) (*DriveResp, error) {
 	}
 	return &resp, nil
 }
+
+// GetDirectUploadURL returns the direct upload URL for OneDrive
+func (d *Onedrive) GetDirectUploadURL(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64) (string, error) {
+	if !d.EnableDirectUpload {
+		return "", fmt.Errorf("direct upload is not enabled")
+	}
+	
+	// Build file path - ensure it starts with /
+	dirPath := dstDir.GetPath()
+	if dirPath == "" {
+		dirPath = "/"
+	}
+	filePath := stdpath.Join(dirPath, fileName)
+	
+	// Create upload session
+	url := d.GetMetaUrl(false, filePath) + "/createUploadSession"
+	metadata := map[string]any{
+		"item": map[string]any{
+			"@microsoft.graph.conflictBehavior": "rename",
+		},
+	}
+	
+	res, err := d.Request(url, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(metadata).SetContext(ctx)
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+	
+	uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
+	if uploadUrl == "" {
+		return "", fmt.Errorf("failed to get upload URL from response")
+	}
+	
+	return uploadUrl, nil
+}
