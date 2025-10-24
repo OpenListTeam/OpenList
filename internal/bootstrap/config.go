@@ -140,6 +140,10 @@ func InitConfig() {
 		log.Fatalf("create temp dir error: %+v", err)
 	}
 	log.Debugf("config: %+v", conf.Conf)
+
+	// Validate and display proxy configuration status
+	validateProxyConfig()
+
 	base.InitClient()
 	initURL()
 }
@@ -176,6 +180,17 @@ func CleanTempDir() {
 	for _, file := range files {
 		if err := os.RemoveAll(filepath.Join(conf.Conf.TempDir, file.Name())); err != nil {
 			log.Errorln("failed delete temp file: ", err)
+		}
+	}
+}
+
+// validateProxyConfig validates proxy configuration and displays status at startup
+func validateProxyConfig() {
+	if conf.Conf.ProxyAddress != "" {
+		if _, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
+			log.Infof("Proxy enabled: %s", conf.Conf.ProxyAddress)
+		} else {
+			log.Errorf("Invalid proxy address format: %s, error: %v", conf.Conf.ProxyAddress, err)
 		}
 	}
 }
