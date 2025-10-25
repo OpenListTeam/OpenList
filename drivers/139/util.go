@@ -1213,7 +1213,7 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 	// 提取 authToken
 	authToken := jsoniter.Get(finalJsonStrBytes, "authToken").ToString()
 	if authToken == "" {
-		return "", errors.New("无法从最终解密结果中提取 authToken。")
+		return "", errors.New("failed to extract authToken from final decryption result")
 	}
 	log.Debugf("DEBUG: 提取到 authToken: %s", authToken)
 
