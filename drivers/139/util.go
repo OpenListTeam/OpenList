@@ -1191,7 +1191,7 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 
 	hexInner := jsoniter.Get(decryptedLayer1StrBytes, "data").ToString()
 	if hexInner == "" {
-		return "", errors.New("第一层解密结果中缺少 'data' 字段。")
+		return "", errors.New("missing data field in first layer decryption result")
 	}
 	log.Debugf("DEBUG: 第一层解密提取到 hex_inner: %s...", hexInner[:min(len(hexInner), 50)])
 
