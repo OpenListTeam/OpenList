@@ -926,7 +926,7 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 
 	dycpwd := jsoniter.Get(res.Body(), "var", "artifact").ToString()
 	if dycpwd == "" {
-		return "", errors.New("无法从换passid响应中提取 dycpwd。")
+		return "", errors.New("failed to extract dycpwd from artifact exchange response")
 	}
 	log.Debugf("DEBUG: 提取到 dycpwd: %s", dycpwd)
 
