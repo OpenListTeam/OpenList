@@ -1222,7 +1222,7 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 	userDomainId := jsoniter.Get(finalJsonStrBytes, "userDomainId").ToString()
 
 	if account == "" || userDomainId == "" {
-		return "", errors.New("无法从最终解密结果中提取 account 或 userDomainId。")
+		return "", errors.New("failed to extract account or userDomainId from final decryption result")
 	}
 
 	d.UserDomainID = userDomainId
