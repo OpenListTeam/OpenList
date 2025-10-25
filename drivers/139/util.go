@@ -864,7 +864,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 	}
 
 	if sid == "" || extractedCguid == "" {
-		return "", errors.New("无法从登录响应中提取 sid 或 cguid。")
+		return "", errors.New("failed to extract sid or cguid from login response")
 	}
 
 	// 提取并记录 cookies
