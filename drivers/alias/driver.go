@@ -532,7 +532,7 @@ func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 	}
 	for _, dst := range dsts {
 		storage, actualPath, err := op.GetStorageAndActualPath(stdpath.Join(dst, sub))
-		if err == nil {
+		if err != nil {
 			continue
 		}
 		mode := storage.Config().LinkCacheMode
