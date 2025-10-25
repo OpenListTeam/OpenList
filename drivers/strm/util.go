@@ -66,12 +66,12 @@ func (d *Strm) list(ctx context.Context, dst, sub string, args *fs.ListArgs) ([]
 		if !obj.IsDir() {
 			path = stdpath.Join(reqPath, obj.GetName())
 			ext := strings.ToLower(utils.Ext(name))
-			if _, ok := d.supportSuffix[ext]; ok {
+			if _, ok := d.downloadSuffix[ext]; ok {
+				size = obj.GetSize()
+			} else if _, ok := d.supportSuffix[ext]; ok {
 				id = "strm"
 				name = strings.TrimSuffix(name, ext) + "strm"
 				size = int64(len(d.getLink(ctx, path)))
-			} else if _, ok := d.downloadSuffix[ext]; ok {
-				size = obj.GetSize()
 			} else {
 				continue
 			}
