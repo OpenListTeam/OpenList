@@ -182,4 +182,5 @@ const (
 	UserAgentKey
 	PathKey
 	SharingIDKey
+	StorageKey
 )
