@@ -164,7 +164,7 @@ func (d *Pan123) login() error {
 			"origin":      "https://www.123pan.com",
 			"referer":     "https://www.123pan.com/",
 			"user-agent":  "Dart/2.19(dart:io)-openlist",
-			"platform":    d.Platform,
+			"platform":    "web",
 			"app-version": "3",
 			//"user-agent":  base.UserAgent,
 		}).
