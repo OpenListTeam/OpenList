@@ -13,7 +13,7 @@ type Addition struct {
 	//OrderDirection string `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
 	AccessToken  string
 	UploadThread int    `json:"UploadThread" type:"number" default:"3" help:"the threads of upload"`
-	Platform     string `json:"platform" type:"string" default:"web" help:"the platform to simulate"`
+	Platform     string `json:"platform" type:"string" default:"web" help:"the platform header value, sent with API requests"`
 }
 
 var config = driver.Config{
