@@ -203,7 +203,7 @@ do:
 		"referer":       "https://www.123pan.com/",
 		"authorization": "Bearer " + d.AccessToken,
 		"user-agent":    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) openlist-client",
-		"platform":      "web",
+		"platform":      d.Platform,
 		"app-version":   "3",
 		//"user-agent":    base.UserAgent,
 	})
