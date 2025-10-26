@@ -75,6 +75,9 @@ func (d *Pan123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		}
 		resp, err := d.Request(DownloadInfo, http.MethodPost, func(req *resty.Request) {
 			req.SetBody(data)
+			req.SetHeaders(map[string]string{
+		        "platform": "android",
+		    })
 		}, nil)
 		if err != nil {
 			return nil, err
@@ -92,6 +95,9 @@ func (d *Pan123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 			if err != nil {
 				return nil, err
 			}
+			query := u.Query()
+		    query.Set("auto_redirect", "0")
+		    u.RawQuery = query.Encode()
 			u_ = u.String()
 		}
 
