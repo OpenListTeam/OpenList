@@ -236,4 +236,9 @@ func (d *Onedrive) GetDetails(ctx context.Context) (*model.StorageDetails, error
 	}, nil
 }
 
+func (d *Onedrive) IsDirectUploadEnabled() bool {
+	return d.EnableDirectUpload
+}
+
 var _ driver.Driver = (*Onedrive)(nil)
+var _ driver.DirectUploadConfigChecker = (*Onedrive)(nil)

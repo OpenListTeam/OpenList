@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -49,12 +50,13 @@ type ObjResp struct {
 }
 
 type FsListResp struct {
-	Content  []ObjResp `json:"content"`
-	Total    int64     `json:"total"`
-	Readme   string    `json:"readme"`
-	Header   string    `json:"header"`
-	Write    bool      `json:"write"`
-	Provider string    `json:"provider"`
+	Content             []ObjResp `json:"content"`
+	Total               int64     `json:"total"`
+	Readme              string    `json:"readme"`
+	Header              string    `json:"header"`
+	Write               bool      `json:"write"`
+	Provider            string    `json:"provider"`
+	DirectUploadEnabled bool      `json:"direct_upload_enabled"` // Whether direct upload is enabled for this storage
 }
 
 func FsListSplit(c *gin.Context) {
@@ -109,17 +111,29 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	}
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
-	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	directUploadEnabled := false
+	storage, _, err := fs.GetStorageAndActualPath(reqPath)
 	if err == nil {
 		provider = storage.GetStorage().Driver
+		// Check if storage implements DirectUploader interface
+		if _, ok := storage.(driver.DirectUploader); ok {
+			// Check if driver implements DirectUploadConfigChecker to avoid side effects
+			if checker, ok := storage.(driver.DirectUploadConfigChecker); ok {
+				directUploadEnabled = checker.IsDirectUploadEnabled()
+			} else {
+				// For drivers without config checker, assume enabled if DirectUploader is implemented
+				directUploadEnabled = true
+			}
+		}
 	}
 	common.SuccessResp(c, FsListResp{
-		Content:  toObjsResp(objs, reqPath, isEncrypt(meta, reqPath)),
-		Total:    int64(total),
-		Readme:   getReadme(meta, reqPath),
-		Header:   getHeader(meta, reqPath),
-		Write:    user.CanWrite() || common.CanWrite(meta, reqPath),
-		Provider: provider,
+		Content:             toObjsResp(objs, reqPath, isEncrypt(meta, reqPath)),
+		Total:               int64(total),
+		Readme:              getReadme(meta, reqPath),
+		Header:              getHeader(meta, reqPath),
+		Write:               user.CanWrite() || common.CanWrite(meta, reqPath),
+		Provider:            provider,
+		DirectUploadEnabled: directUploadEnabled,
 	})
 }
 
