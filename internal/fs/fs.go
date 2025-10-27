@@ -167,6 +167,14 @@ func GetStorage(path string, args *GetStoragesArgs) (driver.Driver, error) {
 	return storageDriver, nil
 }
 
+func GetStorageAndActualPath(path string) (driver.Driver, string, error) {
+	return op.GetStorageAndActualPath(path)
+}
+
+func GetByActualPath(ctx context.Context, storage driver.Driver, actualPath string) (model.Obj, error) {
+	return op.Get(ctx, storage, actualPath)
+}
+
 func Other(ctx context.Context, args model.FsOtherArgs) (interface{}, error) {
 	res, err := other(ctx, args)
 	if err != nil {
