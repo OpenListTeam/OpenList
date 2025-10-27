@@ -85,7 +85,7 @@ func (d *Strm) Init(ctx context.Context) error {
 		}
 	}
 
-	if d.Version != 2 {
+	if d.Version != 3 {
 		types := strings.Split("mp4,mkv,flv,avi,wmv,ts,rmvb,webm,mp3,flac,aac,wav,ogg,m4a,wma,alac", ",")
 		for _, ext := range types {
 			if _, ok := d.supportSuffix[ext]; !ok {
@@ -93,6 +93,7 @@ func (d *Strm) Init(ctx context.Context) error {
 				supportTypes = append(supportTypes, ext)
 			}
 		}
+		d.FilterFileTypes = strings.Join(supportTypes, ",")
 
 		types = strings.Split("ass,srt,vtt,sub,strm", ",")
 		for _, ext := range types {
@@ -102,7 +103,7 @@ func (d *Strm) Init(ctx context.Context) error {
 			}
 		}
 		d.DownloadFileTypes = strings.Join(downloadTypes, ",")
-		d.Version = 2
+		d.Version = 3
 	}
 	return nil
 }
