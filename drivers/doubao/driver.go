@@ -264,6 +264,27 @@ func (d *Doubao) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj
 	return nil, errs.NotImplement
 }
 
+func (d *Doubao) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+
+	var srcObjIds []base.Json
+
+	for _, obj := range srcObjs {
+		srcObjIds = append(srcObjIds, base.Json{"id": obj.GetID()})
+	}
+
+	currentParentId := srcObjs[0].GetPath()
+	var r UploadNodeResp
+	_, err := d.request("/samantha/aispace/move_node", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"node_list":         srcObjIds,
+			"current_parent_id": currentParentId,
+			"target_parent_id":  dstDir.GetID(),
+		})
+	}, &r)
+	return err
+
+}
+
 //func (d *Doubao) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}

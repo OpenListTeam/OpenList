@@ -299,3 +299,53 @@ func (y *Cloud189TV) GetDetails(ctx context.Context) (*model.StorageDetails, err
 		},
 	}, nil
 }
+
+func (y *Cloud189TV) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+
+	isFamily := y.isFamily()
+	other := map[string]string{"targetFileName": dstDir.GetName()}
+
+	var tasks []BatchTaskInfo
+	for _, obj := range srcObjs {
+		tasks = append(tasks, BatchTaskInfo{
+			FileId:   obj.GetID(),
+			FileName: obj.GetName(),
+			IsFolder: BoolToNumber(obj.IsDir()),
+		})
+	}
+
+	resp, err := y.CreateBatchTask("MOVE", IF(isFamily, y.FamilyID, ""), dstDir.GetID(), other, tasks...)
+	if err != nil {
+		return err
+	}
+
+	if err = y.WaitBatchTask("MOVE", resp.TaskID, time.Millisecond*400); err != nil {
+		return err
+	}
+	return nil
+
+}
+
+func (y *Cloud189TV) BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	isFamily := y.isFamily()
+	other := map[string]string{"targetFileName": dstDir.GetName()}
+
+	var tasks []BatchTaskInfo
+	for _, obj := range srcObjs {
+		tasks = append(tasks, BatchTaskInfo{
+			FileId:   obj.GetID(),
+			FileName: obj.GetName(),
+			IsFolder: BoolToNumber(obj.IsDir()),
+		})
+	}
+
+	resp, err := y.CreateBatchTask("COPY", IF(isFamily, y.FamilyID, ""), dstDir.GetID(), other, tasks...)
+	if err != nil {
+		return err
+	}
+
+	if err = y.WaitBatchTask("COPY", resp.TaskID, time.Second); err != nil {
+		return err
+	}
+	return nil
+}

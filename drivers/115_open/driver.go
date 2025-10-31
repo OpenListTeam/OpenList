@@ -367,4 +367,39 @@ func (d *Open115) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 //	return nil, errs.NotSupport
 //}
 
+func (d *Open115) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	if err := d.WaitLimit(ctx); err != nil {
+		return err
+	}
+
+	var srcObjIds []string
+	for _, srcObj := range srcObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	_, err := d.client.Move(ctx, &sdk.MoveReq{
+		FileIDs: strings.Join(srcObjIds, ","),
+		ToCid:   dstDir.GetID(),
+	})
+	return err
+}
+
+func (d *Open115) BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	if err := d.WaitLimit(ctx); err != nil {
+		return err
+	}
+
+	var srcObjIds []string
+	for _, srcObj := range srcObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	_, err := d.client.Copy(ctx, &sdk.CopyReq{
+		PID:     dstDir.GetID(),
+		FileID:  strings.Join(srcObjIds, ","),
+		NoDupli: "1",
+	})
+	return err
+}
+
 var _ driver.Driver = (*Open115)(nil)

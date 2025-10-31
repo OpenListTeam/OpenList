@@ -194,24 +194,12 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 			Path:     "/",
 		}, nil
 	}
-	remoteFullPath := ""
-	var remoteObj model.Obj
-	var err, err2 error
-	firstTryIsFolder, secondTry := guessPath(path)
-	remoteFullPath = d.getPathForRemote(path, firstTryIsFolder)
-	remoteObj, err = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
+
+	remoteObj, err := d.getEncryptedObject(ctx, path)
 	if err != nil {
-		if errs.IsObjectNotFound(err) && secondTry {
-			// try the opposite
-			remoteFullPath = d.getPathForRemote(path, !firstTryIsFolder)
-			remoteObj, err2 = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
-			if err2 != nil {
-				return nil, err2
-			}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
+
 	var size int64 = 0
 	name := ""
 	if !remoteObj.IsDir() {
@@ -424,5 +412,37 @@ func (d *Crypt) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 //func (d *Safe) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}
+
+func (d *Crypt) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+
+	batchMover, ok := d.remoteStorage.(driver.BatchMove)
+	if !ok {
+		return errs.NotImplement
+	}
+
+	srcEncryptedObj, dstEncryptedObj, encryptedObjs, err := d.convertEncryptedObj(ctx, srcDir, srcObjs, args)
+	if err != nil {
+		return err
+	}
+
+	return batchMover.BatchMove(ctx, srcEncryptedObj, encryptedObjs, dstEncryptedObj, args)
+
+}
+
+func (d *Crypt) BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+
+	batchCopier, ok := d.remoteStorage.(driver.BatchCopy)
+	if !ok {
+		return errs.NotImplement
+	}
+
+	srcEncryptedObj, dstEncryptedObj, encryptedObjs, err := d.convertEncryptedObj(ctx, srcDir, srcObjs, args)
+	if err != nil {
+		return err
+	}
+
+	return batchCopier.BatchCopy(ctx, srcEncryptedObj, encryptedObjs, dstEncryptedObj, args)
+
+}
 
 var _ driver.Driver = (*Crypt)(nil)

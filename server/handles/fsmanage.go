@@ -98,6 +98,17 @@ func FsMove(c *gin.Context) {
 		}
 	}
 
+	batchMove, err := fs.BatchMove(c.Request.Context(), req.SrcDir, req.DstDir, req.Names)
+	if err != nil && !errors.Is(errs.NotImplement, err) {
+		common.ErrorResp(c, err, 500)
+		return
+	} else if batchMove {
+		common.SuccessResp(c, gin.H{
+			"message": "Copy operations completed immediately",
+		})
+		return
+	}
+
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
@@ -158,6 +169,16 @@ func FsCopy(c *gin.Context) {
 				return
 			}
 		}
+	}
+
+	batchCopy, err := fs.BatchCopy(c.Request.Context(), req.SrcDir, req.DstDir, req.Names)
+	if err != nil && !errors.Is(errs.NotImplement, err) {
+		common.ErrorResp(c, err, 500)
+	} else if batchCopy {
+		common.SuccessResp(c, gin.H{
+			"message": "Copy operations completed immediately",
+		})
+		return
 	}
 
 	// Create all tasks immediately without any synchronous validation

@@ -218,3 +218,11 @@ type LinkCacheModeResolver interface {
 	// ResolveLinkCacheMode returns the LinkCacheMode for the given path.
 	ResolveLinkCacheMode(path string) LinkCacheMode
 }
+
+type BatchMove interface {
+	BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error
+}
+
+type BatchCopy interface {
+	BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error
+}
