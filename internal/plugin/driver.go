@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sync/atomic"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/alloc"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
@@ -77,6 +79,7 @@ func NewDriverPlugin(ctx context.Context, plugin *PluginInfo) (*DriverPlugin, er
 		}).
 		WithName(plugin.ID)
 
+	ctx = experimental.WithMemoryAllocator(ctx, experimental.MemoryAllocatorFunc(alloc.NewMemory))
 	// 实例化模块，同时注入 Host API
 	instance, err := rt.InstantiateModule(ctx, compiledModule, moduleConfig)
 	if err != nil {
