@@ -468,7 +468,7 @@ func (d *BaiduNetdisk) requestForUploadUrl(path, uploadId string) (string, error
 		uploadUrl = resp.BakServers[0].Server
 	}
 	if uploadUrl == "" {
-		return "", errors.New("upload url is empty")
+		return "", errors.New("upload URL is empty")
 	}
 	return uploadUrl, nil
 }
