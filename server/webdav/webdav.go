@@ -272,7 +272,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	}
 	err = common.Proxy(w, r, link, fi)
 	if err != nil {
-		if statusCode, ok := errors.Unwrap(err).(net.HttpStatusCodeError); ok {
+		if statusCode, ok := errs.UnwrapOrSelf(err).(net.HttpStatusCodeError); ok {
 			return int(statusCode), err
 		}
 		return http.StatusInternalServerError, fmt.Errorf("webdav proxy error: %+v", err)

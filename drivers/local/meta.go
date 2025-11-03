@@ -18,12 +18,12 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:          "Local",
-	OnlyLinkMFile: false,
-	LocalSort:     true,
-	NoCache:       true,
-	DefaultRoot:   "/",
-	NoLinkURL:     true,
+	Name:        "Local",
+	LocalSort:   true,
+	OnlyProxy:   true,
+	NoCache:     true,
+	DefaultRoot: "/",
+	NoLinkURL:   true,
 }
 
 func init() {

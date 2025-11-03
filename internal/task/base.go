@@ -14,7 +14,7 @@ type TaskExtension struct {
 	Creator    *model.User
 	startTime  *time.Time
 	endTime    *time.Time
-	totalBytes int64
+	TotalBytes int64
 	ApiUrl     string
 }
 
@@ -58,11 +58,11 @@ func (t *TaskExtension) ClearEndTime() {
 }
 
 func (t *TaskExtension) SetTotalBytes(totalBytes int64) {
-	t.totalBytes = totalBytes
+	t.TotalBytes = totalBytes
 }
 
 func (t *TaskExtension) GetTotalBytes() int64 {
-	return t.totalBytes
+	return t.TotalBytes
 }
 
 func (t *TaskExtension) ReinitCtx() error {

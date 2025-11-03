@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -27,9 +28,6 @@ func (f RangeReaderFunc) RangeRead(ctx context.Context, httpRange http_range.Ran
 }
 
 func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, error) {
-	if link.MFile != nil {
-		return GetRangeReaderFromMFile(size, link.MFile), nil
-	}
 	if link.Concurrency > 0 || link.PartSize > 0 {
 		down := net.NewDownloader(func(d *net.Downloader) {
 			d.Concurrency = link.Concurrency
@@ -66,7 +64,7 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 	}
 
 	if len(link.URL) == 0 {
-		return nil, errors.New("invalid link: must have at least one of MFile, URL, or RangeReader")
+		return nil, errors.New("invalid link: must have at least one of URL or RangeReader")
 	}
 	rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 		if httpRange.Length < 0 || httpRange.Start+httpRange.Length > size {
@@ -78,7 +76,7 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 
 		response, err := net.RequestHttp(ctx, "GET", header, link.URL)
 		if err != nil {
-			if _, ok := errors.Unwrap(err).(net.HttpStatusCodeError); ok {
+			if _, ok := errs.UnwrapOrSelf(err).(net.HttpStatusCodeError); ok {
 				return nil, err
 			}
 			return nil, fmt.Errorf("http request failure, err:%w", err)
