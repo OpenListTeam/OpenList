@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -840,7 +841,7 @@ func (xc *XunLeiBrowserCommon) OfflineList(ctx context.Context, nextPageToken st
 func (xc *XunLeiBrowserCommon) DeleteOfflineTasks(ctx context.Context, taskIDs []string) error {
 	queryParams := map[string]string{
 		"task_ids": strings.Join(taskIDs, ","),
-		"_t":       fmt.Sprintf("%d", time.Now().UnixMilli()),
+		"_t":       strconv.FormatInt(time.Now().UnixMilli(), 10),
 	}
 	if xc.UseFluentPlay {
 		queryParams["space"] = ThunderBrowserDriveFluentPlayFolderType
