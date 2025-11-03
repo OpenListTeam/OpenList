@@ -395,7 +395,7 @@ func (d *BaiduNetdisk) quota(ctx context.Context) (model.DiskUsage, error) {
 }
 
 // getUploadUrl 从开放平台获取上传域名/地址，并发请求会被合并，结果会被缓存1h。
-// 如果获取失败，则返回 UPLOAD_FALLBACK_API。
+// 如果获取失败，则返回 Upload API设置项。
 func (d *BaiduNetdisk) getUploadUrl(path, uploadId string) string {
 	if !d.UseDynamicUploadAPI {
 		return d.UploadAPI
@@ -435,8 +435,9 @@ func (d *BaiduNetdisk) getUploadUrl(path, uploadId string) string {
 
 	uploadUrl, err, _ := d.uploadUrlG.Do(path, uploadUrlGetFunc)
 	if err != nil {
-		log.Warnf("[baidu_netdisk] get upload URL failed (%v), will use fallback URL: %s", err, UPLOAD_FALLBACK_API)
-		return UPLOAD_FALLBACK_API
+		fallback := d.UploadAPI
+		log.Warnf("[baidu_netdisk] get upload URL failed (%v), will use fallback URL: %s", err, fallback)
+		return fallback
 	}
 	return uploadUrl
 }
