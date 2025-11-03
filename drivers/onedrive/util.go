@@ -317,19 +317,14 @@ func (d *Onedrive) getDrive(ctx context.Context) (*DriveResp, error) {
 	return &resp, nil
 }
 
-// GetDirectUploadInfo returns the direct upload info for OneDrive
-func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, dstDir model.Obj, actualPath string, fileName string, fileSize int64) (*model.DirectUploadInfo, error) {
-	if !d.EnableDirectUpload {
-		return nil, errs.NotImplement
-	}
-	
+func (d *Onedrive) getDirectUploadInfo(ctx context.Context, actualPath, fileName string) (*model.HttpDirectUploadInfo, error) {
 	// Use actualPath (relative to storage root) instead of dstDir.GetPath()
 	// This fixes the bug where mounted subdirectories use incorrect paths
 	dirPath := actualPath
 	if dirPath == "" {
 		dirPath = "/"
 	}
-	
+
 	// Join with root folder path to get the full OneDrive path
 	var fullPath string
 	if d.RootFolderPath == "/" || d.RootFolderPath == "" {
@@ -337,10 +332,10 @@ func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, dstDir model.Obj, ac
 	} else {
 		fullPath = stdpath.Join(d.RootFolderPath, dirPath, fileName)
 	}
-	
+
 	// Clean up the path
 	filePath := stdpath.Clean(fullPath)
-	
+
 	// Create upload session
 	url := d.GetMetaUrl(false, filePath) + "/createUploadSession"
 	metadata := map[string]any{
@@ -348,20 +343,19 @@ func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, dstDir model.Obj, ac
 			"@microsoft.graph.conflictBehavior": "rename",
 		},
 	}
-	
+
 	res, err := d.Request(url, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(metadata).SetContext(ctx)
 	}, nil)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
 	if uploadUrl == "" {
 		return nil, fmt.Errorf("failed to get upload URL from response")
 	}
-	
-	return &model.DirectUploadInfo{
+	return &model.HttpDirectUploadInfo{
 		UploadURL: uploadUrl,
 		ChunkSize: d.ChunkSize * 1024 * 1024, // Convert MB to bytes
 		Method:    "PUT",

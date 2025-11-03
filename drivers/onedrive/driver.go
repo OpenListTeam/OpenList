@@ -236,9 +236,19 @@ func (d *Onedrive) GetDetails(ctx context.Context) (*model.StorageDetails, error
 	}, nil
 }
 
-func (d *Onedrive) IsDirectUploadEnabled() bool {
-	return d.EnableDirectUpload
+func (d *Onedrive) GetDirectUploadTools() []string {
+	if !d.EnableDirectUpload {
+		return nil
+	}
+	return []string{"HttpDirect"}
+}
+
+// GetDirectUploadInfo returns the direct upload info for OneDrive
+func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, _ int64) (any, error) {
+	if !d.EnableDirectUpload {
+		return nil, errs.NotImplement
+	}
+	return d.getDirectUploadInfo(ctx, dstDir.GetPath(), fileName)
 }
 
 var _ driver.Driver = (*Onedrive)(nil)
-var _ driver.DirectUploadConfigChecker = (*Onedrive)(nil)

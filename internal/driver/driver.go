@@ -220,14 +220,10 @@ type LinkCacheModeResolver interface {
 }
 
 type DirectUploader interface {
+	// GetDirectUploadTools returns available frontend-direct upload tools
+	GetDirectUploadTools() []string
 	// GetDirectUploadInfo returns the information needed for direct upload from client to storage
 	// actualPath is the path relative to the storage root (after removing mount path prefix)
-	// return errs.NotImplement if the driver does not support direct upload
-	GetDirectUploadInfo(ctx context.Context, dstDir model.Obj, actualPath string, fileName string, fileSize int64) (*model.DirectUploadInfo, error)
-}
-
-type DirectUploadConfigChecker interface {
-	// IsDirectUploadEnabled checks if direct upload is enabled in driver configuration
-	// This is used by List API to avoid calling GetDirectUploadInfo which may have side effects
-	IsDirectUploadEnabled() bool
+	// return errs.NotImplement if the driver does not support the given direct upload tool
+	GetDirectUploadInfo(ctx context.Context, tool string, dstDir model.Obj, fileName string, fileSize int64) (any, error)
 }

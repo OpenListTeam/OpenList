@@ -604,3 +604,43 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	log.Debugf("put url [%s](%s) done", dstName, url)
 	return errors.WithStack(err)
 }
+
+func GetDirectUploadTools(storage driver.Driver) []string {
+	du, ok := storage.(driver.DirectUploader)
+	if !ok {
+		return nil
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil
+	}
+	return du.GetDirectUploadTools()
+}
+
+func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64) (any, error) {
+	du, ok := storage.(driver.DirectUploader)
+	if !ok {
+		return nil, errs.NotImplement
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	dstDirPath = utils.FixAndCleanPath(dstDirPath)
+	dstPath := stdpath.Join(dstDirPath, dstName)
+	_, err := GetUnwrap(ctx, storage, dstPath)
+	if err == nil {
+		return nil, errors.New("obj already exists")
+	}
+	err = MakeDir(ctx, storage, dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get direct upload info")
+	}
+	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get direct upload info")
+	}
+	info, err := du.GetDirectUploadInfo(ctx, tool, dstDir, dstName, fileSize)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get direct upload info")
+	}
+	return info, nil
+}
