@@ -402,12 +402,11 @@ func (d *BaiduNetdisk) getUploadUrl(path, uploadId string) string {
 	}
 	getCachedUrlFunc := func() string {
 		d.uploadUrlMu.RLock()
+		defer d.uploadUrlMu.RUnlock()
 		if d.uploadUrl != "" && time.Since(d.uploadUrlUpdateTime) < UPLOAD_URL_EXPIRE_TIME {
 			uploadUrl := d.uploadUrl
-			d.uploadUrlMu.RUnlock()
 			return uploadUrl
 		}
-		d.uploadUrlMu.RUnlock()
 		return ""
 	}
 	// 检查地址缓存
