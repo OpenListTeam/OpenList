@@ -11,7 +11,9 @@ type Addition struct {
 	FilterFileTypes   string `json:"filterFileTypes" type:"text" default:"strm" required:"false" help:"Supports suffix name of strm file"`
 	DownloadFileTypes string `json:"downloadFileTypes" type:"text" default:"ass" required:"false" help:"Files need to download with strm (usally subtitles)"`
 	EncodePath        bool   `json:"encodePath" default:"true" required:"true" help:"encode the path in the strm file"`
-	LocalModel        bool   `json:"localModel" default:"false" help:"enable local mode"`
+	WithoutUrl        bool   `json:"withoutUrl" default:"false" help:"strm file content without URL prefix"`
+	SaveStrmToLocal   bool   `json:"SaveStrmToLocal" default:"false" help:"save strm file locally"`
+	SaveStrmLocalPath string `json:"SaveStrmLocalPath" type:"text" help:"save strm file local path"`
 }
 
 var config = driver.Config{
