@@ -62,5 +62,5 @@ func DeleteSharingById(id string) error {
 }
 
 func DeleteSharingsByCreatorId(creatorId uint) error {
-	return errors.WithStack(db.Where("creator_id = ?", creatorId).Delete(&model.SharingDB{}).Error)
+	return errors.WithStack(rwDb.W().Where("creator_id = ?", creatorId).Delete(&model.SharingDB{}).Error)
 }
