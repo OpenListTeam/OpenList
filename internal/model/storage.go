@@ -32,7 +32,7 @@ type Proxy struct {
 	WebdavPolicy string `json:"webdav_policy"`
 	ProxyRange   bool   `json:"proxy_range"`
 	DownProxyURL string `json:"down_proxy_url"`
-	//Disable sign for DownProxyURL
+	// Disable sign for DownProxyURL
 	DisableProxySign bool `json:"disable_proxy_sign"`
 }
 
@@ -54,4 +54,41 @@ func (p Proxy) Webdav302() bool {
 
 func (p Proxy) WebdavProxyURL() bool {
 	return p.WebdavPolicy == "use_proxy_url"
+}
+
+type DiskUsage struct {
+	TotalSpace uint64 `json:"total_space"`
+	FreeSpace  uint64 `json:"free_space"`
+}
+
+type StorageDetails struct {
+	DiskUsage
+}
+
+type StorageDetailsWithName struct {
+	*StorageDetails
+	DriverName string `json:"driver_name"`
+}
+
+type ObjWithStorageDetails interface {
+	GetStorageDetails() *StorageDetailsWithName
+}
+
+type ObjStorageDetails struct {
+	Obj
+	StorageDetailsWithName
+}
+
+func (o ObjStorageDetails) GetStorageDetails() *StorageDetailsWithName {
+	return &o.StorageDetailsWithName
+}
+
+func GetStorageDetails(obj Obj) (*StorageDetailsWithName, bool) {
+	if obj, ok := obj.(ObjWithStorageDetails); ok {
+		return obj.GetStorageDetails(), true
+	}
+	if unwrap, ok := obj.(ObjUnwrap); ok {
+		return GetStorageDetails(unwrap.Unwrap())
+	}
+	return nil, false
 }

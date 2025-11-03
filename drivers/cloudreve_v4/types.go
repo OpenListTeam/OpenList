@@ -66,11 +66,27 @@ type CaptchaResp struct {
 	Ticket string `json:"ticket"`
 }
 
+type AccessJWT struct {
+	TokenType string `json:"token_type"`
+	Sub       string `json:"sub"`
+	Exp       int64  `json:"exp"`
+	Nbf       int64  `json:"nbf"`
+}
+
+type RefreshJWT struct {
+	TokenType   string `json:"token_type"`
+	Sub         string `json:"sub"`
+	Exp         int    `json:"exp"`
+	Nbf         int    `json:"nbf"`
+	StateHash   string `json:"state_hash"`
+	RootTokenID string `json:"root_token_id"`
+}
+
 type Token struct {
-	AccessToken    string    `json:"access_token"`
-	RefreshToken   string    `json:"refresh_token"`
-	AccessExpires  time.Time `json:"access_expires"`
-	RefreshExpires time.Time `json:"refresh_expires"`
+	AccessToken    string `json:"access_token"`
+	RefreshToken   string `json:"refresh_token"`
+	AccessExpires  string `json:"access_expires"`
+	RefreshExpires string `json:"refresh_expires"`
 }
 
 type TokenResponse struct {
@@ -187,4 +203,10 @@ type FolderSummaryResp struct {
 		Completed    bool      `json:"completed"`
 		CalculatedAt time.Time `json:"calculated_at"`
 	} `json:"folder_summary"`
+}
+
+type CapacityResp struct {
+	Total uint64 `json:"total"`
+	Used  uint64 `json:"used"`
+	// StoragePackTotal uint64 `json:"storage_pack_total"`
 }

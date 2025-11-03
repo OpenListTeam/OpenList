@@ -189,3 +189,12 @@ type PrecreateResp struct {
 	// return_type=2
 	File File `json:"info"`
 }
+
+type QuotaResp struct {
+	Errno     int    `json:"errno"`
+	RequestId int64  `json:"request_id"`
+	Total     uint64 `json:"total"`
+	Used      uint64 `json:"used"`
+	//Free      uint64 `json:"free"`
+	//Expire    bool   `json:"expire"`
+}

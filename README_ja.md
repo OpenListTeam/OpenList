@@ -65,6 +65,7 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [WebDAV](https://en.wikipedia.org/wiki/WebDAV)
   - [x] Teambition([中国](https://www.teambition.com), [国際](https://us.teambition.com))
   - [x] [Mediatrack](https://www.mediatrack.cn)
+  - [x] [ProtonDrive](https://proton.me/drive)
   - [x] [139yun](https://yun.139.com)（個人、家族、グループ）
   - [x] [YandexDisk](https://disk.yandex.com)
   - [x] [BaiduNetdisk](http://pan.baidu.com)
@@ -74,7 +75,6 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [Thunder](https://pan.xunlei.com)
   - [x] [Lanzou](https://www.lanzou.com)
   - [x] [ILanzou](https://www.ilanzou.com)
-  - [x] [Aliyundrive share](https://www.alipan.com)
   - [x] [Google photo](https://photos.google.com)
   - [x] [Mega.nz](https://mega.nz)
   - [x] [Baidu photo](https://photo.baidu.com)
@@ -85,6 +85,16 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [FeijiPan](https://www.feijipan.com)
   - [x] [dogecloud](https://www.dogecloud.com/product/oss)
   - [x] [Azure Blob Storage](https://azure.microsoft.com/products/storage/blobs)
+  - [x] [Chaoxing](https://www.chaoxing.com)
+  - [x] [CNB](https://cnb.cool/)
+  - [x] [Degoo](https://degoo.com)
+  - [x] [Doubao](https://www.doubao.com)
+  - [x] [Febbox](https://www.febbox.com)
+  - [x] [GitHub](https://github.com)
+  - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
+  - [x] [Teldrive](https://github.com/tgdrive/teldrive)
+  - [x] [Weiyun](https://www.weiyun.com)
+  - [x] [MediaFire](https://www.mediafire.com)
 - [x] 簡単にデプロイでき、すぐに使える
 - [x] ファイルプレビュー（PDF、markdown、コード、テキストなど）
 - [x] ギャラリーモードでの画像プレビュー

@@ -9,8 +9,8 @@ import (
 type Driver interface {
 	Meta
 	Reader
-	//Writer
-	//Other
+	// Writer
+	// Other
 }
 
 type Meta interface {
@@ -45,11 +45,6 @@ type GetRooter interface {
 type Getter interface {
 	// Get file by path, the path haven't been joined with root path
 	Get(ctx context.Context, path string) (model.Obj, error)
-}
-
-type GetObjInfo interface {
-	// GetObjInfo get file info by path
-	GetObjInfo(ctx context.Context, path string) (model.Obj, error)
 }
 
 //type Writer interface {
@@ -218,6 +213,16 @@ type ArchiveDecompressResult interface {
 	ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) ([]model.Obj, error)
 }
 
+type WithDetails interface {
+	// GetDetails get storage details (total space, free space, etc.)
+	GetDetails(ctx context.Context) (*model.StorageDetails, error)
+}
+
 type Reference interface {
 	InitReference(storage Driver) error
+}
+
+type LinkCacheModeResolver interface {
+	// ResolveLinkCacheMode returns the LinkCacheMode for the given path.
+	ResolveLinkCacheMode(path string) LinkCacheMode
 }

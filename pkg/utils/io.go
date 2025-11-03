@@ -187,40 +187,41 @@ func NewClosers(c ...io.Closer) Closers {
 	return Closers(c)
 }
 
-type SyncClosersIF interface {
-	ClosersIF
-	AcquireReference() bool
-}
-
 type SyncClosers struct {
 	closers []io.Closer
 	ref     int32
 }
 
-var _ SyncClosersIF = (*SyncClosers)(nil)
-
+// if closed, return false
 func (c *SyncClosers) AcquireReference() bool {
 	ref := atomic.AddInt32(&c.ref, 1)
 	if ref > 0 {
-		// log.Debugf("SyncClosers.AcquireReference %p,ref=%d\n", c, ref)
+		// log.Debugf("AcquireReference %p: %d", c, ref)
 		return true
 	}
-	atomic.StoreInt32(&c.ref, math.MinInt16)
+	atomic.StoreInt32(&c.ref, closersClosed)
 	return false
 }
 
-func (c *SyncClosers) Close() error {
-	ref := atomic.AddInt32(&c.ref, -1)
-	if ref < -1 {
-		atomic.StoreInt32(&c.ref, math.MinInt16)
-		return nil
-	}
-	// log.Debugf("SyncClosers.Close %p,ref=%d\n", c, ref+1)
-	if ref > 0 {
-		return nil
-	}
-	atomic.StoreInt32(&c.ref, math.MinInt16)
+const closersClosed = math.MinInt32
 
+func (c *SyncClosers) Close() error {
+	for {
+		ref := atomic.LoadInt32(&c.ref)
+		if ref < 0 {
+			return nil
+		}
+		if ref > 1 {
+			if atomic.CompareAndSwapInt32(&c.ref, ref, ref-1) {
+				// log.Debugf("ReleaseReference %p: %d", c, ref)
+				return nil
+			}
+		} else if atomic.CompareAndSwapInt32(&c.ref, ref, closersClosed) {
+			break
+		}
+	}
+
+	// log.Debugf("FinalClose %p", c)
 	var errs []error
 	for _, closer := range c.closers {
 		if closer != nil {
@@ -248,6 +249,16 @@ func (c *SyncClosers) AddIfCloser(a any) {
 		}
 		c.closers = append(c.closers, closer)
 	}
+}
+
+var _ ClosersIF = (*SyncClosers)(nil)
+
+// 实现cache.Expirable接口
+func (c *SyncClosers) Expired() bool {
+	return atomic.LoadInt32(&c.ref) < 0
+}
+func (c *SyncClosers) Length() int {
+	return len(c.closers)
 }
 
 func NewSyncClosers(c ...io.Closer) SyncClosers {

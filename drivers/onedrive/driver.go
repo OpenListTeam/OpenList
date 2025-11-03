@@ -22,6 +22,7 @@ type Onedrive struct {
 	AccessToken string
 	root        *Object
 	mutex       sync.Mutex
+	ref         *Onedrive
 }
 
 func (d *Onedrive) Config() driver.Config {
@@ -36,10 +37,22 @@ func (d *Onedrive) Init(ctx context.Context) error {
 	if d.ChunkSize < 1 {
 		d.ChunkSize = 5
 	}
+	if d.ref != nil {
+		return nil
+	}
 	return d.refreshToken()
 }
 
+func (d *Onedrive) InitReference(refStorage driver.Driver) error {
+	if ref, ok := refStorage.(*Onedrive); ok {
+		d.ref = ref
+		return nil
+	}
+	return errs.NotSupport
+}
+
 func (d *Onedrive) Drop(ctx context.Context) error {
+	d.ref = nil
 	return nil
 }
 
@@ -205,6 +218,22 @@ func (d *Onedrive) Put(ctx context.Context, dstDir model.Obj, stream model.FileS
 		err = d.upBig(ctx, dstDir, stream, up)
 	}
 	return err
+}
+
+func (d *Onedrive) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if d.DisableDiskUsage {
+		return nil, errs.NotImplement
+	}
+	drive, err := d.getDrive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: drive.Quota.Total,
+			FreeSpace:  drive.Quota.Remaining,
+		},
+	}, nil
 }
 
 var _ driver.Driver = (*Onedrive)(nil)

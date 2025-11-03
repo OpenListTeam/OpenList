@@ -160,6 +160,7 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_transmission", handles.SetTransmission)
 	setting.POST("/set_115", handles.Set115)
 	setting.POST("/set_115_open", handles.Set115Open)
+	setting.POST("/set_123_open", handles.Set123Open)
 	setting.POST("/set_pikpak", handles.SetPikPak)
 	setting.POST("/set_thunder", handles.SetThunder)
 	setting.POST("/set_thunderx", handles.SetThunderX)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/rclone/rclone/lib/mmap"
@@ -125,7 +126,7 @@ type ConcurrencyLimit struct {
 	Limit int // 需要大于0
 }
 
-var ErrExceedMaxConcurrency = ErrorHttpStatusCode(http.StatusTooManyRequests)
+var ErrExceedMaxConcurrency = HttpStatusCodeError(http.StatusTooManyRequests)
 
 func (l *ConcurrencyLimit) sub() error {
 	l._m.Lock()
@@ -403,7 +404,7 @@ var errInfiniteRetry = errors.New("infinite retry")
 func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int64, error) {
 	resp, err := d.cfg.HttpClient(d.ctx, params)
 	if err != nil {
-		statusCode, ok := errors.Unwrap(err).(ErrorHttpStatusCode)
+		statusCode, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError)
 		if !ok {
 			return 0, err
 		}

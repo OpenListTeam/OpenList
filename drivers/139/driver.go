@@ -54,7 +54,8 @@ func (d *Yun139) Init(ctx context.Context) error {
 			"userInfo": base.Json{
 				"userType":    1,
 				"accountType": 1,
-				"accountName": d.Account},
+				"accountName": d.Account,
+			},
 			"modAddrType": 1,
 		}, &resp)
 		if err != nil {
@@ -534,16 +535,15 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		if size > partSize {
 			part = (size + partSize - 1) / partSize
 		}
+
+		// 生成所有 partInfos
 		partInfos := make([]PartInfo, 0, part)
 		for i := int64(0); i < part; i++ {
 			if utils.IsCanceled(ctx) {
 				return ctx.Err()
 			}
 			start := i * partSize
-			byteSize := size - start
-			if byteSize > partSize {
-				byteSize = partSize
-			}
+			byteSize := min(size-start, partSize)
 			partNumber := i + 1
 			partInfo := PartInfo{
 				PartNumber: partNumber,
@@ -591,17 +591,20 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		// resp.Data.RapidUpload: true 支持快传，但此处直接检测是否返回分片的上传地址
 		// 快传的情况下同样需要手动处理冲突
 		if resp.Data.PartInfos != nil {
-			// 读取前100个分片的上传地址
-			uploadPartInfos := resp.Data.PartInfos
+			// Progress
+			p := driver.NewProgress(size, up)
+			rateLimited := driver.NewLimitedUploadStream(ctx, stream)
 
-			// 获取后续分片的上传地址
-			for i := 101; i < len(partInfos); i += 100 {
-				end := i + 100
-				if end > len(partInfos) {
-					end = len(partInfos)
-				}
+			// 先上传前100个分片
+			err = d.uploadPersonalParts(ctx, partInfos, resp.Data.PartInfos, rateLimited, p)
+			if err != nil {
+				return err
+			}
+
+			// 如果还有剩余分片，分批获取上传地址并上传
+			for i := 100; i < len(partInfos); i += 100 {
+				end := min(i+100, len(partInfos))
 				batchPartInfos := partInfos[i:end]
-
 				moredata := base.Json{
 					"fileId":    resp.Data.FileId,
 					"uploadId":  resp.Data.UploadId,
@@ -617,44 +620,13 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				if err != nil {
 					return err
 				}
-				uploadPartInfos = append(uploadPartInfos, moreresp.Data.PartInfos...)
-			}
-
-			// Progress
-			p := driver.NewProgress(size, up)
-
-			rateLimited := driver.NewLimitedUploadStream(ctx, stream)
-			// 上传所有分片
-			for _, uploadPartInfo := range uploadPartInfos {
-				index := uploadPartInfo.PartNumber - 1
-				partSize := partInfos[index].PartSize
-				log.Debugf("[139] uploading part %+v/%+v", index, len(uploadPartInfos))
-				limitReader := io.LimitReader(rateLimited, partSize)
-
-				// Update Progress
-				r := io.TeeReader(limitReader, p)
-
-				req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadPartInfo.UploadUrl, r)
+				err = d.uploadPersonalParts(ctx, partInfos, moreresp.Data.PartInfos, rateLimited, p)
 				if err != nil {
 					return err
 				}
-				req.Header.Set("Content-Type", "application/octet-stream")
-				req.Header.Set("Content-Length", fmt.Sprint(partSize))
-				req.Header.Set("Origin", "https://yun.139.com")
-				req.Header.Set("Referer", "https://yun.139.com/")
-				req.ContentLength = partSize
-
-				res, err := base.HttpClient.Do(req)
-				if err != nil {
-					return err
-				}
-				_ = res.Body.Close()
-				log.Debugf("[139] uploaded: %+v", res)
-				if res.StatusCode != http.StatusOK {
-					return fmt.Errorf("unexpected status code: %d", res.StatusCode)
-				}
 			}
 
+			// 全部分片上传完毕后，complete
 			data = base.Json{
 				"contentHash":          fullHash,
 				"contentHashAlgorithm": "SHA256",
@@ -761,7 +733,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				"manualRename": 2,
 				"operation":    0,
 				"path":         path.Join(dstDir.GetPath(), dstDir.GetID()),
-				"seqNo":        random.String(32), //序列号不能为空
+				"seqNo":        random.String(32), // 序列号不能为空
 				"totalSize":    reportSize,
 				"uploadContentList": []base.Json{{
 					"contentName": stream.GetName(),
@@ -861,6 +833,50 @@ func (d *Yun139) Other(ctx context.Context, args model.OtherArgs) (interface{}, 
 	default:
 		return nil, errs.NotImplement
 	}
+}
+
+func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if d.UserDomainID == "" {
+		return nil, errs.NotImplement
+	}
+	var total, free uint64
+	if d.isFamily() {
+		diskInfo, err := d.getFamilyDiskInfo(ctx)
+		if err != nil {
+			return nil, err
+		}
+		totalMb, err := strconv.ParseUint(diskInfo.Data.DiskSize, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
+		}
+		usedMb, err := strconv.ParseUint(diskInfo.Data.UsedSize, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed convert used size into integer: %+v", err)
+		}
+		total = totalMb * 1024 * 1024
+		free = total - (usedMb * 1024 * 1024)
+	} else {
+		diskInfo, err := d.getPersonalDiskInfo(ctx)
+		if err != nil {
+			return nil, err
+		}
+		totalMb, err := strconv.ParseUint(diskInfo.Data.DiskSize, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
+		}
+		freeMb, err := strconv.ParseUint(diskInfo.Data.FreeDiskSize, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed convert free size into integer: %+v", err)
+		}
+		total = totalMb * 1024 * 1024
+		free = freeMb * 1024 * 1024
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			FreeSpace:  free,
+		},
+	}, nil
 }
 
 var _ driver.Driver = (*Yun139)(nil)

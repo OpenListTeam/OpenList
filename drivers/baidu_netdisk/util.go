@@ -1,6 +1,7 @@
 package baidu_netdisk
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -207,7 +209,7 @@ func (d *BaiduNetdisk) linkOfficial(file model.Obj, _ model.LinkArgs) (*model.Li
 	if err != nil {
 		return nil, err
 	}
-	//if res.StatusCode() == 302 {
+	// if res.StatusCode() == 302 {
 	u = res.Header().Get("location")
 	//}
 
@@ -379,6 +381,17 @@ func (d *BaiduNetdisk) getSliceSize(filesize int64) int64 {
 	}
 
 	return maxSliceSize
+}
+
+func (d *BaiduNetdisk) quota(ctx context.Context) (model.DiskUsage, error) {
+	var resp QuotaResp
+	_, err := d.request("https://pan.baidu.com/api/quota", http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp)
+	if err != nil {
+		return model.DiskUsage{}, err
+	}
+	return driver.DiskUsageFromUsedAndTotal(resp.Used, resp.Total), nil
 }
 
 // func encodeURIComponent(str string) string {

@@ -46,7 +46,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25.0'
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,4 +73,5 @@ jobs:
         with:
           files: build/compress/*
           prerelease: false
+          tag_name: ${{ github.event.release.tag_name }}
 

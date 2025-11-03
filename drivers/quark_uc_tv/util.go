@@ -228,12 +228,18 @@ func (d *QuarkUCTV) getTranscodingLink(ctx context.Context, file model.Obj) (*mo
 		return nil, err
 	}
 
-	return &model.Link{
-		URL:           fileLink.Data.VideoInfo[0].URL,
-		Concurrency:   3,
-		PartSize:      10 * utils.MB,
-		ContentLength: fileLink.Data.VideoInfo[0].Size,
-	}, nil
+	for _, info := range fileLink.Data.VideoInfo {
+		if info.URL != "" {
+			return &model.Link{
+				URL:           info.URL,
+				ContentLength: info.Size,
+				Concurrency:   3,
+				PartSize:      10 * utils.MB,
+			}, nil
+		}
+	}
+
+	return nil, errors.New("no link found")
 }
 
 func (d *QuarkUCTV) getDownloadLink(ctx context.Context, file model.Obj) (*model.Link, error) {
