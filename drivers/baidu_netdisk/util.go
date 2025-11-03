@@ -433,7 +433,7 @@ func (d *BaiduNetdisk) getUploadUrl(path, uploadId string) string {
 		return uploadUrl, nil
 	}
 
-	uploadUrl, err, _ := d.uploadUrlG.Do(path, uploadUrlGetFunc)
+	uploadUrl, err, _ := d.uploadUrlG.Do("", uploadUrlGetFunc)
 	if err != nil {
 		fallback := d.UploadAPI
 		log.Warnf("[baidu_netdisk] get upload URL failed (%v), will use fallback URL: %s", err, fallback)
