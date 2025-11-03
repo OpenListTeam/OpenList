@@ -109,7 +109,7 @@ func (host *DriverHost) Log(level plugin_warp.LogLevel, message string) {
 	} else if level.Error != nil {
 		log.Errorln(message)
 	} else if level.Info != nil {
-		log.Errorln(message)
+		log.Infoln(message)
 	} else if level.Warn != nil {
 		log.Warnln(message)
 	} else {
