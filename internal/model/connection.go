@@ -7,7 +7,7 @@ import (
 
 // A Connection struct abstracts the access to the underlying database connections
 // It is used for reading from a database connection and writing to a database connection.
-// The writing is assumed is always in the context of a database transaction.
+// The writing is always assumed to be in the context of a database transaction.
 type Connection struct {
 	// Read is a read connection used for fast access to the underlying database transaction
 	Read *gorm.DB
