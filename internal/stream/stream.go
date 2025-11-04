@@ -85,27 +85,28 @@ func (f *FileStream) SetExist(obj model.Obj) {
 // It's not thread-safe!
 func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writer) (model.File, error) {
 	if cache := f.GetFile(); cache != nil {
+		_, err := cache.Seek(0, io.SeekStart)
+		if err != nil {
+			return nil, err
+		}
 		if writer == nil {
 			return cache, nil
 		}
-		_, err := cache.Seek(0, io.SeekStart)
+		reader := f.Reader
+		if up != nil {
+			cacheProgress := model.UpdateProgressWithRange(*up, 0, 50)
+			*up = model.UpdateProgressWithRange(*up, 50, 100)
+			reader = &ReaderUpdatingProgress{
+				Reader: &SimpleReaderWithSize{
+					Reader: reader,
+					Size:   f.GetSize(),
+				},
+				UpdateProgress: cacheProgress,
+			}
+		}
+		_, err = utils.CopyWithBuffer(writer, reader)
 		if err == nil {
-			reader := f.Reader
-			if up != nil {
-				cacheProgress := model.UpdateProgressWithRange(*up, 0, 50)
-				*up = model.UpdateProgressWithRange(*up, 50, 100)
-				reader = &ReaderUpdatingProgress{
-					Reader: &SimpleReaderWithSize{
-						Reader: reader,
-						Size:   f.GetSize(),
-					},
-					UpdateProgress: cacheProgress,
-				}
-			}
-			_, err = utils.CopyWithBuffer(writer, reader)
-			if err == nil {
-				_, err = cache.Seek(0, io.SeekStart)
-			}
+			_, err = cache.Seek(0, io.SeekStart)
 		}
 		if err != nil {
 			return nil, err
@@ -115,8 +116,8 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 
 	reader := f.Reader
 	if f.peekBuff != nil {
+		f.peekBuff.Seek(0, io.SeekStart)
 		if writer != nil {
-			f.peekBuff.Seek(0, io.SeekStart)
 			_, err := utils.CopyWithBuffer(writer, f.peekBuff)
 			if err != nil {
 				return nil, err
