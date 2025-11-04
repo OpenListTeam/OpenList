@@ -100,14 +100,16 @@ func (m *MountPoint) getSourceCodeFiles(release *Release, pathPrefix string) []F
 	if release == nil {
 		return nil
 	}
+	baseUrl := "https://github.com/" + m.Repo + "/archive/refs/tags/" + release.TagName
 	return []File{
 		{
 			Path:     pathPrefix + "/Source code.zip",
 			FileName: "Source code.zip",
 			Size:     0,
+			Type:     "file",
 			UpdateAt: release.PublishedAt,
 			CreateAt: release.CreatedAt,
-			Url:      release.ZipballUrl,
+			Url:      baseUrl + ".zip",
 		},
 		{
 			Path:     pathPrefix + "/Source code.tar.gz",
@@ -116,7 +118,7 @@ func (m *MountPoint) getSourceCodeFiles(release *Release, pathPrefix string) []F
 			Type:     "file",
 			UpdateAt: release.PublishedAt,
 			CreateAt: release.CreatedAt,
-			Url:      release.TarballUrl,
+			Url:      baseUrl + ".tar.gz",
 		},
 	}
 }
