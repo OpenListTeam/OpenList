@@ -26,6 +26,7 @@ var config = driver.Config{
 	NoUpload:         false,
 	DefaultRoot:      "/",
 	ProxyRangeOption: true,
+	LinkCacheMode:    driver.LinkCacheAuto,
 }
 
 func init() {

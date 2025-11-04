@@ -18,8 +18,9 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:      "BaiduPhoto",
-	LocalSort: true,
+	Name:          "BaiduPhoto",
+	LocalSort:     true,
+	LinkCacheMode: driver.LinkCacheUA,
 }
 
 func init() {

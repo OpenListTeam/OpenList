@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -239,7 +240,7 @@ func (d *ChaoXing) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 	if err != nil {
 		return err
 	}
-	err = writer.WriteField("puid", fmt.Sprintf("%d", resp.Msg.Puid))
+	err = writer.WriteField("puid", strconv.Itoa(resp.Msg.Puid))
 	if err != nil {
 		fmt.Println("Error writing param2 to request body:", err)
 		return err
@@ -260,7 +261,7 @@ func (d *ChaoXing) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 		return err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Content-Length", fmt.Sprintf("%d", body.Len()))
+	req.Header.Set("Content-Length", strconv.Itoa(body.Len()))
 	resps, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
