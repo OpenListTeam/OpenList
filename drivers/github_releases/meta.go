@@ -11,6 +11,7 @@ type Addition struct {
 	ShowReadme     bool   `json:"show_readme" type:"bool" default:"true" help:"show README、LICENSE file"`
 	Token          string `json:"token" type:"string" required:"false" help:"GitHub token, if you want to access private repositories or increase the rate limit"`
 	ShowAllVersion bool   `json:"show_all_version" type:"bool" default:"false" help:"show all versions"`
+	ShowSourceCode bool   `json:"show_source_code" type:"bool" default:"false" help:"show source code files (zip & tar.gz)"`
 	GitHubProxy    string `json:"gh_proxy" type:"string" default:"" help:"GitHub proxy, e.g. https://ghproxy.net/github.com or https://gh-proxy.com/github.com "`
 }
 

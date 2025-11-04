@@ -44,7 +44,7 @@ func (m *MountPoint) RequestReleases(get func(url string) (*resty.Response, erro
 }
 
 // 获取最新版本
-func (m *MountPoint) GetLatestRelease() []File {
+func (m *MountPoint) GetLatestRelease(showSourceCode bool) []File {
 	files := make([]File, 0)
 	for _, asset := range m.Release.Assets {
 		files = append(files, File{
@@ -57,6 +57,11 @@ func (m *MountPoint) GetLatestRelease() []File {
 			Url:      asset.BrowserDownloadUrl,
 		})
 	}
+
+	if showSourceCode {
+		files = append(files, m.getSourceCodeFiles(m.Release, m.Point)...)
+	}
+
 	return files
 }
 
@@ -90,8 +95,34 @@ func (m *MountPoint) GetAllVersion() []File {
 	return files
 }
 
+// 获取 source code
+func (m *MountPoint) getSourceCodeFiles(release *Release, pathPrefix string) []File {
+	if release == nil {
+		return nil
+	}
+	return []File{
+		{
+			Path:     pathPrefix + "/Source code.zip",
+			FileName: "Source code.zip",
+			Size:     0,
+			UpdateAt: release.PublishedAt,
+			CreateAt: release.CreatedAt,
+			Url:      release.ZipballUrl,
+		},
+		{
+			Path:     pathPrefix + "/Source code.tar.gz",
+			FileName: "Source code.tar.gz",
+			Size:     0,
+			Type:     "file",
+			UpdateAt: release.PublishedAt,
+			CreateAt: release.CreatedAt,
+			Url:      release.TarballUrl,
+		},
+	}
+}
+
 // 根据版本号获取版本
-func (m *MountPoint) GetReleaseByTagName(tagName string) []File {
+func (m *MountPoint) GetReleaseByTagName(tagName string, showSourceCode bool) []File {
 	for _, item := range *m.Releases {
 		if item.TagName == tagName {
 			files := make([]File, 0)
@@ -106,6 +137,12 @@ func (m *MountPoint) GetReleaseByTagName(tagName string) []File {
 					Url:      asset.BrowserDownloadUrl,
 				})
 			}
+
+			if showSourceCode {
+				releasePtr := item
+				files = append(files, m.getSourceCodeFiles(&releasePtr, m.Point+"/"+tagName)...)
+			}
+
 			return files
 		}
 	}
