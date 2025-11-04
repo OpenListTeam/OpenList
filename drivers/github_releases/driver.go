@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -138,6 +139,18 @@ func (d *GithubReleases) Link(ctx context.Context, file model.Obj, args model.Li
 		URL:    url,
 		Header: http.Header{},
 	}
+	fileName := file.GetName()
+	if file.GetSize() == 0 && (fileName == "Source code.zip" || fileName == "Source code.tar.gz") {
+		if resp, err := http.Head(url); err == nil && resp != nil {
+			defer resp.Body.Close()
+			if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+				if size, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
+					link.ContentLength = size
+				}
+			}
+		}
+	}
+
 	return &link, nil
 }
 
