@@ -38,10 +38,7 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 			return nil
 		}
 		for _, strmDriver := range strmDrivers {
-			strmObjs, _ := utils.SliceConvert(objs, func(obj model.Obj) (model.Obj, error) {
-				ret := strmDriver.convert2strmObj(ctx, path, obj)
-				return &ret, nil
-			})
+			strmObjs := strmDriver.convert2strmObjs(ctx, path, objs)
 			updateLocal(strmDriver, stdpath.Join(stdpath.Base(needPath), restPath), strmObjs)
 		}
 		return nil
@@ -92,29 +89,37 @@ func RemoveStrm(dstPath string, d *Strm) {
 }
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
-	link, err := driver.Link(ctx, obj, model.LinkArgs{})
-	if err != nil {
-		log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
-		return
-	}
-	seekableStream, err := stream.NewSeekableStream(&stream.FileStream{
-		Obj: obj,
-		Ctx: ctx,
-	}, link)
-	if err != nil {
-		_ = link.Close()
-		log.Warnf("failed to generate strm of obj %s: failed to get seekable stream: %v", localPath, err)
-		return
-	}
-	defer seekableStream.Close()
-	file, err := utils.CreateNestedFile(localPath)
-	if err != nil {
-		log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
-		return
-	}
-	defer file.Close()
-	if _, err := io.Copy(file, seekableStream); err != nil {
-		log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
+	if obj.IsDir() {
+		err := utils.CreateNestedDirectory(localPath)
+		if err != nil {
+			log.Warnf("failed to generate strm dir %s: failed to create dir: %v", localPath, err)
+			return
+		}
+	} else {
+		link, err := driver.Link(ctx, obj, model.LinkArgs{})
+		if err != nil {
+			log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
+			return
+		}
+		seekableStream, err := stream.NewSeekableStream(&stream.FileStream{
+			Obj: obj,
+			Ctx: ctx,
+		}, link)
+		if err != nil {
+			_ = link.Close()
+			log.Warnf("failed to generate strm of obj %s: failed to get seekable stream: %v", localPath, err)
+			return
+		}
+		defer seekableStream.Close()
+		file, err := utils.CreateNestedFile(localPath)
+		if err != nil {
+			log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
+			return
+		}
+		defer file.Close()
+		if _, err := io.Copy(file, seekableStream); err != nil {
+			log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
+		}
 	}
 }
 
