@@ -17,7 +17,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	cache "github.com/OpenListTeam/OpenList/v4/internal/fs/cache"
+	cachepkg "github.com/OpenListTeam/OpenList/v4/internal/fs/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -210,9 +210,9 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		return newObj, nil
 	}
 
-	uploadCache := cache.UploadCacheFromContext(ctx)
+	uploadCache := cachepkg.UploadCacheFromContext(ctx)
 	var (
-		cache    = stream.GetFile()
+		cacheFile = stream.GetFile()
 		tmpF     *os.File
 		err      error
 		keepTemp bool
@@ -222,7 +222,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		putErr = err
 		return res, err
 	}
-	if _, ok := cache.(io.ReaderAt); !ok {
+	if _, ok := cacheFile.(io.ReaderAt); !ok {
 		tmpF, err = os.CreateTemp(conf.Conf.TempDir, "file-*")
 		if err != nil {
 			return setResult(nil, err)
@@ -230,11 +230,11 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		if uploadCache != nil {
 			uploadCache.RegisterTemp(tmpF.Name())
 		}
-		cache = tmpF
+		cacheFile = tmpF
 	}
 	defer func() {
 		if tmpF != nil {
-			if uploadCache != nil && keepTemp && putErr != nil {
+		if uploadCache != nil && keepTemp && putErr != nil {
 				uploadCache.MarkKeep(tmpF.Name())
 			}
 			_ = tmpF.Close()
@@ -244,7 +244,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 						log.Warnf("[baidu_netdisk] failed to remove upload metadata: %v", err)
 					}
 				} else {
-					cache.RemoveMetadataByPath(tmpF.Name())
+				cachepkg.RemoveMetadataByPath(tmpF.Name())
 				}
 				_ = os.Remove(tmpF.Name())
 			}
@@ -323,7 +323,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		contentMd5 = hex.EncodeToString(fileMd5H.Sum(nil))
 		sliceMd5 = hex.EncodeToString(sliceMd5H2.Sum(nil))
 		if uploadCache != nil {
-			meta := &cache.UploadMetadata{
+			meta := &cachepkg.UploadMetadata{
 				Size:       streamSize,
 				SliceSize:  sliceSize,
 				ContentMD5: contentMd5,
@@ -368,7 +368,7 @@ uploadLoop:
 			retry.Delay(time.Second),
 			retry.DelayType(retry.BackOffDelay))
 
-		cacheReaderAt, okReaderAt := cache.(io.ReaderAt)
+		cacheReaderAt, okReaderAt := cacheFile.(io.ReaderAt)
 		if !okReaderAt {
 			return setResult(nil, fmt.Errorf("cache object must implement io.ReaderAt interface for upload operations"))
 		}
