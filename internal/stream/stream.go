@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	cache "github.com/OpenListTeam/OpenList/v4/internal/fs/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
@@ -64,12 +65,12 @@ func (f *FileStream) Close() error {
 		err1 = nil
 	}
 	if file, ok := f.Reader.(*os.File); ok {
-		cache := conf.UploadCacheFromContext(f.Ctx)
+		uc := cache.UploadCacheFromContext(f.Ctx)
 		closeErr := file.Close()
 		if errors.Is(closeErr, os.ErrClosed) {
 			closeErr = nil
 		}
-		if cache != nil && cache.ShouldKeep(file.Name()) {
+		if uc != nil && uc.ShouldKeep(file.Name()) {
 			err2 = errors.Join(err2, closeErr)
 		} else {
 			err2 = errors.Join(err2, closeErr)

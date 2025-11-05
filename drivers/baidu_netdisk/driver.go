@@ -17,6 +17,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	cache "github.com/OpenListTeam/OpenList/v4/internal/fs/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -209,7 +210,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		return newObj, nil
 	}
 
-	uploadCache := conf.UploadCacheFromContext(ctx)
+	uploadCache := cache.UploadCacheFromContext(ctx)
 	var (
 		cache    = stream.GetFile()
 		tmpF     *os.File
@@ -238,6 +239,13 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 			}
 			_ = tmpF.Close()
 			if uploadCache == nil || !uploadCache.ShouldKeep(tmpF.Name()) {
+				if uploadCache != nil {
+					if err := uploadCache.RemoveMetadataFile(); err != nil && !os.IsNotExist(err) {
+						log.Warnf("[baidu_netdisk] failed to remove upload metadata: %v", err)
+					}
+				} else {
+					cache.RemoveMetadataByPath(tmpF.Name())
+				}
 				_ = os.Remove(tmpF.Name())
 			}
 		}
@@ -256,45 +264,77 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 
 	// cal md5 for first 256k data
 	const SliceSize int64 = 256 * utils.KB
-	blockList := make([]string, 0, count)
-	byteSize := sliceSize
-	fileMd5H := md5.New()
-	sliceMd5H := md5.New()
-	sliceMd5H2 := md5.New()
-	slicemd5H2Write := utils.LimitWriter(sliceMd5H2, SliceSize)
-	writers := []io.Writer{fileMd5H, sliceMd5H, slicemd5H2Write}
-	if tmpF != nil {
-		writers = append(writers, tmpF)
+	var (
+		blockList  []string
+		contentMd5 string
+		sliceMd5   string
+	)
+	metaUsed := false
+	if uploadCache != nil {
+		if meta, err := uploadCache.LoadMetadata(); err == nil {
+			if meta.Size == streamSize && meta.SliceSize == sliceSize && len(meta.BlockList) == count {
+				blockList = append([]string(nil), meta.BlockList...)
+				contentMd5 = meta.ContentMD5
+				sliceMd5 = meta.SliceMD5
+				metaUsed = true
+			}
+		} else if err != nil && !os.IsNotExist(err) {
+			log.Warnf("[baidu_netdisk] failed to load upload metadata: %v", err)
+		}
 	}
-	written := int64(0)
+	if !metaUsed {
+		blockList = make([]string, 0, count)
+		byteSize := sliceSize
+		fileMd5H := md5.New()
+		sliceMd5H := md5.New()
+		sliceMd5H2 := md5.New()
+		slicemd5H2Write := utils.LimitWriter(sliceMd5H2, SliceSize)
+		writers := []io.Writer{fileMd5H, sliceMd5H, slicemd5H2Write}
+		if tmpF != nil {
+			writers = append(writers, tmpF)
+		}
+		written := int64(0)
 
-	for i := 1; i <= count; i++ {
-		if utils.IsCanceled(ctx) {
-			return setResult(nil, ctx.Err())
+		for i := 1; i <= count; i++ {
+			if utils.IsCanceled(ctx) {
+				return setResult(nil, ctx.Err())
+			}
+			if i == count {
+				byteSize = lastBlockSize
+			}
+			n, err := utils.CopyWithBufferN(io.MultiWriter(writers...), stream, byteSize)
+			written += n
+			if err != nil && err != io.EOF {
+				return setResult(nil, err)
+			}
+			blockList = append(blockList, hex.EncodeToString(sliceMd5H.Sum(nil)))
+			sliceMd5H.Reset()
 		}
-		if i == count {
-			byteSize = lastBlockSize
+		if tmpF != nil {
+			if written != streamSize {
+				return setResult(nil, errs.NewErr(err, "CreateTempFile failed, size mismatch: %d != %d ", written, streamSize))
+			}
+			_, err = tmpF.Seek(0, io.SeekStart)
+			if err != nil {
+				return setResult(nil, errs.NewErr(err, "CreateTempFile failed, can't seek to 0 "))
+			}
+			keepTemp = true
 		}
-		n, err := utils.CopyWithBufferN(io.MultiWriter(writers...), stream, byteSize)
-		written += n
-		if err != nil && err != io.EOF {
-			return setResult(nil, err)
+		contentMd5 = hex.EncodeToString(fileMd5H.Sum(nil))
+		sliceMd5 = hex.EncodeToString(sliceMd5H2.Sum(nil))
+		if uploadCache != nil {
+			meta := &cache.UploadMetadata{
+				Size:       streamSize,
+				SliceSize:  sliceSize,
+				ContentMD5: contentMd5,
+				SliceMD5:   sliceMd5,
+				BlockList:  append([]string(nil), blockList...),
+			}
+			if err := uploadCache.SaveMetadata(meta); err != nil {
+				log.Warnf("[baidu_netdisk] failed to save upload metadata: %v", err)
+			}
 		}
-		blockList = append(blockList, hex.EncodeToString(sliceMd5H.Sum(nil)))
-		sliceMd5H.Reset()
 	}
-	if tmpF != nil {
-		if written != streamSize {
-			return setResult(nil, errs.NewErr(err, "CreateTempFile failed, size mismatch: %d != %d ", written, streamSize))
-		}
-		_, err = tmpF.Seek(0, io.SeekStart)
-		if err != nil {
-			return setResult(nil, errs.NewErr(err, "CreateTempFile failed, can't seek to 0 "))
-		}
-		keepTemp = true
-	}
-	contentMd5 := hex.EncodeToString(fileMd5H.Sum(nil))
-	sliceMd5 := hex.EncodeToString(sliceMd5H2.Sum(nil))
 	blockListStr, _ := utils.Json.MarshalToString(blockList)
 	path := stdpath.Join(dstDir.GetPath(), stream.GetName())
 	mtime := stream.ModTime().Unix()

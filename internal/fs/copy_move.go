@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	stdpath "path"
+	"path/filepath"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -15,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
+	cache "github.com/OpenListTeam/OpenList/v4/internal/fs/cache"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
@@ -97,6 +98,7 @@ func (t *FileTransferTask) clearCachedTmpFile() {
 	if err := os.Remove(t.cachedTmpFile); err != nil && !os.IsNotExist(err) {
 		log.Warnf("failed to remove cached temp file %s: %v", t.cachedTmpFile, err)
 	}
+	cache.RemoveMetadataByPath(t.cachedTmpFile)
 	t.cachedTmpFile = ""
 }
 
@@ -256,15 +258,19 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 			if err == nil {
 				log.Warnf("discard cached temp file %s due to size mismatch: expect=%d actual=%d", cachedPath, srcObj.GetSize(), info.Size())
 			} else if !os.IsNotExist(err) {
-				log.Warnf("discard cached temp file %s: %v", cachedPath, err)
+			log.Warnf("discard cached temp file %s: %v", cachedPath, err)
 			}
 			_ = os.Remove(cachedPath)
+			cache.RemoveMetadataByPath(cachedPath)
 			cachedPath = ""
 			t.cachedTmpFile = ""
 		}
 	}
 
-	uploadCache := conf.NewUploadCache(cachedPath)
+	uploadCache := cache.NewUploadCache(cachedPath)
+	if _, err := uploadCache.LoadMetadata(); err != nil && !os.IsNotExist(err) {
+		log.Warnf("failed to load cached metadata for %s: %v", cachedPath, err)
+	}
 	ctx := context.WithValue(t.Ctx(), conf.UploadCacheKey, uploadCache)
 	ss.FileStream.Ctx = ctx
 
@@ -273,6 +279,9 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		if err != nil {
 			log.Warnf("failed to open cached temp file %s: %v", path, err)
 			t.cachedTmpFile = ""
+			if os.IsNotExist(err) {
+				cache.RemoveMetadataByPath(path)
+			}
 		} else {
 			ss.FileStream.Add(file)
 			ss.FileStream.Reader = file
@@ -292,6 +301,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 	} else {
 		if tempPath := uploadCache.TempFile(); tempPath != "" && !uploadCache.ShouldKeep(tempPath) {
 			_ = os.Remove(tempPath)
+			cache.RemoveMetadataByPath(tempPath)
 		}
 		t.clearCachedTmpFile()
 	}
