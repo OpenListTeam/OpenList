@@ -30,13 +30,16 @@ func (h *DriverPluginHandler) Register(ctx context.Context, plugin *PluginInfo) 
 	}
 
 	err = op.RegisterDriver(func() driver.Driver {
-		driver, err := plugin.driver.NewWasmDriver()
+		tempDriver, err := plugin.driver.NewWasmDriver()
 		if err != nil {
 			log.Errorf("deferred load driver plugin err: %v", err)
+			return nil
 		}
-		return driver
+		return tempDriver
 	})
 	if err != nil {
+		// 如果注册失败，关闭运行时
+		plugin.driver.Close(ctx)
 		return fmt.Errorf("failed to register driver in op: %w", err)
 	}
 
@@ -45,21 +48,23 @@ func (h *DriverPluginHandler) Register(ctx context.Context, plugin *PluginInfo) 
 }
 
 func (h *DriverPluginHandler) Unregister(ctx context.Context, plugin *PluginInfo) error {
-	// 遵循用户提供的模式，传递一个工厂函数来注销
+	if plugin.driver == nil {
+		log.Errorf("plugin.driver is nil during unregister for plugin '%s', cannot get config", plugin.ID)
+		return fmt.Errorf("plugin.driver instance not found, cannot properly unregister from op")
+	}
+
 	op.UnRegisterDriver(func() driver.Driver {
-		if plugin.driver == nil {
-			// 如果 driver 实例不存在，尝试临时创建一个用于获取元数据
-			// 注意：这可能因插件的复杂性而失败
-			tempDriver, err := NewDriverPlugin(ctx, plugin)
-			if err != nil {
-				log.Errorf("failed to create temporary driver for unregistering plugin '%s': %v", plugin.ID, err)
-				return nil
-			}
-			d, _ := tempDriver.NewWasmDriver()
-			return d
+		tempDriver, err := plugin.driver.NewWasmDriver()
+		if err != nil {
+			log.Warnf("Failed to create temp driver for unregister: %v", err)
+			return nil
 		}
-		d, _ := plugin.driver.NewWasmDriver()
-		return d
+		return tempDriver
 	})
+
+	if err := plugin.driver.Close(ctx); err != nil {
+		log.Warnf("Error closing driver plugin runtime for %s: %v", plugin.ID, err)
+	}
+
 	return nil
 }
