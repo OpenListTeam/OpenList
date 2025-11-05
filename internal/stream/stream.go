@@ -64,9 +64,18 @@ func (f *FileStream) Close() error {
 		err1 = nil
 	}
 	if file, ok := f.Reader.(*os.File); ok {
-		err2 = os.RemoveAll(file.Name())
-		if err2 != nil {
-			err2 = errs.NewErr(err2, "failed to remove tmpFile [%s]", file.Name())
+		cache := conf.UploadCacheFromContext(f.Ctx)
+		closeErr := file.Close()
+		if errors.Is(closeErr, os.ErrClosed) {
+			closeErr = nil
+		}
+		if cache != nil && cache.ShouldKeep(file.Name()) {
+			err2 = errors.Join(err2, closeErr)
+		} else {
+			err2 = errors.Join(err2, closeErr)
+			if removeErr := os.RemoveAll(file.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
+				err2 = errors.Join(err2, errs.NewErr(removeErr, "failed to remove tmpFile [%s]", file.Name()))
+			}
 		}
 	}
 	f.Reader = nil

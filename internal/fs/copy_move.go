@@ -3,6 +3,8 @@ package fs
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	stdpath "path"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 type taskType uint8
@@ -36,8 +39,9 @@ const (
 
 type FileTransferTask struct {
 	TaskData
-	TaskType taskType
-	groupID  string
+	TaskType      taskType
+	groupID       string
+	cachedTmpFile string
 }
 
 func (t *FileTransferTask) GetName() string {
@@ -77,11 +81,23 @@ func (t *FileTransferTask) Run() error {
 }
 
 func (t *FileTransferTask) OnSucceeded() {
+	t.clearCachedTmpFile()
 	task_group.TransferCoordinator.Done(t.groupID, true)
 }
 
 func (t *FileTransferTask) OnFailed() {
+	t.clearCachedTmpFile()
 	task_group.TransferCoordinator.Done(t.groupID, false)
+}
+
+func (t *FileTransferTask) clearCachedTmpFile() {
+	if t.cachedTmpFile == "" {
+		return
+	}
+	if err := os.Remove(t.cachedTmpFile); err != nil && !os.IsNotExist(err) {
+		log.Warnf("failed to remove cached temp file %s: %v", t.cachedTmpFile, err)
+	}
+	t.cachedTmpFile = ""
 }
 
 func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
@@ -232,8 +248,55 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		return errors.WithMessagef(err, "failed get [%s] stream", t.SrcActualPath)
 	}
 	t.SetTotalBytes(ss.GetSize())
+
+	cachedPath := t.cachedTmpFile
+	if cachedPath != "" {
+		info, err := os.Stat(cachedPath)
+		if err != nil || info.Size() != srcObj.GetSize() {
+			if err == nil {
+				log.Warnf("discard cached temp file %s due to size mismatch: expect=%d actual=%d", cachedPath, srcObj.GetSize(), info.Size())
+			} else if !os.IsNotExist(err) {
+				log.Warnf("discard cached temp file %s: %v", cachedPath, err)
+			}
+			_ = os.Remove(cachedPath)
+			cachedPath = ""
+			t.cachedTmpFile = ""
+		}
+	}
+
+	uploadCache := conf.NewUploadCache(cachedPath)
+	ctx := context.WithValue(t.Ctx(), conf.UploadCacheKey, uploadCache)
+	ss.FileStream.Ctx = ctx
+
+	if path := uploadCache.CachedPath(); path != "" {
+		file, err := os.Open(path)
+		if err != nil {
+			log.Warnf("failed to open cached temp file %s: %v", path, err)
+			t.cachedTmpFile = ""
+		} else {
+			ss.FileStream.Add(file)
+			ss.FileStream.Reader = file
+		}
+	}
+
 	t.Status = "uploading"
-	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, ss, t.SetProgress, true)
+	uploadErr := op.Put(ctx, t.DstStorage, t.DstActualPath, ss, t.SetProgress, true)
+
+	if uploadErr != nil {
+		if newPath := uploadCache.TempFile(); newPath != "" && uploadCache.ShouldKeep(newPath) {
+			if absPath, err := filepath.Abs(newPath); err == nil {
+				newPath = absPath
+			}
+			t.cachedTmpFile = newPath
+		}
+	} else {
+		if tempPath := uploadCache.TempFile(); tempPath != "" && !uploadCache.ShouldKeep(tempPath) {
+			_ = os.Remove(tempPath)
+		}
+		t.clearCachedTmpFile()
+	}
+
+	return uploadErr
 }
 
 var (

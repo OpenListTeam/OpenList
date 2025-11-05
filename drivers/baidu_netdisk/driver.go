@@ -209,22 +209,39 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		return newObj, nil
 	}
 
+	uploadCache := conf.UploadCacheFromContext(ctx)
 	var (
-		cache = stream.GetFile()
-		tmpF  *os.File
-		err   error
+		cache    = stream.GetFile()
+		tmpF     *os.File
+		err      error
+		keepTemp bool
+		putErr   error
 	)
+	setResult := func(res model.Obj, err error) (model.Obj, error) {
+		putErr = err
+		return res, err
+	}
 	if _, ok := cache.(io.ReaderAt); !ok {
 		tmpF, err = os.CreateTemp(conf.Conf.TempDir, "file-*")
 		if err != nil {
-			return nil, err
+			return setResult(nil, err)
 		}
-		defer func() {
-			_ = tmpF.Close()
-			_ = os.Remove(tmpF.Name())
-		}()
+		if uploadCache != nil {
+			uploadCache.RegisterTemp(tmpF.Name())
+		}
 		cache = tmpF
 	}
+	defer func() {
+		if tmpF != nil {
+			if uploadCache != nil && keepTemp && putErr != nil {
+				uploadCache.MarkKeep(tmpF.Name())
+			}
+			_ = tmpF.Close()
+			if uploadCache == nil || !uploadCache.ShouldKeep(tmpF.Name()) {
+				_ = os.Remove(tmpF.Name())
+			}
+		}
+	}()
 
 	streamSize := stream.GetSize()
 	sliceSize := d.getSliceSize(streamSize)
@@ -253,7 +270,7 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 
 	for i := 1; i <= count; i++ {
 		if utils.IsCanceled(ctx) {
-			return nil, ctx.Err()
+			return setResult(nil, ctx.Err())
 		}
 		if i == count {
 			byteSize = lastBlockSize
@@ -261,19 +278,20 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		n, err := utils.CopyWithBufferN(io.MultiWriter(writers...), stream, byteSize)
 		written += n
 		if err != nil && err != io.EOF {
-			return nil, err
+			return setResult(nil, err)
 		}
 		blockList = append(blockList, hex.EncodeToString(sliceMd5H.Sum(nil)))
 		sliceMd5H.Reset()
 	}
 	if tmpF != nil {
 		if written != streamSize {
-			return nil, errs.NewErr(err, "CreateTempFile failed, size mismatch: %d != %d ", written, streamSize)
+			return setResult(nil, errs.NewErr(err, "CreateTempFile failed, size mismatch: %d != %d ", written, streamSize))
 		}
 		_, err = tmpF.Seek(0, io.SeekStart)
 		if err != nil {
-			return nil, errs.NewErr(err, "CreateTempFile failed, can't seek to 0 ")
+			return setResult(nil, errs.NewErr(err, "CreateTempFile failed, can't seek to 0 "))
 		}
+		keepTemp = true
 	}
 	contentMd5 := hex.EncodeToString(fileMd5H.Sum(nil))
 	sliceMd5 := hex.EncodeToString(sliceMd5H2.Sum(nil))
@@ -288,14 +306,14 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		// 没有进度，走预上传
 		precreateResp, err = d.precreate(ctx, path, streamSize, blockListStr, contentMd5, sliceMd5, ctime, mtime)
 		if err != nil {
-			return nil, err
+			return setResult(nil, err)
 		}
 		if precreateResp.ReturnType == 2 {
 			// rapid upload, since got md5 match from baidu server
 			// 修复时间，具体原因见 Put 方法注释的 **注意**
 			precreateResp.File.Ctime = ctime
 			precreateResp.File.Mtime = mtime
-			return fileToObj(precreateResp.File), nil
+			return setResult(fileToObj(precreateResp.File), nil)
 		}
 	}
 
@@ -312,7 +330,7 @@ uploadLoop:
 
 		cacheReaderAt, okReaderAt := cache.(io.ReaderAt)
 		if !okReaderAt {
-			return nil, fmt.Errorf("cache object must implement io.ReaderAt interface for upload operations")
+			return setResult(nil, fmt.Errorf("cache object must implement io.ReaderAt interface for upload operations"))
 		}
 
 		totalParts := len(precreateResp.BlockList)
@@ -359,38 +377,38 @@ uploadLoop:
 		base.SaveUploadProgress(d, precreateResp, d.AccessToken, contentMd5)
 
 		if errors.Is(err, context.Canceled) {
-			return nil, err
+			return setResult(nil, err)
 		}
 		if errors.Is(err, ErrUploadIDExpired) {
 			log.Warn("[baidu_netdisk] uploadid expired, will restart from scratch")
 			// 重新 precreate（所有分片都要重传）
 			newPre, err2 := d.precreate(ctx, path, streamSize, blockListStr, "", "", ctime, mtime)
 			if err2 != nil {
-				return nil, err2
+				return setResult(nil, err2)
 			}
 			if newPre.ReturnType == 2 {
-				return fileToObj(newPre.File), nil
+				return setResult(fileToObj(newPre.File), nil)
 			}
 			precreateResp = newPre
 			// 覆盖掉旧的进度
 			base.SaveUploadProgress(d, precreateResp, d.AccessToken, contentMd5)
 			continue uploadLoop
 		}
-		return nil, err
+		return setResult(nil, err)
 	}
 
 	// step.3 创建文件
 	var newFile File
 	_, err = d.create(path, streamSize, 0, precreateResp.Uploadid, blockListStr, &newFile, mtime, ctime)
 	if err != nil {
-		return nil, err
+		return setResult(nil, err)
 	}
 	// 修复时间，具体原因见 Put 方法注释的 **注意**
 	newFile.Ctime = ctime
 	newFile.Mtime = mtime
 	// 上传成功清理进度
 	base.SaveUploadProgress(d, nil, d.AccessToken, contentMd5)
-	return fileToObj(newFile), nil
+	return setResult(fileToObj(newFile), nil)
 }
 
 // precreate 执行预上传操作，支持首次上传和 uploadid 过期重试
