@@ -48,7 +48,6 @@ type FileStreamer interface {
 	// for a non-seekable Stream, if Read is called, this function won't work.
 	// caches the full Stream and writes it to writer (if provided, even if the stream is already cached).
 	CacheFullAndWriter(up *UpdateProgress, writer io.Writer) (File, error)
-	SetTmpFile(file File)
 	// if the Stream is not a File and is not cached, returns nil.
 	GetFile() File
 }

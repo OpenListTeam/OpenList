@@ -284,18 +284,15 @@ func (y *Cloud189TV) GetDetails(ctx context.Context) (*model.StorageDetails, err
 	if err != nil {
 		return nil, err
 	}
-	var total, free uint64
+	var total, used uint64
 	if y.isFamily() {
 		total = capacityInfo.FamilyCapacityInfo.TotalSize
-		free = capacityInfo.FamilyCapacityInfo.FreeSize
+		used = capacityInfo.FamilyCapacityInfo.UsedSize
 	} else {
 		total = capacityInfo.CloudCapacityInfo.TotalSize
-		free = capacityInfo.CloudCapacityInfo.FreeSize
+		used = capacityInfo.CloudCapacityInfo.UsedSize
 	}
 	return &model.StorageDetails{
-		DiskUsage: model.DiskUsage{
-			TotalSpace: total,
-			FreeSpace:  free,
-		},
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }

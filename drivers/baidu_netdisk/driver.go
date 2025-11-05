@@ -12,6 +12,7 @@ import (
 	stdpath "path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -20,8 +21,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
+	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/avast/retry-go"
+	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -31,6 +34,12 @@ type BaiduNetdisk struct {
 
 	uploadThread int
 	vipType      int // 会员类型，0普通用户(4G/4M)、1普通会员(10G/16M)、2超级会员(20G/32M)
+
+	upClient            *resty.Client // 上传文件使用的http客户端
+	uploadUrlG          singleflight.Group[string]
+	uploadUrlMu         sync.RWMutex
+	uploadUrl           string    // 上传域名
+	uploadUrlUpdateTime time.Time // 上传域名上次更新时间
 }
 
 var ErrUploadIDExpired = errors.New("uploadid expired")
@@ -44,19 +53,26 @@ func (d *BaiduNetdisk) GetAddition() driver.Additional {
 }
 
 func (d *BaiduNetdisk) Init(ctx context.Context) error {
+	d.upClient = base.NewRestyClient().
+		SetTimeout(UPLOAD_TIMEOUT).
+		SetRetryCount(UPLOAD_RETRY_COUNT).
+		SetRetryWaitTime(UPLOAD_RETRY_WAIT_TIME).
+		SetRetryMaxWaitTime(UPLOAD_RETRY_MAX_WAIT_TIME)
 	d.uploadThread, _ = strconv.Atoi(d.UploadThread)
-	if d.uploadThread < 1 || d.uploadThread > 32 {
-		d.uploadThread, d.UploadThread = 3, "3"
+	if d.uploadThread < 1 {
+		d.uploadThread, d.UploadThread = 1, "1"
+	} else if d.uploadThread > 32 {
+		d.uploadThread, d.UploadThread = 32, "32"
 	}
 
 	if _, err := url.Parse(d.UploadAPI); d.UploadAPI == "" || err != nil {
-		d.UploadAPI = "https://d.pcs.baidu.com"
+		d.UploadAPI = UPLOAD_FALLBACK_API
 	}
 
 	res, err := d.get("/xpan/nas", map[string]string{
 		"method": "uinfo",
 	}, nil)
-	log.Debugf("[baidu] get uinfo: %s", string(res))
+	log.Debugf("[baidu_netdisk] get uinfo: %s", string(res))
 	if err != nil {
 		return err
 	}
@@ -183,6 +199,11 @@ func (d *BaiduNetdisk) PutRapid(ctx context.Context, dstDir model.Obj, stream mo
 // **注意**: 截至 2024/04/20 百度云盘 api 接口返回的时间永远是当前时间，而不是文件时间。
 // 而实际上云盘存储的时间是文件时间，所以此处需要覆盖时间，保证缓存与云盘的数据一致
 func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
+	// 百度网盘不允许上传空文件
+	if stream.GetSize() < 1 {
+		return nil, ErrBaiduEmptyFilesNotAllowed
+	}
+
 	// rapid upload
 	if newObj, err := d.PutRapid(ctx, dstDir, stream); err == nil {
 		return newObj, nil
@@ -281,6 +302,9 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 	// step.2 上传分片
 uploadLoop:
 	for attempt := 0; attempt < 2; attempt++ {
+		// 获取上传域名
+		uploadUrl := d.getUploadUrl(path, precreateResp.Uploadid)
+		// 并发上传
 		threadG, upCtx := errgroup.NewGroupWithContext(ctx, d.uploadThread,
 			retry.Attempts(1),
 			retry.Delay(time.Second),
@@ -292,7 +316,6 @@ uploadLoop:
 		}
 
 		totalParts := len(precreateResp.BlockList)
-		doneParts := 0 // 新增计数器
 
 		for i, partseq := range precreateResp.BlockList {
 			if utils.IsCanceled(upCtx) || partseq < 0 {
@@ -313,15 +336,15 @@ uploadLoop:
 					"partseq":      strconv.Itoa(partseq),
 				}
 				section := io.NewSectionReader(cacheReaderAt, offset, size)
-				err := d.uploadSlice(ctx, params, stream.GetName(), driver.NewLimitedUploadStream(ctx, section))
+				err := d.uploadSlice(ctx, uploadUrl, params, stream.GetName(), driver.NewLimitedUploadStream(ctx, section))
 				if err != nil {
 					return err
 				}
 				precreateResp.BlockList[i] = -1
-				doneParts++ // 直接递增计数器
-				if totalParts > 0 {
-					up(float64(doneParts) * 100.0 / float64(totalParts))
-				}
+				// 当前goroutine还没退出，+1才是真正成功的数量
+				success := threadG.Success() + 1
+				progress := float64(success) * 100 / float64(totalParts)
+				up(progress)
 				return nil
 			})
 		}
@@ -405,12 +428,12 @@ func (d *BaiduNetdisk) precreate(ctx context.Context, path string, streamSize in
 	return &precreateResp, nil
 }
 
-func (d *BaiduNetdisk) uploadSlice(ctx context.Context, params map[string]string, fileName string, file io.Reader) error {
-	res, err := base.RestyClient.R().
+func (d *BaiduNetdisk) uploadSlice(ctx context.Context, uploadUrl string, params map[string]string, fileName string, file io.Reader) error {
+	res, err := d.upClient.R().
 		SetContext(ctx).
 		SetQueryParams(params).
 		SetFileReader("file", fileName, file).
-		Post(d.UploadAPI + "/rest/2.0/pcs/superfile2")
+		Post(uploadUrl + "/rest/2.0/pcs/superfile2")
 	if err != nil {
 		return err
 	}
