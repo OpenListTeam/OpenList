@@ -28,44 +28,61 @@ func (f RangeReaderFunc) RangeRead(ctx context.Context, httpRange http_range.Ran
 }
 
 func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, error) {
-	if link.Concurrency > 0 || link.PartSize > 0 {
+	if link.RangeReader != nil {
+		if link.Concurrency < 1 && link.PartSize < 1 {
+			return link.RangeReader, nil
+		}
 		down := net.NewDownloader(func(d *net.Downloader) {
 			d.Concurrency = link.Concurrency
 			d.PartSize = link.PartSize
+			d.HttpClient = net.GetRangeReaderHttpRequestFunc(link.RangeReader)
 		})
-		var rangeReader RangeReaderFunc = func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
-			var req *net.HttpRequestParams
-			if link.RangeReader != nil {
-				req = &net.HttpRequestParams{
-					Range: httpRange,
-					Size:  size,
-				}
-			} else {
-				requestHeader, _ := ctx.Value(conf.RequestHeaderKey).(http.Header)
-				header := net.ProcessHeader(requestHeader, link.Header)
-				req = &net.HttpRequestParams{
-					Range:     httpRange,
-					Size:      size,
-					URL:       link.URL,
-					HeaderRef: header,
-				}
-			}
-			return down.Download(ctx, req)
+		rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
+			return down.Download(ctx, &net.HttpRequestParams{
+				Range: httpRange,
+				Size:  size,
+			})
 		}
-		if link.RangeReader != nil {
-			down.HttpClient = net.GetRangeReaderHttpRequestFunc(link.RangeReader)
-			return rangeReader, nil
-		}
-		return RateLimitRangeReaderFunc(rangeReader), nil
-	}
-
-	if link.RangeReader != nil {
-		return link.RangeReader, nil
+		// RangeReader只能在驱动限速
+		return RangeReaderFunc(rangeReader), nil
 	}
 
 	if len(link.URL) == 0 {
 		return nil, errors.New("invalid link: must have at least one of URL or RangeReader")
 	}
+
+	if link.Concurrency > 0 || link.PartSize > 0 {
+		down := net.NewDownloader(func(d *net.Downloader) {
+			d.Concurrency = link.Concurrency
+			d.PartSize = link.PartSize
+			d.HttpClient = func(ctx context.Context, params *net.HttpRequestParams) (*http.Response, error) {
+				if ServerDownloadLimit == nil {
+					return net.DefaultHttpRequestFunc(ctx, params)
+				}
+				resp, err := net.DefaultHttpRequestFunc(ctx, params)
+				if err == nil && resp.Body != nil {
+					resp.Body = &RateLimitReader{
+						Ctx:     ctx,
+						Reader:  resp.Body,
+						Limiter: ServerDownloadLimit,
+					}
+				}
+				return resp, err
+			}
+		})
+		rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
+			requestHeader, _ := ctx.Value(conf.RequestHeaderKey).(http.Header)
+			header := net.ProcessHeader(requestHeader, link.Header)
+			return down.Download(ctx, &net.HttpRequestParams{
+				Range:     httpRange,
+				Size:      size,
+				URL:       link.URL,
+				HeaderRef: header,
+			})
+		}
+		return RangeReaderFunc(rangeReader), nil
+	}
+
 	rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 		if httpRange.Length < 0 || httpRange.Start+httpRange.Length > size {
 			httpRange.Length = size - httpRange.Start
@@ -81,7 +98,15 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 			}
 			return nil, fmt.Errorf("http request failure, err:%w", err)
 		}
-		if httpRange.Start == 0 && (httpRange.Length == -1 || httpRange.Length == size) || response.StatusCode == http.StatusPartialContent ||
+		if ServerDownloadLimit != nil {
+			response.Body = &RateLimitReader{
+				Ctx:     ctx,
+				Reader:  response.Body,
+				Limiter: ServerDownloadLimit,
+			}
+		}
+		if httpRange.Start == 0 && httpRange.Length == size ||
+			response.StatusCode == http.StatusPartialContent ||
 			checkContentRange(&response.Header, httpRange.Start) {
 			return response.Body, nil
 		} else if response.StatusCode == http.StatusOK {
@@ -94,11 +119,10 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 		}
 		return response.Body, nil
 	}
-	return RateLimitRangeReaderFunc(rangeReader), nil
+	return RangeReaderFunc(rangeReader), nil
 }
 
-// RangeReaderIF.RangeRead返回的io.ReadCloser保留file的签名。
-func GetRangeReaderFromMFile(size int64, file model.File) model.RangeReaderIF {
+func GetRangeReaderFromMFile(size int64, file model.File) *model.FileRangeReader {
 	return &model.FileRangeReader{
 		RangeReaderIF: RangeReaderFunc(func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 			length := httpRange.Length

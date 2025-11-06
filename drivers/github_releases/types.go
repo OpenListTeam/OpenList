@@ -143,6 +143,60 @@ func (m *MountPoint) GetAllVersionSize() int64 {
 	return size
 }
 
+func (m *MountPoint) GetSourceCode() []File {
+	files := make([]File, 0)
+
+	// 无法获取文件大小，此处设为 1
+	files = append(files, File{
+		Path:     m.Point + "/" + "Source code (zip)",
+		FileName: "Source code (zip)",
+		Size:     1,
+		Type:     "file",
+		UpdateAt: m.Release.CreatedAt,
+		CreateAt: m.Release.CreatedAt,
+		Url:      m.Release.ZipballUrl,
+	})
+	files = append(files, File{
+		Path:     m.Point + "/" + "Source code (tar.gz)",
+		FileName: "Source code (tar.gz)",
+		Size:     1,
+		Type:     "file",
+		UpdateAt: m.Release.CreatedAt,
+		CreateAt: m.Release.CreatedAt,
+		Url:      m.Release.TarballUrl,
+	})
+
+	return files
+}
+
+func (m *MountPoint) GetSourceCodeByTagName(tagName string) []File {
+	for _, item := range *m.Releases {
+		if item.TagName == tagName {
+			files := make([]File, 0)
+			files = append(files, File{
+				Path:     m.Point + "/" + "Source code (zip)",
+				FileName: "Source code (zip)",
+				Size:     1,
+				Type:     "file",
+				UpdateAt: item.CreatedAt,
+				CreateAt: item.CreatedAt,
+				Url:      item.ZipballUrl,
+			})
+			files = append(files, File{
+				Path:     m.Point + "/" + "Source code (tar.gz)",
+				FileName: "Source code (tar.gz)",
+				Size:     1,
+				Type:     "file",
+				UpdateAt: item.CreatedAt,
+				CreateAt: item.CreatedAt,
+				Url:      item.TarballUrl,
+			})
+			return files
+		}
+	}
+	return nil
+}
+
 func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error), refresh bool) []File {
 	if m.OtherFile == nil || refresh {
 		resp, _ := get("https://api.github.com/repos/" + m.Repo + "/contents")
