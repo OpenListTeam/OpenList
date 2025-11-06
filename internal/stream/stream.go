@@ -27,8 +27,8 @@ type FileStream struct {
 	ForceStreamUpload bool
 	Exist             model.Obj //the file existed in the destination, we can reuse some info since we wil overwrite it
 	utils.Closers
-	peekBuff  *buffer.Reader
 	size      int64
+	peekBuff  *buffer.Reader
 	oriReader io.Reader // the original reader, used for caching
 }
 
@@ -199,8 +199,9 @@ func (f *FileStream) GetFile() model.File {
 	return nil
 }
 
-// RangeRead have to cache all data first since only Reader is provided.
-// It's not thread-safe!
+// 从流读取指定范围的一块数据,并且不消耗流。
+// 当读取的边界超过内部设置大小后会缓存整个流。
+// 流未缓存时线程不完全
 func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	if httpRange.Length < 0 || httpRange.Start+httpRange.Length > f.GetSize() {
 		httpRange.Length = f.GetSize() - httpRange.Start
@@ -209,12 +210,7 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 		return io.NewSectionReader(f.GetFile(), httpRange.Start, httpRange.Length), nil
 	}
 
-	size := httpRange.Start + httpRange.Length
-	if f.peekBuff != nil && size <= int64(f.peekBuff.Size()) {
-		return io.NewSectionReader(f.peekBuff, httpRange.Start, httpRange.Length), nil
-	}
-
-	cache, err := f.cache(size)
+	cache, err := f.cache(httpRange.Start + httpRange.Length)
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +222,7 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 // 使用bytes.Buffer作为io.CopyBuffer的写入对象，CopyBuffer会调用Buffer.ReadFrom
 // 即使被写入的数据量与Buffer.Cap一致，Buffer也会扩大
 
+// 确保指定大小的数据被缓存
 func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	if maxCacheSize > int64(conf.MaxBufferLimit) {
 		size := f.GetSize()
@@ -258,6 +255,9 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 		f.oriReader = f.Reader
 	}
 	bufSize := maxCacheSize - f.peekBuff.Size()
+	if bufSize <= 0 {
+		return f.peekBuff, nil
+	}
 	var buf []byte
 	if conf.MmapThreshold > 0 && bufSize >= int64(conf.MmapThreshold) {
 		m, err := mmap.Alloc(int(bufSize))
@@ -288,19 +288,15 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 var _ model.FileStreamer = (*SeekableStream)(nil)
 var _ model.FileStreamer = (*FileStream)(nil)
 
-//var _ seekableStream = (*FileStream)(nil)
-
-// for most internal stream, which is either RangeReadCloser or MFile
-// Any functionality implemented based on SeekableStream should implement a Close method,
-// whose only purpose is to close the SeekableStream object. If such functionality has
-// additional resources that need to be closed, they should be added to the Closer property of
-// the SeekableStream object and be closed together when the SeekableStream object is closed.
 type SeekableStream struct {
 	*FileStream
 	// should have one of belows to support rangeRead
 	rangeReader model.RangeReaderIF
 }
 
+// NewSeekableStream create a SeekableStream from FileStream and Link
+// if FileStream.Reader is not nil, use it directly
+// else create RangeReader from Link
 func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error) {
 	if len(fs.Mimetype) == 0 {
 		fs.Mimetype = utils.GetMimeType(fs.Obj.GetName())
@@ -336,7 +332,8 @@ func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error
 	return nil, fmt.Errorf("illegal seekableStream")
 }
 
-// RangeRead is not thread-safe, pls use it in single thread only.
+// 如果使用缓存或者rangeReader读取指定范围的数据，是线程安全的
+// 其他特性继承自FileStream.RangeRead
 func (ss *SeekableStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	if ss.GetFile() == nil && ss.rangeReader != nil {
 		rc, err := ss.rangeReader.RangeRead(ss.Ctx, httpRange)
