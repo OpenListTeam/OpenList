@@ -88,7 +88,7 @@ func (d *OnedriveAPP) _accessToken() error {
 	return nil
 }
 
-func (d *OnedriveAPP) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+func (d *OnedriveAPP) Request(url string, method string, callback base.ReqCallback, resp interface{}, noRetry ...bool) ([]byte, error) {
 	req := base.RestyClient.R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	if callback != nil {
@@ -104,7 +104,7 @@ func (d *OnedriveAPP) Request(url string, method string, callback base.ReqCallba
 		return nil, err
 	}
 	if e.Error.Code != "" {
-		if e.Error.Code == "InvalidAuthenticationToken" {
+		if e.Error.Code == "InvalidAuthenticationToken" && !utils.IsBool(noRetry...) {
 			err = d.accessToken()
 			if err != nil {
 				return nil, err
@@ -216,9 +216,36 @@ func (d *OnedriveAPP) getDrive(ctx context.Context) (*DriveResp, error) {
 	var resp DriveResp
 	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
 		req.SetContext(ctx)
-	}, &resp)
+	}, &resp, true)
 	if err != nil {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (d *OnedriveAPP) getDirectUploadInfo(ctx context.Context, path string) (*model.HttpDirectUploadInfo, error) {
+	// Create upload session
+	url := d.GetMetaUrl(false, path) + "/createUploadSession"
+	metadata := map[string]any{
+		"item": map[string]any{
+			"@microsoft.graph.conflictBehavior": "rename",
+		},
+	}
+
+	res, err := d.Request(url, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(metadata).SetContext(ctx)
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
+	if uploadUrl == "" {
+		return nil, fmt.Errorf("failed to get upload URL from response")
+	}
+	return &model.HttpDirectUploadInfo{
+		UploadURL: uploadUrl,
+		ChunkSize: d.ChunkSize * 1024 * 1024, // Convert MB to bytes
+		Method:    "PUT",
+	}, nil
 }

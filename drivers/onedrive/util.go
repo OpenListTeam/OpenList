@@ -133,7 +133,7 @@ func (d *Onedrive) _refreshToken() error {
 	return nil
 }
 
-func (d *Onedrive) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+func (d *Onedrive) Request(url string, method string, callback base.ReqCallback, resp interface{}, noRetry ...bool) ([]byte, error) {
 	if d.ref != nil {
 		return d.ref.Request(url, method, callback, resp)
 	}
@@ -152,7 +152,7 @@ func (d *Onedrive) Request(url string, method string, callback base.ReqCallback,
 		return nil, err
 	}
 	if e.Error.Code != "" {
-		if e.Error.Code == "InvalidAuthenticationToken" {
+		if e.Error.Code == "InvalidAuthenticationToken" && !utils.IsBool(noRetry...) {
 			err = d.refreshToken()
 			if err != nil {
 				return nil, err
@@ -310,34 +310,16 @@ func (d *Onedrive) getDrive(ctx context.Context) (*DriveResp, error) {
 	var resp DriveResp
 	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
 		req.SetContext(ctx)
-	}, &resp)
+	}, &resp, true)
 	if err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-func (d *Onedrive) getDirectUploadInfo(ctx context.Context, actualPath, fileName string) (*model.HttpDirectUploadInfo, error) {
-	// Use actualPath (relative to storage root) instead of dstDir.GetPath()
-	// This fixes the bug where mounted subdirectories use incorrect paths
-	dirPath := actualPath
-	if dirPath == "" {
-		dirPath = "/"
-	}
-
-	// Join with root folder path to get the full OneDrive path
-	var fullPath string
-	if d.RootFolderPath == "/" || d.RootFolderPath == "" {
-		fullPath = stdpath.Join(dirPath, fileName)
-	} else {
-		fullPath = stdpath.Join(d.RootFolderPath, dirPath, fileName)
-	}
-
-	// Clean up the path
-	filePath := stdpath.Clean(fullPath)
-
+func (d *Onedrive) getDirectUploadInfo(ctx context.Context, path string) (*model.HttpDirectUploadInfo, error) {
 	// Create upload session
-	url := d.GetMetaUrl(false, filePath) + "/createUploadSession"
+	url := d.GetMetaUrl(false, path) + "/createUploadSession"
 	metadata := map[string]any{
 		"item": map[string]any{
 			"@microsoft.graph.conflictBehavior": "rename",

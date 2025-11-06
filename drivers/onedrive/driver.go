@@ -248,7 +248,7 @@ func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, _ string, dstDir mod
 	if !d.EnableDirectUpload {
 		return nil, errs.NotImplement
 	}
-	return d.getDirectUploadInfo(ctx, dstDir.GetPath(), fileName)
+	return d.getDirectUploadInfo(ctx, path.Join(dstDir.GetPath(), fileName))
 }
 
 var _ driver.Driver = (*Onedrive)(nil)
