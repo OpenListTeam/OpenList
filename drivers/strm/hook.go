@@ -3,7 +3,6 @@ package strm
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	stdpath "path"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/tchap/go-patricia/v2/patricia"
@@ -101,23 +101,29 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 			log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
 			return
 		}
-		seekableStream, err := stream.NewSeekableStream(&stream.FileStream{
-			Obj: obj,
-			Ctx: ctx,
-		}, link)
+		defer link.Close()
+		size := link.ContentLength
+		if size <= 0 {
+			size = obj.GetSize()
+		}
+		rrf, err := stream.GetRangeReaderFromLink(size, link)
 		if err != nil {
-			_ = link.Close()
-			log.Warnf("failed to generate strm of obj %s: failed to get seekable stream: %v", localPath, err)
+			log.Warnf("failed to generate strm of obj %s: failed to get range reader: %v", localPath, err)
 			return
 		}
-		defer seekableStream.Close()
+		rc, err := rrf.RangeRead(ctx, http_range.Range{Length: -1})
+		if err != nil {
+			log.Warnf("failed to generate strm of obj %s: failed to read range: %v", localPath, err)
+			return
+		}
+		defer rc.Close()
 		file, err := utils.CreateNestedFile(localPath)
 		if err != nil {
 			log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
 			return
 		}
 		defer file.Close()
-		if _, err := io.Copy(file, seekableStream); err != nil {
+		if _, err := utils.CopyWithBuffer(file, rc); err != nil {
 			log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
 		}
 	}
