@@ -54,6 +54,7 @@ func (f *FileStream) IsForceStreamUpload() bool {
 func (f *FileStream) Close() error {
 	if f.peekBuff != nil {
 		f.peekBuff.Reset()
+		f.oriReader = nil
 		f.peekBuff = nil
 	}
 	return f.Closers.Close()
@@ -253,6 +254,7 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	if f.peekBuff == nil {
 		f.peekBuff = &buffer.Reader{}
 		f.oriReader = f.Reader
+		f.Reader = io.MultiReader(f.peekBuff, f.oriReader)
 	}
 	bufSize := maxCacheSize - f.peekBuff.Size()
 	if bufSize <= 0 {
@@ -278,9 +280,6 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	f.peekBuff.Append(buf)
 	if f.peekBuff.Size() >= f.GetSize() {
 		f.Reader = f.peekBuff
-		f.oriReader = nil
-	} else {
-		f.Reader = io.MultiReader(f.peekBuff, f.oriReader)
 	}
 	return f.peekBuff, nil
 }
