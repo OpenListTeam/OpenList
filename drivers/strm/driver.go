@@ -52,10 +52,12 @@ func (d *Strm) Init(ctx context.Context) error {
 		}
 		k, v := getPair(path)
 		d.pathMap[k] = append(d.pathMap[k], v)
-		err := InsertStrm(utils.FixAndCleanPath(strings.TrimSpace(path)), d)
-		if err != nil {
-			log.Errorf("insert strmTrie error: %v", err)
-			continue
+		if d.SaveStrmToLocal {
+			err := InsertStrm(utils.FixAndCleanPath(strings.TrimSpace(path)), d)
+			if err != nil {
+				log.Errorf("insert strmTrie error: %v", err)
+				continue
+			}
 		}
 	}
 	if len(d.pathMap) == 1 {
