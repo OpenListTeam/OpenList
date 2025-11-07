@@ -38,6 +38,7 @@ const (
 	SharePreviewArchivesByDefault = "share_preview_archives_by_default"
 	ReadMeAutoRender              = "readme_autorender"
 	FilterReadMeScripts           = "filter_readme_scripts"
+	NonEFSZipEncoding             = "non_efs_zip_encoding"
 
 	// global
 	HideFiles               = "hide_files"

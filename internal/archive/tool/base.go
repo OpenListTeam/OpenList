@@ -2,13 +2,14 @@ package tool
 
 import (
 	"io"
+	"regexp"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 )
 
 type MultipartExtension struct {
-	PartFileFormat  string
+	PartFileFormat  *regexp.Regexp
 	SecondPartIndex int
 }
 

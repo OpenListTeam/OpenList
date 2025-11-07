@@ -4,55 +4,51 @@ import (
 	"bytes"
 	"io"
 	"io/fs"
-	stdpath "path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
-	"github.com/saintfish/chardet"
 	"github.com/yeka/zip"
-	"golang.org/x/text/encoding"
-	"golang.org/x/text/encoding/charmap"
-	"golang.org/x/text/encoding/japanese"
-	"golang.org/x/text/encoding/korean"
-	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/encoding/traditionalchinese"
-	"golang.org/x/text/encoding/unicode"
-	"golang.org/x/text/encoding/unicode/utf32"
+	"golang.org/x/text/encoding/ianaindex"
 	"golang.org/x/text/transform"
 )
 
 type WrapReader struct {
 	Reader *zip.Reader
+	efs    bool
 }
 
 func (r *WrapReader) Files() []tool.SubFile {
 	ret := make([]tool.SubFile, 0, len(r.Reader.File))
 	for _, f := range r.Reader.File {
-		ret = append(ret, &WrapFile{f: f})
+		ret = append(ret, &WrapFile{f: f, efs: r.efs})
 	}
 	return ret
 }
 
 type WrapFileInfo struct {
 	fs.FileInfo
+	efs bool
 }
 
 func (f *WrapFileInfo) Name() string {
-	return decodeName(f.FileInfo.Name())
+	return decodeName(f.FileInfo.Name(), f.efs)
 }
 
 type WrapFile struct {
-	f *zip.File
+	f   *zip.File
+	efs bool
 }
 
 func (f *WrapFile) Name() string {
-	return decodeName(f.f.Name)
+	return decodeName(f.f.Name, f.efs)
 }
 
 func (f *WrapFile) FileInfo() fs.FileInfo {
-	return &WrapFileInfo{FileInfo: f.f.FileInfo()}
+	return &WrapFileInfo{FileInfo: f.f.FileInfo(), efs: f.efs}
 }
 
 func (f *WrapFile) Open() (io.ReadCloser, error) {
@@ -67,16 +63,19 @@ func (f *WrapFile) SetPassword(password string) {
 	f.f.SetPassword(password)
 }
 
-func getReader(ss []*stream.SeekableStream) (*zip.Reader, error) {
-	if len(ss) > 1 && stdpath.Ext(ss[1].GetName()) == ".z01" {
-		// FIXME: Incorrect parsing method for standard multipart zip format
+func (z *Zip) getReader(ss []*stream.SeekableStream) (r *zip.Reader, efs bool, err error) {
+	if len(ss) > 1 && z.traditionalSecondPartRegExp.MatchString(ss[1].GetName()) {
 		ss = append(ss[1:], ss[0])
 	}
 	reader, err := stream.NewMultiReaderAt(ss)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return zip.NewReader(reader, reader.Size())
+	buf := make([]byte, 8)
+	n, err := reader.ReadAt(buf, 0)
+	efs = err == nil && n == 8 && (buf[7]&0x08) > 0
+	r, err = zip.NewReader(reader, reader.Size())
+	return
 }
 
 func filterPassword(err error) error {
@@ -86,110 +85,16 @@ func filterPassword(err error) error {
 	return err
 }
 
-func decodeName(name string) string {
-	b := []byte(name)
-	detector := chardet.NewTextDetector()
-	results, err := detector.DetectAll(b)
+func decodeName(name string, efs bool) string {
+	if efs {
+		return name
+	}
+	enc, err := ianaindex.IANA.Encoding(setting.GetStr(conf.NonEFSZipEncoding))
 	if err != nil {
 		return name
 	}
-	var ce, re, enc encoding.Encoding
-	for _, r := range results {
-		if r.Confidence > 30 {
-			ce = getCommonEncoding(r.Charset)
-			if ce != nil {
-				break
-			}
-		}
-		if re == nil {
-			re = getEncoding(r.Charset)
-		}
-	}
-	if ce != nil {
-		enc = ce
-	} else if re != nil {
-		enc = re
-	} else {
-		return name
-	}
-	i := bytes.NewReader(b)
+	i := bytes.NewReader([]byte(name))
 	decoder := transform.NewReader(i, enc.NewDecoder())
 	content, _ := io.ReadAll(decoder)
 	return string(content)
-}
-
-func getCommonEncoding(name string) (enc encoding.Encoding) {
-	switch name {
-	case "UTF-8":
-		enc = unicode.UTF8
-	case "UTF-16LE":
-		enc = unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM)
-	case "Shift_JIS":
-		enc = japanese.ShiftJIS
-	case "GB-18030":
-		enc = simplifiedchinese.GB18030
-	case "EUC-KR":
-		enc = korean.EUCKR
-	case "Big5":
-		enc = traditionalchinese.Big5
-	default:
-		enc = nil
-	}
-	return
-}
-
-func getEncoding(name string) (enc encoding.Encoding) {
-	switch name {
-	case "UTF-8":
-		enc = unicode.UTF8
-	case "UTF-16BE":
-		enc = unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM)
-	case "UTF-16LE":
-		enc = unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM)
-	case "UTF-32BE":
-		enc = utf32.UTF32(utf32.BigEndian, utf32.IgnoreBOM)
-	case "UTF-32LE":
-		enc = utf32.UTF32(utf32.LittleEndian, utf32.IgnoreBOM)
-	case "ISO-8859-1":
-		enc = charmap.ISO8859_1
-	case "ISO-8859-2":
-		enc = charmap.ISO8859_2
-	case "ISO-8859-3":
-		enc = charmap.ISO8859_3
-	case "ISO-8859-4":
-		enc = charmap.ISO8859_4
-	case "ISO-8859-5":
-		enc = charmap.ISO8859_5
-	case "ISO-8859-6":
-		enc = charmap.ISO8859_6
-	case "ISO-8859-7":
-		enc = charmap.ISO8859_7
-	case "ISO-8859-8":
-		enc = charmap.ISO8859_8
-	case "ISO-8859-8-I":
-		enc = charmap.ISO8859_8I
-	case "ISO-8859-9":
-		enc = charmap.ISO8859_9
-	case "windows-1251":
-		enc = charmap.Windows1251
-	case "windows-1256":
-		enc = charmap.Windows1256
-	case "KOI8-R":
-		enc = charmap.KOI8R
-	case "Shift_JIS":
-		enc = japanese.ShiftJIS
-	case "GB-18030":
-		enc = simplifiedchinese.GB18030
-	case "EUC-JP":
-		enc = japanese.EUCJP
-	case "EUC-KR":
-		enc = korean.EUCKR
-	case "Big5":
-		enc = traditionalchinese.Big5
-	case "ISO-2022-JP":
-		enc = japanese.ISO2022JP
-	default:
-		enc = nil
-	}
-	return
 }
