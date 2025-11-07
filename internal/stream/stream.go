@@ -224,8 +224,9 @@ func (f *FileStream) GetFile() model.File {
 	return nil
 }
 
-// RangeRead have to cache all data first since only Reader is provided.
-// It's not thread-safe!
+// 从流读取指定范围的一块数据,并且不消耗流。
+// 当读取的边界超过内部设置大小后会缓存整个流。
+// 流未缓存时线程不完全
 func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	if httpRange.Length < 0 || httpRange.Start+httpRange.Length > f.GetSize() {
 		httpRange.Length = f.GetSize() - httpRange.Start
@@ -315,8 +316,6 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 var _ model.FileStreamer = (*SeekableStream)(nil)
 var _ model.FileStreamer = (*FileStream)(nil)
 
-//var _ seekableStream = (*FileStream)(nil)
-
 // for most internal stream, which is either RangeReadCloser or MFile
 // Any functionality implemented based on SeekableStream should implement a Close method,
 // whose only purpose is to close the SeekableStream object. If such functionality has
@@ -364,7 +363,8 @@ func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error
 	return nil, fmt.Errorf("illegal seekableStream")
 }
 
-// RangeRead is not thread-safe, pls use it in single thread only.
+// 如果使用缓存或者 rangeReadCloser 读取指定范围的数据，是线程安全的
+// 其他特性继承自FileStream.RangeRead
 func (ss *SeekableStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	if ss.GetFile() == nil && ss.rangeReadCloser != nil {
 		rc, err := ss.rangeReadCloser.RangeRead(ss.Ctx, httpRange)
