@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	stdpath "path"
@@ -35,11 +36,15 @@ type BaiduNetdisk struct {
 	uploadThread int
 	vipType      int // 会员类型，0普通用户(4G/4M)、1普通会员(10G/16M)、2超级会员(20G/32M)
 
-	upClient            *resty.Client // 上传文件使用的http客户端
-	uploadUrlG          singleflight.Group[string]
-	uploadUrlMu         sync.RWMutex
-	uploadUrl           string    // 上传域名
-	uploadUrlUpdateTime time.Time // 上传域名上次更新时间
+	upClient       *resty.Client // 上传文件使用的http客户端
+	uploadUrlG     singleflight.Group[string]
+	uploadUrlMu    sync.RWMutex
+	uploadUrlCache map[string]uploadURLCacheEntry
+}
+
+type uploadURLCacheEntry struct {
+	url        string
+	updateTime time.Time
 }
 
 var ErrUploadIDExpired = errors.New("uploadid expired")
@@ -58,6 +63,7 @@ func (d *BaiduNetdisk) Init(ctx context.Context) error {
 		SetRetryCount(UPLOAD_RETRY_COUNT).
 		SetRetryWaitTime(UPLOAD_RETRY_WAIT_TIME).
 		SetRetryMaxWaitTime(UPLOAD_RETRY_MAX_WAIT_TIME)
+	d.uploadUrlCache = make(map[string]uploadURLCacheEntry)
 	d.uploadThread, _ = strconv.Atoi(d.UploadThread)
 	if d.uploadThread < 1 {
 		d.uploadThread, d.UploadThread = 1, "1"
@@ -298,12 +304,22 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 			return fileToObj(precreateResp.File), nil
 		}
 	}
+	ensureUploadURL := func() {
+		if precreateResp.UploadURL != "" {
+			return
+		}
+		precreateResp.UploadURL = d.getUploadUrl(path, precreateResp.Uploadid)
+	}
+	ensureUploadURL()
 
 	// step.2 上传分片
 uploadLoop:
 	for attempt := 0; attempt < 2; attempt++ {
 		// 获取上传域名
-		uploadUrl := d.getUploadUrl(path, precreateResp.Uploadid)
+		if precreateResp.UploadURL == "" {
+			ensureUploadURL()
+		}
+		uploadUrl := precreateResp.UploadURL
 		// 并发上传
 		threadG, upCtx := errgroup.NewGroupWithContext(ctx, d.uploadThread,
 			retry.Attempts(1),
@@ -363,6 +379,7 @@ uploadLoop:
 		}
 		if errors.Is(err, ErrUploadIDExpired) {
 			log.Warn("[baidu_netdisk] uploadid expired, will restart from scratch")
+			d.clearUploadUrlCache(precreateResp.Uploadid)
 			// 重新 precreate（所有分片都要重传）
 			newPre, err2 := d.precreate(ctx, path, streamSize, blockListStr, "", "", ctime, mtime)
 			if err2 != nil {
@@ -372,6 +389,8 @@ uploadLoop:
 				return fileToObj(newPre.File), nil
 			}
 			precreateResp = newPre
+			precreateResp.UploadURL = ""
+			ensureUploadURL()
 			// 覆盖掉旧的进度
 			base.SaveUploadProgress(d, precreateResp, d.AccessToken, contentMd5)
 			continue uploadLoop
@@ -390,6 +409,7 @@ uploadLoop:
 	newFile.Mtime = mtime
 	// 上传成功清理进度
 	base.SaveUploadProgress(d, nil, d.AccessToken, contentMd5)
+	d.clearUploadUrlCache(precreateResp.Uploadid)
 	return fileToObj(newFile), nil
 }
 
@@ -438,6 +458,9 @@ func (d *BaiduNetdisk) uploadSlice(ctx context.Context, uploadUrl string, params
 		return err
 	}
 	log.Debugln(res.RawResponse.Status + res.String())
+	if res.StatusCode() != http.StatusOK {
+		return errs.NewErr(errs.StreamIncomplete, "baidu upload failed, status=%d, body=%s", res.StatusCode(), res.String())
+	}
 	errCode := utils.Json.Get(res.Body(), "error_code").ToInt()
 	errNo := utils.Json.Get(res.Body(), "errno").ToInt()
 	respStr := res.String()

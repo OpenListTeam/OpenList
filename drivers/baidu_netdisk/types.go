@@ -193,6 +193,8 @@ type PrecreateResp struct {
 
 	// return_type=2
 	File File `json:"info"`
+
+	UploadURL string `json:"-"` // 保存断点续传对应的上传域名
 }
 
 type UploadServerResp struct {
