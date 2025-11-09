@@ -6,25 +6,24 @@ import (
 	"io/fs"
 	"strings"
 
+	"github.com/KirCute/zip"
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
-	"github.com/yeka/zip"
 	"golang.org/x/text/encoding/ianaindex"
 	"golang.org/x/text/transform"
 )
 
 type WrapReader struct {
 	Reader *zip.Reader
-	efs    bool
 }
 
 func (r *WrapReader) Files() []tool.SubFile {
 	ret := make([]tool.SubFile, 0, len(r.Reader.File))
 	for _, f := range r.Reader.File {
-		ret = append(ret, &WrapFile{f: f, efs: r.efs})
+		ret = append(ret, &WrapFile{f: f})
 	}
 	return ret
 }
@@ -39,16 +38,15 @@ func (f *WrapFileInfo) Name() string {
 }
 
 type WrapFile struct {
-	f   *zip.File
-	efs bool
+	f *zip.File
 }
 
 func (f *WrapFile) Name() string {
-	return decodeName(f.f.Name, f.efs)
+	return decodeName(f.f.Name, isEFS(f.f.Flags))
 }
 
 func (f *WrapFile) FileInfo() fs.FileInfo {
-	return &WrapFileInfo{FileInfo: f.f.FileInfo(), efs: f.efs}
+	return &WrapFileInfo{FileInfo: f.f.FileInfo(), efs: isEFS(f.f.Flags)}
 }
 
 func (f *WrapFile) Open() (io.ReadCloser, error) {
@@ -63,19 +61,33 @@ func (f *WrapFile) SetPassword(password string) {
 	f.f.SetPassword(password)
 }
 
-func (z *Zip) getReader(ss []*stream.SeekableStream) (r *zip.Reader, efs bool, err error) {
+func makePart(ss *stream.SeekableStream) (zip.SizeReaderAt, error) {
+	ra, err := stream.NewReadAtSeeker(ss, 0)
+	if err != nil {
+		return nil, err
+	}
+	return &inlineSizeReaderAt{ReaderAt: ra, size: ss.GetSize()}, nil
+}
+
+func (z *Zip) getReader(ss []*stream.SeekableStream) (*zip.Reader, error) {
 	if len(ss) > 1 && z.traditionalSecondPartRegExp.MatchString(ss[1].GetName()) {
 		ss = append(ss[1:], ss[0])
+		ras := make([]zip.SizeReaderAt, 0, len(ss))
+		for _, s := range ss {
+			ra, err := makePart(s)
+			if err != nil {
+				return nil, err
+			}
+			ras = append(ras, ra)
+		}
+		return zip.NewMultipartReader(ras)
+	} else {
+		reader, err := stream.NewMultiReaderAt(ss)
+		if err != nil {
+			return nil, err
+		}
+		return zip.NewReader(reader, reader.Size())
 	}
-	reader, err := stream.NewMultiReaderAt(ss)
-	if err != nil {
-		return nil, false, err
-	}
-	buf := make([]byte, 8)
-	n, err := reader.ReadAt(buf, 0)
-	efs = err == nil && n == 8 && (buf[7]&0x08) > 0
-	r, err = zip.NewReader(reader, reader.Size())
-	return
 }
 
 func filterPassword(err error) error {
@@ -97,4 +109,17 @@ func decodeName(name string, efs bool) string {
 	decoder := transform.NewReader(i, enc.NewDecoder())
 	content, _ := io.ReadAll(decoder)
 	return string(content)
+}
+
+func isEFS(flags uint16) bool {
+	return (flags & 0x800) > 0
+}
+
+type inlineSizeReaderAt struct {
+	io.ReaderAt
+	size int64
+}
+
+func (i *inlineSizeReaderAt) Size() int64 {
+	return i.size
 }
