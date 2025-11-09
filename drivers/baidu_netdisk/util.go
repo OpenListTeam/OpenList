@@ -394,29 +394,28 @@ func (d *BaiduNetdisk) quota(ctx context.Context) (model.DiskUsage, error) {
 	return driver.DiskUsageFromUsedAndTotal(resp.Used, resp.Total), nil
 }
 
-// getUploadUrl 从开放平台获取上传域名/地址，并发请求会被合并，结果会被缓存1h。
+// getUploadUrl 从开放平台获取上传域名/地址，并发请求会被合并，结果会在 uploadid 生命周期内复用。
 // 如果获取失败，则返回 Upload API设置项。
 func (d *BaiduNetdisk) getUploadUrl(path, uploadId string) string {
-	if !d.UseDynamicUploadAPI {
+	if !d.UseDynamicUploadAPI || uploadId == "" {
 		return d.UploadAPI
 	}
-	getCachedUrlFunc := func() string {
+	getCachedUrlFunc := func() (string, bool) {
 		d.uploadUrlMu.RLock()
 		defer d.uploadUrlMu.RUnlock()
-		if d.uploadUrl != "" && time.Since(d.uploadUrlUpdateTime) < UPLOAD_URL_EXPIRE_TIME {
-			uploadUrl := d.uploadUrl
-			return uploadUrl
+		if entry, ok := d.uploadUrlCache[uploadId]; ok {
+			return entry.url, true
 		}
-		return ""
+		return "", false
 	}
 	// 检查地址缓存
-	if uploadUrl := getCachedUrlFunc(); uploadUrl != "" {
+	if uploadUrl, ok := getCachedUrlFunc(); ok {
 		return uploadUrl
 	}
 
 	uploadUrlGetFunc := func() (string, error) {
 		// 双重检查缓存
-		if uploadUrl := getCachedUrlFunc(); uploadUrl != "" {
+		if uploadUrl, ok := getCachedUrlFunc(); ok {
 			return uploadUrl, nil
 		}
 
@@ -426,19 +425,32 @@ func (d *BaiduNetdisk) getUploadUrl(path, uploadId string) string {
 		}
 
 		d.uploadUrlMu.Lock()
-		defer d.uploadUrlMu.Unlock()
-		d.uploadUrl = uploadUrl
-		d.uploadUrlUpdateTime = time.Now()
+		d.uploadUrlCache[uploadId] = uploadURLCacheEntry{
+			url:        uploadUrl,
+			updateTime: time.Now(),
+		}
+		d.uploadUrlMu.Unlock()
 		return uploadUrl, nil
 	}
 
-	uploadUrl, err, _ := d.uploadUrlG.Do("", uploadUrlGetFunc)
+	uploadUrl, err, _ := d.uploadUrlG.Do(uploadId, uploadUrlGetFunc)
 	if err != nil {
 		fallback := d.UploadAPI
 		log.Warnf("[baidu_netdisk] get upload URL failed (%v), will use fallback URL: %s", err, fallback)
 		return fallback
 	}
 	return uploadUrl
+}
+
+func (d *BaiduNetdisk) clearUploadUrlCache(uploadId string) {
+	if uploadId == "" {
+		return
+	}
+	d.uploadUrlMu.Lock()
+	if _, ok := d.uploadUrlCache[uploadId]; ok {
+		delete(d.uploadUrlCache, uploadId)
+	}
+	d.uploadUrlMu.Unlock()
 }
 
 // requestForUploadUrl 请求获取上传地址。
