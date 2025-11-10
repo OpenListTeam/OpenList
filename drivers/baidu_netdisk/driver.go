@@ -425,7 +425,7 @@ func (d *BaiduNetdisk) precreate(ctx context.Context, path string, streamSize in
 }
 
 func (d *BaiduNetdisk) uploadSlice(ctx context.Context, uploadUrl string, params map[string]string, fileName string, file *io.SectionReader) error {
-	b := bytes.NewBuffer(nil)
+	b := bytes.NewBuffer(make([]byte, 0, bytes.MinRead))
 	mw := multipart.NewWriter(b)
 	_, err := mw.CreateFormFile("file", fileName)
 	if err != nil {

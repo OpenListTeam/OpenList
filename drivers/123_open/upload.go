@@ -135,12 +135,13 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				if res.StatusCode != 200 {
 					return fmt.Errorf("slice %d upload failed, status code: %d", partNumber, res.StatusCode)
 				}
-				var resp BaseResp
-				respBody, err := io.ReadAll(res.Body)
+				b.Reset()
+				_, err = b.ReadFrom(res.Body)
 				if err != nil {
 					return err
 				}
-				err = json.Unmarshal(respBody, &resp)
+				var resp BaseResp
+				err = json.Unmarshal(b.Bytes(), &resp)
 				if err != nil {
 					return err
 				}

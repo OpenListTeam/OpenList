@@ -226,7 +226,7 @@ func (d *ChaoXing) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 	if resp.Result != 1 {
 		return errors.New("get upload data error")
 	}
-	body := &bytes.Buffer{}
+	body := bytes.NewBuffer(make([]byte, 0, bytes.MinRead))
 	writer := multipart.NewWriter(body)
 	_, err = writer.CreateFormFile("file", file.GetName())
 	if err != nil {
