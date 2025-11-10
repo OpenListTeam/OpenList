@@ -456,7 +456,7 @@ func (r *headCache) Close() error {
 }
 
 func (r *RangeReadReadAtSeeker) InitHeadCache() {
-	if r.ss.GetFile() == nil && r.masterOff == 0 {
+	if r.masterOff == 0 {
 		value, _ := r.readerMap.LoadAndDelete(int64(0))
 		r.headCache = &headCache{reader: value.(io.Reader)}
 		r.ss.Closers.Add(r.headCache)
@@ -464,12 +464,12 @@ func (r *RangeReadReadAtSeeker) InitHeadCache() {
 }
 
 func NewReadAtSeeker(ss *SeekableStream, offset int64, forceRange ...bool) (model.File, error) {
-	if ss.GetFile() != nil {
-		_, err := ss.GetFile().Seek(offset, io.SeekStart)
+	if cache := ss.GetFile(); cache != nil {
+		_, err := cache.Seek(offset, io.SeekStart)
 		if err != nil {
 			return nil, err
 		}
-		return ss.GetFile(), nil
+		return cache, nil
 	}
 	r := &RangeReadReadAtSeeker{
 		ss:        ss,
@@ -479,10 +479,11 @@ func NewReadAtSeeker(ss *SeekableStream, offset int64, forceRange ...bool) (mode
 		if offset < 0 || offset > ss.GetSize() {
 			return nil, errors.New("offset out of range")
 		}
-		_, err := r.getReaderAtOffset(offset)
+		reader, err := r.getReaderAtOffset(offset)
 		if err != nil {
 			return nil, err
 		}
+		r.readerMap.Store(int64(offset), reader)
 	} else {
 		r.readerMap.Store(int64(offset), ss)
 	}
@@ -502,39 +503,41 @@ func NewMultiReaderAt(ss []*SeekableStream) (readerutil.SizeReaderAt, error) {
 }
 
 func (r *RangeReadReadAtSeeker) getReaderAtOffset(off int64) (io.Reader, error) {
-	var rr io.Reader
-	var cur int64 = -1
-	r.readerMap.Range(func(key, value any) bool {
-		k := key.(int64)
-		if off == k {
-			cur = k
-			rr = value.(io.Reader)
-			return false
+	for {
+		var cur int64 = -1
+		r.readerMap.Range(func(key, value any) bool {
+			k := key.(int64)
+			if off == k {
+				cur = k
+				return false
+			}
+			if off > k && off-k <= 4*utils.MB && k > cur {
+				cur = k
+			}
+			return true
+		})
+		if cur < 0 {
+			break
 		}
-		if off > k && off-k <= 4*utils.MB && (rr == nil || k < cur) {
-			rr = value.(io.Reader)
-			cur = k
+		v, ok := r.readerMap.LoadAndDelete(int64(cur))
+		if !ok {
+			continue
 		}
-		return true
-	})
-	if cur >= 0 {
-		r.readerMap.Delete(int64(cur))
-	}
-	if off == int64(cur) {
-		// logrus.Debugf("getReaderAtOffset match_%d", off)
-		return rr, nil
-	}
-
-	if rr != nil {
+		rr := v.(io.Reader)
+		if off == int64(cur) {
+			// logrus.Debugf("getReaderAtOffset match_%d", off)
+			return rr, nil
+		}
 		n, _ := utils.CopyWithBufferN(io.Discard, rr, off-cur)
 		cur += n
 		if cur == off {
 			// logrus.Debugf("getReaderAtOffset old_%d", off)
 			return rr, nil
 		}
+		break
 	}
-	// logrus.Debugf("getReaderAtOffset new_%d", off)
 
+	// logrus.Debugf("getReaderAtOffset new_%d", off)
 	reader, err := r.ss.RangeRead(http_range.Range{Start: off, Length: -1})
 	if err != nil {
 		return nil, err
