@@ -2,8 +2,10 @@ package op
 
 import (
 	"context"
-	stderrors "errors"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"golang.org/x/time/rate"
 	stdpath "path"
+	"strconv"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -310,7 +312,7 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcDirPath := stdpath.Dir(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == srcDirPath {
-		return stderrors.New("move in place")
+		return errors.New("move in place")
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
@@ -343,8 +345,23 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			}
 		}
 	default:
-		return errs.NotImplement
+		err = errs.NotImplement
 	}
+
+	if err == nil {
+		needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterCopyAndMove)
+		if needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1") {
+			targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
+			var limiter *rate.Limiter
+			if l, _ := GetSettingItemByKey(conf.HandleHookAfterCopyAndMove); l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil {
+					limiter = rate.NewLimiter(rate.Limit(f), 1)
+				}
+			}
+			go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
+		}
+	}
+
 	return errors.WithStack(err)
 }
 
@@ -397,7 +414,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == stdpath.Dir(srcPath) {
-		return stderrors.New("copy in place")
+		return errors.New("copy in place")
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
@@ -428,8 +445,23 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			}
 		}
 	default:
-		return errs.NotImplement
+		err = errs.NotImplement
 	}
+
+	if err == nil {
+		needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterCopyAndMove)
+		if needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1") {
+			targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
+			var limiter *rate.Limiter
+			if l, _ := GetSettingItemByKey(conf.HandleHookAfterCopyAndMove); l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil {
+					limiter = rate.NewLimiter(rate.Limit(f), 1)
+				}
+			}
+			go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
+		}
+	}
+
 	return errors.WithStack(err)
 }
 

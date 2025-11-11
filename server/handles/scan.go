@@ -1,7 +1,7 @@
 package handles
 
 import (
-	"github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -17,7 +17,7 @@ func StartManualScan(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if err := fs.BeginManualScan(req.Path, req.Limit); err != nil {
+	if err := op.BeginManualScan(req.Path, req.Limit); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
@@ -25,10 +25,10 @@ func StartManualScan(c *gin.Context) {
 }
 
 func StopManualScan(c *gin.Context) {
-	if !fs.ManualScanRunning() {
+	if !op.ManualScanRunning() {
 		common.ErrorStrResp(c, "manual scan is not running", 400)
 	}
-	fs.StopManualScan()
+	op.StopManualScan()
 	common.SuccessResp(c)
 }
 
@@ -39,8 +39,8 @@ type ManualScanResp struct {
 
 func GetManualScanProgress(c *gin.Context) {
 	ret := ManualScanResp{
-		ObjCount: fs.ScannedCount.Load(),
-		IsDone:   !fs.ManualScanRunning(),
+		ObjCount: op.ScannedCount.Load(),
+		IsDone:   !op.ManualScanRunning(),
 	}
 	common.SuccessResp(c, ret)
 }

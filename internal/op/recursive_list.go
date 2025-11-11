@@ -1,4 +1,4 @@
-package fs
+package op
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -51,7 +50,7 @@ func StopManualScan() {
 }
 
 func RecursivelyList(ctx context.Context, rawPath string, limit rate.Limit, counter *atomic.Uint64) error {
-	storage, actualPath, err := op.GetStorageAndActualPath(rawPath)
+	storage, actualPath, err := GetStorageAndActualPath(rawPath)
 	if err != nil && !errors.Is(err, errs.StorageNotFound) {
 		return err
 	} else if err == nil {
@@ -69,7 +68,7 @@ func RecursivelyList(ctx context.Context, rawPath string, limit rate.Limit, coun
 }
 
 func recursivelyListVirtual(ctx context.Context, rawPath string, limit rate.Limit, counter *atomic.Uint64, wg *sync.WaitGroup) {
-	objs := op.GetStorageVirtualFilesByPath(rawPath)
+	objs := GetStorageVirtualFilesByPath(rawPath)
 	if counter != nil {
 		counter.Add(uint64(len(objs)))
 	}
@@ -78,7 +77,7 @@ func recursivelyListVirtual(ctx context.Context, rawPath string, limit rate.Limi
 			return
 		}
 		nextPath := stdpath.Join(rawPath, obj.GetName())
-		storage, actualPath, err := op.GetStorageAndActualPath(nextPath)
+		storage, actualPath, err := GetStorageAndActualPath(nextPath)
 		if err != nil && !errors.Is(err, errs.StorageNotFound) {
 			log.Errorf("error recursively list: failed get storage [%s]: %v", nextPath, err)
 		} else if err == nil {
@@ -98,7 +97,7 @@ func recursivelyListVirtual(ctx context.Context, rawPath string, limit rate.Limi
 }
 
 func RecursivelyListStorage(ctx context.Context, storage driver.Driver, actualPath string, limiter *rate.Limiter, counter *atomic.Uint64) {
-	objs, err := op.List(ctx, storage, actualPath, model.ListArgs{Refresh: true})
+	objs, err := List(ctx, storage, actualPath, model.ListArgs{Refresh: true})
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			log.Errorf("error recursively list: failed list (%s)[%s]: %v", storage.GetStorage().MountPath, actualPath, err)
