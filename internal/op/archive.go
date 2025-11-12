@@ -11,6 +11,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -20,6 +21,7 @@ import (
 	gocache "github.com/OpenListTeam/go-cache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 var archiveMetaCache = gocache.NewMemCache(gocache.WithShards[*model.ArchiveMetaProvider](64))
@@ -506,9 +508,9 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		return errors.WithMessage(err, "failed to get dst dir")
 	}
 
+	var newObjs []model.Obj
 	switch s := storage.(type) {
 	case driver.ArchiveDecompressResult:
-		var newObjs []model.Obj
 		newObjs, err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
 		if err == nil {
 			if len(newObjs) > 0 {
@@ -526,6 +528,32 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		}
 	default:
 		return errs.NotImplement
+	}
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		onlyList := false
+		targetPath := dstDirPath
+		if newObjs != nil && len(newObjs) == 1 && newObjs[0].IsDir() {
+			targetPath = stdpath.Join(dstDirPath, newObjs[0].GetName())
+		} else if newObjs != nil && len(newObjs) == 1 && !newObjs[0].IsDir() {
+			onlyList = true
+		} else if args.PutIntoNewDir {
+			targetPath = stdpath.Join(dstDirPath, strings.TrimSuffix(srcObj.GetName(), stdpath.Ext(srcObj.GetName())))
+		} else if innerBase := stdpath.Base(args.InnerPath); innerBase != "." && innerBase != "/" {
+			targetPath = stdpath.Join(dstDirPath, innerBase)
+			dstObj, e := GetUnwrap(ctx, storage, targetPath)
+			onlyList = e != nil || !dstObj.IsDir()
+		}
+		if onlyList {
+			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		} else {
+			var limiter *rate.Limiter
+			if l, _ := GetSettingItemByKey(conf.HandleHookAfterWriting); !onlyList && l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil {
+					limiter = rate.NewLimiter(rate.Limit(f), 1)
+				}
+			}
+			go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
+		}
 	}
 	return errors.WithStack(err)
 }

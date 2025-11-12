@@ -30,7 +30,7 @@ func RefreshAndRemove(dstPath string, payloads ...any) {
 	if dstNeedRefresh {
 		op.Cache.DeleteDirectory(dstStorage, dstActualPath)
 	}
-	dstNeedHandleHook := setting.GetBool(conf.HandleHookAfterCopyAndMove)
+	dstNeedHandleHook := setting.GetBool(conf.HandleHookAfterWriting)
 	dstHandleHookLimit := setting.GetFloat(conf.HandleHookRateLimit, .0)
 	var listLimiter *rate.Limiter
 	if dstNeedRefresh && dstNeedHandleHook && dstHandleHookLimit > .0 {

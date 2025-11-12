@@ -27,6 +27,7 @@ func StartManualScan(c *gin.Context) {
 func StopManualScan(c *gin.Context) {
 	if !op.ManualScanRunning() {
 		common.ErrorStrResp(c, "manual scan is not running", 400)
+		return
 	}
 	op.StopManualScan()
 	common.SuccessResp(c)

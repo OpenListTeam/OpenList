@@ -2,12 +2,11 @@ package op
 
 import (
 	"context"
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"golang.org/x/time/rate"
 	stdpath "path"
 	"strconv"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -16,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 var listG singleflight.Group[[]model.Obj]
@@ -348,12 +348,13 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		err = errs.NotImplement
 	}
 
-	if err == nil {
-		needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterCopyAndMove)
-		if needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1") {
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		if !srcObj.IsDir() {
+			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		} else {
 			targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
 			var limiter *rate.Limiter
-			if l, _ := GetSettingItemByKey(conf.HandleHookAfterCopyAndMove); l != nil {
+			if l, _ := GetSettingItemByKey(conf.HandleHookAfterWriting); l != nil {
 				if f, e := strconv.ParseFloat(l.Value, 64); e == nil {
 					limiter = rate.NewLimiter(rate.Limit(f), 1)
 				}
@@ -448,12 +449,13 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		err = errs.NotImplement
 	}
 
-	if err == nil {
-		needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterCopyAndMove)
-		if needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1") {
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		if !srcObj.IsDir() {
+			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		} else {
 			targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
 			var limiter *rate.Limiter
-			if l, _ := GetSettingItemByKey(conf.HandleHookAfterCopyAndMove); l != nil {
+			if l, _ := GetSettingItemByKey(conf.HandleHookAfterWriting); l != nil {
 				if f, e := strconv.ParseFloat(l.Value, 64); e == nil {
 					limiter = rate.NewLimiter(rate.Limit(f), 1)
 				}
@@ -589,6 +591,9 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			err = Remove(ctx, storage, tempPath)
 		}
 	}
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+	}
 	return errors.WithStack(err)
 }
 
@@ -633,6 +638,9 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	default:
 		return errors.WithStack(errs.NotImplement)
 	}
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+	}
 	log.Debugf("put url [%s](%s) done", dstName, url)
 	return errors.WithStack(err)
 }
@@ -675,4 +683,9 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 		return nil, errors.WithStack(err)
 	}
 	return info, nil
+}
+
+func needHandleObjsUpdateHook() bool {
+	needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterWriting)
+	return needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1")
 }
