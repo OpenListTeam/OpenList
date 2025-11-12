@@ -1,0 +1,60 @@
+name: Mark stale issues
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # daily at 00:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  mark-stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark issues stale after 90 days inactivity
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const days = 90;
+            const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+            const labelName = 'stale';
+            const whitelist = ['WIP', 'has-parent', 'collection', 'Announcement'];
+            const staleComment = `This issue has been automatically marked as stale because it hasn't had recent activity for ${days} days. If you'd like to keep it open, please reply and the label will be removed.`;
+
+            // Ensure the stale label exists; create if missing
+            try {
+              await github.rest.issues.getLabel({ ...context.repo, name: labelName });
+            } catch (err) {
+              if (err.status === 404) {
+                await github.rest.issues.createLabel({ ...context.repo, name: labelName, color: 'cccccc', description: 'Marked as stale after inactivity' });
+              } else {
+                throw err;
+              }
+            }
+
+            // List open issues (not PRs) and paginate
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: 'open',
+              per_page: 100
+            });
+            for (const issue of issues) {
+              // Skip PRs
+              if (issue.pull_request) continue;
+              // Skip locked issues
+              if (issue.locked) continue;
+              // Skip if already labeled stale
+              const labels = (issue.labels || []).map(l => (typeof l === 'string' ? l : l.name));
+              // Skip if contains any whitelist label
+              if (labels.some(l => whitelist.includes(l))) continue;
+              if (labels.includes(labelName)) continue;
+
+              const updated = new Date(issue.updated_at || issue.created_at);
+              if (updated < cutoff) {
+                // Add stale label and comment
+                await github.rest.issues.addLabels({ ...context.repo, issue_number: issue.number, labels: [labelName] });
+                await github.rest.issues.createComment({ ...context.repo, issue_number: issue.number, body: staleComment });
+                console.log(`Marked #${issue.number} as stale`);
+              }
+            }
