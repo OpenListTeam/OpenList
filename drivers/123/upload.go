@@ -148,7 +148,7 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 					}
 					defer res.Body.Close()
 					if res.StatusCode == http.StatusForbidden {
-						singleflight.AnyGroup.Do(fmt.Sprintf("Pan123.newUpload_%p", threadG), func() (any, error) {
+						_, err, _ = singleflight.AnyGroup.Do(fmt.Sprintf("Pan123.newUpload_%p", threadG), func() (any, error) {
 							newS3PreSignedUrls, err := getS3UploadUrl(ctx, upReq, cur, end)
 							if err != nil {
 								return nil, err
