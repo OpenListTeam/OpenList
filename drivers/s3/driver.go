@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
@@ -208,6 +209,35 @@ func (d *S3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up
 	}
 	_, err := uploader.UploadWithContext(ctx, input)
 	return err
+}
+
+func (d *S3) GetDirectUploadTools() []string {
+	if !d.EnableDirectUpload {
+		return nil
+	}
+	return []string{"HttpDirect"}
+}
+
+func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, _ int64) (any, error) {
+	if !d.EnableDirectUpload {
+		return nil, errs.NotImplement
+	}
+	path := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
+	req, _ := d.client.PutObjectRequest(&s3.PutObjectInput{
+		Bucket: &d.Bucket,
+		Key:    &path,
+	})
+	if req == nil {
+		return nil, fmt.Errorf("failed to create PutObject request")
+	}
+	link, err := req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+	if err != nil {
+		return nil, err
+	}
+	return &model.HttpDirectUploadInfo{
+		UploadURL: link,
+		Method:    "PUT",
+	}, nil
 }
 
 var _ driver.Driver = (*S3)(nil)
