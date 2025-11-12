@@ -24,4 +24,4 @@ jobs:
           close-issue-message: "This issue has been automatically closed due to inactivity for 90 days after being marked as stale. If you believe this was done in error, please feel free to reopen the issue or contact the maintainers."
           any-of-labels: "bug"
           exempt-labels: "WIP,has-parent,collection,Announcement"
-          operations-per-run: 100
+          operations-per-run: 30
