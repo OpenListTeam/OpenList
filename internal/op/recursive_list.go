@@ -107,17 +107,17 @@ func RecursivelyListStorage(ctx context.Context, storage driver.Driver, actualPa
 	if counter != nil {
 		counter.Add(uint64(len(objs)))
 	}
-	if limiter != nil {
-		if err = limiter.Wait(ctx); err != nil {
-			return
-		}
-	}
 	for _, obj := range objs {
 		if utils.IsCanceled(ctx) {
 			return
 		}
 		if !obj.IsDir() {
 			continue
+		}
+		if limiter != nil {
+			if err = limiter.Wait(ctx); err != nil {
+				return
+			}
 		}
 		nextPath := stdpath.Join(actualPath, obj.GetName())
 		RecursivelyListStorage(ctx, storage, nextPath, limiter, counter)

@@ -24,8 +24,10 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var archiveMetaCache = gocache.NewMemCache(gocache.WithShards[*model.ArchiveMetaProvider](64))
-var archiveMetaG singleflight.Group[*model.ArchiveMetaProvider]
+var (
+	archiveMetaCache = gocache.NewMemCache(gocache.WithShards[*model.ArchiveMetaProvider](64))
+	archiveMetaG     singleflight.Group[*model.ArchiveMetaProvider]
+)
 
 func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, args model.ArchiveMetaArgs) (*model.ArchiveMetaProvider, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -198,8 +200,10 @@ func getArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 	return obj, archiveMetaProvider, err
 }
 
-var archiveListCache = gocache.NewMemCache(gocache.WithShards[[]model.Obj](64))
-var archiveListG singleflight.Group[[]model.Obj]
+var (
+	archiveListCache = gocache.NewMemCache(gocache.WithShards[[]model.Obj](64))
+	archiveListG     singleflight.Group[[]model.Obj]
+)
 
 func ListArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -399,8 +403,10 @@ type objWithLink struct {
 	obj  model.Obj
 }
 
-var extractCache = cache.NewKeyedCache[*objWithLink](5 * time.Minute)
-var extractG = singleflight.Group[*objWithLink]{}
+var (
+	extractCache = cache.NewKeyedCache[*objWithLink](5 * time.Minute)
+	extractG     = singleflight.Group[*objWithLink]{}
+)
 
 func DriverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -547,8 +553,8 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
 		} else {
 			var limiter *rate.Limiter
-			if l, _ := GetSettingItemByKey(conf.HandleHookAfterWriting); !onlyList && l != nil {
-				if f, e := strconv.ParseFloat(l.Value, 64); e == nil {
+			if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
 					limiter = rate.NewLimiter(rate.Limit(f), 1)
 				}
 			}

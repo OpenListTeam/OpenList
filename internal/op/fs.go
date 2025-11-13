@@ -354,8 +354,8 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		} else {
 			targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
 			var limiter *rate.Limiter
-			if l, _ := GetSettingItemByKey(conf.HandleHookAfterWriting); l != nil {
-				if f, e := strconv.ParseFloat(l.Value, 64); e == nil {
+			if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
 					limiter = rate.NewLimiter(rate.Limit(f), 1)
 				}
 			}
@@ -455,8 +455,8 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		} else {
 			targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
 			var limiter *rate.Limiter
-			if l, _ := GetSettingItemByKey(conf.HandleHookAfterWriting); l != nil {
-				if f, e := strconv.ParseFloat(l.Value, 64); e == nil {
+			if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
 					limiter = rate.NewLimiter(rate.Limit(f), 1)
 				}
 			}
