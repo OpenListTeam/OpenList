@@ -41,7 +41,7 @@ func uploadAuth(ctx context.Context, path string) error {
 	}
 	if !(common.CanAccess(user, meta, path, ctx.Value(conf.MetaPassKey).(string)) &&
 		((user.CanFTPManage() && user.CanWrite()) || common.CanWrite(meta, stdpath.Dir(path)))) {
-		return errs.PermissionDenied
+		return errs.IgnoredSystemFile
 	}
 	return nil
 }
@@ -54,7 +54,7 @@ func OpenUpload(ctx context.Context, path string, trunc bool) (*FileUploadProxy,
 	// Check if system file should be ignored
 	_, name := stdpath.Split(path)
 	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(name) {
-		return nil, errs.PermissionDenied
+		return nil, errs.IgnoredSystemFile
 	}
 	tmpFile, err := os.CreateTemp(conf.Conf.TempDir, "file-*")
 	if err != nil {

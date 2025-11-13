@@ -361,7 +361,7 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	}
 	// Check if system file should be ignored
 	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
-		return http.StatusForbidden, errors.New("system file upload ignored")
+		return http.StatusForbidden, errs.IgnoredSystemFile
 	}
 	fsStream := &stream.FileStream{
 		Obj:      &obj,

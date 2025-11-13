@@ -289,7 +289,7 @@ func (b *s3Backend) PutObject(
 	}
 	// Check if system file should be ignored
 	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
-		return result, errors.New("system file upload ignored")
+		return result, errs.IgnoredSystemFile
 	}
 	stream := &stream.FileStream{
 		Obj:      &obj,
