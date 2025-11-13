@@ -49,15 +49,15 @@ func makeStorageResp(ctx *gin.Context, storages []model.Storage) []*StorageResp 
 			continue
 		}
 		workerCount++
-		go func() {
-			details, e := op.GetStorageDetails(ctx, d)
+		go func(dri driver.Driver, idx int) {
+			details, e := op.GetStorageDetails(ctx, dri)
 			if e != nil {
-				if !errors.Is(e, errs.NotImplement) && !errors.Is(err, errs.StorageNotInit) {
-					log.Errorf("failed get %s details: %+v", s.MountPath, err)
+				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
+					log.Errorf("failed get %s details: %+v", dri.GetStorage().MountPath, e)
 				}
 			}
-			detailsChan <- detailWithIndex{idx: i, val: details}
-		}()
+			detailsChan <- detailWithIndex{idx: idx, val: details}
+		}(d, i)
 	}
 	for workerCount > 0 {
 		select {

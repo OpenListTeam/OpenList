@@ -359,15 +359,15 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 			},
 		}
 		resultChan := make(chan *model.StorageDetails, 1)
-		go func() {
-			details, err := GetStorageDetails(ctx, d, refresh)
+		go func(dri driver.Driver) {
+			details, err := GetStorageDetails(ctx, dri, refresh)
 			if err != nil {
 				if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.StorageNotInit) {
-					log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
+					log.Errorf("failed get %s storage details: %+v", dri.GetStorage().MountPath, err)
 				}
 			}
 			resultChan <- details
-		}()
+		}(d)
 		select {
 		case r := <-resultChan:
 			ret.StorageDetails = r

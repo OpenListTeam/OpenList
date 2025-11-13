@@ -53,15 +53,15 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 			},
 		}
 		workerCount++
-		go func() {
-			details, e := op.GetStorageDetails(ctx, remoteDriver, refresh)
+		go func(dri driver.Driver, i int) {
+			details, e := op.GetStorageDetails(ctx, dri, refresh)
 			if e != nil {
 				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
-					log.Errorf("failed get %s storage details: %+v", remoteDriver.GetStorage().MountPath, e)
+					log.Errorf("failed get %s storage details: %+v", dri.GetStorage().MountPath, e)
 				}
 			}
-			detailsChan <- detailWithIndex{idx: idx, val: details}
-		}()
+			detailsChan <- detailWithIndex{idx: i, val: details}
+		}(remoteDriver, idx)
 	}
 	for workerCount > 0 {
 		select {
