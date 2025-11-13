@@ -68,7 +68,7 @@ func FsStream(c *gin.Context) {
 	dir, name := stdpath.Split(path)
 	// Check if system file should be ignored
 	if shouldIgnoreSystemFile(name) {
-		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 415)
+		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 403)
 		return
 	}
 	// 如果请求头 Content-Length 和 X-File-Size 都没有，则 size=-1，表示未知大小的流式上传
@@ -177,7 +177,7 @@ func FsForm(c *gin.Context) {
 	dir, name := stdpath.Split(path)
 	// Check if system file should be ignored
 	if shouldIgnoreSystemFile(name) {
-		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 415)
+		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 403)
 		return
 	}
 	h := make(map[*utils.HashType]string)
