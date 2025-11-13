@@ -56,6 +56,7 @@ const (
 	ShareArchivePreview     = "share_archive_preview"
 	ShareForceProxy         = "share_force_proxy"
 	ShareSummaryContent     = "share_summary_content"
+	IgnoreSystemFiles       = "ignore_system_files"
 
 	// index
 	SearchIndex     = "search_index"
