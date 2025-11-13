@@ -173,10 +173,10 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		mode = storage.(driver.LinkCacheModeResolver).ResolveLinkCacheMode(path)
 	}
 	typeKey := args.Type
-	if mode&driver.LinkCacheIP == 1 {
+	if mode&driver.LinkCacheIP != 0 {
 		typeKey += "/" + args.IP
 	}
-	if mode&driver.LinkCacheUA == 1 {
+	if mode&driver.LinkCacheUA != 0 {
 		typeKey += "/" + args.Header.Get("User-Agent")
 	}
 	key := Key(storage, path)
