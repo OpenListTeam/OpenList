@@ -25,9 +25,10 @@ import (
 type S3 struct {
 	model.Storage
 	Addition
-	Session    *session.Session
-	client     *s3.S3
-	linkClient *s3.S3
+	Session            *session.Session
+	client             *s3.S3
+	linkClient         *s3.S3
+	directUploadClient *s3.S3
 
 	config driver.Config
 	cron   *cron.Cron
@@ -53,16 +54,18 @@ func (d *S3) Init(ctx context.Context) error {
 			if err != nil {
 				log.Errorln("Doge init session error:", err)
 			}
-			d.client = d.getClient(false)
-			d.linkClient = d.getClient(true)
+			d.client = d.getClient(ClientTypeNormal)
+			d.linkClient = d.getClient(ClientTypeLink)
+			d.directUploadClient = d.getClient(ClientTypeDirectUpload)
 		})
 	}
 	err := d.initSession()
 	if err != nil {
 		return err
 	}
-	d.client = d.getClient(false)
-	d.linkClient = d.getClient(true)
+	d.client = d.getClient(ClientTypeNormal)
+	d.linkClient = d.getClient(ClientTypeLink)
+	d.directUploadClient = d.getClient(ClientTypeDirectUpload)
 	return nil
 }
 
@@ -223,7 +226,7 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 		return nil, errs.NotImplement
 	}
 	path := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
-	req, _ := d.client.PutObjectRequest(&s3.PutObjectInput{
+	req, _ := d.directUploadClient.PutObjectRequest(&s3.PutObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &path,
 	})
