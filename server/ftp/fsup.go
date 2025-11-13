@@ -160,7 +160,7 @@ func OpenUploadWithLength(ctx context.Context, path string, trunc bool, length i
 	// Check if system file should be ignored
 	_, name := stdpath.Split(path)
 	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(name) {
-		return nil, errs.PermissionDenied
+		return nil, errs.IgnoredSystemFile
 	}
 	if trunc {
 		_ = fs.Remove(ctx, path)
