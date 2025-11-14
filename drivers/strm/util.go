@@ -3,7 +3,6 @@ package strm
 import (
 	"context"
 	"fmt"
-
 	stdpath "path"
 	"strings"
 
@@ -69,11 +68,12 @@ func (d *Strm) convert2strmObjs(ctx context.Context, reqPath string, objs []mode
 		if !obj.IsDir() {
 			path = stdpath.Join(reqPath, obj.GetName())
 			ext := strings.ToLower(utils.Ext(name))
+			sourceExt := utils.SourceExt(name)
 			if _, ok := d.downloadSuffix[ext]; ok {
 				size = obj.GetSize()
 			} else if _, ok := d.supportSuffix[ext]; ok {
 				id = "strm"
-				name = strings.TrimSuffix(name, ext) + "strm"
+				name = strings.TrimSuffix(name, sourceExt) + "strm"
 				size = int64(len(d.getLink(ctx, path)))
 			} else {
 				continue
