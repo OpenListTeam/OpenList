@@ -204,4 +204,93 @@ func (d *Cloud189) GetDetails(ctx context.Context) (*model.StorageDetails, error
 	}, nil
 }
 
+func (d *Cloud189) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	var taskInfos []base.Json
+	for _, srcObj := range srcObjs {
+		taskInfos = append(taskInfos, base.Json{
+			"fileId":   srcObj.GetID(),
+			"fileName": srcObj.GetName(),
+			"isFolder": func() int {
+				if srcObj.IsDir() {
+					return 1
+				}
+				return 0
+			}(),
+		})
+	}
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	if err != nil {
+		return err
+	}
+	form := map[string]string{
+		"type":           "MOVE",
+		"targetFolderId": dstDir.GetID(),
+		"taskInfos":      string(taskInfosBytes),
+	}
+	_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
+		req.SetFormData(form)
+	}, nil)
+	return err
+}
+
+func (d *Cloud189) BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	var taskInfos []base.Json
+	for _, srcObj := range srcObjs {
+		taskInfos = append(taskInfos, base.Json{
+			"fileId":   srcObj.GetID(),
+			"fileName": srcObj.GetName(),
+			"isFolder": func() int {
+				if srcObj.IsDir() {
+					return 1
+				}
+				return 0
+			}(),
+		})
+	}
+
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	if err != nil {
+		return err
+	}
+	form := map[string]string{
+		"type":           "COPY",
+		"targetFolderId": dstDir.GetID(),
+		"taskInfos":      string(taskInfosBytes),
+	}
+	_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
+		req.SetFormData(form)
+	}, nil)
+	return err
+}
+
+func (d *Cloud189) BatchRemove(ctx context.Context, batchRenameObj model.BatchRemoveObj, args model.BatchArgs) error {
+
+	var taskInfos []base.Json
+	for _, srcObj := range batchRenameObj.RemoveObjs {
+		taskInfos = append(taskInfos, base.Json{
+			"fileId":   srcObj.GetID(),
+			"fileName": srcObj.GetName(),
+			"isFolder": func() int {
+				if srcObj.IsDir() {
+					return 1
+				}
+				return 0
+			}(),
+		})
+	}
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	if err != nil {
+		return err
+	}
+	form := map[string]string{
+		"type":           "DELETE",
+		"targetFolderId": "",
+		"taskInfos":      string(taskInfosBytes),
+	}
+	_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
+		req.SetFormData(form)
+	}, nil)
+	return err
+}
+
 var _ driver.Driver = (*Cloud189)(nil)

@@ -296,3 +296,72 @@ func (y *Cloud189TV) GetDetails(ctx context.Context) (*model.StorageDetails, err
 		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }
+
+func (y *Cloud189TV) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+
+	isFamily := y.isFamily()
+	other := map[string]string{"targetFileName": dstDir.GetName()}
+
+	var tasks []BatchTaskInfo
+	for _, obj := range srcObjs {
+		tasks = append(tasks, BatchTaskInfo{
+			FileId:   obj.GetID(),
+			FileName: obj.GetName(),
+			IsFolder: BoolToNumber(obj.IsDir()),
+		})
+	}
+
+	resp, err := y.CreateBatchTask("MOVE", IF(isFamily, y.FamilyID, ""), dstDir.GetID(), other, tasks...)
+	if err != nil {
+		return err
+	}
+
+	if err = y.WaitBatchTask("MOVE", resp.TaskID, time.Millisecond*400); err != nil {
+		return err
+	}
+	return nil
+
+}
+
+func (y *Cloud189TV) BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	isFamily := y.isFamily()
+	other := map[string]string{"targetFileName": dstDir.GetName()}
+
+	var tasks []BatchTaskInfo
+	for _, obj := range srcObjs {
+		tasks = append(tasks, BatchTaskInfo{
+			FileId:   obj.GetID(),
+			FileName: obj.GetName(),
+			IsFolder: BoolToNumber(obj.IsDir()),
+		})
+	}
+
+	resp, err := y.CreateBatchTask("COPY", IF(isFamily, y.FamilyID, ""), dstDir.GetID(), other, tasks...)
+	if err != nil {
+		return err
+	}
+
+	if err = y.WaitBatchTask("COPY", resp.TaskID, time.Second); err != nil {
+		return err
+	}
+	return nil
+}
+func (y *Cloud189TV) BatchRemove(ctx context.Context, batchRenameObj model.BatchRemoveObj, args model.BatchArgs) error {
+	isFamily := y.isFamily()
+
+	var tasks []BatchTaskInfo
+	for _, obj := range batchRenameObj.RemoveObjs {
+		tasks = append(tasks, BatchTaskInfo{
+			FileId:   obj.GetID(),
+			FileName: obj.GetName(),
+			IsFolder: BoolToNumber(obj.IsDir()),
+		})
+	}
+
+	resp, err := y.CreateBatchTask("DELETE", IF(isFamily, y.FamilyID, ""), "", nil, tasks...)
+	if err != nil {
+		return err
+	}
+	// 批量任务数量限制，过快会导致无法删除
+	return y.WaitBatchTask("DELETE", resp.TaskID, time.Millisecond*200)
+}

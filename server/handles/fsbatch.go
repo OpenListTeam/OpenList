@@ -169,6 +169,9 @@ func FsBatchRename(c *gin.Context) {
 		}
 	}
 	common.GinWithValue(c, conf.MetaKey, meta)
+
+	nameMapping := make(map[string]string)
+
 	for _, renameObject := range req.RenameObjects {
 		if renameObject.SrcName == "" || renameObject.NewName == "" {
 			continue
@@ -178,8 +181,25 @@ func FsBatchRename(c *gin.Context) {
 			common.ErrorResp(c, err, 403)
 			return
 		}
-		filePath := fmt.Sprintf("%s/%s", reqPath, renameObject.SrcName)
-		if err := fs.Rename(c.Request.Context(), filePath, renameObject.NewName); err != nil {
+
+		nameMapping[renameObject.SrcName] = renameObject.NewName
+	}
+	clear(req.RenameObjects)
+
+	batchRename, err := fs.BatchRename(c, reqPath, nameMapping)
+	if err != nil && !errors.Is(errs.NotImplement, err) {
+		common.ErrorResp(c, err, 500)
+		return
+	} else if batchRename {
+		common.SuccessResp(c, gin.H{
+			"message": "Rename operations completed immediately",
+		})
+		return
+	}
+
+	for srcName, newName := range nameMapping {
+		filePath := fmt.Sprintf("%s/%s", reqPath, srcName)
+		if err := fs.Rename(c.Request.Context(), filePath, newName); err != nil {
 			common.ErrorResp(c, err, 500)
 			return
 		}

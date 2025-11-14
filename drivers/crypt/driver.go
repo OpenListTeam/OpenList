@@ -194,24 +194,12 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 			Path:     "/",
 		}, nil
 	}
-	remoteFullPath := ""
-	var remoteObj model.Obj
-	var err, err2 error
-	firstTryIsFolder, secondTry := guessPath(path)
-	remoteFullPath = d.getPathForRemote(path, firstTryIsFolder)
-	remoteObj, err = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
+
+	remoteObj, err := d.getEncryptedObject(ctx, path)
 	if err != nil {
-		if errs.IsObjectNotFound(err) && secondTry {
-			// try the opposite
-			remoteFullPath = d.getPathForRemote(path, !firstTryIsFolder)
-			remoteObj, err2 = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
-			if err2 != nil {
-				return nil, err2
-			}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
+
 	var size int64 = 0
 	name := ""
 	if !remoteObj.IsDir() {
@@ -424,5 +412,197 @@ func (d *Crypt) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 //func (d *Safe) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}
+
+func (d *Crypt) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+
+	batchMover, ok := d.remoteStorage.(driver.BatchMove)
+	if !ok {
+		return errs.NotImplement
+	}
+
+	srcEncryptedObj, dstEncryptedObj, encryptedObjs, err := d.convertEncryptedObj(ctx, srcDir, srcObjs, args)
+	if err != nil {
+		return err
+	}
+
+	err = batchMover.BatchMove(ctx, srcEncryptedObj, encryptedObjs, dstEncryptedObj, args)
+	if err != nil {
+		return err
+	}
+
+	if remoteActualPath, err := d.getActualPathForRemote(srcDir.GetPath(), true); err != nil {
+		log.Warnf("Failed to get actual path for remote storage: %v", err)
+	} else {
+		op.Cache.DeleteDirectory(d.remoteStorage, remoteActualPath)
+	}
+
+	if remoteActualPath, err := d.getActualPathForRemote(dstDir.GetPath(), true); err != nil {
+		log.Warnf("Failed to get actual path for remote storage: %v", err)
+	} else {
+		op.Cache.DeleteDirectory(d.remoteStorage, remoteActualPath)
+	}
+
+	return nil
+
+}
+
+func (d *Crypt) BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+
+	batchCopier, ok := d.remoteStorage.(driver.BatchCopy)
+	if !ok {
+		return errs.NotImplement
+	}
+
+	srcEncryptedObj, dstEncryptedObj, encryptedObjs, err := d.convertEncryptedObj(ctx, srcDir, srcObjs, args)
+	if err != nil {
+		return err
+	}
+
+	err = batchCopier.BatchCopy(ctx, srcEncryptedObj, encryptedObjs, dstEncryptedObj, args)
+	if err != nil {
+		return err
+	}
+
+	if remoteActualPath, err := d.getActualPathForRemote(dstDir.GetPath(), true); err != nil {
+		log.Warnf("Failed to get actual path for remote storage: %v", err)
+	} else {
+		op.Cache.DeleteDirectory(d.remoteStorage, remoteActualPath)
+	}
+
+	return nil
+
+}
+
+func (d *Crypt) BatchRemove(ctx context.Context, batchRemoveObj model.BatchRemoveObj, args model.BatchArgs) error {
+
+	batchRemover, ok := d.remoteStorage.(driver.BatchRemove)
+	if !ok {
+		return errs.NotImplement
+	}
+
+	srcEncryptedObj, _, encryptedObjs, err := d.convertEncryptedObj(ctx, batchRemoveObj.Dir, batchRemoveObj.RemoveObjs, args)
+	if err != nil {
+		return err
+	}
+
+	removeObj := model.BatchRemoveObj{
+		Dir: srcEncryptedObj,
+	}
+
+	nameSetMap := make(map[string]bool, len(encryptedObjs))
+	for _, obj := range batchRemoveObj.RemoveObjs {
+		nameSetMap[obj.GetName()] = true
+	}
+
+	for _, obj := range encryptedObjs {
+		decryptedName := ""
+		if obj.IsDir() {
+			decryptedName, _ = d.cipher.DecryptDirName(obj.GetName())
+			if decryptedName == "" || !nameSetMap[decryptedName] {
+				continue
+			}
+			removeObj.RemoveObjs = append(removeObj.RemoveObjs, obj)
+		} else {
+			decryptedName, _ = d.cipher.DecryptFileName(obj.GetName())
+			if decryptedName == "" || !nameSetMap[decryptedName] {
+				continue
+			}
+			removeObj.RemoveObjs = append(removeObj.RemoveObjs, obj)
+		}
+	}
+
+	err = batchRemover.BatchRemove(ctx, removeObj, args)
+	if err != nil {
+		return err
+	}
+
+	if remoteActualPath, err := d.getActualPathForRemote(batchRemoveObj.Dir.GetPath(), true); err != nil {
+		log.Warnf("Failed to get actual path for remote storage: %v", err)
+	} else {
+		op.Cache.DeleteDirectory(d.remoteStorage, remoteActualPath)
+	}
+
+	return nil
+}
+
+func (d *Crypt) BatchRename(ctx context.Context, batchRenameObj model.BatchRenameObj, args model.BatchArgs) error {
+
+	batchRenamer, ok := d.remoteStorage.(driver.BatchRename)
+	if !ok {
+		return errs.NotImplement
+	}
+
+	convert, err := utils.SliceConvert(batchRenameObj.RenameObjs, func(src model.RenameObj) (model.Obj, error) {
+		return &src, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	srcEncryptedObj, _, encryptedObjs, err := d.convertEncryptedObj(ctx, batchRenameObj.Dir, convert, args)
+	if err != nil {
+		return err
+	}
+
+	renameObj := model.BatchRenameObj{
+		Dir: srcEncryptedObj,
+	}
+
+	nameSetMap := make(map[string]model.RenameObj, len(encryptedObjs))
+	for _, obj := range batchRenameObj.RenameObjs {
+		nameSetMap[obj.GetName()] = obj
+	}
+
+	for _, obj := range encryptedObjs {
+		decryptedName := ""
+		encryptedName := ""
+		if obj.IsDir() {
+			decryptedName, _ = d.cipher.DecryptDirName(obj.GetName())
+			if decryptedName == "" {
+				continue
+			}
+
+			newObj, exist := nameSetMap[decryptedName]
+			if !exist {
+				continue
+			}
+
+			encryptedName = d.cipher.EncryptDirName(newObj.NewName)
+			renameObj.RenameObjs = append(renameObj.RenameObjs, model.RenameObj{
+				Obj:     obj,
+				NewName: encryptedName,
+			})
+		} else {
+			decryptedName, _ = d.cipher.DecryptFileName(obj.GetName())
+			if decryptedName == "" {
+				continue
+			}
+			newObj, exist := nameSetMap[decryptedName]
+			if !exist {
+				continue
+			}
+
+			encryptedName = d.cipher.EncryptFileName(newObj.NewName)
+			renameObj.RenameObjs = append(renameObj.RenameObjs, model.RenameObj{
+				Obj:     obj,
+				NewName: encryptedName,
+			})
+		}
+	}
+
+	err = batchRenamer.BatchRename(ctx, renameObj, args)
+	if err != nil {
+		return err
+	}
+
+	if remoteActualPath, err := d.getActualPathForRemote(batchRenameObj.Dir.GetPath(), true); err != nil {
+		log.Warnf("Failed to get actual path for remote storage: %v", err)
+	} else {
+		op.Cache.DeleteDirectory(d.remoteStorage, remoteActualPath)
+	}
+
+	return nil
+
+}
 
 var _ driver.Driver = (*Crypt)(nil)

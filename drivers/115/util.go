@@ -547,3 +547,23 @@ func SplitFileByPartSize(fileSize int64, chunkSize int64) ([]oss.FileChunk, erro
 
 	return chunks, nil
 }
+
+func (d *Pan115) batchRename(renameObj model.BatchRenameObj) error {
+
+	form := make(map[string]string)
+
+	for _, obj := range renameObj.RenameObjs {
+		form[fmt.Sprintf("files_new_name[%s]", obj.GetID())] = obj.NewName
+	}
+
+	result := driver115.BasicResp{}
+
+	req := d.client.NewRequest().
+		SetFormData(form).
+		ForceContentType("application/json;charset=UTF-8").
+		SetResult(&result)
+
+	resp, err := req.Post(driver115.ApiFileRename)
+
+	return driver115.CheckErr(err, &result, resp)
+}
