@@ -196,6 +196,7 @@ func (d *OnedriveAPP) upBig(ctx context.Context, dstDir model.Obj, stream model.
 					return nil
 				}
 			},
+			retry.Context(ctx),
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),

@@ -387,8 +387,8 @@ func (d *Mediafire) Put(ctx context.Context, dstDir model.Obj, file model.FileSt
 		}
 	} else {
 		pollKey = checkResp.Response.ResumableUpload.UploadKey
-		up(100.0)
 	}
+	defer up(100.0)
 
 	pollResp, err := d.pollUpload(ctx, pollKey)
 	if err != nil {

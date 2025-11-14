@@ -200,15 +200,20 @@ func (d *CnbReleases) Put(ctx context.Context, dstDir model.Obj, file model.File
 	if err != nil {
 		return err
 	}
-
 	head := bytes.NewReader(b.Bytes()[:headSize])
 	tail := bytes.NewReader(b.Bytes()[headSize:])
-	rateLimitedRd := driver.NewLimitedUploadStream(ctx, io.MultiReader(head, file, tail))
+	r := driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
+		Reader: &driver.SimpleReaderWithSize{
+			Reader: io.MultiReader(head, file, tail),
+			Size:   int64(b.Len()) + file.GetSize(),
+		},
+		UpdateProgress: up,
+	})
 
 	// use net/http to upload file
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(resp.ExpiresInSec+1)*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctxWithTimeout, http.MethodPost, resp.UploadURL, rateLimitedRd)
+	req, err := http.NewRequestWithContext(ctxWithTimeout, http.MethodPost, resp.UploadURL, r)
 	if err != nil {
 		return err
 	}
