@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	stdpath "path"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -184,6 +186,52 @@ func (d *Onedrive) GetFile(path string) (*File, error) {
 	u := d.GetMetaUrl(false, path)
 	_, err := d.Request(u, http.MethodGet, nil, &file)
 	return &file, err
+}
+
+func (d *Onedrive) createLink(path string) (string, error) {
+	api := d.GetMetaUrl(false, path) + "/createLink"
+	data := base.Json{
+		"type":  "view",
+		"scope": "anonymous",
+	}
+	var resp struct {
+		Link struct {
+			WebUrl string `json:"webUrl"`
+		} `json:"link"`
+	}
+	_, err := d.Request(api, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, &resp)
+	if err != nil {
+		return "", err
+	}
+
+	p, err := url.Parse(resp.Link.WebUrl)
+	if err != nil {
+		return "", err
+	}
+	q := p.Query()
+
+	if p.Host == "1drv.ms" {
+		// For personal, do some transformations
+		// https://1drv.ms/t/c/{user}/{share} ->
+		// https://my.microsoftpersonalcontent.com/personal/{user}/_layouts/15/download.aspx?share={share}
+		paths := strings.Split(p.Path, "/")
+		if len(paths) < 5 || paths[3] == "" || paths[4] == "" {
+			return "", fmt.Errorf("invalid onedrive short link")
+		}
+		user := paths[3]
+		share := paths[4]
+		p.Scheme = "https"
+		p.Host = "my.microsoftpersonalcontent.com"
+		p.Path = fmt.Sprintf("/personal/%s/_layouts/15/download.aspx", user)
+		q = url.Values{}
+		q.Set("share", share)
+	} else {
+		q.Set("download", "1")
+	}
+	p.RawQuery = q.Encode()
+	return p.String(), nil
 }
 
 func (d *Onedrive) upSmall(ctx context.Context, dstDir model.Obj, stream model.FileStreamer) error {
