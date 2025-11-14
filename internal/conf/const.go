@@ -58,6 +58,7 @@ const (
 	ShareSummaryContent     = "share_summary_content"
 	HandleHookAfterWriting  = "handle_hook_after_writing"
 	HandleHookRateLimit     = "handle_hook_rate_limit"
+	IgnoreSystemFiles       = "ignore_system_files"
 
 	// index
 	SearchIndex     = "search_index"

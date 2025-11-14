@@ -19,6 +19,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -285,6 +286,10 @@ func (b *s3Backend) PutObject(
 		Size:     size,
 		Modified: ti,
 		Ctime:    time.Now(),
+	}
+	// Check if system file should be ignored
+	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
+		return result, errs.IgnoredSystemFile
 	}
 	stream := &stream.FileStream{
 		Obj:      &obj,

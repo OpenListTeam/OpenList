@@ -13,7 +13,7 @@ body:
     attributes:
       label: 请确认以下事项
       description: |
-        您必须勾选以下内容，否则您的问题可能会被直接关闭。
+        您必须确认、同意并勾选以下内容，否则您的问题一定会被直接关闭。
         或者您可以去[讨论区](https://github.com/OpenListTeam/OpenList/discussions)。
       options:
         - label: |
@@ -60,6 +60,14 @@ body:
     validations:
       required: true
   - type: textarea
+    id: logs
+    attributes:
+      label: 日志（必填）
+      description: |
+        请复制粘贴错误日志，或者截图。(可隐藏隐私字段) [查看方法](https://doc.oplist.org/faq/howto#%E5%A6%82%E4%BD%95%E5%BF%AB%E9%80%9F%E5%AE%9A%E4%BD%8Dbug)
+    validations:
+      required: true
+  - type: textarea
     id: config
     attributes:
       label: 配置文件内容（必填）
@@ -67,12 +75,6 @@ body:
         请提供您的`OpenList`应用的配置文件，并截图相关存储配置。(可隐藏隐私字段)
     validations:
       required: true
-  - type: textarea
-    id: logs
-    attributes:
-      label: 日志（可选）
-      description: |
-        请复制粘贴错误日志，或者截图。(可隐藏隐私字段) [查看方法](https://doc.oplist.org/faq/howto#%E5%A6%82%E4%BD%95%E5%BF%AB%E9%80%9F%E5%AE%9A%E4%BD%8Dbug)
   - type: textarea
     id: reproduction
     attributes:

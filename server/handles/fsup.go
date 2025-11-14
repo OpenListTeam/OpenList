@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -26,6 +28,14 @@ func getLastModified(c *gin.Context) time.Time {
 	}
 	lastModified := time.UnixMilli(lastModifiedMillisecond)
 	return lastModified
+}
+
+// shouldIgnoreSystemFile checks if the filename should be ignored based on settings
+func shouldIgnoreSystemFile(filename string) bool {
+	if setting.GetBool(conf.IgnoreSystemFiles) {
+		return utils.IsSystemFile(filename)
+	}
+	return false
 }
 
 func FsStream(c *gin.Context) {
@@ -56,6 +66,11 @@ func FsStream(c *gin.Context) {
 		}
 	}
 	dir, name := stdpath.Split(path)
+	// Check if system file should be ignored
+	if shouldIgnoreSystemFile(name) {
+		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 403)
+		return
+	}
 	// 如果请求头 Content-Length 和 X-File-Size 都没有，则 size=-1，表示未知大小的流式上传
 	size := c.Request.ContentLength
 	if size < 0 {
@@ -160,6 +175,11 @@ func FsForm(c *gin.Context) {
 	}
 	defer f.Close()
 	dir, name := stdpath.Split(path)
+	// Check if system file should be ignored
+	if shouldIgnoreSystemFile(name) {
+		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 403)
+		return
+	}
 	h := make(map[*utils.HashType]string)
 	if md5 := c.GetHeader("X-File-Md5"); md5 != "" {
 		h[utils.MD5] = md5
