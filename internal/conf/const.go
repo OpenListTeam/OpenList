@@ -56,6 +56,8 @@ const (
 	ShareArchivePreview     = "share_archive_preview"
 	ShareForceProxy         = "share_force_proxy"
 	ShareSummaryContent     = "share_summary_content"
+	HandleHookAfterWriting  = "handle_hook_after_writing"
+	HandleHookRateLimit     = "handle_hook_rate_limit"
 	IgnoreSystemFiles       = "ignore_system_files"
 
 	// index

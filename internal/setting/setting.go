@@ -28,3 +28,11 @@ func GetInt(key string, defaultVal int) int {
 func GetBool(key string) bool {
 	return GetStr(key) == "true" || GetStr(key) == "1"
 }
+
+func GetFloat(key string, defaultVal float64) float64 {
+	f, err := strconv.ParseFloat(GetStr(key), 64)
+	if err != nil {
+		return defaultVal
+	}
+	return f
+}
