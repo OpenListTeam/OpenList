@@ -166,6 +166,23 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_thunderx", handles.SetThunderX)
 	setting.POST("/set_thunder_browser", handles.SetThunderBrowser)
 
+	// 添加插件管理 API 路由组
+	plugin := g.Group("/plugin")
+	{
+		plugin.GET("/list", handles.ListPlugins)
+		plugin.POST("/install", handles.InstallPlugin)
+		plugin.POST("/upload", handles.InstallPluginFromUpload)
+		plugin.POST("/uninstall", handles.UninstallPlugin)
+		plugin.POST("/update", handles.UpdatePlugin)
+
+		// 将检查更新的路由放在一个子组中，更符合 RESTful 风格
+		updates := plugin.Group("/updates")
+		{
+			updates.GET("/check", handles.CheckForUpdates)
+			updates.POST("/check_one", handles.CheckForUpdateSingle)
+		}
+	}
+
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
 	_task(g.Group("/task"))
 
