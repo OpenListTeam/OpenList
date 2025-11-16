@@ -261,6 +261,10 @@ func FsRemove(c *gin.Context) {
 		return
 	}
 	for _, name := range req.Names {
+		if name == "" {
+			common.ErrorStrResp(c, "Unexpected empty item name", 400)
+			return
+		}
 		err := fs.Remove(c.Request.Context(), stdpath.Join(reqDir, name))
 		if err != nil {
 			common.ErrorResp(c, err, 500)
