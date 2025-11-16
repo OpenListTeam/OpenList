@@ -433,3 +433,4 @@ func (d *Mediafire) GetDetails(ctx context.Context) (*model.StorageDetails, erro
 }
 
 var _ driver.Driver = (*Mediafire)(nil)
+

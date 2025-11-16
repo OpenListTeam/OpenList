@@ -96,7 +96,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	} else {
 		body, err = io.ReadAll(resp.Body)
 	}
-	
+
 	if err != nil {
 		return "", err
 	}
@@ -740,3 +740,4 @@ func (d *Mediafire) getFileByHash(ctx context.Context, hash string) (*model.ObjT
 	file := resp.Response.FileInfo[0]
 	return d.fileToObj(file), nil
 }
+
