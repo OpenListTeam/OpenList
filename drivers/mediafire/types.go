@@ -244,3 +244,4 @@ type MediafireUserInfoResponse struct {
 		CurrentAPIVersion string `json:"current_api_version"`
 	} `json:"response"`
 }
+
