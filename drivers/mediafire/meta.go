@@ -23,8 +23,8 @@ type Addition struct {
 	driver.RootPath
 	//driver.RootID
 
-	SessionToken string `json:"session_token" required:"true" type:"string" help:"Required for MediaFire API"`
-	Cookie       string `json:"cookie" required:"true" type:"string" help:"Required for navigation"`
+	SessionToken string `json:"session_token" required:"false" type:"string" help:"Optional for MediaFire API, can be auto-acquired from cookie"`
+	Cookie       string `json:"cookie" required:"true" type:"string" help:"Required for MediaFire API authentication"`
 
 	OrderBy        string  `json:"order_by" type:"select" options:"name,time,size" default:"name"`
 	OrderDirection string  `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
