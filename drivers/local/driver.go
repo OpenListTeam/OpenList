@@ -296,7 +296,7 @@ func (d *Local) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 		return fmt.Errorf("the destination folder is a subfolder of the source folder")
 	}
 	err := os.Rename(srcPath, dstPath)
-	if err != nil && strings.Contains(err.Error(), "invalid cross-device link") {
+	if isCrossDeviceError(err) {
 		// 跨设备移动，变更为移动任务
 		return errs.NotImplement
 	}

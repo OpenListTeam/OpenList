@@ -479,7 +479,7 @@ func (d *Local) recurAndTryCopy(srcPath, dstPath string) error {
 
 func tryReflinkCopy(srcPath, dstPath string) error {
 	err := reflink.Always(srcPath, dstPath)
-	if errors.Is(err, reflink.ErrReflinkUnsupported) || errors.Is(err, reflink.ErrReflinkFailed) {
+	if errors.Is(err, reflink.ErrReflinkUnsupported) || errors.Is(err, reflink.ErrReflinkFailed) || isCrossDeviceError(err) {
 		return errs.NotImplement
 	}
 	return err
