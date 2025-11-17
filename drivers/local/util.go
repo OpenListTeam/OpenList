@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/KarpelesLab/reflink"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -416,10 +415,7 @@ func (d *Local) tryCopy(srcPath, dstPath string, info os.FileInfo) error {
 	} else if info.Mode()&os.ModeSymlink != 0 {
 		return d.copySymlink(srcPath, dstPath)
 	} else if info.Mode()&os.ModeNamedPipe != 0 {
-		if err := os.MkdirAll(filepath.Dir(dstPath), os.FileMode(d.mkdirPerm)); err != nil {
-			return err
-		}
-		return syscall.Mkfifo(dstPath, uint32(info.Mode()))
+		return copyNamedPipe(dstPath, info.Mode(), os.FileMode(d.mkdirPerm))
 	} else if info.IsDir() {
 		return d.recurAndTryCopy(srcPath, dstPath)
 	} else {
