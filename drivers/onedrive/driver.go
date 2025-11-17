@@ -244,11 +244,11 @@ func (d *Onedrive) GetDirectUploadTools() []string {
 }
 
 // GetDirectUploadInfo returns the direct upload info for OneDrive
-func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, _ int64) (any, error) {
+func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, fileSize int64) (any, error) {
 	if !d.EnableDirectUpload {
 		return nil, errs.NotImplement
 	}
-	return d.getDirectUploadInfo(ctx, path.Join(dstDir.GetPath(), fileName))
+	return d.getDirectUploadInfo(ctx, path.Join(dstDir.GetPath(), fileName), fileSize)
 }
 
 var _ driver.Driver = (*Onedrive)(nil)

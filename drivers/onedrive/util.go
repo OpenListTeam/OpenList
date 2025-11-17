@@ -317,29 +317,44 @@ func (d *Onedrive) getDrive(ctx context.Context) (*DriveResp, error) {
 	return &resp, nil
 }
 
-func (d *Onedrive) getDirectUploadInfo(ctx context.Context, path string) (*model.HttpDirectUploadInfo, error) {
-	// Create upload session
-	url := d.GetMetaUrl(false, path) + "/createUploadSession"
-	metadata := map[string]any{
-		"item": map[string]any{
-			"@microsoft.graph.conflictBehavior": "rename",
-		},
-	}
+func (d *Onedrive) getDirectUploadInfo(ctx context.Context, path string, fileSize int64) (*model.HttpDirectUploadInfo, error) {
+	// Reference: drivers/onedrive/driver.go#L215C25-L215C36 (39dcf9b)
+	const smallFileLimit int64 = 4 * 1024 * 1024
 
-	res, err := d.Request(url, http.MethodPost, func(req *resty.Request) {
-		req.SetBody(metadata).SetContext(ctx)
-	}, nil)
-	if err != nil {
-		return nil, err
-	}
+	if fileSize <= smallFileLimit {
+		// Small file: Same behavior as upSmall()
+		// in drivers/onedrive/util.go#L189 (39dcf9b)
+		uploadUrl := d.GetMetaUrl(false, path) + "/content"
+		return &model.HttpDirectUploadInfo{
+			UploadURL: uploadUrl,
+			ChunkSize: 0,
+			Method:    http.MethodPut,
+		}, nil
+	} else {
+		// Large file: Same behavior as upBig()
+		// in drivers/onedrive/util.go#L235 (39dcf9b)
+		url := d.GetMetaUrl(false, path) + "/createUploadSession"
+		metadata := map[string]any{
+			"item": map[string]any{
+				"@microsoft.graph.conflictBehavior": "rename",
+			},
+		}
 
-	uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
-	if uploadUrl == "" {
-		return nil, fmt.Errorf("failed to get upload URL from response")
+		res, err := d.Request(url, http.MethodPost, func(req *resty.Request) {
+			req.SetBody(metadata).SetContext(ctx)
+		}, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
+		if uploadUrl == "" {
+			return nil, fmt.Errorf("failed to get upload URL from response")
+		}
+		return &model.HttpDirectUploadInfo{
+			UploadURL: uploadUrl,
+			ChunkSize: d.ChunkSize * 1024 * 1024, // Convert MB to bytes
+			Method:    http.MethodPut,
+		}, nil
 	}
-	return &model.HttpDirectUploadInfo{
-		UploadURL: uploadUrl,
-		ChunkSize: d.ChunkSize * 1024 * 1024, // Convert MB to bytes
-		Method:    "PUT",
-	}, nil
 }
