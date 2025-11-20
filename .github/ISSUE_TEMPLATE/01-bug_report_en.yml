@@ -13,7 +13,7 @@ body:
     attributes:
       label: Please confirm the following
       description: |
-        You must check all the following, otherwise your issue may be closed directly.
+        You must confirm, agree, and check all the following, otherwise your issue will definitely be closed directly.
         Or you can go to the [discussions](https://github.com/OpenListTeam/OpenList/discussions).
       options:
         - label: |
@@ -60,6 +60,14 @@ body:
     validations:
       required: true
   - type: textarea
+    id: logs
+    attributes:
+      label: Logs (required)
+      description: |
+        Please copy and paste any relevant log output or screenshots. (You may mask sensitive fields) [Guide](https://doc.oplist.org/faq/howto#how-to-quickly-locate-bugs)
+    validations:
+      required: true
+  - type: textarea
     id: config
     attributes:
       label: Configuration File Content (required)
@@ -67,12 +75,6 @@ body:
         Please provide your `OpenList` application's configuration file and a screenshot of the relevant storage configuration. (You may mask sensitive fields)
     validations:
       required: true
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs (optional)
-      description: |
-        Please copy and paste any relevant log output or screenshots. (You may mask sensitive fields) [Guide](https://doc.oplist.org/faq/howto#how-to-quickly-locate-bugs)
   - type: textarea
     id: reproduction
     attributes:

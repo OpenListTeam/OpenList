@@ -38,6 +38,7 @@ const (
 	SharePreviewArchivesByDefault = "share_preview_archives_by_default"
 	ReadMeAutoRender              = "readme_autorender"
 	FilterReadMeScripts           = "filter_readme_scripts"
+	NonEFSZipEncoding             = "non_efs_zip_encoding"
 
 	// global
 	HideFiles               = "hide_files"
@@ -55,6 +56,7 @@ const (
 	ShareArchivePreview     = "share_archive_preview"
 	ShareForceProxy         = "share_force_proxy"
 	ShareSummaryContent     = "share_summary_content"
+	IgnoreSystemFiles       = "ignore_system_files"
 
 	// index
 	SearchIndex     = "search_index"

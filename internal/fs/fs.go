@@ -167,6 +167,14 @@ func GetStorage(path string, args *GetStoragesArgs) (driver.Driver, error) {
 	return storageDriver, nil
 }
 
+func GetStorageAndActualPath(path string) (driver.Driver, string, error) {
+	return op.GetStorageAndActualPath(path)
+}
+
+func GetByActualPath(ctx context.Context, storage driver.Driver, actualPath string) (model.Obj, error) {
+	return op.Get(ctx, storage, actualPath)
+}
+
 func Other(ctx context.Context, args model.FsOtherArgs) (interface{}, error) {
 	res, err := other(ctx, args)
 	if err != nil {
@@ -189,4 +197,12 @@ func PutURL(ctx context.Context, path, dstName, urlStr string) error {
 		return errs.NotImplement
 	}
 	return op.PutURL(ctx, storage, dstDirActualPath, dstName, urlStr)
+}
+
+func GetDirectUploadInfo(ctx context.Context, tool, path, dstName string, fileSize int64) (any, error) {
+	info, err := getDirectUploadInfo(ctx, tool, path, dstName, fileSize)
+	if err != nil {
+		log.Errorf("failed get %s direct upload info for %s(%d bytes): %+v", path, dstName, fileSize, err)
+	}
+	return info, err
 }

@@ -173,10 +173,10 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		mode = storage.(driver.LinkCacheModeResolver).ResolveLinkCacheMode(path)
 	}
 	typeKey := args.Type
-	if mode&driver.LinkCacheIP == 1 {
+	if mode&driver.LinkCacheIP == driver.LinkCacheIP {
 		typeKey += "/" + args.IP
 	}
-	if mode&driver.LinkCacheUA == 1 {
+	if mode&driver.LinkCacheUA == driver.LinkCacheUA {
 		typeKey += "/" + args.Header.Get("User-Agent")
 	}
 	key := Key(storage, path)
@@ -568,15 +568,15 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	dstPath := stdpath.Join(dstDirPath, dstName)
 	_, err := GetUnwrap(ctx, storage, dstPath)
 	if err == nil {
-		return errors.New("obj already exists")
+		return errors.WithStack(errs.ObjectAlreadyExists)
 	}
 	err = MakeDir(ctx, storage, dstDirPath)
 	if err != nil {
-		return errors.WithMessagef(err, "failed to put url")
+		return errors.WithMessagef(err, "failed to make dir [%s]", dstDirPath)
 	}
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
-		return errors.WithMessagef(err, "failed to put url")
+		return errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
 	}
 	switch s := storage.(type) {
 	case driver.PutURLResult:
@@ -599,8 +599,48 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 			}
 		}
 	default:
-		return errs.NotImplement
+		return errors.WithStack(errs.NotImplement)
 	}
 	log.Debugf("put url [%s](%s) done", dstName, url)
 	return errors.WithStack(err)
+}
+
+func GetDirectUploadTools(storage driver.Driver) []string {
+	du, ok := storage.(driver.DirectUploader)
+	if !ok {
+		return nil
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil
+	}
+	return du.GetDirectUploadTools()
+}
+
+func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64) (any, error) {
+	du, ok := storage.(driver.DirectUploader)
+	if !ok {
+		return nil, errors.WithStack(errs.NotImplement)
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	dstDirPath = utils.FixAndCleanPath(dstDirPath)
+	dstPath := stdpath.Join(dstDirPath, dstName)
+	_, err := GetUnwrap(ctx, storage, dstPath)
+	if err == nil {
+		return nil, errors.WithStack(errs.ObjectAlreadyExists)
+	}
+	err = MakeDir(ctx, storage, dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to make dir [%s]", dstDirPath)
+	}
+	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
+	}
+	info, err := du.GetDirectUploadInfo(ctx, tool, dstDir, dstName, fileSize)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return info, nil
 }
