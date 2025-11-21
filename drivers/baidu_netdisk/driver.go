@@ -58,8 +58,13 @@ func (d *BaiduNetdisk) GetAddition() driver.Additional {
 }
 
 func (d *BaiduNetdisk) Init(ctx context.Context) error {
+	timeout := DEFAULT_UPLOAD_SLICE_TIMEOUT
+	if d.UploadSliceTimeout > 0 {
+		timeout = time.Second * time.Duration(d.UploadSliceTimeout)
+	}
+
 	d.upClient = base.NewRestyClient().
-		SetTimeout(UPLOAD_TIMEOUT).
+		SetTimeout(timeout).
 		SetRetryCount(UPLOAD_RETRY_COUNT).
 		SetRetryWaitTime(UPLOAD_RETRY_WAIT_TIME).
 		SetRetryMaxWaitTime(UPLOAD_RETRY_MAX_WAIT_TIME)
