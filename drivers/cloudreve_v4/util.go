@@ -447,7 +447,9 @@ func (d *CloudreveV4) upRemote(ctx context.Context, file model.FileStreamer, u F
 					return errors.New(up.Msg)
 				}
 				return nil
-			}, retry.Attempts(3),
+			},
+			retry.Context(ctx),
+			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
 		)
@@ -508,7 +510,9 @@ func (d *CloudreveV4) upOneDrive(ctx context.Context, file model.FileStreamer, u
 				default:
 					return nil
 				}
-			}, retry.Attempts(3),
+			},
+			retry.Context(ctx),
+			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
 		)
@@ -572,6 +576,7 @@ func (d *CloudreveV4) upS3(ctx context.Context, file model.FileStreamer, u FileU
 					return nil
 				}
 			},
+			retry.Context(ctx),
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
