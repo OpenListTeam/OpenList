@@ -15,10 +15,11 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:        "123PanShare",
-	LocalSort:   true,
-	NoUpload:    true,
-	DefaultRoot: "0",
+	Name:          "123PanShare",
+	LocalSort:     true,
+	NoUpload:      true,
+	DefaultRoot:   "0",
+	LinkCacheMode: driver.LinkCacheIP,
 }
 
 func init() {
