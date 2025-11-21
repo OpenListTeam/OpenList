@@ -231,4 +231,40 @@ func (d *QuarkOpen) Put(ctx context.Context, dstDir model.Obj, stream model.File
 	return d.upFinish(ctx, pre, partInfo, etags)
 }
 
+func (d *QuarkOpen) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	var srcObjIds []string
+	for _, srcObj := range srcObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	data := base.Json{
+		"action_type": 1,
+		"fid_list":    srcObjIds,
+		"to_pdir_fid": dstDir.GetID(),
+	}
+	_, err := d.request(ctx, "/open/v1/file/move", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, nil)
+
+	return err
+}
+
+func (d *QuarkOpen) BatchRemove(ctx context.Context, batchRenameObj model.BatchRemoveObj, args model.BatchArgs) error {
+
+	var srcObjIds []string
+	for _, srcObj := range batchRenameObj.RemoveObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	data := base.Json{
+		"action_type": 1,
+		"fid_list":    srcObjIds,
+	}
+	_, err := d.request(ctx, "/open/v1/file/delete", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, nil)
+
+	return err
+}
+
 var _ driver.Driver = (*QuarkOpen)(nil)

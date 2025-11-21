@@ -227,3 +227,19 @@ type DirectUploader interface {
 	// return errs.NotImplement if the driver does not support the given direct upload tool
 	GetDirectUploadInfo(ctx context.Context, tool string, dstDir model.Obj, fileName string, fileSize int64) (any, error)
 }
+
+type BatchMove interface {
+	BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error
+}
+
+type BatchCopy interface {
+	BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error
+}
+
+type BatchRemove interface {
+	BatchRemove(ctx context.Context, batchRemoveObj model.BatchRemoveObj, args model.BatchArgs) error
+}
+
+type BatchRename interface {
+	BatchRename(ctx context.Context, batchRenameObj model.BatchRenameObj, args model.BatchArgs) error
+}

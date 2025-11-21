@@ -258,4 +258,51 @@ func (d *Pan115) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	}, nil
 }
 
+func (d *Pan115) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	if err := d.WaitLimit(ctx); err != nil {
+		return err
+	}
+
+	var srcObjIds []string
+	for _, srcObj := range srcObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	return d.client.Move(dstDir.GetID(), srcObjIds...)
+}
+
+func (d *Pan115) BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	if err := d.WaitLimit(ctx); err != nil {
+		return err
+	}
+
+	var srcObjIds []string
+	for _, srcObj := range srcObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	return d.client.Copy(dstDir.GetID(), srcObjIds...)
+}
+
+func (d *Pan115) BatchRemove(ctx context.Context, batchRemoveObj model.BatchRemoveObj, args model.BatchArgs) error {
+	if err := d.WaitLimit(ctx); err != nil {
+		return err
+	}
+
+	var srcObjIds []string
+	for _, srcObj := range batchRemoveObj.RemoveObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	return d.client.Delete(srcObjIds...)
+}
+
+func (d *Pan115) BatchRename(ctx context.Context, batchRenameObj model.BatchRenameObj, args model.BatchArgs) error {
+	if err := d.WaitLimit(ctx); err != nil {
+		return err
+	}
+
+	return d.batchRename(batchRenameObj)
+}
+
 var _ driver.Driver = (*Pan115)(nil)
