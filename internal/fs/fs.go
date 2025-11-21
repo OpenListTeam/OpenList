@@ -84,6 +84,14 @@ func Copy(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool)
 	return res, err
 }
 
+func Merge(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool) (task.TaskExtensionInfo, error) {
+	res, err := transfer(ctx, merge, srcObjPath, dstDirPath, lazyCache...)
+	if err != nil {
+		log.Errorf("failed merge %s to %s: %+v", srcObjPath, dstDirPath, err)
+	}
+	return res, err
+}
+
 func Rename(ctx context.Context, srcPath, dstName string, lazyCache ...bool) error {
 	err := rename(ctx, srcPath, dstName, lazyCache...)
 	if err != nil {
