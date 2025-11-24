@@ -111,6 +111,13 @@ func (d *Strm) getLink(ctx context.Context, path string) string {
 		signPath := sign.Sign(path)
 		finalPath = fmt.Sprintf("%s?sign=%s", finalPath, signPath)
 	}
+	pathPrefix := d.PathPrefix
+	if len(pathPrefix) > 0 {
+		finalPath = stdpath.Join(pathPrefix, finalPath)
+	}
+	if !strings.HasPrefix(finalPath, "/") {
+		finalPath = "/" + finalPath
+	}
 	if d.WithoutUrl {
 		return finalPath
 	}
@@ -120,10 +127,7 @@ func (d *Strm) getLink(ctx context.Context, path string) string {
 	} else {
 		apiUrl = common.GetApiUrl(ctx)
 	}
-	if !strings.HasPrefix(finalPath, "/") {
-		finalPath = "/" + finalPath
-	}
-	return fmt.Sprintf("%s/d%s",
+	return fmt.Sprintf("%s%s",
 		apiUrl,
 		finalPath)
 }

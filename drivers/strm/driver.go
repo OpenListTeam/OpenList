@@ -96,7 +96,7 @@ func (d *Strm) Init(ctx context.Context) error {
 		}
 	}
 
-	if d.Version != 3 {
+	if d.Version != 5 {
 		types := strings.Split("mp4,mkv,flv,avi,wmv,ts,rmvb,webm,mp3,flac,aac,wav,ogg,m4a,wma,alac", ",")
 		for _, ext := range types {
 			if _, ok := d.supportSuffix[ext]; !ok {
@@ -114,7 +114,8 @@ func (d *Strm) Init(ctx context.Context) error {
 			}
 		}
 		d.DownloadFileTypes = strings.Join(downloadTypes, ",")
-		d.Version = 3
+		d.PathPrefix = "/d"
+		d.Version = 5
 	}
 	return nil
 }
