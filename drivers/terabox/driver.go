@@ -241,7 +241,6 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 				}
 				return nil
 			},
-			retry.Context(ctx),
 			retry.Attempts(5),
 			retry.DelayType(retry.FixedDelay),
 			retry.Context(ctx),
