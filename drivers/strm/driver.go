@@ -109,7 +109,7 @@ func (d *Strm) Init(ctx context.Context) error {
 		types = strings.Split("ass,srt,vtt,sub,strm", ",")
 		for _, ext := range types {
 			if _, ok := d.downloadSuffix[ext]; !ok {
-				d.supportSuffix[ext] = struct{}{}
+				d.downloadSuffix[ext] = struct{}{}
 				downloadTypes = append(downloadTypes, ext)
 			}
 		}
