@@ -360,6 +360,7 @@ func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.O
 			Name:          []string{name},
 			PutIntoNewDir: args.PutIntoNewDir,
 			SrcDir:        dir,
+			Overwrite:     args.Overwrite,
 		})
 	})
 	return err

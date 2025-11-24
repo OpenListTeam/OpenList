@@ -77,6 +77,7 @@ type ArchiveDecompressArgs struct {
 	ArchiveInnerArgs
 	CacheFull     bool
 	PutIntoNewDir bool
+	Overwrite     bool
 }
 
 type SharingListArgs struct {

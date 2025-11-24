@@ -509,7 +509,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	// UrlTree PUT
-	if storage.GetStorage().Driver == "UrlTree" {
+	if storage.Config().OnlyIndices {
 		var link string
 		dstDirPath, link = urlTreeSplitLineFormPath(stdpath.Join(dstDirPath, file.GetName()))
 		file = &stream.FileStream{Obj: &model.Object{Name: link}}

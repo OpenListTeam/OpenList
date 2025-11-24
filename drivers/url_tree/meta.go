@@ -20,6 +20,7 @@ var config = driver.Config{
 	LocalSort:   true,
 	NoCache:     true,
 	CheckStatus: true,
+	OnlyIndices: true,
 }
 
 func init() {

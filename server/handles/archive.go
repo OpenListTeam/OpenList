@@ -1,7 +1,6 @@
 package handles
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	stdpath "path"
@@ -229,30 +228,15 @@ func FsArchiveList(c *gin.Context, req *ArchiveListReq, user *model.User) {
 	})
 }
 
-type StringOrArray []string
-
-func (s *StringOrArray) UnmarshalJSON(data []byte) error {
-	var value string
-	if err := json.Unmarshal(data, &value); err == nil {
-		*s = []string{value}
-		return nil
-	}
-	var sliceValue []string
-	if err := json.Unmarshal(data, &sliceValue); err != nil {
-		return err
-	}
-	*s = sliceValue
-	return nil
-}
-
 type ArchiveDecompressReq struct {
-	SrcDir        string        `json:"src_dir" form:"src_dir"`
-	DstDir        string        `json:"dst_dir" form:"dst_dir"`
-	Name          StringOrArray `json:"name" form:"name"`
-	ArchivePass   string        `json:"archive_pass" form:"archive_pass"`
-	InnerPath     string        `json:"inner_path" form:"inner_path"`
-	CacheFull     bool          `json:"cache_full" form:"cache_full"`
-	PutIntoNewDir bool          `json:"put_into_new_dir" form:"put_into_new_dir"`
+	SrcDir        string   `json:"src_dir" form:"src_dir"`
+	DstDir        string   `json:"dst_dir" form:"dst_dir"`
+	Name          []string `json:"name" form:"name"`
+	ArchivePass   string   `json:"archive_pass" form:"archive_pass"`
+	InnerPath     string   `json:"inner_path" form:"inner_path"`
+	CacheFull     bool     `json:"cache_full" form:"cache_full"`
+	PutIntoNewDir bool     `json:"put_into_new_dir" form:"put_into_new_dir"`
+	Overwrite     bool     `json:"overwrite" form:"overwrite"`
 }
 
 func FsArchiveDecompress(c *gin.Context) {
@@ -295,6 +279,7 @@ func FsArchiveDecompress(c *gin.Context) {
 			},
 			CacheFull:     req.CacheFull,
 			PutIntoNewDir: req.PutIntoNewDir,
+			Overwrite:     req.Overwrite,
 		})
 		if e != nil {
 			if errors.Is(e, errs.WrongArchivePassword) {

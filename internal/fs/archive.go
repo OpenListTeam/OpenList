@@ -125,6 +125,7 @@ func (t *ArchiveDownloadTask) RunWithoutPushUploadTask() (*ArchiveContentUploadT
 		DstActualPath: t.DstActualPath,
 		dstStorage:    t.DstStorage,
 		DstStorageMp:  t.DstStorageMp,
+		overwrite:     t.Overwrite,
 	}
 	return uploadTask, nil
 }
@@ -142,6 +143,7 @@ type ArchiveContentUploadTask struct {
 	DstStorageMp  string
 	finalized     bool
 	groupID       string
+	overwrite     bool
 }
 
 func (t *ArchiveContentUploadTask) GetName() string {
@@ -232,6 +234,7 @@ func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTask *Arch
 				dstStorage:    t.dstStorage,
 				DstStorageMp:  t.DstStorageMp,
 				groupID:       t.groupID,
+				overwrite:     t.overwrite,
 			})
 			if err != nil {
 				es = stderrors.Join(es, err)
@@ -241,6 +244,12 @@ func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTask *Arch
 			return es
 		}
 	} else {
+		if !t.overwrite {
+			dstPath := stdpath.Join(t.DstActualPath, t.ObjName)
+			if res, _ := op.Get(t.Ctx(), t.dstStorage, dstPath); res != nil {
+				return errs.ObjectAlreadyExists
+			}
+		}
 		file, err := os.Open(t.FilePath)
 		if err != nil {
 			return err
