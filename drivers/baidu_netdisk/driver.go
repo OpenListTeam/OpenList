@@ -453,7 +453,11 @@ func (d *BaiduNetdisk) uploadSlice(ctx context.Context, uploadUrl string, params
 	req.ContentLength = int64(b.Len()) + file.Size()
 
 	client := net.NewHttpClient()
-	client.Timeout = UPLOAD_TIMEOUT
+	if d.UploadSliceTimeout > 0 {
+		client.Timeout = time.Second * time.Duration(d.UploadSliceTimeout)
+	} else {
+		client.Timeout = DEFAULT_UPLOAD_SLICE_TIMEOUT
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

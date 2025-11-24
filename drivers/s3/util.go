@@ -41,9 +41,15 @@ func (d *S3) initSession() error {
 	return err
 }
 
-func (d *S3) getClient(link bool) *s3.S3 {
+const (
+	ClientTypeNormal = iota
+	ClientTypeLink
+	ClientTypeDirectUpload
+)
+
+func (d *S3) getClient(clientType int) *s3.S3 {
 	client := s3.New(d.Session)
-	if link && d.CustomHost != "" {
+	if clientType == ClientTypeLink && d.CustomHost != "" {
 		client.Handlers.Build.PushBack(func(r *request.Request) {
 			if r.HTTPRequest.Method != http.MethodGet {
 				return
@@ -55,6 +61,20 @@ func (d *S3) getClient(link bool) *s3.S3 {
 				r.HTTPRequest.URL.Host = split[1]
 			} else {
 				r.HTTPRequest.URL.Host = d.CustomHost
+			}
+		})
+	}
+	if clientType == ClientTypeDirectUpload && d.DirectUploadHost != "" {
+		client.Handlers.Build.PushBack(func(r *request.Request) {
+			if r.HTTPRequest.Method != http.MethodPut {
+				return
+			}
+			split := strings.SplitN(d.DirectUploadHost, "://", 2)
+			if utils.SliceContains([]string{"http", "https"}, split[0]) {
+				r.HTTPRequest.URL.Scheme = split[0]
+				r.HTTPRequest.URL.Host = split[1]
+			} else {
+				r.HTTPRequest.URL.Host = d.DirectUploadHost
 			}
 		})
 	}

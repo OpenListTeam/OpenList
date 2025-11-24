@@ -11,6 +11,7 @@ var (
 	ObjectAlreadyExists = errors.New("object already exists")
 	NotFolder           = errors.New("not a folder")
 	NotFile             = errors.New("not a file")
+	IgnoredSystemFile   = errors.New("system file upload ignored")
 )
 
 func IsObjectNotFound(err error) bool {

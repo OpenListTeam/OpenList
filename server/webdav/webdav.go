@@ -20,6 +20,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -357,6 +358,10 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 		Size:     size,
 		Modified: h.getModTime(r),
 		Ctime:    h.getCreateTime(r),
+	}
+	// Check if system file should be ignored
+	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
+		return http.StatusForbidden, errs.IgnoredSystemFile
 	}
 	fsStream := &stream.FileStream{
 		Obj:      &obj,

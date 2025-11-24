@@ -96,7 +96,7 @@ func (d *Strm) Init(ctx context.Context) error {
 		}
 	}
 
-	if d.Version != 3 {
+	if d.Version != 5 {
 		types := strings.Split("mp4,mkv,flv,avi,wmv,ts,rmvb,webm,mp3,flac,aac,wav,ogg,m4a,wma,alac", ",")
 		for _, ext := range types {
 			if _, ok := d.supportSuffix[ext]; !ok {
@@ -109,12 +109,13 @@ func (d *Strm) Init(ctx context.Context) error {
 		types = strings.Split("ass,srt,vtt,sub,strm", ",")
 		for _, ext := range types {
 			if _, ok := d.downloadSuffix[ext]; !ok {
-				d.supportSuffix[ext] = struct{}{}
+				d.downloadSuffix[ext] = struct{}{}
 				downloadTypes = append(downloadTypes, ext)
 			}
 		}
 		d.DownloadFileTypes = strings.Join(downloadTypes, ",")
-		d.Version = 3
+		d.PathPrefix = "/d"
+		d.Version = 5
 	}
 	return nil
 }
