@@ -294,7 +294,6 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		}
 		precreateResp.UploadURL = d.getUploadUrl(path, precreateResp.Uploadid)
 	}
-	ensureUploadURL()
 
 	// step.2 上传分片
 uploadLoop:
