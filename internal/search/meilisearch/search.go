@@ -83,14 +83,17 @@ func (m *Meilisearch) Index(ctx context.Context, node model.SearchNode) error {
 }
 
 func (m *Meilisearch) BatchIndex(ctx context.Context, nodes []model.SearchNode) error {
-	documents, _ := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
+	documents, err := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
 		parentHash := hashPath(src.Parent)
 		nodePath := path.Join(src.Parent, src.Name)
 		nodePathHash := hashPath(nodePath)
 		parentPaths := utils.GetPathHierarchy(src.Parent)
-		parentPathHashes, _ := utils.SliceConvert(parentPaths, func(parentPath string) (string, error) {
+		parentPathHashes, err := utils.SliceConvert(parentPaths, func(parentPath string) (string, error) {
 			return hashPath(parentPath), nil
 		})
+		if err != nil {
+			return nil, err
+		}
 
 		return &searchDocument{
 			ID:               nodePathHash,
@@ -99,9 +102,12 @@ func (m *Meilisearch) BatchIndex(ctx context.Context, nodes []model.SearchNode) 
 			SearchNode:       src,
 		}, nil
 	})
+	if err != nil {
+		return err
+	}
 
 	// max up to 10,000 documents per batch to reduce error rate while uploading over the Internet
-	_, err := m.Client.Index(m.IndexUid).AddDocumentsInBatchesWithContext(ctx, documents, 10000)
+	_, err = m.Client.Index(m.IndexUid).AddDocumentsInBatchesWithContext(ctx, documents, 10000)
 	if err != nil {
 		return err
 	}
@@ -204,6 +210,9 @@ func (m *Meilisearch) Del(ctx context.Context, prefix string) error {
 }
 
 func (m *Meilisearch) Release(ctx context.Context) error {
+	if m.taskQueue != nil {
+		m.taskQueue.Stop()
+	}
 	return nil
 }
 
@@ -236,14 +245,17 @@ func (m *Meilisearch) batchIndexWithTaskUID(ctx context.Context, nodes []model.S
 		return nil, nil
 	}
 
-	documents, _ := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
+	documents, err := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
 		parentHash := hashPath(src.Parent)
 		nodePath := path.Join(src.Parent, src.Name)
 		nodePathHash := hashPath(nodePath)
 		parentPaths := utils.GetPathHierarchy(src.Parent)
-		parentPathHashes, _ := utils.SliceConvert(parentPaths, func(parentPath string) (string, error) {
+		parentPathHashes, err := utils.SliceConvert(parentPaths, func(parentPath string) (string, error) {
 			return hashPath(parentPath), nil
 		})
+		if err != nil {
+			return nil, err
+		}
 
 		return &searchDocument{
 			ID:               nodePathHash,
@@ -252,6 +264,9 @@ func (m *Meilisearch) batchIndexWithTaskUID(ctx context.Context, nodes []model.S
 			SearchNode:       src,
 		}, nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	// max up to 10,000 documents per batch to reduce error rate while uploading over the Internet
 	tasks, err := m.Client.Index(m.IndexUid).AddDocumentsInBatchesWithContext(ctx, documents, 10000)
