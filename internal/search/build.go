@@ -225,9 +225,6 @@ func Update(ctx context.Context, parent string, objs []model.Obj) {
 		return
 	}
 
-	// For other searchers (db, bleve), execute immediately with sync logic
-	ctx := context.Background()
-
 	nodes, err := instance.Get(ctx, parent)
 	if err != nil {
 		log.Errorf("update search index error while get nodes: %+v", err)
