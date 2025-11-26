@@ -115,8 +115,9 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 
 	var result []model.Obj
 	for _, obj := range objs {
+		name := model.UnwrapObj(obj).GetName()
 		if obj.IsDir() {
-			name, err := d.cipher.DecryptDirName(obj.GetName())
+			name, err = d.cipher.DecryptDirName(name)
 			if err != nil {
 				// filter illegal files
 				continue
@@ -140,7 +141,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 				// filter illegal files
 				continue
 			}
-			name, err := d.cipher.DecryptFileName(obj.GetName())
+			name, err = d.cipher.DecryptFileName(name)
 			if err != nil {
 				// filter illegal files
 				continue
@@ -188,42 +189,41 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 			Path:     "/",
 		}, nil
 	}
-	remoteFullPath := ""
-	var remoteObj model.Obj
-	var err, err2 error
-	firstTryIsFolder, secondTry := guessPath(path)
-	remoteFullPath = d.getPathForRemote(path, firstTryIsFolder)
-	remoteObj, err = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
+
+	remoteStorage, remoteActualPath, err := op.GetStorageAndActualPath(d.RemotePath)
 	if err != nil {
-		if errs.IsObjectNotFound(err) && secondTry {
+		return nil, err
+	}
+	firstTryIsFolder, secondTry := guessPath(path)
+	remoteObj, err := op.Get(ctx, remoteStorage, stdpath.Join(remoteActualPath, d.convertPath(path, firstTryIsFolder)))
+	if err != nil {
+		if secondTry && errs.IsObjectNotFound(err) {
 			// try the opposite
-			remoteFullPath = d.getPathForRemote(path, !firstTryIsFolder)
-			remoteObj, err2 = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
-			if err2 != nil {
-				return nil, err2
+			remoteObj, err = op.Get(ctx, remoteStorage, stdpath.Join(remoteActualPath, d.convertPath(path, !firstTryIsFolder)))
+			if err != nil {
+				return nil, err
 			}
 		} else {
 			return nil, err
 		}
 	}
+
 	var size int64 = 0
-	name := ""
+	name := model.UnwrapObj(remoteObj).GetName()
 	if !remoteObj.IsDir() {
 		size, err = d.cipher.DecryptedSize(remoteObj.GetSize())
 		if err != nil {
 			log.Warnf("DecryptedSize failed for %s ,will use original size, err:%s", path, err)
 			size = remoteObj.GetSize()
 		}
-		name, err = d.cipher.DecryptFileName(remoteObj.GetName())
+		name, err = d.cipher.DecryptFileName(name)
 		if err != nil {
 			log.Warnf("DecryptFileName failed for %s ,will use original name, err:%s", path, err)
-			name = remoteObj.GetName()
 		}
 	} else {
-		name, err = d.cipher.DecryptDirName(remoteObj.GetName())
+		name, err = d.cipher.DecryptDirName(name)
 		if err != nil {
 			log.Warnf("DecryptDirName failed for %s ,will use original name, err:%s", path, err)
-			name = remoteObj.GetName()
 		}
 	}
 	obj := &model.Object{
@@ -326,14 +326,12 @@ func (d *Crypt) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 }
 
 func (d *Crypt) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	remoteStorage, srcRemoteActualPath, err := d.getStorageAndActualPath(srcObj.GetPath(), srcObj.IsDir())
+	remoteStorage, remoteActualPath, err := op.GetStorageAndActualPath(d.RemotePath)
 	if err != nil {
 		return err
 	}
-	_, dstRemoteActualPath, err := d.getStorageAndActualPath(dstDir.GetPath(), dstDir.IsDir())
-	if err != nil {
-		return err
-	}
+	srcRemoteActualPath := stdpath.Join(remoteActualPath, d.convertPath(srcObj.GetPath(), srcObj.IsDir()))
+	dstRemoteActualPath := stdpath.Join(remoteActualPath, d.convertPath(dstDir.GetPath(), dstDir.IsDir()))
 	return op.Move(ctx, remoteStorage, srcRemoteActualPath, dstRemoteActualPath)
 }
 
@@ -352,14 +350,12 @@ func (d *Crypt) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 }
 
 func (d *Crypt) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	remoteStorage, srcRemoteActualPath, err := d.getStorageAndActualPath(srcObj.GetPath(), srcObj.IsDir())
+	remoteStorage, remoteActualPath, err := op.GetStorageAndActualPath(d.RemotePath)
 	if err != nil {
 		return err
 	}
-	_, dstRemoteActualPath, err := d.getStorageAndActualPath(dstDir.GetPath(), dstDir.IsDir())
-	if err != nil {
-		return err
-	}
+	srcRemoteActualPath := stdpath.Join(remoteActualPath, d.convertPath(srcObj.GetPath(), srcObj.IsDir()))
+	dstRemoteActualPath := stdpath.Join(remoteActualPath, d.convertPath(dstDir.GetPath(), dstDir.IsDir()))
 	return op.Copy(ctx, remoteStorage, srcRemoteActualPath, dstRemoteActualPath)
 }
 

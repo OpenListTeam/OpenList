@@ -23,22 +23,19 @@ func guessPath(path string) (isFolder, secondTry bool) {
 	return false, true
 }
 
-func (d *Crypt) getPathForRemote(path string, isFolder bool) (remoteFullPath string) {
-	if isFolder && !strings.HasSuffix(path, "/") {
-		path = path + "/"
+func (d *Crypt) convertPath(path string, isFolder bool) (remotePath string) {
+	if isFolder {
+		return d.cipher.EncryptDirName(path)
 	}
 	dir, fileName := filepath.Split(path)
-
-	remoteDir := d.cipher.EncryptDirName(dir)
-	remoteFileName := ""
-	if len(strings.TrimSpace(fileName)) > 0 {
-		remoteFileName = d.cipher.EncryptFileName(fileName)
-	}
-	return stdpath.Join(d.RemotePath, remoteDir, remoteFileName)
-
+	return stdpath.Join(d.cipher.EncryptDirName(dir), d.cipher.EncryptFileName(fileName))
 }
 
-// actual path is used for internal only. any link for user should come from remoteFullPath
-func (d *Crypt) getStorageAndActualPath(path string, isFolder bool) (storage driver.Driver, actualPath string, err error) {
-	return op.GetStorageAndActualPath(d.getPathForRemote(path, isFolder))
+// get the remote storage and actual path for the given path
+func (d *Crypt) getStorageAndActualPath(path string, isFolder bool) (remoteStorage driver.Driver, remoteActualPath string, err error) {
+	remoteStorage, remoteActualPath, err = op.GetStorageAndActualPath(d.RemotePath)
+	if err == nil {
+		remoteActualPath = stdpath.Join(remoteActualPath, d.convertPath(path, isFolder))
+	}
+	return
 }
