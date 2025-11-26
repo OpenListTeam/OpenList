@@ -527,7 +527,7 @@ func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 		if err != nil {
 			continue
 		}
-		if storage.Config().CheckStatus && storage.GetStorage().GetStorage().Status != op.WORK {
+		if storage.Config().CheckStatus && storage.GetStorage().Status != op.WORK {
 			continue
 		}
 		mode := storage.Config().LinkCacheMode
