@@ -15,7 +15,7 @@ func guessPath(path string) (isFolder, secondTry bool) {
 		return true, false
 	}
 	lastSlash := strings.LastIndex(path, "/")
-	if strings.Index(path[lastSlash:], ".") < 0 {
+	if !strings.Contains(path[lastSlash:], ".") {
 		//no dot, try folder then try file
 		return true, true
 	}
