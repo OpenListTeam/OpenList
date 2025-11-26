@@ -9,8 +9,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/go-resty/resty/v2"
 	"github.com/OpenListTeam/wopan-sdk-go"
+	"github.com/go-resty/resty/v2"
 )
 
 type Wopan struct {

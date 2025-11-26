@@ -194,11 +194,11 @@ func IsSystemFile(filename string) bool {
 	case ".DS_Store", "desktop.ini", "Thumbs.db":
 		return true
 	}
-	
+
 	// Apple Double files (._*)
 	if strings.HasPrefix(filename, "._") {
 		return true
 	}
-	
+
 	return false
 }
