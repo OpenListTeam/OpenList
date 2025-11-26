@@ -68,6 +68,13 @@ func (d *Crypt) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("can't find remote storage: %w", err)
 	}
+
+	// ensure the remote (upper-level) storage is initialized and healthy
+	// If the upper-level storage failed to initialize, refuse to load this crypt driver.
+	if storage.Config().CheckStatus && storage.GetStorage().Status != op.WORK {
+		return fmt.Errorf("remote storage not ready (status=%s)", storage.GetStorage().Status)
+	}
+
 	d.remoteStorage = storage
 
 	p, _ := strings.CutPrefix(d.Password, obfuscatedPrefix)
