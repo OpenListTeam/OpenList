@@ -20,6 +20,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/pkg/errors"
 	rcCrypt "github.com/rclone/rclone/backend/crypt"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/obscure"
@@ -29,8 +30,7 @@ import (
 type Crypt struct {
 	model.Storage
 	Addition
-	cipher        *rcCrypt.Cipher
-	remoteStorage driver.Driver
+	cipher *rcCrypt.Cipher
 }
 
 const obfuscatedPrefix = "___Obfuscated___"
@@ -60,22 +60,9 @@ func (d *Crypt) Init(ctx context.Context) error {
 	}
 	d.FileNameEncoding = utils.GetNoneEmpty(d.FileNameEncoding, "base64")
 	d.EncryptedSuffix = utils.GetNoneEmpty(d.EncryptedSuffix, ".bin")
+	d.RemotePath = utils.FixAndCleanPath(d.RemotePath)
 
 	op.MustSaveDriverStorage(d)
-
-	// need remote storage exist
-	storage, err := fs.GetStorage(d.RemotePath, &fs.GetStoragesArgs{})
-	if err != nil {
-		return fmt.Errorf("can't find remote storage: %w", err)
-	}
-
-	// ensure the remote (upper-level) storage is initialized and healthy
-	// If the upper-level storage failed to initialize, refuse to load this crypt driver.
-	if storage.Config().CheckStatus && storage.GetStorage().Status != op.WORK {
-		return fmt.Errorf("remote storage not ready (status=%s)", storage.GetStorage().Status)
-	}
-
-	d.remoteStorage = storage
 
 	p, _ := strings.CutPrefix(d.Password, obfuscatedPrefix)
 	p2, _ := strings.CutPrefix(d.Salt, obfuscatedPrefix)
@@ -115,11 +102,13 @@ func (d *Crypt) Drop(ctx context.Context) error {
 }
 
 func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	path := dir.GetPath()
-	// return d.list(ctx, d.RemotePath, path)
-	// remoteFull
-
-	objs, err := fs.List(ctx, d.getPathForRemote(path, true), &fs.ListArgs{NoLog: true, Refresh: args.Refresh})
+	remoteStorage, actualPath, err := d.getStorageAndActualPathForRemote(dir.GetPath(), true)
+	if errors.Is(err, errs.StorageNotFound) { // listing virtual path
+		return fs.List(ctx, stdpath.Join(d.RemotePath, dir.GetPath()), &fs.ListArgs{NoLog: true, Refresh: args.Refresh})
+	} else if err != nil {
+		return nil, err
+	}
+	objs, err := fs.List(ctx, stdpath.Join(remoteStorage.GetStorage().MountPath, actualPath), &fs.ListArgs{NoLog: true, Refresh: args.Refresh})
 	// the obj must implement the model.SetPath interface
 	// return objs, err
 	if err != nil {
@@ -201,17 +190,22 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 			Path:     "/",
 		}, nil
 	}
-	remoteFullPath := ""
+	remoteStorage, rootActualPath, restActualPath, err := d.getStorageAndPlainPath(path)
+	if errors.Is(err, errs.StorageNotFound) { // getting virtual path
+		return fs.Get(ctx, stdpath.Join(d.RemotePath, path), &fs.GetArgs{NoLog: true})
+	} else if err != nil {
+		return nil, err
+	}
 	var remoteObj model.Obj
-	var err, err2 error
+	var err2 error
 	firstTryIsFolder, secondTry := guessPath(path)
-	remoteFullPath = d.getPathForRemote(path, firstTryIsFolder)
-	remoteObj, err = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
+	encryptedActualPath := d.getActualPathForRemote(restActualPath, firstTryIsFolder)
+	remoteObj, err = fs.Get(ctx, stdpath.Join(remoteStorage.GetStorage().MountPath, rootActualPath, encryptedActualPath), &fs.GetArgs{NoLog: true})
 	if err != nil {
 		if errs.IsObjectNotFound(err) && secondTry {
 			// try the opposite
-			remoteFullPath = d.getPathForRemote(path, !firstTryIsFolder)
-			remoteObj, err2 = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
+			encryptedActualPath = d.getActualPathForRemote(restActualPath, !firstTryIsFolder)
+			remoteObj, err2 = fs.Get(ctx, stdpath.Join(remoteStorage.GetStorage().MountPath, rootActualPath, encryptedActualPath), &fs.GetArgs{NoLog: true})
 			if err2 != nil {
 				return nil, err2
 			}
@@ -254,11 +248,11 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 const fileHeaderSize = 32
 
 func (d *Crypt) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	dstDirActualPath, err := d.getActualPathForRemote(file.GetPath(), false)
+	remoteStorage, dstDirActualPath, err := d.getStorageAndActualPathForRemote(file.GetPath(), false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert path to remote path: %w", err)
 	}
-	remoteLink, remoteFile, err := op.Link(ctx, d.remoteStorage, dstDirActualPath, args)
+	remoteLink, remoteFile, err := op.Link(ctx, remoteStorage, dstDirActualPath, args)
 	if err != nil {
 		return nil, err
 	}
@@ -330,30 +324,42 @@ func (d *Crypt) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 }
 
 func (d *Crypt) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	dstDirActualPath, err := d.getActualPathForRemote(parentDir.GetPath(), true)
+	remoteStorage, dstDirActualPath, err := d.getStorageAndActualPathForRemote(parentDir.GetPath(), true)
 	if err != nil {
 		return fmt.Errorf("failed to convert path to remote path: %w", err)
 	}
 	dir := d.cipher.EncryptDirName(dirName)
-	return op.MakeDir(ctx, d.remoteStorage, stdpath.Join(dstDirActualPath, dir))
+	return op.MakeDir(ctx, remoteStorage, stdpath.Join(dstDirActualPath, dir))
 }
 
 func (d *Crypt) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	srcRemoteActualPath, err := d.getActualPathForRemote(srcObj.GetPath(), srcObj.IsDir())
+	srcRemoteStorage, srcRemoteActualPath, err := d.getStorageAndActualPathForRemote(srcObj.GetPath(), srcObj.IsDir())
 	if err != nil {
 		return fmt.Errorf("failed to convert path to remote path: %w", err)
 	}
-	dstRemoteActualPath, err := d.getActualPathForRemote(dstDir.GetPath(), dstDir.IsDir())
+	dstRemoteStorage, dstRemoteActualPath, err := d.getStorageAndActualPathForRemote(dstDir.GetPath(), dstDir.IsDir())
 	if err != nil {
 		return fmt.Errorf("failed to convert path to remote path: %w", err)
 	}
-	return op.Move(ctx, d.remoteStorage, srcRemoteActualPath, dstRemoteActualPath)
+	if srcRemoteActualPath == "/" {
+		return fmt.Errorf("cannot move remote storage root")
+	}
+	if srcRemoteStorage.GetStorage().MountPath == dstRemoteStorage.GetStorage().MountPath {
+		return op.Move(ctx, srcRemoteStorage, srcRemoteActualPath, dstRemoteActualPath)
+	}
+	srcOriginPath := stdpath.Join(srcRemoteStorage.GetStorage().MountPath, srcRemoteActualPath)
+	dstOriginPath := stdpath.Join(dstRemoteStorage.GetStorage().MountPath, dstRemoteActualPath)
+	_, err = fs.Move(ctx, srcOriginPath, dstOriginPath)
+	return err
 }
 
 func (d *Crypt) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	remoteActualPath, err := d.getActualPathForRemote(srcObj.GetPath(), srcObj.IsDir())
+	remoteStorage, remoteActualPath, err := d.getStorageAndActualPathForRemote(srcObj.GetPath(), srcObj.IsDir())
 	if err != nil {
 		return fmt.Errorf("failed to convert path to remote path: %w", err)
+	}
+	if remoteActualPath == "/" {
+		return fmt.Errorf("cannot rename remote storage root")
 	}
 	var newEncryptedName string
 	if srcObj.IsDir() {
@@ -361,31 +367,40 @@ func (d *Crypt) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 	} else {
 		newEncryptedName = d.cipher.EncryptFileName(newName)
 	}
-	return op.Rename(ctx, d.remoteStorage, remoteActualPath, newEncryptedName)
+	return op.Rename(ctx, remoteStorage, remoteActualPath, newEncryptedName)
 }
 
 func (d *Crypt) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	srcRemoteActualPath, err := d.getActualPathForRemote(srcObj.GetPath(), srcObj.IsDir())
+	srcRemoteStorage, srcRemoteActualPath, err := d.getStorageAndActualPathForRemote(srcObj.GetPath(), srcObj.IsDir())
 	if err != nil {
 		return fmt.Errorf("failed to convert path to remote path: %w", err)
 	}
-	dstRemoteActualPath, err := d.getActualPathForRemote(dstDir.GetPath(), dstDir.IsDir())
+	dstRemoteStorage, dstRemoteActualPath, err := d.getStorageAndActualPathForRemote(dstDir.GetPath(), dstDir.IsDir())
 	if err != nil {
 		return fmt.Errorf("failed to convert path to remote path: %w", err)
 	}
-	return op.Copy(ctx, d.remoteStorage, srcRemoteActualPath, dstRemoteActualPath)
+	if srcRemoteStorage.GetStorage().MountPath == dstRemoteStorage.GetStorage().MountPath {
+		return op.Copy(ctx, srcRemoteStorage, srcRemoteActualPath, dstRemoteActualPath)
+	}
+	srcOriginPath := stdpath.Join(srcRemoteStorage.GetStorage().MountPath, srcRemoteActualPath)
+	dstOriginPath := stdpath.Join(dstRemoteStorage.GetStorage().MountPath, dstRemoteActualPath)
+	_, err = fs.Copy(ctx, srcOriginPath, dstOriginPath)
+	return err
 }
 
 func (d *Crypt) Remove(ctx context.Context, obj model.Obj) error {
-	remoteActualPath, err := d.getActualPathForRemote(obj.GetPath(), obj.IsDir())
+	remoteStorage, remoteActualPath, err := d.getStorageAndActualPathForRemote(obj.GetPath(), obj.IsDir())
 	if err != nil {
 		return fmt.Errorf("failed to convert path to remote path: %w", err)
 	}
-	return op.Remove(ctx, d.remoteStorage, remoteActualPath)
+	if remoteActualPath == "/" {
+		return fmt.Errorf("cannot remove remote storage mount path")
+	}
+	return op.Remove(ctx, remoteStorage, remoteActualPath)
 }
 
 func (d *Crypt) Put(ctx context.Context, dstDir model.Obj, streamer model.FileStreamer, up driver.UpdateProgress) error {
-	dstDirActualPath, err := d.getActualPathForRemote(dstDir.GetPath(), true)
+	remoteStorage, dstDirActualPath, err := d.getStorageAndActualPathForRemote(dstDir.GetPath(), true)
 	if err != nil {
 		return fmt.Errorf("failed to convert path to remote path: %w", err)
 	}
@@ -411,7 +426,7 @@ func (d *Crypt) Put(ctx context.Context, dstDir model.Obj, streamer model.FileSt
 		ForceStreamUpload: true,
 		Exist:             streamer.GetExist(),
 	}
-	err = op.Put(ctx, d.remoteStorage, dstDirActualPath, streamOut, up, false)
+	err = op.Put(ctx, remoteStorage, dstDirActualPath, streamOut, up, false)
 	if err != nil {
 		return err
 	}
@@ -419,13 +434,14 @@ func (d *Crypt) Put(ctx context.Context, dstDir model.Obj, streamer model.FileSt
 }
 
 func (d *Crypt) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	remoteDetails, err := op.GetStorageDetails(ctx, d.remoteStorage)
+	remoteStorage, err := fs.GetStorage(d.RemotePath, &fs.GetStoragesArgs{})
 	if err != nil {
+		if errors.Is(err, errs.StorageNotFound) {
+			err = errs.NotImplement
+		}
 		return nil, err
 	}
-	return &model.StorageDetails{
-		DiskUsage: remoteDetails.DiskUsage,
-	}, nil
+	return op.GetStorageDetails(ctx, remoteStorage)
 }
 
 //func (d *Safe) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
