@@ -233,12 +233,12 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 // https://github.com/rclone/rclone/blob/v1.67.0/backend/crypt/cipher.go#L37
 const fileHeaderSize = 32
 
-func (d *Crypt) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+func (d *Crypt) Link(ctx context.Context, file model.Obj, _ model.LinkArgs) (*model.Link, error) {
 	remoteStorage, dstDirActualPath, err := d.getStorageAndActualPath(file.GetPath(), false)
 	if err != nil {
 		return nil, err
 	}
-	remoteLink, remoteFile, err := op.Link(ctx, remoteStorage, dstDirActualPath, args)
+	remoteLink, remoteFile, err := op.Link(ctx, remoteStorage, dstDirActualPath, model.LinkArgs{})
 	if err != nil {
 		return nil, err
 	}
