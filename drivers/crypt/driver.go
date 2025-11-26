@@ -103,10 +103,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	if err != nil {
 		return nil, err
 	}
-	objs, err := op.List(ctx, remoteStorage, dstDirActualPath, model.ListArgs{
-		ReqPath: args.ReqPath,
-		Refresh: args.Refresh,
-	})
+	objs, err := op.List(ctx, remoteStorage, dstDirActualPath, model.ListArgs{Refresh: args.Refresh})
 	// the obj must implement the model.SetPath interface
 	// return objs, err
 	if err != nil {
@@ -125,57 +122,53 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			if !d.ShowHidden && strings.HasPrefix(name, ".") {
 				continue
 			}
-			objRes := model.Object{
+			result = append(result, &model.Object{
 				Name:     name,
 				Size:     0,
 				Modified: obj.ModTime(),
 				IsFolder: obj.IsDir(),
 				Ctime:    obj.CreateTime(),
 				// discarding hash as it's encrypted
-			}
-			result = append(result, &objRes)
-		} else {
-			thumb, ok := model.GetThumb(obj)
-			size, err := d.cipher.DecryptedSize(obj.GetSize())
-			if err != nil {
-				// filter illegal files
-				continue
-			}
-			name, err = d.cipher.DecryptFileName(name)
-			if err != nil {
-				// filter illegal files
-				continue
-			}
-			if !d.ShowHidden && strings.HasPrefix(name, ".") {
-				continue
-			}
-			objRes := model.Object{
-				Name:     name,
-				Size:     size,
-				Modified: obj.ModTime(),
-				IsFolder: obj.IsDir(),
-				Ctime:    obj.CreateTime(),
-				// discarding hash as it's encrypted
-			}
-			if d.Thumbnail && thumb == "" {
-				thumbPath := stdpath.Join(args.ReqPath, ".thumbnails", name+".webp")
-				thumb = fmt.Sprintf("%s/d%s?sign=%s",
-					common.GetApiUrl(ctx),
-					utils.EncodePath(thumbPath, true),
-					sign.Sign(thumbPath))
-			}
-			if !ok && !d.Thumbnail {
-				result = append(result, &objRes)
-			} else {
-				objWithThumb := model.ObjThumb{
-					Object: objRes,
-					Thumbnail: model.Thumbnail{
-						Thumbnail: thumb,
-					},
-				}
-				result = append(result, &objWithThumb)
-			}
+			})
+			continue
 		}
+
+		size, err := d.cipher.DecryptedSize(obj.GetSize())
+		if err != nil {
+			// filter illegal files
+			continue
+		}
+		name, err = d.cipher.DecryptFileName(name)
+		if err != nil {
+			// filter illegal files
+			continue
+		}
+		if !d.ShowHidden && strings.HasPrefix(name, ".") {
+			continue
+		}
+		objRes := &model.Object{
+			Name:     name,
+			Size:     size,
+			Modified: obj.ModTime(),
+			IsFolder: obj.IsDir(),
+			Ctime:    obj.CreateTime(),
+			// discarding hash as it's encrypted
+		}
+		if !d.Thumbnail || !strings.HasPrefix(args.ReqPath, "/") {
+			result = append(result, objRes)
+			continue
+		}
+		thumbPath := stdpath.Join(args.ReqPath, ".thumbnails", name+".webp")
+		thumb := fmt.Sprintf("%s/d%s?sign=%s",
+			common.GetApiUrl(ctx),
+			utils.EncodePath(thumbPath, true),
+			sign.Sign(thumbPath))
+		result = append(result, &model.ObjThumb{
+			Object: *objRes,
+			Thumbnail: model.Thumbnail{
+				Thumbnail: thumb,
+			},
+		})
 	}
 
 	return result, nil
