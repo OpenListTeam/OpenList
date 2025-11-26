@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
@@ -15,7 +16,7 @@ func guessPath(path string) (isFolder, secondTry bool) {
 		return true, false
 	}
 	lastSlash := strings.LastIndex(path, "/")
-	if strings.Index(path[lastSlash:], ".") < 0 {
+	if !strings.Contains(path[lastSlash:], ".") {
 		//no dot, try folder then try file
 		return true, true
 	}
@@ -38,7 +39,6 @@ func (d *Crypt) getPathForRemote(path string, isFolder bool) (remoteFullPath str
 }
 
 // actual path is used for internal only. any link for user should come from remoteFullPath
-func (d *Crypt) getActualPathForRemote(path string, isFolder bool) (string, error) {
-	_, remoteActualPath, err := op.GetStorageAndActualPath(d.getPathForRemote(path, isFolder))
-	return remoteActualPath, err
+func (d *Crypt) getStorageAndActualPath(path string, isFolder bool) (storage driver.Driver, actualPath string, err error) {
+	return op.GetStorageAndActualPath(d.getPathForRemote(path, isFolder))
 }
