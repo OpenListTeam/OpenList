@@ -227,20 +227,23 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 }
 
 // Other api
-func Other(ctx context.Context, storage driver.Driver, args model.FsOtherArgs) (interface{}, error) {
+func Other(ctx context.Context, storage driver.Driver, args model.FsOtherArgs) (any, error) {
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	o, ok := storage.(driver.Other)
+	if !ok {
+		return nil, errs.NotImplement
+	}
 	obj, err := GetUnwrap(ctx, storage, args.Path)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to get obj")
 	}
-	if o, ok := storage.(driver.Other); ok {
-		return o.Other(ctx, model.OtherArgs{
-			Obj:    obj,
-			Method: args.Method,
-			Data:   args.Data,
-		})
-	} else {
-		return nil, errs.NotImplement
-	}
+	return o.Other(ctx, model.OtherArgs{
+		Obj:    obj,
+		Method: args.Method,
+		Data:   args.Data,
+	})
 }
 
 var mkdirG singleflight.Group[any]

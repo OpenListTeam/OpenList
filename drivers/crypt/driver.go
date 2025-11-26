@@ -441,7 +441,13 @@ func (d *Crypt) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 		}
 		return nil, err
 	}
-	return op.GetStorageDetails(ctx, remoteStorage)
+	remoteDetails, err := op.GetStorageDetails(ctx, remoteStorage)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: remoteDetails.DiskUsage,
+	}, nil
 }
 
 //func (d *Safe) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
