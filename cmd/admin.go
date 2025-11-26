@@ -50,7 +50,7 @@ var SetPasswordCmd = &cobra.Command{
 	Short: "Set admin user's password",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			return fmt.Errorf("Please enter the new password")
+			return fmt.Errorf("please enter the new password")
 		}
 		setAdminPassword(args[0])
 		return nil
