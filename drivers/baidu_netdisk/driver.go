@@ -305,7 +305,11 @@ uploadLoop:
 			retry.Attempts(UPLOAD_RETRY_COUNT),
 			retry.Delay(UPLOAD_RETRY_WAIT_TIME),
 			retry.MaxDelay(UPLOAD_RETRY_MAX_WAIT_TIME),
-			retry.DelayType(retry.BackOffDelay))
+			retry.DelayType(retry.BackOffDelay),
+			retry.RetryIf(func(err error) bool {
+				return !errors.Is(err, ErrUploadIDExpired)
+			}),
+			retry.LastErrorOnly(true))
 
 		totalParts := len(precreateResp.BlockList)
 
