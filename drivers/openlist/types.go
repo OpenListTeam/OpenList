@@ -1,7 +1,6 @@
 package openlist
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -72,32 +71,16 @@ type LoginResp struct {
 	Token string `json:"token"`
 }
 
-type IntOrIntSlice []int
-
-func (i *IntOrIntSlice) UnmarshalJSON(data []byte) error {
-	var v int
-	if err := json.Unmarshal(data, &v); err == nil {
-		*i = []int{v}
-		return nil
-	}
-	var s []int
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	*i = s
-	return nil
-}
-
 type MeResp struct {
-	Id         int           `json:"id"`
-	Username   string        `json:"username"`
-	Password   string        `json:"password"`
-	BasePath   string        `json:"base_path"`
-	Role       IntOrIntSlice `json:"role"`
-	Disabled   bool          `json:"disabled"`
-	Permission int           `json:"permission"`
-	SsoId      string        `json:"sso_id"`
-	Otp        bool          `json:"otp"`
+	Id         int    `json:"id"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	BasePath   string `json:"base_path"`
+	Role       int    `json:"role"`
+	Disabled   bool   `json:"disabled"`
+	Permission int    `json:"permission"`
+	SsoId      string `json:"sso_id"`
+	Otp        bool   `json:"otp"`
 }
 
 type ArchiveMetaReq struct {
