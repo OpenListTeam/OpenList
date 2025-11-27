@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -303,6 +304,66 @@ func (d *Doubao) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj
 	// a folder with the same name as the archive file needs to be created to store the extracted results if args.PutIntoNewDir
 	// return errs.NotImplement to use an internal archive tool
 	return nil, errs.NotImplement
+}
+
+func (d *Doubao) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+
+	var srcObjIds []base.Json
+
+	for _, obj := range srcObjs {
+		srcObjIds = append(srcObjIds, base.Json{"id": obj.GetID()})
+	}
+
+	currentParentId := srcObjs[0].GetPath()
+
+	// Doubao service limits the number of files that can be moved in one request
+	for movingFiles := range slices.Chunk(srcObjIds, 50) {
+		if err := d.WaitLimit(ctx); err != nil {
+			return err
+		}
+		var r UploadNodeResp
+		_, err := d.request("/samantha/aispace/move_node", http.MethodPost, func(req *resty.Request) {
+			req.SetBody(base.Json{
+				"node_list":         movingFiles,
+				"current_parent_id": currentParentId,
+				"target_parent_id":  dstDir.GetID(),
+			})
+		}, &r)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+
+}
+
+func (d *Doubao) BatchRemove(ctx context.Context, batchRemoveObj model.BatchRemoveObj, args model.BatchArgs) error {
+	if err := d.WaitLimit(ctx); err != nil {
+		return err
+	}
+
+	var srcObjIds []base.Json
+
+	for _, obj := range batchRemoveObj.RemoveObjs {
+		srcObjIds = append(srcObjIds, base.Json{"id": obj.GetID()})
+	}
+
+	for removingFiles := range slices.Chunk(srcObjIds, 50) {
+		if err := d.WaitLimit(ctx); err != nil {
+			return err
+		}
+
+		var r BaseResp
+		_, err := d.request("/samantha/aispace/delete_node", http.MethodPost, func(req *resty.Request) {
+			req.SetBody(base.Json{"node_list": removingFiles})
+		}, &r)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 //func (d *Doubao) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {

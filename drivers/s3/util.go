@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -246,27 +247,6 @@ func (d *S3) copyDir(ctx context.Context, src string, dst string) error {
 	return nil
 }
 
-func (d *S3) removeDir(ctx context.Context, src string) error {
-	objs, err := op.List(ctx, d, src, model.ListArgs{})
-	if err != nil {
-		return err
-	}
-	for _, obj := range objs {
-		cSrc := path.Join(src, obj.GetName())
-		if obj.IsDir() {
-			err = d.removeDir(ctx, cSrc)
-		} else {
-			err = d.removeFile(cSrc)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	_ = d.removeFile(path.Join(src, getPlaceholderName(d.Placeholder)))
-	_ = d.removeFile(path.Join(src, d.Placeholder))
-	return nil
-}
-
 func (d *S3) removeFile(src string) error {
 	key := getKey(src, false)
 	input := &s3.DeleteObjectInput{
@@ -275,4 +255,75 @@ func (d *S3) removeFile(src string) error {
 	}
 	_, err := d.client.DeleteObject(input)
 	return err
+}
+
+func (d *S3) removeDir(ctx context.Context, src string) error {
+
+	keys, err := d.collectAllKeys(ctx, src)
+	if err != nil {
+		return err
+	}
+
+	err2 := d.batchDelete(keys)
+	if err2 != nil {
+		return err2
+	}
+
+	return nil
+}
+
+func (d *S3) batchDelete(keys []string) error {
+	for deletingKeys := range slices.Chunk(keys, 1000) {
+		var objectsToDelete []*s3.ObjectIdentifier
+		for _, key := range deletingKeys {
+			objectsToDelete = append(objectsToDelete, &s3.ObjectIdentifier{Key: aws.String(key)})
+		}
+
+		input := &s3.DeleteObjectsInput{
+			Bucket: aws.String(d.Bucket),
+			Delete: &s3.Delete{
+				Objects: objectsToDelete,
+				Quiet:   aws.Bool(true),
+			},
+		}
+
+		if _, err := d.client.DeleteObjects(input); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *S3) collectAllKeys(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+
+	objs, err := op.List(ctx, d, prefix, model.ListArgs{})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, obj := range objs {
+		cSrc := path.Join(prefix, obj.GetName())
+		if obj.IsDir() {
+			subKeys, err := d.collectAllKeys(ctx, cSrc)
+			if err != nil {
+				return nil, err
+			}
+			keys = append(keys, subKeys...)
+
+			keys = append(keys,
+				getKey(path.Join(cSrc, getPlaceholderName(d.Placeholder)), false),
+				getKey(path.Join(cSrc, d.Placeholder), false),
+			)
+		} else {
+			keys = append(keys, getKey(cSrc, false))
+		}
+	}
+
+	keys = append(keys,
+		getKey(path.Join(prefix, getPlaceholderName(d.Placeholder)), false),
+		getKey(path.Join(prefix, d.Placeholder), false),
+	)
+
+	return keys, nil
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ var ( // 不同情况下获取的AccessTokenQPS限制不同 如下模块化易�
 	Mkdir          = InitApiInfo(Api+"/upload/v1/file/mkdir", 2)
 	Move           = InitApiInfo(Api+"/api/v1/file/move", 1)
 	Rename         = InitApiInfo(Api+"/api/v1/file/name", 1)
+	BatchRename    = InitApiInfo(Api+"/api/v1/file/rename", 0)
 	Trash          = InitApiInfo(Api+"/api/v1/file/trash", 2)
 	UploadCreate   = InitApiInfo(Api+"/upload/v2/file/create", 2)
 	UploadComplete = InitApiInfo(Api+"/upload/v2/file/upload_complete", 0)
@@ -240,15 +242,18 @@ func (d *Open123) mkdir(parentID int64, name string) error {
 	return nil
 }
 
-func (d *Open123) move(fileID, toParentFileID int64) error {
-	_, err := d.Request(Move, http.MethodPost, func(req *resty.Request) {
-		req.SetBody(base.Json{
-			"fileIDs":        []int64{fileID},
-			"toParentFileID": toParentFileID,
-		})
-	}, nil)
-	if err != nil {
-		return err
+func (d *Open123) move(fileIDs []int64, toParentFileID int64) error {
+
+	for ids := range slices.Chunk(fileIDs, 100) {
+		_, err := d.Request(Move, http.MethodPost, func(req *resty.Request) {
+			req.SetBody(base.Json{
+				"fileIDs":        ids,
+				"toParentFileID": toParentFileID,
+			})
+		}, nil)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -268,14 +273,31 @@ func (d *Open123) rename(fileId int64, fileName string) error {
 	return nil
 }
 
-func (d *Open123) trash(fileId int64) error {
-	_, err := d.Request(Trash, http.MethodPost, func(req *resty.Request) {
-		req.SetBody(base.Json{
-			"fileIDs": []int64{fileId},
-		})
-	}, nil)
-	if err != nil {
-		return err
+func (d *Open123) batchRename(renameList []string) error {
+	for names := range slices.Chunk(renameList, 30) {
+		_, err := d.Request(BatchRename, http.MethodPost, func(req *resty.Request) {
+			req.SetBody(base.Json{
+				"renameList": names,
+			})
+		}, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (d *Open123) trash(fileIDs []int64) error {
+	for cids := range slices.Chunk(fileIDs, 100) {
+		_, err := d.Request(Trash, http.MethodPost, func(req *resty.Request) {
+			req.SetBody(base.Json{
+				"fileIDs": cids,
+			})
+		}, nil)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

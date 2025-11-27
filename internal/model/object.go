@@ -112,3 +112,18 @@ type ObjectProvider struct {
 	Object
 	Provider
 }
+
+type BatchRemoveObj struct {
+	Dir        Obj
+	RemoveObjs []Obj
+}
+
+type BatchRenameObj struct {
+	Dir        Obj
+	RenameObjs []RenameObj
+}
+
+type RenameObj struct {
+	Obj
+	NewName string
+}

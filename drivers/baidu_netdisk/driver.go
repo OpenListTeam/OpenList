@@ -490,4 +490,57 @@ func (d *BaiduNetdisk) GetDetails(ctx context.Context) (*model.StorageDetails, e
 	return &model.StorageDetails{DiskUsage: du}, nil
 }
 
+func (d *BaiduNetdisk) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	var data []base.Json
+
+	for _, obj := range srcObjs {
+		data = append(data, base.Json{
+			"path":    obj.GetPath(),
+			"dest":    dstDir.GetPath(),
+			"newname": obj.GetName(),
+		})
+	}
+
+	_, err := d.manage("move", data)
+	return err
+}
+
+func (d *BaiduNetdisk) BatchCopy(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	var data []base.Json
+
+	for _, obj := range srcObjs {
+		data = append(data, base.Json{
+			"path":    obj.GetPath(),
+			"dest":    dstDir.GetPath(),
+			"newname": obj.GetName(),
+		})
+	}
+
+	_, err := d.manage("copy", data)
+	return err
+}
+
+func (d *BaiduNetdisk) BatchRemove(ctx context.Context, batchRemoveObj model.BatchRemoveObj, args model.BatchArgs) error {
+	var data []string
+	for _, obj := range batchRemoveObj.RemoveObjs {
+		data = append(data, obj.GetPath())
+	}
+
+	_, err := d.manage("delete", data)
+	return err
+}
+
+func (d *BaiduNetdisk) BatchRename(ctx context.Context, batchRenameObj model.BatchRenameObj, args model.BatchArgs) error {
+	var data []base.Json
+	for _, ro := range batchRenameObj.RenameObjs {
+		data = append(data, base.Json{
+			"path":    ro.GetPath(),
+			"newname": ro.NewName,
+		})
+	}
+
+	_, err := d.manage("rename", data)
+	return err
+}
+
 var _ driver.Driver = (*BaiduNetdisk)(nil)

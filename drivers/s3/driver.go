@@ -243,4 +243,22 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 	}, nil
 }
 
+func (d *S3) BatchRemove(ctx context.Context, batchRemoveObj model.BatchRemoveObj, args model.BatchArgs) error {
+	var keys []string
+
+	for _, obj := range batchRemoveObj.RemoveObjs {
+		if obj.IsDir() {
+			subDirKeys, err := d.collectAllKeys(ctx, obj.GetPath())
+			if err != nil {
+				return err
+			}
+			keys = append(keys, subDirKeys...)
+		} else {
+			keys = append(keys, getKey(obj.GetPath(), false))
+		}
+	}
+
+	return d.batchDelete(keys)
+}
+
 var _ driver.Driver = (*S3)(nil)

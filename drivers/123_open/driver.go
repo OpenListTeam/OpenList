@@ -120,7 +120,7 @@ func (d *Open123) MakeDir(ctx context.Context, parentDir model.Obj, dirName stri
 func (d *Open123) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	toParentFileID, _ := strconv.ParseInt(dstDir.GetID(), 10, 64)
 
-	return d.move(srcObj.(File).FileId, toParentFileID)
+	return d.move([]int64{srcObj.(File).FileId}, toParentFileID)
 }
 
 func (d *Open123) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
@@ -152,7 +152,7 @@ func (d *Open123) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 func (d *Open123) Remove(ctx context.Context, obj model.Obj) error {
 	fileId, _ := strconv.ParseInt(obj.GetID(), 10, 64)
 
-	return d.trash(fileId)
+	return d.trash([]int64{fileId})
 }
 
 func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
@@ -235,6 +235,32 @@ func (d *Open123) OfflineDownload(ctx context.Context, url string, dir model.Obj
 
 func (d *Open123) OfflineDownloadProcess(ctx context.Context, taskID int) (float64, int, error) {
 	return d.queryOfflineDownloadStatus(ctx, taskID)
+}
+
+func (d *Open123) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	var ids []int64
+	for _, obj := range srcObjs {
+		ids = append(ids, obj.(File).FileId)
+	}
+
+	return d.move(ids, dstDir.(File).FileId)
+}
+
+func (d *Open123) BatchRemove(ctx context.Context, batchRemoveObj model.BatchRemoveObj, args model.BatchArgs) error {
+	var ids []int64
+	for _, obj := range batchRemoveObj.RemoveObjs {
+		ids = append(ids, obj.(File).FileId)
+	}
+	return d.trash(ids)
+}
+
+func (d *Open123) BatchRename(ctx context.Context, batchRenameObj model.BatchRenameObj, args model.BatchArgs) error {
+	var renameList []string
+	for _, obj := range batchRenameObj.RenameObjs {
+		renameList = append(renameList, fmt.Sprintf("%d|%s", obj.Obj.(File).FileId, obj.NewName))
+	}
+
+	return d.batchRename(renameList)
 }
 
 var (

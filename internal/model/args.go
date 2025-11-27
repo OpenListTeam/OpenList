@@ -121,3 +121,8 @@ func (r *RangeReadCloser) RangeRead(ctx context.Context, httpRange http_range.Ra
 	r.Add(rc)
 	return rc, err
 }
+
+type BatchArgs struct {
+	SrcDirActualPath string
+	DstDirActualPath string
+}

@@ -224,4 +224,41 @@ func (d *QuarkOrUC) GetDetails(ctx context.Context) (*model.StorageDetails, erro
 	}, nil
 }
 
+func (d *QuarkOrUC) BatchMove(ctx context.Context, srcDir model.Obj, srcObjs []model.Obj, dstDir model.Obj, args model.BatchArgs) error {
+	var srcObjIds []string
+	for _, srcObj := range srcObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	data := base.Json{
+		"action_type":  1,
+		"exclude_fids": []string{},
+		"filelist":     srcObjIds,
+		"to_pdir_fid":  dstDir.GetID(),
+	}
+	_, err := d.request("/file/move", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, nil)
+
+	return err
+}
+
+func (d *QuarkOrUC) BatchRemove(ctx context.Context, batchRenameObj model.BatchRemoveObj, args model.BatchArgs) error {
+
+	var srcObjIds []string
+	for _, srcObj := range batchRenameObj.RemoveObjs {
+		srcObjIds = append(srcObjIds, srcObj.GetID())
+	}
+
+	data := base.Json{
+		"action_type":  1,
+		"exclude_fids": []string{},
+		"filelist":     srcObjIds,
+	}
+	_, err := d.request("/file/delete", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, nil)
+	return err
+}
+
 var _ driver.Driver = (*QuarkOrUC)(nil)
