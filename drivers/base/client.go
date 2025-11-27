@@ -15,8 +15,11 @@ var (
 	RestyClient      *resty.Client
 	HttpClient       *http.Client
 )
-var UserAgent = "Mozilla/5.0 (Macintosh; Apple macOS 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/138.0.0.0"
+
 var DefaultTimeout = time.Second * 30
+
+const UserAgent = "Mozilla/5.0 (Macintosh; Apple macOS 26_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/142.0.0.0 OpenList/425.6.30"
+const UserAgentNT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/142.0.0.0 OpenList/425.6.30"
 
 func InitClient() {
 	NoRedirectClient = resty.New().SetRedirectPolicy(

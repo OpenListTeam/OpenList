@@ -60,7 +60,7 @@ const (
 	VideoDataType    = "video"
 	DefaultChunkSize = int64(5 * 1024 * 1024) // 5MB
 	MaxRetryAttempts = 3                      // 最大重试次数
-	UserAgent        = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+	UserAgent        = base.UserAgentNT
 	Region           = "cn-north-1"
 	UploadTimeout    = 3 * time.Minute
 )

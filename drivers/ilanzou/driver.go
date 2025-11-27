@@ -152,8 +152,7 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	req := base.NoRedirectClient.R()
 
 	req.SetHeaders(map[string]string{
-		"Referer":    d.conf.site + "/",
-		"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+		"Referer": d.conf.site + "/",
 	})
 	if d.Addition.Ip != "" {
 		req.SetHeader("X-Forwarded-For", d.Addition.Ip)
