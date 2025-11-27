@@ -100,11 +100,7 @@ func (d *Crypt) Drop(ctx context.Context) error {
 
 func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	remoteFullPath := dir.GetPath()
-	remoteStorage, remoteActualPath, err := op.GetStorageAndActualPath(remoteFullPath)
-	if err != nil {
-		return nil, err
-	}
-	objs, err := op.List(ctx, remoteStorage, remoteActualPath, model.ListArgs{Refresh: args.Refresh})
+	objs, err := fs.List(ctx, remoteFullPath, &fs.ListArgs{NoLog: true, Refresh: args.Refresh})
 	// the obj must implement the model.SetPath interface
 	// return objs, err
 	if err != nil {
