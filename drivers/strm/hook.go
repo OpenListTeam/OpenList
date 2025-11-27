@@ -89,13 +89,7 @@ func RemoveStrm(dstPath string, d *Strm) {
 }
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
-	if obj.IsDir() {
-		err := utils.CreateNestedDirectory(localPath)
-		if err != nil {
-			log.Warnf("failed to generate strm dir %s: failed to create dir: %v", localPath, err)
-			return
-		}
-	} else {
+	if !obj.IsDir() {
 		link, err := driver.Link(ctx, obj, model.LinkArgs{})
 		if err != nil {
 			log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
