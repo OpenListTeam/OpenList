@@ -27,6 +27,7 @@ var config = driver.Config{
 	NoCache:     true,
 	DefaultRoot: "/",
 	NoLinkURL:   true,
+	CheckStatus: true,
 }
 
 func init() {
