@@ -15,6 +15,7 @@ Final opts by @Suyunjing @j2rong4cn @KirCute @Da3zKi7
 */
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -60,7 +61,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	}
 
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Content-Length", "0")
 	req.Header.Set("Cookie", d.Cookie)
@@ -83,7 +84,19 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	var body []byte
+	// Handle gzip decompression if needed
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer gzipReader.Close()
+		body, _ = io.ReadAll(gzipReader)
+	} else {
+		body, err = io.ReadAll(resp.Body)
+	}
+
 	if err != nil {
 		return "", err
 	}
@@ -719,3 +732,4 @@ func (d *Mediafire) getFileByHash(ctx context.Context, hash string) (*model.ObjT
 	file := resp.Response.FileInfo[0]
 	return d.fileToObj(file), nil
 }
+

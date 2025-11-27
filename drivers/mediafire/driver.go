@@ -60,20 +60,24 @@ func (d *Mediafire) GetAddition() driver.Additional {
 
 // Init initializes the MediaFire driver with session token and cookie validation
 func (d *Mediafire) Init(ctx context.Context) error {
-	if d.SessionToken == "" {
-		return fmt.Errorf("Init :: [MediaFire] {critical} missing sessionToken")
-	}
-
 	if d.Cookie == "" {
 		return fmt.Errorf("Init :: [MediaFire] {critical} missing Cookie")
 	}
+
+	// If SessionToken is empty, try to get it from cookie
+	if d.SessionToken == "" {
+		if _, err := d.getSessionToken(ctx); err != nil {
+			return fmt.Errorf("Init :: [MediaFire] {critical} failed to get session token from cookie: %w", err)
+		}
+	}
+
 	// Setup rate limiter if rate limit is configured
 	if d.LimitRate > 0 {
 		d.limiter = rate.NewLimiter(rate.Limit(d.LimitRate), 1)
 	}
+
 	// Validate and refresh session token if needed
 	if _, err := d.getSessionToken(ctx); err != nil {
-
 		d.renewToken(ctx)
 
 		// Avoids 10 mins token expiry (6- 9)
@@ -429,3 +433,4 @@ func (d *Mediafire) GetDetails(ctx context.Context) (*model.StorageDetails, erro
 }
 
 var _ driver.Driver = (*Mediafire)(nil)
+
