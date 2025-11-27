@@ -205,13 +205,12 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 	}
 
-	var size int64 = 0
+	size := remoteObj.GetSize()
 	name := model.UnwrapObj(remoteObj).GetName()
 	if !remoteObj.IsDir() {
-		size, err = d.cipher.DecryptedSize(remoteObj.GetSize())
+		size, err = d.cipher.DecryptedSize(size)
 		if err != nil {
 			log.Warnf("DecryptedSize failed for %s ,will use original size, err:%s", path, err)
-			size = remoteObj.GetSize()
 		}
 		name, err = d.cipher.DecryptFileName(name)
 		if err != nil {
@@ -231,7 +230,6 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 		IsFolder: remoteObj.IsDir(),
 	}
 	return obj, nil
-	// return nil, errs.ObjectNotFound
 }
 
 // https://github.com/rclone/rclone/blob/v1.67.0/backend/crypt/cipher.go#L37
