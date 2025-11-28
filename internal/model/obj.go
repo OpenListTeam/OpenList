@@ -242,3 +242,64 @@ func (om *ObjMerge) InitHideReg(hides string) {
 func (om *ObjMerge) Reset() {
 	om.set.Clear()
 }
+
+type valObj struct {
+	Obj
+	key, val any
+}
+
+func (v *valObj) Unwrap() Obj {
+	return v.Obj
+}
+
+func ObjValue(obj Obj, key any) (val any) {
+	switch o := obj.(type) {
+	case *valObj:
+		if key == o.key {
+			return o.val
+		}
+		return ObjValue(o.Obj, key)
+	case ObjUnwrap:
+		return ObjValue(o.Unwrap(), key)
+	}
+	return nil
+}
+
+func ObjWithValue(obj Obj, key, val any) Obj {
+	return &valObj{obj, key, val}
+}
+
+type ObjMask uint8
+
+const (
+	Virtual ObjMask = 1 << iota
+	Directory
+)
+
+var objMaskKey ObjMask
+
+func ObjHasMask(obj Obj, mask ObjMask) bool {
+	val := ObjValue(obj, &objMaskKey)
+	if masks, ok := val.(*ObjMask); ok {
+		return *masks&mask == mask
+	}
+	return false
+}
+func ObjAddMask(obj Obj, mask ObjMask) Obj {
+	if mask == 0 {
+		return obj
+	}
+	val := ObjValue(obj, &objMaskKey)
+	if masks, ok := val.(*ObjMask); ok {
+		*masks |= mask
+		return obj
+	}
+	return ObjWithValue(obj, &objMaskKey, &mask)
+}
+func GetObjMask(obj Obj) ObjMask {
+	val := ObjValue(obj, &objMaskKey)
+	if masks, ok := val.(*ObjMask); ok {
+		return *masks
+	}
+	return 0
+}
