@@ -137,14 +137,14 @@ func WrapObjName(objs Obj) Obj {
 }
 
 func WrapObjsName(objs []Obj) {
-	for i := 0; i < len(objs); i++ {
+	for i := range objs {
 		objs[i] = &ObjWrapName{Name: utils.MappingName(objs[i].GetName()), Obj: objs[i]}
 	}
 }
 
 func UnwrapObj(obj Obj) Obj {
 	if unwrap, ok := obj.(ObjUnwrap); ok {
-		obj = unwrap.Unwrap()
+		return unwrap.Unwrap()
 	}
 	return obj
 }
@@ -273,7 +273,7 @@ type ObjMask uint8
 
 const (
 	Virtual ObjMask = 1 << iota
-	Directory
+	Temp
 )
 
 var objMaskKey ObjMask

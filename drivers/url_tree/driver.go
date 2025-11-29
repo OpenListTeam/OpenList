@@ -44,6 +44,10 @@ func (d *Urls) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (Addition) GetRootPath() string {
+	return "/"
+}
+
 func (d *Urls) Get(ctx context.Context, path string) (model.Obj, error) {
 	d.mutex.RLock()
 	defer d.mutex.RUnlock()
@@ -255,7 +259,7 @@ func (d *Urls) Put(ctx context.Context, dstDir model.Obj, stream model.FileStrea
 	if node.isFile() {
 		return errs.NotFolder
 	}
-	file, err := parseFileLine(stream.GetName(), d.HeadSize)
+	file, err := parseFileLine(stream.GetPath(), d.HeadSize)
 	if err != nil {
 		return err
 	}

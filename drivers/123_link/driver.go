@@ -39,6 +39,10 @@ func (d *Pan123Link) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (Addition) GetRootPath() string {
+	return "/"
+}
+
 func (d *Pan123Link) Get(ctx context.Context, path string) (model.Obj, error) {
 	node := GetNodeFromRootByPath(d.root, path)
 	return nodeToObj(node, path)

@@ -60,8 +60,8 @@ func Link(ctx context.Context, path string, args model.LinkArgs) (*model.Link, m
 	return res, file, nil
 }
 
-func MakeDir(ctx context.Context, path string, lazyCache ...bool) error {
-	err := makeDir(ctx, path, lazyCache...)
+func MakeDir(ctx context.Context, path string) error {
+	err := makeDir(ctx, path)
 	if err != nil {
 		log.Errorf("failed make dir %s: %+v", path, err)
 	}
@@ -175,14 +175,6 @@ func GetStorage(path string, args *GetStoragesArgs) (driver.Driver, error) {
 	return storageDriver, nil
 }
 
-func GetStorageAndActualPath(path string) (driver.Driver, string, error) {
-	return op.GetStorageAndActualPath(path)
-}
-
-func GetByActualPath(ctx context.Context, storage driver.Driver, actualPath string) (model.Obj, error) {
-	return op.Get(ctx, storage, actualPath)
-}
-
 func Other(ctx context.Context, args model.FsOtherArgs) (interface{}, error) {
 	res, err := other(ctx, args)
 	if err != nil {
@@ -199,9 +191,8 @@ func PutURL(ctx context.Context, path, dstName, urlStr string) error {
 	if storage.Config().NoUpload {
 		return errors.WithStack(errs.UploadNotSupported)
 	}
-	_, ok := storage.(driver.PutURL)
 	_, okResult := storage.(driver.PutURLResult)
-	if !ok && !okResult {
+	if !okResult {
 		return errs.NotImplement
 	}
 	return op.PutURL(ctx, storage, dstDirActualPath, dstName, urlStr)

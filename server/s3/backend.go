@@ -258,7 +258,7 @@ func (b *s3Backend) PutObject(
 	if err != nil {
 		if errs.IsObjectNotFound(err) && strings.Contains(objectName, "/") {
 			log.Debugf("reqPath: %s not found and objectName contains /, need to makeDir", reqPath)
-			err = fs.MakeDir(ctx, reqPath, true)
+			err = fs.MakeDir(ctx, reqPath)
 			if err != nil {
 				return result, errors.WithMessagef(err, "failed to makeDir, reqPath: %s", reqPath)
 			}
