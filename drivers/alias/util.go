@@ -28,6 +28,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 	for _, k := range d.rootOrder {
 		obj := model.Object{
 			Name:     k,
+			Path:     "/" + k,
 			IsFolder: true,
 			Modified: d.Modified,
 		}

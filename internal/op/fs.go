@@ -125,10 +125,10 @@ func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...b
 	key := Key(storage, path)
 	// try get from cache first
 	refreshList := false
-	listKey, name := stdpath.Split(key)
-	if dirCache, exists := Cache.dirCache.Get(listKey); exists {
+	if dirCache, exists := Cache.dirCache.Get(stdpath.Dir(key)); exists {
 		refreshList = true
 		files := dirCache.GetSortedObjects(storage)
+		name := stdpath.Base(path)
 		for _, f := range files {
 			if f.GetName() == name {
 				if utils.IsBool(noTempObj...) && model.ObjHasMask(f, model.Temp) {

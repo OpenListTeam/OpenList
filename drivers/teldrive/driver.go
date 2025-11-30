@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -65,6 +66,7 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 
 	return utils.SliceConvert(listResp.Items, func(src Object) (model.Obj, error) {
 		return &model.Object{
+			Path: path.Join(dir.GetPath(), src.Name),
 			ID:   src.ID,
 			Name: src.Name,
 			Size: func() int64 {

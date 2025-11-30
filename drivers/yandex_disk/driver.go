@@ -41,7 +41,9 @@ func (d *YandexDisk) List(ctx context.Context, dir model.Obj, args model.ListArg
 		return nil, err
 	}
 	return utils.SliceConvert(files, func(src File) (model.Obj, error) {
-		return fileToObj(src), nil
+		obj := fileToObj(src)
+		obj.Path = path.Join(dir.GetPath(), obj.Name)
+		return obj, nil
 	})
 }
 

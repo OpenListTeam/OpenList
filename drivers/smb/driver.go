@@ -3,6 +3,7 @@ package smb
 import (
 	"context"
 	"errors"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -54,17 +55,17 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 		return nil, err
 	}
 	d.updateLastConnTime()
-	var files []model.Obj
+	files := make([]model.Obj, 0, len(rawFiles))
 	for _, f := range rawFiles {
-		file := model.ObjThumb{
-			Object: model.Object{
-				Name:     f.Name(),
-				Modified: f.ModTime(),
-				Size:     f.Size(),
-				IsFolder: f.IsDir(),
-				Ctime:    f.(*smb2.FileStat).CreationTime,
-			},
+		file := model.Object{
+			Path:     path.Join(fullPath, f.Name()),
+			Name:     f.Name(),
+			Modified: f.ModTime(),
+			Size:     f.Size(),
+			IsFolder: f.IsDir(),
+			Ctime:    f.(*smb2.FileStat).CreationTime,
 		}
+
 		files = append(files, &file)
 	}
 	return files, nil

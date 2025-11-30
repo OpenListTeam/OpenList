@@ -25,12 +25,11 @@ type AzureBlob struct {
 	Addition
 	client          *azblob.Client
 	containerClient *container.Client
-	config          driver.Config
 }
 
 // Config returns the driver configuration.
 func (d *AzureBlob) Config() driver.Config {
-	return d.config
+	return config
 }
 
 // GetAddition returns additional settings specific to Azure Blob Storage.

@@ -54,6 +54,7 @@ func (d *WebDav) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 	}
 	return utils.SliceConvert(files, func(src os.FileInfo) (model.Obj, error) {
 		return &model.Object{
+			Path:     path.Join(dir.GetPath(), src.Name()),
 			Name:     src.Name(),
 			Size:     src.Size(),
 			Modified: src.ModTime(),

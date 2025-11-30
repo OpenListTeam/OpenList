@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	stdpath "path"
 	"strings"
 	"time"
 
@@ -42,21 +43,20 @@ func (d *Seafile) Drop(ctx context.Context) error {
 
 func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) (result []model.Obj, err error) {
 	path := dir.GetPath()
-	if path == d.RootFolderPath {
+	if path == "/" && d.RepoId == "" {
 		libraries, err := d.listLibraries()
 		if err != nil {
 			return nil, err
 		}
-		if path == "/" && d.RepoId == "" {
-			return utils.SliceConvert(libraries, func(f LibraryItemResp) (model.Obj, error) {
-				return &model.Object{
-					Name:     f.Name,
-					Modified: time.Unix(f.Modified, 0),
-					Size:     f.Size,
-					IsFolder: true,
-				}, nil
-			})
-		}
+		return utils.SliceConvert(libraries, func(f LibraryItemResp) (model.Obj, error) {
+			return &model.Object{
+				Path:     stdpath.Join(path, f.Name),
+				Name:     f.Name,
+				Modified: time.Unix(f.Modified, 0),
+				Size:     f.Size,
+				IsFolder: true,
+			}, nil
+		})
 	}
 	var repo *LibraryInfo
 	repo, path, err = d.getRepoAndPath(path)
@@ -79,14 +79,12 @@ func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 		return nil, err
 	}
 	return utils.SliceConvert(resp, func(f RepoDirItemResp) (model.Obj, error) {
-		return &model.ObjThumb{
-			Object: model.Object{
-				Name:     f.Name,
-				Modified: time.Unix(f.Modified, 0),
-				Size:     f.Size,
-				IsFolder: f.Type == "dir",
-			},
-			// Thumbnail: model.Thumbnail{Thumbnail: f.Thumb},
+		return &model.Object{
+			Path:     stdpath.Join(dir.GetPath(), f.Name),
+			Name:     f.Name,
+			Modified: time.Unix(f.Modified, 0),
+			Size:     f.Size,
+			IsFolder: f.Type == "dir",
 		}, nil
 	})
 }

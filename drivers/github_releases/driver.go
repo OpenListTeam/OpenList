@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	stdpath "path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -51,7 +52,7 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 				if d.Addition.ShowReadme {
 					files = append(files, point.GetOtherFile(d.GetRequest, args.Refresh)...)
 				}
-				if d.Addition.ShowSourceCode{
+				if d.Addition.ShowSourceCode {
 					files = append(files, point.GetSourceCode()...)
 				}
 			} else if strings.HasPrefix(point.Point, path) { // 仓库目录的父目录
@@ -70,7 +71,7 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 				}
 				if !hasSameDir {
 					files = append(files, File{
-						Path:     path + "/" + nextDir,
+						Path:     stdpath.Join(path, nextDir),
 						FileName: nextDir,
 						Size:     point.GetLatestSize(),
 						UpdateAt: point.Release.PublishedAt,
@@ -105,7 +106,7 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 				if !hasSameDir {
 					files = append(files, File{
 						FileName: nextDir,
-						Path:     path + "/" + nextDir,
+						Path:     stdpath.Join(path, nextDir),
 						Size:     point.GetAllVersionSize(),
 						UpdateAt: (*point.Releases)[0].PublishedAt,
 						CreateAt: (*point.Releases)[0].CreatedAt,
@@ -121,7 +122,7 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 
 				files = append(files, point.GetReleaseByTagName(tagName)...)
 
-				if d.Addition.ShowSourceCode{
+				if d.Addition.ShowSourceCode {
 					files = append(files, point.GetSourceCodeByTagName(tagName)...)
 				}
 			}

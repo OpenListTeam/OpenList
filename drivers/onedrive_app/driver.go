@@ -85,7 +85,9 @@ func (d *OnedriveAPP) List(ctx context.Context, dir model.Obj, args model.ListAr
 		return nil, err
 	}
 	return utils.SliceConvert(files, func(src File) (model.Obj, error) {
-		return fileToObj(src, dir.GetID()), nil
+		obj := fileToObj(src, dir.GetID())
+		obj.Path = path.Join(dir.GetPath(), obj.GetName())
+		return obj, nil
 	})
 }
 
