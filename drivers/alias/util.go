@@ -28,11 +28,12 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 	for _, k := range d.rootOrder {
 		obj := model.Object{
 			Name:     k,
+			Path:     "/" + k,
 			IsFolder: true,
 			Modified: d.Modified,
 		}
 		idx := len(objs)
-		objs = append(objs, &obj)
+		objs = append(objs, model.ObjAddMask(&obj, model.Virtual))
 		v := d.pathMap[k]
 		if !withDetails || len(v) != 1 {
 			continue

@@ -34,9 +34,9 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 		return
 	}
 	_ = countAccess(c.ClientIP(), s)
-	fakePath := fmt.Sprintf("/%s/%s", sid, path)
 	url := ""
 	if !obj.IsDir() {
+		fakePath := fmt.Sprintf("/%s/%s", sid, path)
 		url = fmt.Sprintf("%s/sd%s", common.GetApiUrl(c), utils.EncodePath(fakePath, true))
 		if s.Pwd != "" {
 			url += "?pwd=" + s.Pwd
@@ -45,8 +45,6 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 	thumb, _ := model.GetThumb(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{
-			Id:          "",
-			Path:        fakePath,
 			Name:        obj.GetName(),
 			Size:        obj.GetSize(),
 			IsDir:       obj.IsDir(),
@@ -80,14 +78,11 @@ func SharingList(c *gin.Context, req *ListReq) {
 		return
 	}
 	_ = countAccess(c.ClientIP(), s)
-	fakePath := fmt.Sprintf("/%s/%s", sid, path)
 	total, objs := pagination(objs, &req.PageReq)
 	common.SuccessResp(c, FsListResp{
 		Content: utils.MustSliceConvert(objs, func(obj model.Obj) ObjResp {
 			thumb, _ := model.GetThumb(obj)
 			return ObjResp{
-				Id:          "",
-				Path:        stdpath.Join(fakePath, obj.GetName()),
 				Name:        obj.GetName(),
 				Size:        obj.GetSize(),
 				IsDir:       obj.IsDir(),

@@ -114,12 +114,10 @@ func (d *BaiduNetdisk) Move(ctx context.Context, srcObj, dstDir model.Obj) (mode
 	if err != nil {
 		return nil, err
 	}
-	if srcObj, ok := srcObj.(*model.ObjThumb); ok {
-		srcObj.SetPath(stdpath.Join(dstDir.GetPath(), srcObj.GetName()))
-		srcObj.Modified = time.Now()
-		return srcObj, nil
-	}
-	return nil, nil
+	obj := srcObj.(*model.ObjThumb)
+	obj.SetPath(stdpath.Join(dstDir.GetPath(), obj.GetName()))
+	obj.Modified = time.Now()
+	return obj, nil
 }
 
 func (d *BaiduNetdisk) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
@@ -134,13 +132,11 @@ func (d *BaiduNetdisk) Rename(ctx context.Context, srcObj model.Obj, newName str
 		return nil, err
 	}
 
-	if srcObj, ok := srcObj.(*model.ObjThumb); ok {
-		srcObj.SetPath(stdpath.Join(stdpath.Dir(srcObj.GetPath()), newName))
-		srcObj.Name = newName
-		srcObj.Modified = time.Now()
-		return srcObj, nil
-	}
-	return nil, nil
+	obj := srcObj.(*model.ObjThumb)
+	obj.SetPath(stdpath.Join(stdpath.Dir(obj.GetPath()), newName))
+	obj.Name = newName
+	obj.Modified = time.Now()
+	return obj, nil
 }
 
 func (d *BaiduNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {

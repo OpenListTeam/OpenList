@@ -75,7 +75,7 @@ func (t *TransferTask) Run() error {
 				Mimetype: mimetype,
 				Closers:  utils.NewClosers(r),
 			}
-			return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress)
+			return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress, true)
 		}
 		return transferStdPath(t)
 	}
@@ -219,7 +219,7 @@ func transferStdFile(t *TransferTask) error {
 		Closers:  utils.NewClosers(rc),
 	}
 	t.SetTotalBytes(info.Size())
-	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress)
+	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress, true)
 }
 
 func removeStdTemp(t *TransferTask) {
@@ -317,7 +317,8 @@ func transferObjFile(t *TransferTask) error {
 	if err != nil {
 		return errors.WithMessagef(err, "failed get src [%s] file", t.SrcActualPath)
 	}
-	link, _, err := op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
+	var link *model.Link
+	link, srcFile, err = op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
 	if err != nil {
 		return errors.WithMessagef(err, "failed get [%s] link", t.SrcActualPath)
 	}
@@ -331,7 +332,7 @@ func transferObjFile(t *TransferTask) error {
 		return errors.WithMessagef(err, "failed get [%s] stream", t.SrcActualPath)
 	}
 	t.SetTotalBytes(ss.GetSize())
-	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
+	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, ss, t.SetProgress, true)
 }
 
 func removeObjTemp(t *TransferTask) {
