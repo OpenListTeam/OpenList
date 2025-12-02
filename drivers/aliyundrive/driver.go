@@ -356,6 +356,47 @@ func (d *AliDrive) Other(ctx context.Context, args model.OtherArgs) (interface{}
 		url = "https://api.alipan.com/v2/file/get_video_preview_play_info"
 		data["category"] = "live_transcoding"
 		data["url_expire_sec"] = 14400
+	case "transfer":
+		url = args.Data.(map[string]string)["url"] // the share url
+		shareid := d.extractShareId(url)
+		if shareid == "" {
+			return nil, fmt.Errorf("invalid share url")
+		}
+		shareToken, err := d.getShareToken(shareid, args.Data.(map[string]string)["valid_code"])
+		if err != nil {
+			return nil, err
+		}
+		fileid, parent_fileid := d.getFileId(shareid, shareToken)
+		res, err, _ := d.request("https://api.aliyundrive.com/adrive/v4/batch", http.MethodPost, func(req *resty.Request) {
+			req.SetBody(base.Json{
+				"requests": []base.Json{
+					{
+						"headers": base.Json{
+							"Content-Type": "application/json",
+						},
+						"method": "POST",
+						"id":     "0",
+						"body": base.Json{
+							"share_id":          shareid,
+							"file_id":           fileid,
+							"to_drive_id":       args.Obj.GetID(),
+							"to_parent_file_id": parent_fileid,
+						},
+						"url": "/file/copy",
+					},
+				},
+				"resource": "file",
+			})
+			req.SetHeader("X-Share-Token", shareToken)
+		}, nil)
+		if err != nil {
+			return nil, err
+		}
+		status := utils.Json.Get(res, "responses", 0, "status").ToInt()
+		if status < 300 && status >= 100 {
+			return res, nil
+		}
+		return nil, fmt.Errorf("transfer failed: %s", string(res))
 	default:
 		return nil, errs.NotSupport
 	}
