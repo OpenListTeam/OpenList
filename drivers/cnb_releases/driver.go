@@ -50,7 +50,8 @@ func (d *CnbReleases) Drop(ctx context.Context) error {
 }
 
 func (d *CnbReleases) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	if dir.GetPath() == "/" {
+	dirID := dir.GetID()
+	if dirID == "" {
 		// get all releases for root dir
 		var resp ReleaseList
 
@@ -75,36 +76,32 @@ func (d *CnbReleases) List(ctx context.Context, dir model.Obj, args model.ListAr
 				IsFolder: true,
 			}, nil
 		})
-	} else {
-		// get release info by release id
-		releaseID := dir.GetID()
-		if releaseID == "" {
-			return nil, errs.ObjectNotFound
-		}
-		var resp Release
-		err := d.Request(http.MethodGet, "/{repo}/-/releases/{release_id}", func(req *resty.Request) {
-			req.SetPathParam("repo", d.Repo)
-			req.SetPathParam("release_id", releaseID)
-		}, &resp)
-		if err != nil {
-			return nil, err
-		}
-
-		return utils.SliceConvert(resp.Assets, func(src ReleaseAsset) (model.Obj, error) {
-			return &Object{
-				Object: model.Object{
-					ID:       src.ID,
-					Path:     src.Path,
-					Name:     src.Name,
-					Size:     src.Size,
-					Ctime:    src.CreatedAt,
-					Modified: src.UpdatedAt,
-					IsFolder: false,
-				},
-				ParentID: dir.GetID(),
-			}, nil
-		})
 	}
+
+	var resp Release
+	err := d.Request(http.MethodGet, "/{repo}/-/releases/{release_id}", func(req *resty.Request) {
+		req.SetPathParam("repo", d.Repo)
+		req.SetPathParam("release_id", dirID)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return utils.SliceConvert(resp.Assets, func(src ReleaseAsset) (model.Obj, error) {
+		return &Object{
+			Object: model.Object{
+				ID:       src.ID,
+				Path:     src.Path,
+				Name:     src.Name,
+				Size:     src.Size,
+				Ctime:    src.CreatedAt,
+				Modified: src.UpdatedAt,
+				IsFolder: false,
+			},
+			ParentID: dirID,
+		}, nil
+	})
+
 }
 
 func (d *CnbReleases) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
