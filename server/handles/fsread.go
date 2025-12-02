@@ -33,8 +33,6 @@ type DirReq struct {
 }
 
 type ObjResp struct {
-	Id           string                        `json:"id"`
-	Path         string                        `json:"path"`
 	Name         string                        `json:"name"`
 	Size         int64                         `json:"size"`
 	IsDir        bool                          `json:"is_dir"`
@@ -234,8 +232,6 @@ func toObjsResp(objs []model.Obj, parent string, encrypt bool) []ObjResp {
 		thumb, _ := model.GetThumb(obj)
 		mountDetails, _ := model.GetStorageDetails(obj)
 		resp = append(resp, ObjResp{
-			Id:           obj.GetID(),
-			Path:         obj.GetPath(),
 			Name:         obj.GetName(),
 			Size:         obj.GetSize(),
 			IsDir:        obj.IsDir(),
@@ -365,8 +361,6 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	mountDetails, _ := model.GetStorageDetails(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{
-			Id:           obj.GetID(),
-			Path:         obj.GetPath(),
 			Name:         obj.GetName(),
 			Size:         obj.GetSize(),
 			IsDir:        obj.IsDir(),
