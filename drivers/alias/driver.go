@@ -148,6 +148,7 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
 				objRes := model.Object{
 					Name:     obj.GetName(),
+					Path:     stdpath.Join(path, obj.GetName()),
 					Size:     obj.GetSize(),
 					Modified: obj.ModTime(),
 					IsFolder: obj.IsDir(),

@@ -18,6 +18,7 @@ func (d *Strm) listRoot() []model.Obj {
 	var objs []model.Obj
 	for k := range d.pathMap {
 		obj := model.Object{
+			Path:     "/" + k,
 			Name:     k,
 			IsFolder: true,
 			Modified: d.Modified,
@@ -67,8 +68,8 @@ func (d *Strm) convert2strmObjs(ctx context.Context, reqPath string, objs []mode
 		size := int64(0)
 		if !obj.IsDir() {
 			path = stdpath.Join(reqPath, obj.GetName())
-			ext := strings.ToLower(utils.Ext(name))
 			sourceExt := utils.SourceExt(name)
+			ext := strings.ToLower(sourceExt)
 			if _, ok := d.downloadSuffix[ext]; ok {
 				size = obj.GetSize()
 			} else if _, ok := d.supportSuffix[ext]; ok {

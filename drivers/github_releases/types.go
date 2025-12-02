@@ -2,6 +2,7 @@ package github_releases
 
 import (
 	"encoding/json"
+	"path"
 	"strings"
 	"time"
 
@@ -45,10 +46,10 @@ func (m *MountPoint) RequestReleases(get func(url string) (*resty.Response, erro
 
 // 获取最新版本
 func (m *MountPoint) GetLatestRelease() []File {
-	files := make([]File, 0)
+	files := make([]File, 0, len(m.Release.Assets))
 	for _, asset := range m.Release.Assets {
 		files = append(files, File{
-			Path:     m.Point + "/" + asset.Name,
+			Path:     path.Join(m.Point, asset.Name),
 			FileName: asset.Name,
 			Size:     asset.Size,
 			Type:     "file",
@@ -74,7 +75,7 @@ func (m *MountPoint) GetAllVersion() []File {
 	files := make([]File, 0)
 	for _, release := range *m.Releases {
 		file := File{
-			Path:     m.Point + "/" + release.TagName,
+			Path:     path.Join(m.Point, release.TagName),
 			FileName: release.TagName,
 			Size:     m.GetSizeByTagName(release.TagName),
 			Type:     "dir",
@@ -97,7 +98,7 @@ func (m *MountPoint) GetReleaseByTagName(tagName string) []File {
 			files := make([]File, 0)
 			for _, asset := range item.Assets {
 				files = append(files, File{
-					Path:     m.Point + "/" + tagName + "/" + asset.Name,
+					Path:     path.Join(m.Point, tagName, asset.Name),
 					FileName: asset.Name,
 					Size:     asset.Size,
 					Type:     "file",
@@ -148,7 +149,7 @@ func (m *MountPoint) GetSourceCode() []File {
 
 	// 无法获取文件大小，此处设为 1
 	files = append(files, File{
-		Path:     m.Point + "/" + "Source code (zip)",
+		Path:     path.Join(m.Point, "Source code (zip)"),
 		FileName: "Source code (zip)",
 		Size:     1,
 		Type:     "file",
@@ -157,7 +158,7 @@ func (m *MountPoint) GetSourceCode() []File {
 		Url:      m.Release.ZipballUrl,
 	})
 	files = append(files, File{
-		Path:     m.Point + "/" + "Source code (tar.gz)",
+		Path:     path.Join(m.Point, "Source code (tar.gz)"),
 		FileName: "Source code (tar.gz)",
 		Size:     1,
 		Type:     "file",
@@ -174,7 +175,7 @@ func (m *MountPoint) GetSourceCodeByTagName(tagName string) []File {
 		if item.TagName == tagName {
 			files := make([]File, 0)
 			files = append(files, File{
-				Path:     m.Point + "/" + "Source code (zip)",
+				Path:     path.Join(m.Point, "Source code (zip)"),
 				FileName: "Source code (zip)",
 				Size:     1,
 				Type:     "file",
@@ -183,7 +184,7 @@ func (m *MountPoint) GetSourceCodeByTagName(tagName string) []File {
 				Url:      item.ZipballUrl,
 			})
 			files = append(files, File{
-				Path:     m.Point + "/" + "Source code (tar.gz)",
+				Path:     path.Join(m.Point, "Source code (tar.gz)"),
 				FileName: "Source code (tar.gz)",
 				Size:     1,
 				Type:     "file",
@@ -209,7 +210,7 @@ func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error),
 	for _, file := range *m.OtherFile {
 		if strings.HasSuffix(file.Name, ".md") || strings.HasPrefix(file.Name, "LICENSE") {
 			files = append(files, File{
-				Path:     m.Point + "/" + file.Name,
+				Path:     path.Join(m.Point, file.Name),
 				FileName: file.Name,
 				Size:     file.Size,
 				Type:     "file",

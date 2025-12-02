@@ -77,7 +77,6 @@ func (d *AliyundriveOpen) GetRoot(ctx context.Context) (model.Obj, error) {
 		ID:       d.RootFolderID,
 		Path:     "/",
 		Name:     "root",
-		Size:     0,
 		Modified: d.Modified,
 		IsFolder: true,
 	}, nil

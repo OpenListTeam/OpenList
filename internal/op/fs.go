@@ -50,11 +50,11 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errors.Wrapf(err, "failed to list objs")
 		}
 		// set path
-		for _, f := range files {
-			if s, ok := f.(model.SetPath); ok && f.GetPath() == "" && dir.GetPath() != "" {
-				s.SetPath(stdpath.Join(dir.GetPath(), f.GetName()))
-			}
-		}
+		// for _, f := range files {
+		// 	if s, ok := f.(model.SetPath); ok && f.GetPath() == "" && dir.GetPath() != "" {
+		// 		s.SetPath(stdpath.Join(dir.GetPath(), f.GetName()))
+		// 	}
+		// }
 		// warp obj name
 		model.WrapObjsName(files)
 		// call hooks
@@ -88,6 +88,37 @@ func Get(ctx context.Context, storage driver.Driver, path string) (model.Obj, er
 	path = utils.FixAndCleanPath(path)
 	log.Debugf("op.Get %s", path)
 
+	// is root folder
+	if path == "/" {
+		if getRooter, ok := storage.(driver.GetRooter); ok {
+			rootObj, err := getRooter.GetRoot(ctx)
+			if err != nil {
+				return nil, errors.WithMessage(err, "failed get root obj")
+			}
+			return &model.ObjWrapName{
+				Name: RootName,
+				Obj:  rootObj,
+			}, nil
+		}
+		switch r := storage.GetAddition().(type) {
+		case driver.IRootId:
+			return &model.Object{
+				ID:       r.GetRootId(),
+				Name:     RootName,
+				Modified: storage.GetStorage().Modified,
+				IsFolder: true,
+			}, nil
+		case driver.IRootPath:
+			return &model.Object{
+				Path:     r.GetRootPath(),
+				Name:     RootName,
+				Modified: storage.GetStorage().Modified,
+				IsFolder: true,
+			}, nil
+		}
+		return nil, errors.New("please implement GetRooter or IRootPath or IRootId interface")
+	}
+
 	// get the obj directly without list so that we can reduce the io
 	if g, ok := storage.(driver.Getter); ok {
 		obj, err := g.Get(ctx, path)
@@ -99,47 +130,6 @@ func Get(ctx context.Context, storage driver.Driver, path string) (model.Obj, er
 		}
 	}
 
-	// is root folder
-	if utils.PathEqual(path, "/") {
-		var rootObj model.Obj
-		if getRooter, ok := storage.(driver.GetRooter); ok {
-			obj, err := getRooter.GetRoot(ctx)
-			if err != nil {
-				return nil, errors.WithMessage(err, "failed get root obj")
-			}
-			rootObj = obj
-		} else {
-			switch r := storage.GetAddition().(type) {
-			case driver.IRootId:
-				rootObj = &model.Object{
-					ID:       r.GetRootId(),
-					Name:     RootName,
-					Size:     0,
-					Modified: storage.GetStorage().Modified,
-					IsFolder: true,
-				}
-			case driver.IRootPath:
-				rootObj = &model.Object{
-					Path:     r.GetRootPath(),
-					Name:     RootName,
-					Size:     0,
-					Modified: storage.GetStorage().Modified,
-					IsFolder: true,
-				}
-			default:
-				return nil, errors.Errorf("please implement IRootPath or IRootId or GetRooter method")
-			}
-		}
-		if rootObj == nil {
-			return nil, errors.Errorf("please implement IRootPath or IRootId or GetRooter method")
-		}
-		return &model.ObjWrapName{
-			Name: RootName,
-			Obj:  rootObj,
-		}, nil
-	}
-
-	// not root folder
 	dir, name := stdpath.Split(path)
 	files, err := List(ctx, storage, dir, model.ListArgs{})
 	if err != nil {

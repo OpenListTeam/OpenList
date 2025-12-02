@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	stdpath "path"
 	"strings"
 	"sync"
 	"time"
@@ -73,15 +74,16 @@ func (d *OnedriveSharelink) Drop(ctx context.Context) error {
 }
 
 func (d *OnedriveSharelink) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	path := dir.GetPath()
-	files, err := d.getFiles(ctx, path)
+	files, err := d.getFiles(ctx, dir.GetPath())
 	if err != nil {
 		return nil, err
 	}
 
 	// Convert the slice of files to the required model.Obj format
 	return utils.SliceConvert(files, func(src Item) (model.Obj, error) {
-		return fileToObj(src), nil
+		obj := fileToObj(src)
+		obj.Path = stdpath.Join(dir.GetPath(), obj.GetName())
+		return obj, nil
 	})
 }
 
