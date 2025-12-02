@@ -151,7 +151,7 @@ func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...b
 		}
 	}
 
-	if !dirCacheExists {
+	if !dirCacheExists || refreshList {
 		files, err := List(ctx, storage, dir, model.ListArgs{Refresh: refreshList})
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed get parent list")
