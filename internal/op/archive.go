@@ -529,9 +529,9 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
 		onlyList := false
 		targetPath := dstDirPath
-		if newObjs != nil && len(newObjs) == 1 && newObjs[0].IsDir() {
+		if len(newObjs) == 1 && newObjs[0].IsDir() {
 			targetPath = stdpath.Join(dstDirPath, newObjs[0].GetName())
-		} else if newObjs != nil && len(newObjs) == 1 && !newObjs[0].IsDir() {
+		} else if len(newObjs) == 1 && !newObjs[0].IsDir() {
 			onlyList = true
 		} else if args.PutIntoNewDir {
 			targetPath = stdpath.Join(dstDirPath, strings.TrimSuffix(srcObj.GetName(), stdpath.Ext(srcObj.GetName())))

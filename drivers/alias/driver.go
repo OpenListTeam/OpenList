@@ -85,6 +85,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	}
 	var ret *model.Object
 	provider := ""
+	var mark model.ObjMask
 	for _, dst := range dsts {
 		rawPath := stdpath.Join(dst, sub)
 		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
@@ -93,6 +94,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 		storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
 		if ret == nil {
+			mark = model.GetObjMask(obj)
 			ret = &model.Object{
 				Path:     path,
 				Name:     obj.GetName(),
@@ -114,14 +116,14 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		return nil, errs.ObjectNotFound
 	}
 	if provider != "" {
-		return &model.ObjectProvider{
+		return model.ObjAddMask(&model.ObjectProvider{
 			Object: *ret,
 			Provider: model.Provider{
 				Provider: provider,
 			},
-		}, nil
+		}, mark), nil
 	}
-	return ret, nil
+	return model.ObjAddMask(ret, mark), nil
 }
 
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
@@ -150,21 +152,22 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					Modified: obj.ModTime(),
 					IsFolder: obj.IsDir(),
 				}
+				mask := model.GetObjMask(obj)
 				if thumb, ok := model.GetThumb(obj); ok {
-					return &model.ObjThumb{
+					return model.ObjAddMask(&model.ObjThumb{
 						Object: objRes,
 						Thumbnail: model.Thumbnail{
 							Thumbnail: thumb,
 						},
-					}, nil
+					}, mask), nil
 				}
 				if details, ok := model.GetStorageDetails(obj); ok {
-					return &model.ObjStorageDetails{
+					return model.ObjAddMask(&model.ObjStorageDetails{
 						Obj:                    &objRes,
 						StorageDetailsWithName: *details,
-					}, nil
+					}, mask), nil
 				}
-				return &objRes, nil
+				return model.ObjAddMask(&objRes, mask), nil
 			})
 		}
 		if err == nil {
