@@ -40,6 +40,7 @@ func (d *DoubaoShare) Drop(ctx context.Context) error {
 	return nil
 }
 
+// 潜在bug：配置二级目录时，可能会出问题
 func (d *DoubaoShare) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	// 检查是否为根目录
 	if dir.GetID() == "" && dir.GetPath() == "/" {
