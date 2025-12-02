@@ -173,15 +173,11 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	return result, nil
 }
 
-func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
-	if utils.PathEqual(path, "/") {
-		return &model.Object{
-			Name:     "Root",
-			IsFolder: true,
-			Path:     d.RemotePath,
-		}, nil
-	}
+func (a Addition) GetRootPath() string {
+	return a.RemotePath
+}
 
+func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 	firstTryIsFolder, secondTry := guessPath(path)
 	remoteFullPath := stdpath.Join(d.RemotePath, d.encryptPath(path, firstTryIsFolder))
 	remoteObj, err := fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
