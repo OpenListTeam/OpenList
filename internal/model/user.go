@@ -59,6 +59,7 @@ type User struct {
 	OtpSecret  string `json:"-"`
 	SsoID      string `json:"sso_id"` // unique by sso platform
 	Authn      string `gorm:"type:text" json:"-"`
+	AllowLdap  bool   `json:"allow_ldap" gorm:"default:true"`
 }
 
 func (u *User) IsGuest() bool {
