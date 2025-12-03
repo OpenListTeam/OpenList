@@ -4,7 +4,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v3_24_0"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v3_32_0"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v3_41_0"
-	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v3_all"
 )
 
 type VersionPatches struct {
@@ -31,12 +30,6 @@ var UpgradePatches = []VersionPatches{
 		Version: "v3.41.0",
 		Patches: []func(){
 			v3_41_0.GrantAdminPermissions,
-		},
-	},
-	{
-		Version: "v3.0.0",
-		Patches: []func(){
-			v3_all.RenameAlistV3Driver,
 		},
 	},
 }
