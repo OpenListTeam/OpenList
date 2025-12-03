@@ -22,6 +22,10 @@ var listG singleflight.Group[[]model.Obj]
 
 // List files in storage, not contains virtual file
 func List(ctx context.Context, storage driver.Driver, path string, args model.ListArgs) ([]model.Obj, error) {
+	return list(ctx, storage, path, args, nil)
+}
+
+func list(ctx context.Context, storage driver.Driver, path string, args model.ListArgs, resultValidator func([]model.Obj) error) ([]model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
@@ -31,7 +35,14 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 	if !args.Refresh {
 		if dirCache, exists := Cache.dirCache.Get(key); exists {
 			log.Debugf("use cache when list %s", path)
-			return dirCache.GetSortedObjects(storage), nil
+			objs := dirCache.GetSortedObjects(storage)
+			if resultValidator != nil {
+				if err := resultValidator(objs); err == nil {
+					return objs, nil
+				}
+			} else {
+				return objs, nil
+			}
 		}
 	}
 
@@ -80,7 +91,15 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 		return files, nil
 	})
-	return objs, err
+	if err != nil {
+		return nil, err
+	}
+	if resultValidator != nil {
+		if err := resultValidator(objs); err != nil {
+			return nil, err
+		}
+	}
+	return objs, nil
 }
 
 // Get object from list of files
@@ -126,12 +145,13 @@ func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...b
 	dir, name := stdpath.Split(path)
 	dirCache, dirCacheExists := Cache.dirCache.Get(Key(storage, dir))
 	refreshList := false
+	noTemp := utils.IsBool(noTempObj...)
 	if dirCacheExists {
 		files := dirCache.GetSortedObjects(storage)
 		name := stdpath.Base(path)
 		for _, f := range files {
 			if f.GetName() == name {
-				if utils.IsBool(noTempObj...) && model.ObjHasMask(f, model.Temp) {
+				if noTemp && model.ObjHasMask(f, model.Temp) {
 					refreshList = true
 					break
 				}
@@ -152,15 +172,24 @@ func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...b
 	}
 
 	if !dirCacheExists || refreshList {
-		files, err := List(ctx, storage, dir, model.ListArgs{Refresh: refreshList})
-		if err != nil {
-			return nil, errors.WithMessage(err, "failed get parent list")
-		}
-		for _, f := range files {
-			if f.GetName() == name {
-				return f, nil
+		var obj model.Obj
+		_, err := list(ctx, storage, dir, model.ListArgs{Refresh: refreshList}, func(objs []model.Obj) error {
+			for _, f := range objs {
+				if f.GetName() == name {
+					if noTemp && model.ObjHasMask(f, model.Temp) {
+						break
+					}
+					obj = f
+					return nil
+				}
 			}
+			return errors.WithStack(errs.ObjectNotFound)
+		})
+		if err != nil {
+			log.Debugf("cant find obj with name: %s", name)
+			return nil, err
 		}
+		return obj, nil
 	}
 	log.Debugf("cant find obj with name: %s", name)
 	return nil, errors.WithStack(errs.ObjectNotFound)
