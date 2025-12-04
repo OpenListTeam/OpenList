@@ -324,7 +324,7 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 						dirCache.UpdateObject("", wrapObjName(storage, newObj))
 					} else {
 						t := time.Now()
-						newObj := &model.Object{
+						newObj = &model.Object{
 							Name:     dirName,
 							IsFolder: true,
 							Modified: t,
@@ -433,7 +433,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 	} else if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(Key(storage, srcDirPath)); exist {
 			newObj = &struct{ *model.ObjWrapName }{&model.ObjWrapName{Name: dstName, Obj: srcObj}}
-			cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, newObj))
+			cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, model.ObjAddMask(newObj, model.Temp)))
 		}
 	}
 	return nil
@@ -599,13 +599,14 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
 		} else if !storage.Config().NoCache {
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				newObj := &model.Object{
+				newObj = &model.Object{
 					Name:     file.GetName(),
 					Size:     file.GetSize(),
 					Modified: file.ModTime(),
 					Ctime:    file.CreateTime(),
 				}
-				cache.UpdateObject(newObj.GetName(), wrapObjName(storage, model.ObjAddMask(newObj, model.Temp)))
+				newObj = wrapObjName(storage, model.ObjAddMask(newObj, model.Temp))
+				cache.UpdateObject(newObj.GetName(), newObj)
 			}
 		}
 	}
