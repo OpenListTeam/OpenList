@@ -142,9 +142,9 @@ func WrapObjsName(objs []Obj) {
 	}
 }
 
-func UnwrapObj(obj Obj) Obj {
-	if unwrap, ok := obj.(ObjUnwrap); ok {
-		return unwrap.Unwrap()
+func UnwrapObjName(obj Obj) Obj {
+	if n, ok := obj.(*ObjWrapName); ok {
+		return n.Obj
 	}
 	return obj
 }

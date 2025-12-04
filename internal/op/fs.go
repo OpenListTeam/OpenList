@@ -61,7 +61,7 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errors.Wrapf(err, "failed to list objs")
 		}
 		// warp obj name
-		model.WrapObjsName(files)
+		wrapObjsName(storage, files)
 		// sort objs
 		if storage.Config().LocalSort {
 			model.SortFiles(files, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
@@ -110,10 +110,7 @@ func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...b
 			if err != nil {
 				return nil, errors.WithMessage(err, "failed get root obj")
 			}
-			return &model.ObjWrapName{
-				Name: RootName,
-				Obj:  rootObj,
-			}, nil
+			return rootObj, nil
 		}
 		switch r := storage.GetAddition().(type) {
 		case driver.IRootId:
@@ -157,7 +154,7 @@ func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...b
 	if g, ok := storage.(driver.Getter); ok {
 		obj, err := g.Get(ctx, path)
 		if err == nil {
-			return model.WrapObjName(obj), nil
+			return obj, nil
 		}
 		if !errs.IsNotImplementError(err) && !errs.IsNotSupportError(err) {
 			return nil, errors.WithMessage(err, "failed to get obj")
@@ -193,7 +190,7 @@ func GetUnwrap(ctx context.Context, storage driver.Driver, path string) (model.O
 	if err != nil {
 		return nil, err
 	}
-	return model.UnwrapObj(obj), err
+	return model.UnwrapObjName(obj), err
 }
 
 var linkG = singleflight.Group[*objWithLink]{}
@@ -324,7 +321,7 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 			if !storage.Config().NoCache {
 				if dirCache, exist := Cache.dirCache.Get(Key(storage, parentPath)); exist {
 					if newObj != nil {
-						dirCache.UpdateObject("", model.WrapObjName(newObj))
+						dirCache.UpdateObject("", wrapObjName(storage, newObj))
 					} else {
 						t := time.Now()
 						newObj := &model.Object{
@@ -333,7 +330,7 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 							Modified: t,
 							Ctime:    t,
 						}
-						dirCache.UpdateObject("", model.WrapObjName(model.ObjAddMask(newObj, model.Temp)))
+						dirCache.UpdateObject("", wrapObjName(storage, model.ObjAddMask(newObj, model.Temp)))
 					}
 				}
 			}
@@ -360,7 +357,7 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
 	}
-	srcObj := model.UnwrapObj(srcRawObj)
+	srcObj := model.UnwrapObjName(srcRawObj)
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get dst dir")
@@ -378,10 +375,10 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	if err == nil {
 		Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
 		if newObj != nil {
-			Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
+			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
 		} else if !storage.Config().NoCache {
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				cache.UpdateObject(srcRawObj.GetName(), model.WrapObjName(model.ObjAddMask(srcObj, model.Temp)))
+				cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, model.ObjAddMask(srcObj, model.Temp)))
 			}
 		}
 	}
@@ -416,7 +413,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
 	}
-	srcObj := model.UnwrapObj(srcRawObj)
+	srcObj := model.UnwrapObjName(srcRawObj)
 
 	var newObj model.Obj
 	switch s := storage.(type) {
@@ -432,10 +429,11 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 	}
 	srcDirPath := stdpath.Dir(srcPath)
 	if newObj != nil {
-		Cache.updateDirectoryObject(storage, srcDirPath, srcRawObj, model.WrapObjName(newObj))
+		Cache.updateDirectoryObject(storage, srcDirPath, srcRawObj, wrapObjName(storage, newObj))
 	} else if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(Key(storage, srcDirPath)); exist {
-			cache.UpdateObject(srcRawObj.GetName(), &model.ObjWrapName{Name: utils.MappingName(dstName), Obj: srcObj})
+			newObj = &struct{ *model.ObjWrapName }{&model.ObjWrapName{Name: dstName, Obj: srcObj}}
+			cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, newObj))
 		}
 	}
 	return nil
@@ -455,7 +453,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
 	}
-	srcObj := model.UnwrapObj(srcRawObj)
+	srcObj := model.UnwrapObjName(srcRawObj)
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get dst dir")
@@ -472,10 +470,10 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	}
 	if err == nil {
 		if newObj != nil {
-			Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
+			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
 		} else if !storage.Config().NoCache {
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				cache.UpdateObject(srcRawObj.GetName(), model.WrapObjName(model.ObjAddMask(srcObj, model.Temp)))
+				cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, model.ObjAddMask(srcObj, model.Temp)))
 			}
 		}
 	}
@@ -519,7 +517,7 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 
 	switch s := storage.(type) {
 	case driver.Remove:
-		err = s.Remove(ctx, model.UnwrapObj(rawObj))
+		err = s.Remove(ctx, model.UnwrapObjName(rawObj))
 		if err == nil {
 			Cache.removeDirectoryObject(storage, dirPath, rawObj)
 		}
@@ -598,7 +596,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
 		if newObj != nil {
-			Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
+			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
 		} else if !storage.Config().NoCache {
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
 				newObj := &model.Object{
@@ -607,7 +605,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 					Modified: file.ModTime(),
 					Ctime:    file.CreateTime(),
 				}
-				cache.UpdateObject(newObj.GetName(), model.WrapObjName(model.ObjAddMask(newObj, model.Temp)))
+				cache.UpdateObject(newObj.GetName(), wrapObjName(storage, model.ObjAddMask(newObj, model.Temp)))
 			}
 		}
 	}
@@ -657,7 +655,7 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
 		if newObj != nil {
-			Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
+			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
 		} else {
 			err = errors.New("PutURL returned nil obj")
 		}
@@ -713,4 +711,16 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 func needHandleObjsUpdateHook() bool {
 	needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterWriting)
 	return needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1")
+}
+
+func wrapObjsName(storage driver.Driver, objs []model.Obj) {
+	if _, ok := storage.(driver.Getter); !ok {
+		model.WrapObjsName(objs)
+	}
+}
+func wrapObjName(storage driver.Driver, obj model.Obj) model.Obj {
+	if _, ok := storage.(driver.Getter); !ok {
+		return model.WrapObjName(obj)
+	}
+	return obj
 }

@@ -112,7 +112,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	for _, obj := range objs {
 		size := obj.GetSize()
 		mask := model.GetObjMask(obj)
-		name := model.UnwrapObj(obj).GetName()
+		name := model.UnwrapObjName(obj).GetName()
 		rawName := name
 		if mask&model.Virtual == 0 {
 			if obj.IsDir() {
@@ -194,7 +194,7 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 	}
 
 	size := remoteObj.GetSize()
-	name := model.UnwrapObj(remoteObj).GetName()
+	name := model.UnwrapObjName(remoteObj).GetName()
 	mask := model.GetObjMask(remoteObj)
 	if mask&model.Virtual == 0 {
 		if !remoteObj.IsDir() {
