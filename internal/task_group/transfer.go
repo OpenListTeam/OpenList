@@ -74,13 +74,13 @@ func RefreshAndRemove(dstPath string, payloads ...any) {
 }
 
 func verifyAndRemove(ctx context.Context, srcStorage, dstStorage driver.Driver, srcPath, dstPath string /* , refresh bool */) error {
-	srcObj, err := op.Get(ctx, srcStorage, srcPath, true)
+	srcObj, err := op.GetUnwrap(ctx, srcStorage, srcPath)
 	if err != nil {
 		return errors.WithMessagef(err, "failed get src [%s] file", path.Join(srcStorage.GetStorage().MountPath, srcPath))
 	}
 
 	dstObjPath := path.Join(dstPath, srcObj.GetName())
-	dstObj, err := op.Get(ctx, dstStorage, dstObjPath, true)
+	dstObj, err := op.GetUnwrap(ctx, dstStorage, dstObjPath)
 	if err != nil {
 		return errors.WithMessagef(err, "failed get dst [%s] file", path.Join(dstStorage.GetStorage().MountPath, dstObjPath))
 	}

@@ -60,24 +60,17 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to list objs")
 		}
-		// set path
-		// for _, f := range files {
-		// 	if s, ok := f.(model.SetPath); ok && f.GetPath() == "" && dir.GetPath() != "" {
-		// 		s.SetPath(stdpath.Join(dir.GetPath(), f.GetName()))
-		// 	}
-		// }
 		// warp obj name
 		model.WrapObjsName(files)
-		// call hooks
-		go func(reqPath string, files []model.Obj) {
-			HandleObjsUpdateHook(context.WithoutCancel(ctx), reqPath, files)
-		}(utils.GetFullPath(storage.GetStorage().MountPath, path), files)
-
 		// sort objs
 		if storage.Config().LocalSort {
 			model.SortFiles(files, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
 		}
 		model.ExtractFolder(files, storage.GetStorage().ExtractFolder)
+		// call hooks
+		go func(reqPath string, files []model.Obj) {
+			HandleObjsUpdateHook(context.WithoutCancel(ctx), reqPath, files)
+		}(utils.GetFullPath(storage.GetStorage().MountPath, path), files)
 
 		if !storage.Config().NoCache {
 			if len(files) > 0 {
@@ -698,7 +691,7 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 	}
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	dstPath := stdpath.Join(dstDirPath, dstName)
-	_, err := GetUnwrap(ctx, storage, dstPath)
+	_, err := Get(ctx, storage, dstPath)
 	if err == nil {
 		return nil, errors.WithStack(errs.ObjectAlreadyExists)
 	}

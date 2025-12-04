@@ -235,7 +235,8 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		return nil
 	}
 
-	link, _, err := op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
+	var link *model.Link
+	link, srcObj, err = op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
 	if err != nil {
 		return errors.WithMessagef(err, "failed get [%s] link", t.SrcActualPath)
 	}

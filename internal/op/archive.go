@@ -537,7 +537,7 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 			targetPath = stdpath.Join(dstDirPath, strings.TrimSuffix(srcObj.GetName(), stdpath.Ext(srcObj.GetName())))
 		} else if innerBase := stdpath.Base(args.InnerPath); innerBase != "." && innerBase != "/" {
 			targetPath = stdpath.Join(dstDirPath, innerBase)
-			dstObj, e := GetUnwrap(ctx, storage, targetPath)
+			dstObj, e := Get(ctx, storage, targetPath)
 			onlyList = e != nil || !dstObj.IsDir()
 		}
 		if onlyList {
