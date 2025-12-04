@@ -11,6 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/OpenList/v4/server/ftp"
 	"github.com/OpenListTeam/OpenList/v4/server/sftp"
 	"github.com/OpenListTeam/sftpd-openlist"
@@ -99,8 +100,13 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 	if userObj.Disabled || !userObj.CanFTPAccess() {
 		return nil, errors.New("user is not allowed to access via SFTP")
 	}
-	passHash := model.StaticHash(string(password))
-	if err = userObj.ValidatePwdStaticHash(passHash); err != nil {
+	pass := string(password)
+	passHash := model.StaticHash(pass)
+	err = userObj.ValidatePwdStaticHash(passHash)
+	if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
+		err = common.HandleLdapLogin(conn.User(), pass)
+	}
+	if err != nil {
 		return nil, err
 	}
 	return nil, nil

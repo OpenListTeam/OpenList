@@ -19,6 +19,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/OpenList/v4/server/ftp"
 	ftpserver "github.com/fclairamb/ftpserverlib"
 )
@@ -125,7 +126,11 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 			return nil, err
 		}
 		passHash := model.StaticHash(pass)
-		if err = userObj.ValidatePwdStaticHash(passHash); err != nil {
+		err = userObj.ValidatePwdStaticHash(passHash)
+		if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
+			err = common.HandleLdapLogin(user, pass)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
