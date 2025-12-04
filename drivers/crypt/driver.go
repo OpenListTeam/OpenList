@@ -113,9 +113,9 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		size := obj.GetSize()
 		mask := model.GetObjMask(obj)
 		mask &^= model.Temp
-		name := model.UnwrapObjName(obj).GetName()
-		rawName := name
+		name := obj.GetName()
 		if mask&model.Virtual == 0 {
+			rawName := model.UnwrapObjName(obj).GetName()
 			if obj.IsDir() {
 				name, err = d.cipher.DecryptDirName(rawName)
 				if err != nil {
@@ -139,7 +139,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			continue
 		}
 		objRes := &model.Object{
-			Path:     stdpath.Join(remoteFullPath, rawName),
+			Path:     stdpath.Join(remoteFullPath, obj.GetName()),
 			Name:     name,
 			Size:     size,
 			Modified: obj.ModTime(),
@@ -195,21 +195,22 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 	}
 
 	size := remoteObj.GetSize()
-	name := model.UnwrapObjName(remoteObj).GetName()
+	name := remoteObj.GetName()
 	mask := model.GetObjMask(remoteObj)
 	mask &^= model.Temp
 	if mask&model.Virtual == 0 {
+		rawName := model.UnwrapObjName(remoteObj).GetName()
 		if !remoteObj.IsDir() {
 			size, err = d.cipher.DecryptedSize(size)
 			if err != nil {
 				log.Warnf("DecryptedSize failed for %s ,will use original size, err:%s", path, err)
 			}
-			name, err = d.cipher.DecryptFileName(name)
+			name, err = d.cipher.DecryptFileName(rawName)
 			if err != nil {
 				log.Warnf("DecryptFileName failed for %s ,will use original name, err:%s", path, err)
 			}
 		} else {
-			name, err = d.cipher.DecryptDirName(name)
+			name, err = d.cipher.DecryptDirName(rawName)
 			if err != nil {
 				log.Warnf("DecryptDirName failed for %s ,will use original name, err:%s", path, err)
 			}
