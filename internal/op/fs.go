@@ -320,18 +320,16 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 			}
 			if !storage.Config().NoCache {
 				if dirCache, exist := Cache.dirCache.Get(Key(storage, parentPath)); exist {
-					if newObj != nil {
-						dirCache.UpdateObject("", wrapObjName(storage, newObj))
-					} else {
+					if newObj == nil {
 						t := time.Now()
-						newObj = &model.Object{
+						newObj = model.ObjAddMask(&model.Object{
 							Name:     dirName,
 							IsFolder: true,
 							Modified: t,
 							Ctime:    t,
-						}
-						dirCache.UpdateObject("", wrapObjName(storage, model.ObjAddMask(newObj, model.Temp)))
+						}, model.Temp)
 					}
+					dirCache.UpdateObject("", wrapObjName(storage, newObj))
 				}
 			}
 		}
@@ -373,12 +371,24 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		err = errs.NotImplement
 	}
 	if err == nil {
-		Cache.removeDirectoryObject(storage, srcDirPath, srcRawObj)
-		if newObj != nil {
-			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
-		} else if !storage.Config().NoCache {
-			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, model.ObjAddMask(srcObj, model.Temp)))
+		srcKey := Key(storage, srcDirPath)
+		dstKey := Key(storage, dstDirPath)
+		if !srcRawObj.IsDir() {
+			Cache.linkCache.DeleteKey(stdpath.Join(srcKey, srcRawObj.GetName()))
+			Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
+		}
+		if !storage.Config().NoCache {
+			if cache, exist := Cache.dirCache.Get(srcKey); exist {
+				if srcRawObj.IsDir() {
+					Cache.deleteDirectoryTree(stdpath.Join(srcKey, srcRawObj.GetName()))
+				}
+				cache.RemoveObject(srcRawObj.GetName())
+			}
+			if cache, exist := Cache.dirCache.Get(dstKey); exist {
+				if newObj == nil {
+					newObj = model.ObjAddMask(srcObj, model.Temp)
+				}
+				cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, newObj))
 			}
 		}
 	}
@@ -427,15 +437,10 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	srcDirPath := stdpath.Dir(srcPath)
-	if newObj != nil {
-		Cache.updateDirectoryObject(storage, srcDirPath, srcRawObj, wrapObjName(storage, newObj))
-	} else if !storage.Config().NoCache {
-		if cache, exist := Cache.dirCache.Get(Key(storage, srcDirPath)); exist {
-			newObj = &struct{ *model.ObjWrapName }{&model.ObjWrapName{Name: dstName, Obj: srcObj}}
-			cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, model.ObjAddMask(newObj, model.Temp)))
-		}
+	if newObj == nil {
+		newObj = model.ObjAddMask(&model.ObjWrapName{Name: dstName, Obj: srcObj}, model.Temp)
 	}
+	Cache.updateDirectoryObject(storage, stdpath.Dir(srcPath), srcRawObj, wrapObjName(storage, newObj))
 	return nil
 }
 
@@ -469,11 +474,16 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		err = errs.NotImplement
 	}
 	if err == nil {
-		if newObj != nil {
-			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
-		} else if !storage.Config().NoCache {
-			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, model.ObjAddMask(srcObj, model.Temp)))
+		dstKey := Key(storage, dstDirPath)
+		if !srcRawObj.IsDir() {
+			Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
+		}
+		if !storage.Config().NoCache {
+			if cache, exist := Cache.dirCache.Get(dstKey); exist {
+				if newObj == nil {
+					newObj = model.ObjAddMask(srcObj, model.Temp)
+				}
+				cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, newObj))
 			}
 		}
 	}
@@ -596,18 +606,17 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	}
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
-		if newObj != nil {
-			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
-		} else if !storage.Config().NoCache {
+		if !storage.Config().NoCache {
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				newObj = &model.Object{
-					Name:     file.GetName(),
-					Size:     file.GetSize(),
-					Modified: file.ModTime(),
-					Ctime:    file.CreateTime(),
+				if newObj == nil {
+					newObj = model.ObjAddMask(&model.Object{
+						Name:     file.GetName(),
+						Size:     file.GetSize(),
+						Modified: file.ModTime(),
+						Ctime:    file.CreateTime(),
+					}, model.Temp)
 				}
-				newObj = wrapObjName(storage, model.ObjAddMask(newObj, model.Temp))
-				cache.UpdateObject(newObj.GetName(), newObj)
+				cache.UpdateObject(newObj.GetName(), wrapObjName(storage, newObj))
 			}
 		}
 	}
@@ -656,10 +665,15 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	newObj, err = s.PutURL(ctx, dstDir, dstName, url)
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
-		if newObj != nil {
-			Cache.addDirectoryObject(storage, dstDirPath, wrapObjName(storage, newObj))
-		} else {
-			err = errors.New("PutURL returned nil obj")
+		if !storage.Config().NoCache {
+			if newObj != nil {
+				cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath))
+				if exist {
+					cache.UpdateObject(newObj.GetName(), wrapObjName(storage, newObj))
+				}
+			} else {
+				err = errors.New("PutURL returned nil obj")
+			}
 		}
 	}
 

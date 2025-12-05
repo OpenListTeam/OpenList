@@ -511,8 +511,12 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		newObjs, err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
 		if err == nil {
 			if len(newObjs) > 0 {
-				for _, newObj := range newObjs {
-					Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
+				if !storage.Config().NoCache {
+					if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
+						for _, newObj := range newObjs {
+							cache.UpdateObject(newObj.GetName(), newObj)
+						}
+					}
 				}
 			} else if !utils.IsBool(lazyCache...) {
 				Cache.DeleteDirectory(storage, dstDirPath)
