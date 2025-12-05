@@ -16,6 +16,8 @@ import (
 // copied from https://github.com/bihe/monorepo/blob/477e534bd4c0814cdca73fea774b518148cebd3f/pkg/persistence/sqlite.go#L59
 // with little edit.
 // it should solve "database is locked error", and make better performance.
+// Note: configuration `Database.Pool` settings are not applied for sqlite3.
+// sqlite3 uses its own tuning here for correctness and performance.
 func CreateSqliteCon(dsn string, gormConfig *gorm.Config) (con model.Connection, err error) {
 	var (
 		read  *gorm.DB
