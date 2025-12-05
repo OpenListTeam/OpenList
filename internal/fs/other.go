@@ -10,12 +10,12 @@ import (
 	"github.com/pkg/errors"
 )
 
-func makeDir(ctx context.Context, path string, lazyCache ...bool) error {
+func makeDir(ctx context.Context, path string) error {
 	storage, actualPath, err := op.GetStorageAndActualPath(path)
 	if err != nil {
 		return errors.WithMessage(err, "failed get storage")
 	}
-	return op.MakeDir(ctx, storage, actualPath, lazyCache...)
+	return op.MakeDir(ctx, storage, actualPath)
 }
 
 func rename(ctx context.Context, srcPath, dstName string, lazyCache ...bool) error {

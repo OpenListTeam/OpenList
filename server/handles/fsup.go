@@ -112,7 +112,7 @@ func FsStream(c *gin.Context) {
 	if asTask {
 		t, err = fs.PutAsTask(c.Request.Context(), dir, s)
 	} else {
-		err = fs.PutDirectly(c.Request.Context(), dir, s, true)
+		err = fs.PutDirectly(c.Request.Context(), dir, s)
 	}
 	if err != nil {
 		common.ErrorResp(c, err, 500)
@@ -212,7 +212,7 @@ func FsForm(c *gin.Context) {
 		}{f}
 		t, err = fs.PutAsTask(c.Request.Context(), dir, s)
 	} else {
-		err = fs.PutDirectly(c.Request.Context(), dir, s, true)
+		err = fs.PutDirectly(c.Request.Context(), dir, s)
 	}
 	if err != nil {
 		common.ErrorResp(c, err, 500)

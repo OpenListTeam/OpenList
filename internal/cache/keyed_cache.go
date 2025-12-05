@@ -70,7 +70,7 @@ func (c *KeyedCache[T]) Delete(key string) {
 	delete(c.entries, key)
 }
 
-func (c *KeyedCache[T]) Take(key string) (T, bool) {
+func (c *KeyedCache[T]) Pop(key string) (T, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if entry, exists := c.entries[key]; exists {
