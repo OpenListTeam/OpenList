@@ -8,7 +8,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 type CacheManager struct {
@@ -32,9 +31,8 @@ func NewCacheManager() *CacheManager {
 // global instance
 var Cache = NewCacheManager()
 
-// utils.GetFullPath(storage.GetStorage().MountPath, path)
 func Key(storage driver.Driver, path string) string {
-	return utils.GetFullPath(storage.GetStorage().MountPath, path)
+	return stdpath.Join(storage.GetStorage().MountPath, path)
 }
 
 // update object in dirCache.
