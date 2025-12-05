@@ -122,7 +122,7 @@ func (d *BaiduNetdisk) request(furl string, method string, callback base.ReqCall
 				}
 			}
 
-			if 31023 == errno && d.DownloadAPI == "crack_video" {
+			if errno == 31023 && d.DownloadAPI == "crack_video" {
 				result = res.Body()
 				return nil
 			}
@@ -247,7 +247,7 @@ func (d *BaiduNetdisk) linkCrack(file model.Obj, _ model.LinkArgs) (*model.Link,
 func (d *BaiduNetdisk) linkCrackVideo(file model.Obj, _ model.LinkArgs) (*model.Link, error) {
 	param := map[string]string{
 		"type":       "VideoURL",
-		"path":       fmt.Sprintf("%s", file.GetPath()),
+		"path":       file.GetPath(),
 		"fs_id":      file.GetID(),
 		"devuid":     "0%1",
 		"clienttype": "1",
@@ -394,49 +394,16 @@ func (d *BaiduNetdisk) quota(ctx context.Context) (model.DiskUsage, error) {
 	return driver.DiskUsageFromUsedAndTotal(resp.Used, resp.Total), nil
 }
 
-// getUploadUrl 从开放平台获取上传域名/地址，并发请求会被合并，结果会被缓存1h。
+// getUploadUrl 从开放平台获取上传域名/地址，并发请求会被合并，结果会在 uploadid 生命周期内复用。
 // 如果获取失败，则返回 Upload API设置项。
 func (d *BaiduNetdisk) getUploadUrl(path, uploadId string) string {
-	if !d.UseDynamicUploadAPI {
+	if !d.UseDynamicUploadAPI || uploadId == "" {
 		return d.UploadAPI
 	}
-	getCachedUrlFunc := func() string {
-		d.uploadUrlMu.RLock()
-		defer d.uploadUrlMu.RUnlock()
-		if d.uploadUrl != "" && time.Since(d.uploadUrlUpdateTime) < UPLOAD_URL_EXPIRE_TIME {
-			uploadUrl := d.uploadUrl
-			return uploadUrl
-		}
-		return ""
-	}
-	// 检查地址缓存
-	if uploadUrl := getCachedUrlFunc(); uploadUrl != "" {
-		return uploadUrl
-	}
 
-	uploadUrlGetFunc := func() (string, error) {
-		// 双重检查缓存
-		if uploadUrl := getCachedUrlFunc(); uploadUrl != "" {
-			return uploadUrl, nil
-		}
-
-		uploadUrl, err := d.requestForUploadUrl(path, uploadId)
-		if err != nil {
-			return "", err
-		}
-
-		d.uploadUrlMu.Lock()
-		defer d.uploadUrlMu.Unlock()
-		d.uploadUrl = uploadUrl
-		d.uploadUrlUpdateTime = time.Now()
-		return uploadUrl, nil
-	}
-
-	uploadUrl, err, _ := d.uploadUrlG.Do("", uploadUrlGetFunc)
+	uploadUrl, err := d.requestForUploadUrl(path, uploadId)
 	if err != nil {
-		fallback := d.UploadAPI
-		log.Warnf("[baidu_netdisk] get upload URL failed (%v), will use fallback URL: %s", err, fallback)
-		return fallback
+		return d.UploadAPI
 	}
 	return uploadUrl
 }

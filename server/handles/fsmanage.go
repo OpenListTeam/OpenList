@@ -57,10 +57,12 @@ func FsMkdir(c *gin.Context) {
 }
 
 type MoveCopyReq struct {
-	SrcDir    string   `json:"src_dir"`
-	DstDir    string   `json:"dst_dir"`
-	Names     []string `json:"names"`
-	Overwrite bool     `json:"overwrite"`
+	SrcDir       string   `json:"src_dir"`
+	DstDir       string   `json:"dst_dir"`
+	Names        []string `json:"names"`
+	Overwrite    bool     `json:"overwrite"`
+	SkipExisting bool     `json:"skip_existing"`
+	Merge        bool     `json:"merge"`
 }
 
 func FsMove(c *gin.Context) {
@@ -89,20 +91,25 @@ func FsMove(c *gin.Context) {
 		return
 	}
 
+	var validNames []string
 	if !req.Overwrite {
 		for _, name := range req.Names {
-			if res, _ := fs.Get(c.Request.Context(), stdpath.Join(dstDir, name), &fs.GetArgs{NoLog: true}); res != nil {
+			if res, _ := fs.Get(c.Request.Context(), stdpath.Join(dstDir, name), &fs.GetArgs{NoLog: true}); res != nil && !req.SkipExisting {
 				common.ErrorStrResp(c, fmt.Sprintf("file [%s] exists", name), 403)
 				return
+			} else if res == nil {
+				validNames = append(validNames, name)
 			}
 		}
+	} else {
+		validNames = req.Names
 	}
 
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
-	for i, name := range req.Names {
-		t, err := fs.Move(c.Request.Context(), stdpath.Join(srcDir, name), dstDir, len(req.Names) > i+1)
+	for i, name := range validNames {
+		t, err := fs.Move(c.Request.Context(), stdpath.Join(srcDir, name), dstDir, len(validNames) > i+1)
 		if t != nil {
 			addedTasks = append(addedTasks, t)
 		}
@@ -151,20 +158,34 @@ func FsCopy(c *gin.Context) {
 		return
 	}
 
+	var validNames []string
 	if !req.Overwrite {
 		for _, name := range req.Names {
 			if res, _ := fs.Get(c.Request.Context(), stdpath.Join(dstDir, name), &fs.GetArgs{NoLog: true}); res != nil {
-				common.ErrorStrResp(c, fmt.Sprintf("file [%s] exists", name), 403)
-				return
+				if !req.SkipExisting && !req.Merge {
+					common.ErrorStrResp(c, fmt.Sprintf("file [%s] exists", name), 403)
+					return
+				} else if req.Merge && res.IsDir() {
+					validNames = append(validNames, name)
+				}
+			} else {
+				validNames = append(validNames, name)
 			}
 		}
+	} else {
+		validNames = req.Names
 	}
 
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
-	for i, name := range req.Names {
-		t, err := fs.Copy(c.Request.Context(), stdpath.Join(srcDir, name), dstDir, len(req.Names) > i+1)
+	for i, name := range validNames {
+		var t task.TaskExtensionInfo
+		if req.Merge {
+			t, err = fs.Merge(c.Request.Context(), stdpath.Join(srcDir, name), dstDir, len(validNames) > i+1)
+		} else {
+			t, err = fs.Copy(c.Request.Context(), stdpath.Join(srcDir, name), dstDir, len(validNames) > i+1)
+		}
 		if t != nil {
 			addedTasks = append(addedTasks, t)
 		}

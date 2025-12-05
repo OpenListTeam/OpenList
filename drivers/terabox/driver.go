@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math"
 	stdpath "path"
 	"strconv"
 
@@ -193,7 +192,7 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 	streamSize := stream.GetSize()
 	chunkSize := calculateChunkSize(streamSize)
 	chunkByteData := make([]byte, chunkSize)
-	count := int(math.Ceil(float64(streamSize) / float64(chunkSize)))
+	count := int((streamSize + chunkSize - 1) / chunkSize)
 	left := streamSize
 	uploadBlockList := make([]string, 0, count)
 	h := md5.New()

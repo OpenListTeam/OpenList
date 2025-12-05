@@ -222,4 +222,18 @@ func (d *OnedriveAPP) GetDetails(ctx context.Context) (*model.StorageDetails, er
 	}, nil
 }
 
+func (d *OnedriveAPP) GetDirectUploadTools() []string {
+	if !d.EnableDirectUpload {
+		return nil
+	}
+	return []string{"HttpDirect"}
+}
+
+func (d *OnedriveAPP) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, _ int64) (any, error) {
+	if !d.EnableDirectUpload {
+		return nil, errs.NotImplement
+	}
+	return d.getDirectUploadInfo(ctx, path.Join(dstDir.GetPath(), fileName))
+}
+
 var _ driver.Driver = (*OnedriveAPP)(nil)

@@ -3,7 +3,6 @@ package strm
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	stdpath "path"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/tchap/go-patricia/v2/patricia"
@@ -27,7 +27,7 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 			localPath := stdpath.Join(localParentPath, obj.GetName())
 			generateStrm(ctx, driver, obj, localPath)
 		}
-		deleteExtraFiles(localParentPath, objs)
+		deleteExtraFiles(driver, localParentPath, objs)
 	}
 
 	_ = strmTrie.VisitPrefixes(patricia.Prefix(path), func(needPathPrefix patricia.Prefix, item patricia.Item) error {
@@ -38,10 +38,7 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 			return nil
 		}
 		for _, strmDriver := range strmDrivers {
-			strmObjs, _ := utils.SliceConvert(objs, func(obj model.Obj) (model.Obj, error) {
-				ret := strmDriver.convert2strmObj(ctx, path, obj)
-				return &ret, nil
-			})
+			strmObjs := strmDriver.convert2strmObjs(ctx, path, objs)
 			updateLocal(strmDriver, stdpath.Join(stdpath.Base(needPath), restPath), strmObjs)
 		}
 		return nil
@@ -92,33 +89,41 @@ func RemoveStrm(dstPath string, d *Strm) {
 }
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
-	link, err := driver.Link(ctx, obj, model.LinkArgs{})
-	if err != nil {
-		log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
-		return
-	}
-	seekableStream, err := stream.NewSeekableStream(&stream.FileStream{
-		Obj: obj,
-		Ctx: ctx,
-	}, link)
-	if err != nil {
-		_ = link.Close()
-		log.Warnf("failed to generate strm of obj %s: failed to get seekable stream: %v", localPath, err)
-		return
-	}
-	defer seekableStream.Close()
-	file, err := utils.CreateNestedFile(localPath)
-	if err != nil {
-		log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
-		return
-	}
-	defer file.Close()
-	if _, err := io.Copy(file, seekableStream); err != nil {
-		log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
+	if !obj.IsDir() {
+		link, err := driver.Link(ctx, obj, model.LinkArgs{})
+		if err != nil {
+			log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
+			return
+		}
+		defer link.Close()
+		size := link.ContentLength
+		if size <= 0 {
+			size = obj.GetSize()
+		}
+		rrf, err := stream.GetRangeReaderFromLink(size, link)
+		if err != nil {
+			log.Warnf("failed to generate strm of obj %s: failed to get range reader: %v", localPath, err)
+			return
+		}
+		rc, err := rrf.RangeRead(ctx, http_range.Range{Length: -1})
+		if err != nil {
+			log.Warnf("failed to generate strm of obj %s: failed to read range: %v", localPath, err)
+			return
+		}
+		defer rc.Close()
+		file, err := utils.CreateNestedFile(localPath)
+		if err != nil {
+			log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
+			return
+		}
+		defer file.Close()
+		if _, err := utils.CopyWithBuffer(file, rc); err != nil {
+			log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
+		}
 	}
 }
 
-func deleteExtraFiles(localPath string, objs []model.Obj) {
+func deleteExtraFiles(driver *Strm, localPath string, objs []model.Obj) {
 	localFiles, err := getLocalFiles(localPath)
 	if err != nil {
 		log.Errorf("Failed to read local files from %s: %v", localPath, err)
@@ -126,15 +131,29 @@ func deleteExtraFiles(localPath string, objs []model.Obj) {
 	}
 
 	objsSet := make(map[string]struct{})
+	objsBaseNameSet := make(map[string]struct{})
 	for _, obj := range objs {
 		if obj.IsDir() {
 			continue
 		}
-		objsSet[stdpath.Join(localPath, obj.GetName())] = struct{}{}
+		objName := obj.GetName()
+		objsSet[stdpath.Join(localPath, objName)] = struct{}{}
+
+		objBaseName := strings.TrimSuffix(objName, utils.SourceExt(objName))
+		objsBaseNameSet[stdpath.Join(localPath, objBaseName[:len(objBaseName)-1])] = struct{}{}
 	}
 
 	for _, localFile := range localFiles {
 		if _, exists := objsSet[localFile]; !exists {
+			ext := utils.Ext(localFile)
+			localFileName := stdpath.Base(localFile)
+			localFileBaseName := strings.TrimSuffix(localFile, utils.SourceExt(localFileName))
+			_, nameExists := objsBaseNameSet[localFileBaseName[:len(localFileBaseName)-1]]
+			_, downloadFile := driver.downloadSuffix[ext]
+			if driver.KeepLocalDownloadFile && nameExists && downloadFile {
+				continue
+			}
+
 			err := os.Remove(localFile)
 			if err != nil {
 				log.Errorf("Failed to delete file: %s, error: %v\n", localFile, err)

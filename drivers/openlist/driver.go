@@ -117,7 +117,7 @@ func (d *OpenList) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 	if d.PassUAToUpsteam {
 		userAgent := args.Header.Get("user-agent")
 		if userAgent != "" {
-			headers["User-Agent"] = base.UserAgent
+			headers["User-Agent"] = userAgent
 		}
 	}
 	// if PassIPToUpsteam is true, then pass the ip address to the upstream
@@ -360,6 +360,7 @@ func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.O
 			Name:          []string{name},
 			PutIntoNewDir: args.PutIntoNewDir,
 			SrcDir:        dir,
+			Overwrite:     args.Overwrite,
 		})
 	})
 	return err

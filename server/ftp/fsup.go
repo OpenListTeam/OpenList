@@ -15,7 +15,9 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	ftpserver "github.com/fclairamb/ftpserverlib"
 	"github.com/pkg/errors"
@@ -48,6 +50,11 @@ func OpenUpload(ctx context.Context, path string, trunc bool) (*FileUploadProxy,
 	err := uploadAuth(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	// Check if system file should be ignored
+	_, name := stdpath.Split(path)
+	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(name) {
+		return nil, errs.IgnoredSystemFile
 	}
 	tmpFile, err := os.CreateTemp(conf.Conf.TempDir, "file-*")
 	if err != nil {
@@ -149,6 +156,11 @@ func OpenUploadWithLength(ctx context.Context, path string, trunc bool, length i
 	err := uploadAuth(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	// Check if system file should be ignored
+	_, name := stdpath.Split(path)
+	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(name) {
+		return nil, errs.IgnoredSystemFile
 	}
 	if trunc {
 		_ = fs.Remove(ctx, path)

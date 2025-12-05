@@ -756,30 +756,24 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		}
 		partInfo := ""
 		var reader io.ReadSeeker
-		var rateLimitedRd io.Reader
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
-				if reader == nil {
-					var err error
-					reader, err = ss.GetSectionReader(offset, partSize)
-					if err != nil {
-						return err
-					}
-					silceMd5.Reset()
-					w, err := utils.CopyWithBuffer(writers, reader)
-					if w != partSize {
-						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", partSize, w, err)
-					}
-					// 计算块md5并进行hex和base64编码
-					md5Bytes := silceMd5.Sum(nil)
-					silceMd5Hexs = append(silceMd5Hexs, strings.ToUpper(hex.EncodeToString(md5Bytes)))
-					partInfo = fmt.Sprintf("%d-%s", i, base64.StdEncoding.EncodeToString(md5Bytes))
-
-					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+			Before: func(ctx context.Context) (err error) {
+				reader, err = ss.GetSectionReader(offset, partSize)
+				if err != nil {
+					return err
 				}
+				silceMd5.Reset()
+				w, err := utils.CopyWithBuffer(writers, reader)
+				if w != partSize {
+					return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", partSize, w, err)
+				}
+				// 计算块md5并进行hex和base64编码
+				md5Bytes := silceMd5.Sum(nil)
+				silceMd5Hexs = append(silceMd5Hexs, strings.ToUpper(hex.EncodeToString(md5Bytes)))
+				partInfo = fmt.Sprintf("%d-%s", i, base64.StdEncoding.EncodeToString(md5Bytes))
 				return nil
 			},
-			Do: func(ctx context.Context) error {
+			Do: func(ctx context.Context) (err error) {
 				reader.Seek(0, io.SeekStart)
 				uploadUrls, err := y.GetMultiUploadUrls(ctx, isFamily, initMultiUpload.Data.UploadFileID, partInfo)
 				if err != nil {
@@ -788,11 +782,11 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 
 				// step.4 上传切片
 				uploadUrl := uploadUrls[0]
-				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false, rateLimitedRd, isFamily)
+				_, err = y.put(ctx, uploadUrl.RequestURL, uploadUrl.Headers, false, driver.NewLimitedUploadStream(ctx, reader), isFamily)
 				if err != nil {
 					return err
 				}
-				up(float64(threadG.Success()) * 100 / float64(count))
+				up(float64(threadG.Success()+1) * 100 / float64(count+1))
 				return nil
 			},
 			After: func(err error) {
@@ -804,6 +798,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 	if err = threadG.Wait(); err != nil {
 		return nil, err
 	}
+	defer up(100)
 
 	if fileMd5 != nil {
 		fileMd5Hex = strings.ToUpper(hex.EncodeToString(fileMd5.Sum(nil)))
@@ -995,7 +990,7 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 					return err
 				}
 
-				up(float64(threadG.Success()) * 100 / float64(len(uploadUrls)))
+				up(float64(threadG.Success()+1) * 100 / float64(len(uploadUrls)+1))
 				uploadProgress.UploadParts[i] = ""
 				return nil
 			})
@@ -1007,6 +1002,7 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 			}
 			return nil, err
 		}
+		defer up(100)
 	}
 
 	// step.5 提交

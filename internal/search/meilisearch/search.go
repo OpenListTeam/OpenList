@@ -33,6 +33,7 @@ type Meilisearch struct {
 	IndexUid             string
 	FilterableAttributes []string
 	SearchableAttributes []string
+	taskQueue            *TaskQueueManager
 }
 
 func (m *Meilisearch) Config() searcher.Config {
@@ -82,14 +83,17 @@ func (m *Meilisearch) Index(ctx context.Context, node model.SearchNode) error {
 }
 
 func (m *Meilisearch) BatchIndex(ctx context.Context, nodes []model.SearchNode) error {
-	documents, _ := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
+	documents, err := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
 		parentHash := hashPath(src.Parent)
 		nodePath := path.Join(src.Parent, src.Name)
 		nodePathHash := hashPath(nodePath)
 		parentPaths := utils.GetPathHierarchy(src.Parent)
-		parentPathHashes, _ := utils.SliceConvert(parentPaths, func(parentPath string) (string, error) {
+		parentPathHashes, err := utils.SliceConvert(parentPaths, func(parentPath string) (string, error) {
 			return hashPath(parentPath), nil
 		})
+		if err != nil {
+			return nil, err
+		}
 
 		return &searchDocument{
 			ID:               nodePathHash,
@@ -98,9 +102,12 @@ func (m *Meilisearch) BatchIndex(ctx context.Context, nodes []model.SearchNode) 
 			SearchNode:       src,
 		}, nil
 	})
+	if err != nil {
+		return err
+	}
 
 	// max up to 10,000 documents per batch to reduce error rate while uploading over the Internet
-	_, err := m.Client.Index(m.IndexUid).AddDocumentsInBatchesWithContext(ctx, documents, 10000)
+	_, err = m.Client.Index(m.IndexUid).AddDocumentsInBatchesWithContext(ctx, documents, 10000)
 	if err != nil {
 		return err
 	}
@@ -203,6 +210,9 @@ func (m *Meilisearch) Del(ctx context.Context, prefix string) error {
 }
 
 func (m *Meilisearch) Release(ctx context.Context) error {
+	if m.taskQueue != nil {
+		m.taskQueue.Stop()
+	}
 	return nil
 }
 
@@ -218,4 +228,116 @@ func (m *Meilisearch) getTaskStatus(ctx context.Context, taskUID int64) (meilise
 		return meilisearch.TaskStatusUnknown, err
 	}
 	return forTask.Status, nil
+}
+
+// EnqueueUpdate enqueues an update task to the task queue
+func (m *Meilisearch) EnqueueUpdate(parent string, objs []model.Obj) {
+	if m.taskQueue == nil {
+		return
+	}
+
+	m.taskQueue.Enqueue(parent, objs)
+}
+
+// batchIndexWithTaskUID indexes documents and returns all taskUIDs
+func (m *Meilisearch) batchIndexWithTaskUID(ctx context.Context, nodes []model.SearchNode) ([]int64, error) {
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+
+	documents, err := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
+		parentHash := hashPath(src.Parent)
+		nodePath := path.Join(src.Parent, src.Name)
+		nodePathHash := hashPath(nodePath)
+		parentPaths := utils.GetPathHierarchy(src.Parent)
+		parentPathHashes, err := utils.SliceConvert(parentPaths, func(parentPath string) (string, error) {
+			return hashPath(parentPath), nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		return &searchDocument{
+			ID:               nodePathHash,
+			ParentHash:       parentHash,
+			ParentPathHashes: parentPathHashes,
+			SearchNode:       src,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// max up to 10,000 documents per batch to reduce error rate while uploading over the Internet
+	tasks, err := m.Client.Index(m.IndexUid).AddDocumentsInBatchesWithContext(ctx, documents, 10000)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return all task UIDs
+	taskUIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		taskUIDs = append(taskUIDs, task.TaskUID)
+	}
+	return taskUIDs, nil
+}
+
+// batchDeleteWithTaskUID deletes documents and returns all taskUIDs
+func (m *Meilisearch) batchDeleteWithTaskUID(ctx context.Context, paths []string) ([]int64, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	// Deduplicate paths first
+	pathSet := make(map[string]struct{})
+	uniquePaths := make([]string, 0, len(paths))
+	for _, p := range paths {
+		p = utils.FixAndCleanPath(p)
+		if _, exists := pathSet[p]; !exists {
+			pathSet[p] = struct{}{}
+			uniquePaths = append(uniquePaths, p)
+		}
+	}
+
+	const batchSize = 100 // max paths per batch to avoid filter length limits
+	var taskUIDs []int64
+
+	// Process in batches to avoid filter length limits
+	for i := 0; i < len(uniquePaths); i += batchSize {
+		end := i + batchSize
+		if end > len(uniquePaths) {
+			end = len(uniquePaths)
+		}
+		batch := uniquePaths[i:end]
+
+		// Build combined filter to delete all children in one request
+		// Format: parent_path_hashes = 'hash1' OR parent_path_hashes = 'hash2' OR ...
+		var filters []string
+		for _, p := range batch {
+			pathHash := hashPath(p)
+			filters = append(filters, fmt.Sprintf("parent_path_hashes = '%s'", pathHash))
+		}
+		if len(filters) > 0 {
+			combinedFilter := strings.Join(filters, " OR ")
+			// Delete all children for all paths in one request
+			task, err := m.Client.Index(m.IndexUid).DeleteDocumentsByFilterWithContext(ctx, combinedFilter)
+			if err != nil {
+				return nil, err
+			}
+			taskUIDs = append(taskUIDs, task.TaskUID)
+		}
+
+		// Convert paths to document IDs and batch delete
+		documentIDs := make([]string, 0, len(batch))
+		for _, p := range batch {
+			documentIDs = append(documentIDs, hashPath(p))
+		}
+		// Use batch delete API
+		task, err := m.Client.Index(m.IndexUid).DeleteDocumentsWithContext(ctx, documentIDs)
+		if err != nil {
+			return nil, err
+		}
+		taskUIDs = append(taskUIDs, task.TaskUID)
+	}
+	return taskUIDs, nil
 }

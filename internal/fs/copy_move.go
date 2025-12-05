@@ -24,14 +24,17 @@ type taskType uint8
 func (t taskType) String() string {
 	if t == 0 {
 		return "copy"
-	} else {
+	} else if t == 1 {
 		return "move"
+	} else {
+		return "merge"
 	}
 }
 
 const (
 	copy taskType = iota
 	move
+	merge
 )
 
 type FileTransferTask struct {
@@ -67,7 +70,7 @@ func (t *FileTransferTask) Run() error {
 	return t.RunWithNextTaskCallback(func(nextTask *FileTransferTask) error {
 		nextTask.groupID = t.groupID
 		task_group.TransferCoordinator.AddTask(t.groupID, nil)
-		if t.TaskType == copy {
+		if t.TaskType == copy || t.TaskType == merge {
 			CopyTaskManager.Add(nextTask)
 		} else {
 			MoveTaskManager.Add(nextTask)
@@ -109,7 +112,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	}
 
 	if srcStorage.GetStorage() == dstStorage.GetStorage() {
-		if taskType == copy {
+		if taskType == copy || taskType == merge {
 			err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath, lazyCache...)
 			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
 				return nil, err
@@ -161,7 +164,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	t.Creator, _ = ctx.Value(conf.UserKey).(*model.User)
 	t.ApiUrl = common.GetApiUrl(ctx)
 	t.groupID = dstDirPath
-	if taskType == copy {
+	if taskType == copy || taskType == merge {
 		task_group.TransferCoordinator.AddTask(dstDirPath, nil)
 		CopyTaskManager.Add(t)
 	} else {
@@ -177,6 +180,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 	if err != nil {
 		return errors.WithMessagef(err, "failed get src [%s] file", t.SrcActualPath)
 	}
+
 	if srcObj.IsDir() {
 		t.Status = "src object is dir, listing objs"
 		objs, err := op.List(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.ListArgs{})
@@ -184,17 +188,34 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 			return errors.WithMessagef(err, "failed list src [%s] objs", t.SrcActualPath)
 		}
 		dstActualPath := stdpath.Join(t.DstActualPath, srcObj.GetName())
-		if t.TaskType == copy {
+		if t.TaskType == copy || t.TaskType == merge {
 			if t.Ctx().Value(conf.NoTaskKey) != nil {
 				defer op.Cache.DeleteDirectory(t.DstStorage, dstActualPath)
 			} else {
 				task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToRefresh(dstActualPath))
 			}
 		}
+
+		existedObjs := make(map[string]bool)
+		if t.TaskType == merge {
+			dstObjs, _ := op.List(t.Ctx(), t.DstStorage, dstActualPath, model.ListArgs{})
+			for _, obj := range dstObjs {
+				if !obj.IsDir() {
+					existedObjs[obj.GetName()] = true
+				}
+			}
+		}
+
 		for _, obj := range objs {
 			if utils.IsCanceled(t.Ctx()) {
 				return nil
 			}
+
+			if t.TaskType == merge && !obj.IsDir() && existedObjs[obj.GetName()] {
+				// skip existed file
+				continue
+			}
+
 			err = f(&FileTransferTask{
 				TaskType: t.TaskType,
 				TaskData: TaskData{

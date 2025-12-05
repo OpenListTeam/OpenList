@@ -234,16 +234,8 @@ func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, e
 		if err != nil {
 			continue
 		}
-		other, ok := storage.(driver.Other)
-		if !ok {
-			continue
-		}
-		obj, err := op.GetUnwrap(ctx, storage, actualPath)
-		if err != nil {
-			continue
-		}
-		return other.Other(ctx, model.OtherArgs{
-			Obj:    obj,
+		return op.Other(ctx, storage, model.FsOtherArgs{
+			Path:   actualPath,
 			Method: args.Method,
 			Data:   args.Data,
 		})
@@ -533,6 +525,9 @@ func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 	for _, dst := range dsts {
 		storage, actualPath, err := op.GetStorageAndActualPath(stdpath.Join(dst, sub))
 		if err != nil {
+			continue
+		}
+		if storage.Config().CheckStatus && storage.GetStorage().Status != op.WORK {
 			continue
 		}
 		mode := storage.Config().LinkCacheMode

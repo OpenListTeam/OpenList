@@ -3,7 +3,6 @@ package strm
 import (
 	"context"
 	"fmt"
-
 	stdpath "path"
 	"strings"
 
@@ -58,10 +57,36 @@ func (d *Strm) list(ctx context.Context, dst, sub string, args *fs.ListArgs) ([]
 	if err != nil {
 		return nil, err
 	}
+	return d.convert2strmObjs(ctx, reqPath, objs), nil
+}
 
+func (d *Strm) convert2strmObjs(ctx context.Context, reqPath string, objs []model.Obj) []model.Obj {
 	var validObjs []model.Obj
 	for _, obj := range objs {
-		objRes := d.convert2strmObj(ctx, reqPath, obj)
+		id, name, path := "", obj.GetName(), ""
+		size := int64(0)
+		if !obj.IsDir() {
+			path = stdpath.Join(reqPath, obj.GetName())
+			ext := strings.ToLower(utils.Ext(name))
+			sourceExt := utils.SourceExt(name)
+			if _, ok := d.downloadSuffix[ext]; ok {
+				size = obj.GetSize()
+			} else if _, ok := d.supportSuffix[ext]; ok {
+				id = "strm"
+				name = strings.TrimSuffix(name, sourceExt) + "strm"
+				size = int64(len(d.getLink(ctx, path)))
+			} else {
+				continue
+			}
+		}
+		objRes := model.Object{
+			ID:       id,
+			Path:     path,
+			Name:     name,
+			Size:     size,
+			Modified: obj.ModTime(),
+			IsFolder: obj.IsDir(),
+		}
 		thumb, ok := model.GetThumb(obj)
 		if !ok {
 			validObjs = append(validObjs, &objRes)
@@ -74,33 +99,7 @@ func (d *Strm) list(ctx context.Context, dst, sub string, args *fs.ListArgs) ([]
 			},
 		})
 	}
-	return validObjs, nil
-}
-
-func (d *Strm) convert2strmObj(ctx context.Context, reqPath string, obj model.Obj) model.Object {
-	id, name, path := "", obj.GetName(), ""
-	size := int64(0)
-	if !obj.IsDir() {
-		path = stdpath.Join(reqPath, obj.GetName())
-		ext := strings.ToLower(utils.Ext(name))
-		if _, ok := d.supportSuffix[ext]; ok {
-			id = "strm"
-			name = strings.TrimSuffix(name, ext) + "strm"
-			size = int64(len(d.getLink(ctx, path)))
-		} else if _, ok := d.downloadSuffix[ext]; ok {
-			size = obj.GetSize()
-		} else {
-
-		}
-	}
-	return model.Object{
-		ID:       id,
-		Path:     path,
-		Name:     name,
-		Size:     size,
-		Modified: obj.ModTime(),
-		IsFolder: obj.IsDir(),
-	}
+	return validObjs
 }
 
 func (d *Strm) getLink(ctx context.Context, path string) string {
@@ -112,6 +111,13 @@ func (d *Strm) getLink(ctx context.Context, path string) string {
 		signPath := sign.Sign(path)
 		finalPath = fmt.Sprintf("%s?sign=%s", finalPath, signPath)
 	}
+	pathPrefix := d.PathPrefix
+	if len(pathPrefix) > 0 {
+		finalPath = stdpath.Join(pathPrefix, finalPath)
+	}
+	if !strings.HasPrefix(finalPath, "/") {
+		finalPath = "/" + finalPath
+	}
 	if d.WithoutUrl {
 		return finalPath
 	}
@@ -121,10 +127,7 @@ func (d *Strm) getLink(ctx context.Context, path string) string {
 	} else {
 		apiUrl = common.GetApiUrl(ctx)
 	}
-	if !strings.HasPrefix(finalPath, "/") {
-		finalPath = "/" + finalPath
-	}
-	return fmt.Sprintf("%s/d%s",
+	return fmt.Sprintf("%s%s",
 		apiUrl,
 		finalPath)
 }

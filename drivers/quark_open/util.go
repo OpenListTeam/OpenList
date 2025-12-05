@@ -341,8 +341,7 @@ func (d *QuarkOpen) upPart(ctx context.Context, upUrlInfo UpUrlInfo, partNumber 
 	req.Header.Set("User-Agent", "Go-http-client/1.1")
 
 	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := base.HttpClient.Do(req)
 	if err != nil {
 		return "", err
 	}

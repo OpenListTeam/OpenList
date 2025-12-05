@@ -3,6 +3,7 @@ package zip
 import (
 	"io"
 	stdpath "path"
+	"regexp"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
@@ -12,34 +13,39 @@ import (
 )
 
 type Zip struct {
+	traditionalSecondPartRegExp *regexp.Regexp
 }
 
-func (Zip) AcceptedExtensions() []string {
+func (z *Zip) AcceptedExtensions() []string {
 	return []string{}
 }
 
-func (Zip) AcceptedMultipartExtensions() map[string]tool.MultipartExtension {
+func (z *Zip) AcceptedMultipartExtensions() map[string]tool.MultipartExtension {
 	return map[string]tool.MultipartExtension{
-		".zip":     {".z%.2d", 1},
-		".zip.001": {".zip.%.3d", 2},
+		".zip":     {PartFileFormat: regexp.MustCompile(`^.*\.z(\d+)$`), SecondPartIndex: 1},
+		".zip.001": {PartFileFormat: regexp.MustCompile(`^.*\.zip\.(\d+)$`), SecondPartIndex: 2},
 	}
 }
 
-func (Zip) GetMeta(ss []*stream.SeekableStream, args model.ArchiveArgs) (model.ArchiveMeta, error) {
-	zipReader, err := getReader(ss)
+func (z *Zip) GetMeta(ss []*stream.SeekableStream, args model.ArchiveArgs) (model.ArchiveMeta, error) {
+	zipReader, err := z.getReader(ss)
 	if err != nil {
 		return nil, err
 	}
+	efs := true
+	if len(zipReader.File) > 0 {
+		efs = isEFS(zipReader.File[0].Flags)
+	}
 	encrypted, tree := tool.GenerateMetaTreeFromFolderTraversal(&WrapReader{Reader: zipReader})
 	return &model.ArchiveMetaInfo{
-		Comment:   zipReader.Comment,
+		Comment:   decodeName(zipReader.Comment, efs),
 		Encrypted: encrypted,
 		Tree:      tree,
 	}, nil
 }
 
-func (Zip) List(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) ([]model.Obj, error) {
-	zipReader, err := getReader(ss)
+func (z *Zip) List(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) ([]model.Obj, error) {
+	zipReader, err := z.getReader(ss)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +63,7 @@ func (Zip) List(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) ([]mod
 				_ = rc.Close()
 				passVerified = true
 			}
-			name := strings.TrimSuffix(decodeName(file.Name), "/")
+			name := strings.TrimSuffix(decodeName(file.Name, isEFS(file.Flags)), "/")
 			if strings.Contains(name, "/") {
 				// 有些压缩包不压缩第一个文件夹
 				strs := strings.Split(name, "/")
@@ -70,7 +76,7 @@ func (Zip) List(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) ([]mod
 				}
 				continue
 			}
-			ret = append(ret, tool.MakeModelObj(&WrapFileInfo{FileInfo: file.FileInfo()}))
+			ret = append(ret, tool.MakeModelObj(&WrapFileInfo{FileInfo: file.FileInfo(), efs: isEFS(file.Flags)}))
 		}
 		if len(ret) == 0 && dir != nil {
 			ret = append(ret, dir)
@@ -81,13 +87,13 @@ func (Zip) List(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) ([]mod
 		ret := make([]model.Obj, 0)
 		exist := false
 		for _, file := range zipReader.File {
-			name := decodeName(file.Name)
+			name := decodeName(file.Name, isEFS(file.Flags))
 			dir := stdpath.Dir(strings.TrimSuffix(name, "/")) + "/"
 			if dir != innerPath {
 				continue
 			}
 			exist = true
-			ret = append(ret, tool.MakeModelObj(&WrapFileInfo{file.FileInfo()}))
+			ret = append(ret, tool.MakeModelObj(&WrapFileInfo{file.FileInfo(), isEFS(file.Flags)}))
 		}
 		if !exist {
 			return nil, errs.ObjectNotFound
@@ -96,14 +102,14 @@ func (Zip) List(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) ([]mod
 	}
 }
 
-func (Zip) Extract(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) (io.ReadCloser, int64, error) {
-	zipReader, err := getReader(ss)
+func (z *Zip) Extract(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) (io.ReadCloser, int64, error) {
+	zipReader, err := z.getReader(ss)
 	if err != nil {
 		return nil, 0, err
 	}
 	innerPath := strings.TrimPrefix(args.InnerPath, "/")
 	for _, file := range zipReader.File {
-		if decodeName(file.Name) == innerPath {
+		if decodeName(file.Name, isEFS(file.Flags)) == innerPath {
 			if file.IsEncrypted() {
 				file.SetPassword(args.Password)
 			}
@@ -117,8 +123,8 @@ func (Zip) Extract(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) (io
 	return nil, 0, errs.ObjectNotFound
 }
 
-func (Zip) Decompress(ss []*stream.SeekableStream, outputPath string, args model.ArchiveInnerArgs, up model.UpdateProgress) error {
-	zipReader, err := getReader(ss)
+func (z *Zip) Decompress(ss []*stream.SeekableStream, outputPath string, args model.ArchiveInnerArgs, up model.UpdateProgress) error {
+	zipReader, err := z.getReader(ss)
 	if err != nil {
 		return err
 	}
@@ -128,5 +134,7 @@ func (Zip) Decompress(ss []*stream.SeekableStream, outputPath string, args model
 var _ tool.Tool = (*Zip)(nil)
 
 func init() {
-	tool.RegisterTool(Zip{})
+	tool.RegisterTool(&Zip{
+		traditionalSecondPartRegExp: regexp.MustCompile(`^.*\.z0*1$`),
+	})
 }

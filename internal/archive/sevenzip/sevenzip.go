@@ -2,6 +2,7 @@ package sevenzip
 
 import (
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
@@ -18,7 +19,7 @@ func (SevenZip) AcceptedExtensions() []string {
 
 func (SevenZip) AcceptedMultipartExtensions() map[string]tool.MultipartExtension {
 	return map[string]tool.MultipartExtension{
-		".7z.001": {".7z.%.3d", 2},
+		".7z.001": {PartFileFormat: regexp.MustCompile(`^.*\.7z\.(\d+)$`), SecondPartIndex: 2},
 	}
 }
 
