@@ -1,4 +1,4 @@
-//go:build !cgo
+//go:build cgo
 
 package dbengine
 
@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/glebarez/sqlite"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"runtime"
 	"strings"
