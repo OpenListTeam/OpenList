@@ -6,7 +6,7 @@ import (
 )
 
 func GetSSHPublicKeyByUserId(userId uint, pageIndex, pageSize int) (keys []model.SSHPublicKey, count int64, err error) {
-	keyDB := db.Model(&model.SSHPublicKey{})
+	keyDB := rwDb.R().Model(&model.SSHPublicKey{})
 	query := model.SSHPublicKey{UserId: userId}
 	if err := keyDB.Where(query).Count(&count).Error; err != nil {
 		return nil, 0, errors.Wrapf(err, "failed get user's keys count")
@@ -19,7 +19,7 @@ func GetSSHPublicKeyByUserId(userId uint, pageIndex, pageSize int) (keys []model
 
 func GetSSHPublicKeyById(id uint) (*model.SSHPublicKey, error) {
 	var k model.SSHPublicKey
-	if err := db.First(&k, id).Error; err != nil {
+	if err := rwDb.R().First(&k, id).Error; err != nil {
 		return nil, errors.Wrapf(err, "failed get old key")
 	}
 	return &k, nil
@@ -27,22 +27,22 @@ func GetSSHPublicKeyById(id uint) (*model.SSHPublicKey, error) {
 
 func GetSSHPublicKeyByUserTitle(userId uint, title string) (*model.SSHPublicKey, error) {
 	key := model.SSHPublicKey{UserId: userId, Title: title}
-	if err := db.Where(key).First(&key).Error; err != nil {
+	if err := rwDb.R().Where(key).First(&key).Error; err != nil {
 		return nil, errors.Wrapf(err, "failed find key with title of user")
 	}
 	return &key, nil
 }
 
 func CreateSSHPublicKey(k *model.SSHPublicKey) error {
-	return errors.WithStack(db.Create(k).Error)
+	return errors.WithStack(rwDb.W().Create(k).Error)
 }
 
 func UpdateSSHPublicKey(k *model.SSHPublicKey) error {
-	return errors.WithStack(db.Save(k).Error)
+	return errors.WithStack(rwDb.W().Save(k).Error)
 }
 
 func GetSSHPublicKeys(pageIndex, pageSize int) (keys []model.SSHPublicKey, count int64, err error) {
-	keyDB := db.Model(&model.SSHPublicKey{})
+	keyDB := rwDb.R().Model(&model.SSHPublicKey{})
 	if err := keyDB.Count(&count).Error; err != nil {
 		return nil, 0, errors.Wrapf(err, "failed get keys count")
 	}
@@ -53,5 +53,5 @@ func GetSSHPublicKeys(pageIndex, pageSize int) (keys []model.SSHPublicKey, count
 }
 
 func DeleteSSHPublicKeyById(id uint) error {
-	return errors.WithStack(db.Delete(&model.SSHPublicKey{}, id).Error)
+	return errors.WithStack(rwDb.W().Delete(&model.SSHPublicKey{}, id).Error)
 }
