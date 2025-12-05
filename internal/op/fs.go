@@ -584,6 +584,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		log.Warnf("file size < 0, try to get full size from cache")
 		file.CacheFullAndWriter(nil, nil)
 	}
+
 	var newObj model.Obj
 	switch s := storage.(type) {
 	case driver.PutResult:

@@ -68,7 +68,6 @@ func (t *FileTransferTask) Run() error {
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
 	return t.RunWithNextTaskCallback(func(nextTask *FileTransferTask) error {
-		nextTask.groupID = t.groupID
 		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 		if t.TaskType == copy || t.TaskType == merge {
 			CopyTaskManager.Add(nextTask)
@@ -138,6 +137,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 		TaskType: taskType,
 	}
 
+	t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
 	if ctx.Value(conf.NoTaskKey) != nil {
 		var callback func(nextTask *FileTransferTask) error
 		hasSuccess := false
@@ -150,25 +150,24 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 			return err
 		}
 		t.Base.SetCtx(ctx)
+		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 		err = t.RunWithNextTaskCallback(callback)
 		if hasSuccess || err == nil {
 			if taskType == move {
-				task_group.RefreshAndRemove(dstDirPath, task_group.SrcPathToRemove(srcObjPath))
-				// } else {
-				// 	op.Cache.DeleteDirectory(t.DstStorage, dstDirActualPath)
+				task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
 			}
 		}
+		task_group.TransferCoordinator.Done(t.groupID, hasSuccess)
 		return nil, err
 	}
 
 	t.Creator, _ = ctx.Value(conf.UserKey).(*model.User)
 	t.ApiUrl = common.GetApiUrl(ctx)
-	t.groupID = dstDirPath
 	if taskType == copy || taskType == merge {
-		task_group.TransferCoordinator.AddTask(dstDirPath, nil)
+		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 		CopyTaskManager.Add(t)
 	} else {
-		task_group.TransferCoordinator.AddTask(dstDirPath, task_group.SrcPathToRemove(srcObjPath))
+		task_group.TransferCoordinator.AddTask(t.groupID, task_group.SrcPathToRemove(srcObjPath))
 		MoveTaskManager.Add(t)
 	}
 	return t, nil
@@ -188,9 +187,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 			return errors.WithMessagef(err, "failed list src [%s] objs", t.SrcActualPath)
 		}
 		dstActualPath := stdpath.Join(t.DstActualPath, srcObj.GetName())
-		if t.Ctx().Value(conf.NoTaskKey) == nil {
-			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToRefresh(dstActualPath))
-		}
+		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstActualPath))
 
 		existedObjs := make(map[string]bool)
 		if t.TaskType == merge {
@@ -226,6 +223,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 					SrcStorageMp:  t.SrcStorageMp,
 					DstStorageMp:  t.DstStorageMp,
 				},
+				groupID: t.groupID,
 			})
 			if err != nil {
 				return err
@@ -235,8 +233,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		return nil
 	}
 
-	var link *model.Link
-	link, srcObj, err = op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
+	link, srcObj, err := op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
 	if err != nil {
 		return errors.WithMessagef(err, "failed get [%s] link", t.SrcActualPath)
 	}

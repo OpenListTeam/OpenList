@@ -87,7 +87,7 @@ func putAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) 
 		file:             file,
 	}
 	t.SetTotalBytes(file.GetSize())
-	task_group.TransferCoordinator.AddTask(dstDirPath, nil)
+	task_group.TransferCoordinator.AddTask(stdpath.Join(storage.GetStorage().MountPath, dstDirActualPath), nil)
 	UploadTaskManager.Add(t)
 	return t, nil
 }

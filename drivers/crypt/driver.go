@@ -374,7 +374,7 @@ func (d *Crypt) Put(ctx context.Context, dstDir model.Obj, streamer model.FileSt
 		ForceStreamUpload: true,
 		Exist:             streamer.GetExist(),
 	}
-	return op.Put(ctx, remoteStorage, remoteActualPath, streamOut, up)
+	return op.Put(ctx, remoteStorage, remoteActualPath, streamOut, up, true)
 }
 
 func (d *Crypt) GetDetails(ctx context.Context) (*model.StorageDetails, error) {

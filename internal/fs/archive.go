@@ -162,6 +162,7 @@ func (t *ArchiveContentUploadTask) Run() error {
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
 	return t.RunWithNextTaskCallback(func(nextTsk *ArchiveContentUploadTask) error {
+		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 		ArchiveContentUploadTaskManager.Add(nextTsk)
 		return nil
 	})
@@ -204,8 +205,8 @@ func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTask *Arch
 		if err != nil {
 			return err
 		}
-		if !t.InPlace && len(t.groupID) > 0 {
-			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToRefresh(nextDstActualPath))
+		if !t.InPlace {
+			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(nextDstActualPath))
 		}
 		var es error
 		for _, entry := range entries {
@@ -218,9 +219,6 @@ func (t *ArchiveContentUploadTask) RunWithNextTaskCallback(f func(nextTask *Arch
 			if err != nil {
 				es = stderrors.Join(es, err)
 				continue
-			}
-			if len(t.groupID) > 0 {
-				task_group.TransferCoordinator.AddTask(t.groupID, nil)
 			}
 			err = f(&ArchiveContentUploadTask{
 				TaskExtension: task.TaskExtension{
@@ -405,14 +403,22 @@ func archiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args 
 		}
 		defer uploadTask.deleteSrcFile()
 		var callback func(t *ArchiveContentUploadTask) error
+		var hasSuccess bool
 		callback = func(t *ArchiveContentUploadTask) error {
 			t.Base.SetCtx(ctx)
 			e := t.RunWithNextTaskCallback(callback)
+			if e == nil {
+				hasSuccess = true
+			}
 			t.deleteSrcFile()
 			return e
 		}
 		uploadTask.Base.SetCtx(ctx)
-		return nil, uploadTask.RunWithNextTaskCallback(callback)
+		uploadTask.groupID = stdpath.Join(uploadTask.DstStorageMp, uploadTask.DstActualPath)
+		task_group.TransferCoordinator.AddTask(uploadTask.groupID, nil)
+		err = uploadTask.RunWithNextTaskCallback(callback)
+		task_group.TransferCoordinator.Done(uploadTask.groupID, hasSuccess)
+		return nil, err
 	} else {
 		tsk.Creator, _ = ctx.Value(conf.UserKey).(*model.User)
 		tsk.ApiUrl = common.GetApiUrl(ctx)

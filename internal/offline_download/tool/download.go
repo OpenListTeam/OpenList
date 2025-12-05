@@ -2,6 +2,7 @@ package tool
 
 import (
 	"fmt"
+	"path"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -201,11 +202,11 @@ func (t *DownloadTask) Transfer() error {
 				DstStorage:    dstStorage,
 				DstStorageMp:  dstStorage.GetStorage().MountPath,
 			},
-			groupID:      t.DstDirPath,
 			DeletePolicy: t.DeletePolicy,
 			Url:          t.Url,
 		}
 		tsk.SetTotalBytes(t.GetTotalBytes())
+		tsk.groupID = path.Join(tsk.DstStorageMp, tsk.DstActualPath)
 		task_group.TransferCoordinator.AddTask(tsk.groupID, nil)
 		TransferTaskManager.Add(tsk)
 		return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	stdpath "path"
 	"path/filepath"
 	"time"
@@ -147,10 +148,10 @@ func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 				DstStorage:    dstStorage,
 				DstStorageMp:  dstStorage.GetStorage().MountPath,
 			},
-			groupID:      dstDirPath,
 			DeletePolicy: deletePolicy,
 		}
-		task_group.TransferCoordinator.AddTask(dstDirPath, nil)
+		t.groupID = path.Join(t.DstStorageMp, t.DstActualPath)
+		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 		TransferTaskManager.Add(t)
 	}
 	return nil
@@ -169,7 +170,7 @@ func transferStdPath(t *TransferTask) error {
 			return err
 		}
 		dstDirActualPath := stdpath.Join(t.DstActualPath, info.Name())
-		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToRefresh(dstDirActualPath))
+		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstDirActualPath))
 		for _, entry := range entries {
 			srcRawPath := stdpath.Join(t.SrcActualPath, entry.Name())
 			task := &TransferTask{
@@ -260,10 +261,10 @@ func transferObj(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 				SrcStorageMp:  srcStorage.GetStorage().MountPath,
 				DstStorageMp:  dstStorage.GetStorage().MountPath,
 			},
-			groupID:      dstDirPath,
 			DeletePolicy: deletePolicy,
 		}
-		task_group.TransferCoordinator.AddTask(dstDirPath, nil)
+		t.groupID = path.Join(t.DstStorageMp, t.DstActualPath)
+		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 		TransferTaskManager.Add(t)
 	}
 	return nil
@@ -282,7 +283,7 @@ func transferObjPath(t *TransferTask) error {
 			return errors.WithMessagef(err, "failed list src [%s] objs", t.SrcActualPath)
 		}
 		dstDirActualPath := stdpath.Join(t.DstActualPath, srcObj.GetName())
-		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToRefresh(dstDirActualPath))
+		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstDirActualPath))
 		for _, obj := range objs {
 			if utils.IsCanceled(t.Ctx()) {
 				return nil
@@ -313,12 +314,11 @@ func transferObjPath(t *TransferTask) error {
 }
 
 func transferObjFile(t *TransferTask) error {
-	srcFile, err := op.Get(t.Ctx(), t.SrcStorage, t.SrcActualPath)
+	_, err := op.Get(t.Ctx(), t.SrcStorage, t.SrcActualPath)
 	if err != nil {
 		return errors.WithMessagef(err, "failed get src [%s] file", t.SrcActualPath)
 	}
-	var link *model.Link
-	link, srcFile, err = op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
+	link, srcFile, err := op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
 	if err != nil {
 		return errors.WithMessagef(err, "failed get [%s] link", t.SrcActualPath)
 	}
