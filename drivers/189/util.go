@@ -107,7 +107,7 @@ import (
 //	res, err = d.client.R().
 //		SetHeaders(map[string]string{
 //			"lt":         lt,
-//			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36",
+//			"User-Agent": base.UserAgentNT,
 //			"Referer":    "https://open.e.189.cn/",
 //			"accept":     "application/json;charset=UTF-8",
 //		}).SetFormData(map[string]string{

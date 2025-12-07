@@ -71,9 +71,8 @@ func (d *ILanZou) request(pathname, method string, callback base.ReqCallback, pr
 	req.SetHeaders(map[string]string{
 		"Origin":          d.conf.site,
 		"Referer":         d.conf.site + "/",
-		"User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
-		"Accept-Encoding": "gzip, deflate, br, zstd",
-		"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,mt;q=0.5",
+		"Accept-Encoding": "gzip",
+		"Accept-Language": "zh-CN,zh;q=0.9,en-US,en;q=0.8",
 	})
 
 	if d.Addition.Ip != "" {
