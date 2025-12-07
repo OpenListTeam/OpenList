@@ -4,6 +4,7 @@ import (
 	"context"
 	stdpath "path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -13,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
@@ -75,8 +77,34 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if !storage.Config().NoCache {
 			if len(files) > 0 {
 				log.Debugf("set cache: %s => %+v", key, files)
-				ttl := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
-				Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), ttl)
+
+				ttl := storage.GetStorage().CacheExpiration
+
+				customCachePolicies := storage.GetStorage().CustomCachePolicies
+				if len(customCachePolicies) > 0 {
+					configPolicies := strings.Split(customCachePolicies, "\n")
+					for _, configPolicy := range configPolicies {
+						policy := strings.Split(strings.TrimSpace(configPolicy), ":")
+						if len(policy) != 2 {
+							log.Warnf("Malformed custom cache policy entry: %s in storage %s for path %s. Expected format: pattern:ttl", configPolicy, storage.GetStorage().MountPath, path)
+							continue
+						}
+						if match, err1 := doublestar.Match(policy[0], path); err1 != nil {
+							log.Warnf("Invalid glob pattern in custom cache policy: %s, error: %v", policy[0], err1)
+							continue
+						} else if !match {
+							continue
+						}
+
+						if configTtl, err1 := strconv.ParseInt(policy[1], 10, 64); err1 == nil {
+							ttl = int(configTtl)
+							break
+						}
+					}
+				}
+
+				duration := time.Minute * time.Duration(ttl)
+				Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), duration)
 			} else {
 				log.Debugf("del cache: %s", key)
 				Cache.deleteDirectoryTree(key)

@@ -15,6 +15,7 @@ Final opts by @Suyunjing @j2rong4cn @KirCute @Da3zKi7
 */
 
 import (
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
@@ -49,13 +50,11 @@ var config = driver.Config{
 func init() {
 	op.RegisterDriver(func() driver.Driver {
 		return &Mediafire{
-			appBase:         "https://app.mediafire.com",
-			apiBase:         "https://www.mediafire.com/api/1.5",
-			hostBase:        "https://www.mediafire.com",
-			maxRetries:      3,
-			secChUa:         "\"Not)A;Brand\";v=\"8\", \"Chromium\";v=\"139\", \"Google Chrome\";v=\"139\"",
-			secChUaPlatform: "Windows",
-			userAgent:       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+			appBase:    "https://app.mediafire.com",
+			apiBase:    "https://www.mediafire.com/api/1.5",
+			hostBase:   "https://www.mediafire.com",
+			maxRetries: 3,
+			userAgent:  base.UserAgent,
 		}
 	})
 }
