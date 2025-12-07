@@ -2,7 +2,7 @@ package alias
 
 import (
 	"context"
-	"errors"
+	"math/rand"
 	stdpath "path"
 	"strings"
 	"time"
@@ -12,7 +12,9 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -118,37 +120,28 @@ func (d *Alias) link(ctx context.Context, reqPath string, args model.LinkArgs) (
 	return op.Link(ctx, storage, reqActualPath, args)
 }
 
-func (d *Alias) getReqPath(ctx context.Context, obj model.Obj, isParent bool) ([]*string, error) {
-	root, sub := d.getRootAndPath(obj.GetPath())
+func (d *Alias) getAllReqPath(ctx context.Context, objPath string, isParent bool, ifContinue func(err error) (bool, error)) ([]string, error) {
+	root, sub := d.getRootAndPath(objPath)
 	if sub == "" && !isParent {
 		return nil, errs.NotSupport
 	}
 	dsts, ok := d.pathMap[root]
-	all := true
 	if !ok {
 		return nil, errs.ObjectNotFound
 	}
-	var reqPath []*string
+	var reqPath []string
 	for _, dst := range dsts {
 		path := stdpath.Join(dst, sub)
 		_, err := fs.Get(ctx, path, &fs.GetArgs{NoLog: true})
-		if err != nil {
-			all = false
-			if d.ProtectSameName && d.ParallelWrite && len(reqPath) >= 2 {
-				return nil, errs.NotImplement
+		cont, err := ifContinue(err)
+		if !cont {
+			if err == nil {
+				return []string{path}, nil
+			} else {
+				return nil, err
 			}
-			continue
 		}
-		if !d.ProtectSameName && !d.ParallelWrite {
-			return []*string{&path}, nil
-		}
-		reqPath = append(reqPath, &path)
-		if d.ProtectSameName && !d.ParallelWrite && len(reqPath) >= 2 {
-			return nil, errs.NotImplement
-		}
-		if d.ProtectSameName && d.ParallelWrite && len(reqPath) >= 2 && !all {
-			return nil, errs.NotImplement
-		}
+		reqPath = append(reqPath, path)
 	}
 	if len(reqPath) == 0 {
 		return nil, errs.ObjectNotFound
@@ -156,8 +149,211 @@ func (d *Alias) getReqPath(ctx context.Context, obj model.Obj, isParent bool) ([
 	return reqPath, nil
 }
 
-func (d *Alias) getArchiveMeta(ctx context.Context, dst, sub string, args model.ArchiveArgs) (model.ArchiveMeta, error) {
-	reqPath := stdpath.Join(dst, sub)
+func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
+	if policy == AllWP {
+		return func(_ error) (bool, error) {
+			return true, nil
+		}
+	}
+	all := true
+	l := 0
+	return func(err error) (bool, error) {
+		if err != nil {
+			switch policy {
+			case AllStrictWP:
+				return false, ErrSamePathLeak
+			case DeterministicOrAllWP:
+				if l >= 2 {
+					return false, ErrSamePathLeak
+				}
+			}
+			all = false
+		} else {
+			switch policy {
+			case FirstRWP:
+				return false, nil
+			case DeterministicWP:
+				if l > 0 {
+					return false, ErrPathConflict
+				}
+			case DeterministicOrAllWP:
+				if l > 0 && !all {
+					return false, ErrSamePathLeak
+				}
+			}
+			l += 1
+		}
+		return true, nil
+	}
+}
+
+func (d *Alias) getWritePath(ctx context.Context, obj model.Obj, isParent bool) ([]string, error) {
+	if d.WriteConflictPolicy == DisabledWP {
+		return nil, errs.PermissionDenied
+	}
+	reqPath, err := d.getAllReqPath(ctx, obj.GetPath(), isParent, getWriteAndPutFilterFunc(d.WriteConflictPolicy))
+	if err != nil {
+		return nil, err
+	}
+	return reqPath, nil
+}
+
+func (d *Alias) getPutPath(ctx context.Context, obj model.Obj) ([]string, error) {
+	if d.PutConflictPolicy == DisabledWP {
+		return nil, errs.PermissionDenied
+	}
+	reqPath, err := d.getAllReqPath(ctx, obj.GetPath(), true, getWriteAndPutFilterFunc(d.PutConflictPolicy))
+	if err != nil {
+		return nil, err
+	}
+	if d.PutConflictPolicy == RandomBalancedRP {
+		ri := rand.Intn(len(reqPath))
+		return []string{reqPath[ri]}, nil
+	} else if d.PutConflictPolicy == BalancedByQuotaP || d.PutConflictPolicy == BalancedByQuotaStrictP {
+		r, ok := getRandomPathByQuotaBalanced(ctx, reqPath, d.PutConflictPolicy == BalancedByQuotaStrictP, uint64(obj.GetSize()))
+		if !ok {
+			return nil, ErrNoEnoughSpace
+		}
+		return []string{r}, nil
+	} else {
+		return reqPath, nil
+	}
+}
+
+func getRandomPathByQuotaBalanced(ctx context.Context, reqPath []string, strict bool, objSize uint64) (string, bool) {
+	// Get all space
+	details := make([]*model.StorageDetails, len(reqPath))
+	detailsChan := make(chan detailWithIndex, len(reqPath))
+	workerCount := 0
+	for i, p := range reqPath {
+		s, err := fs.GetStorage(p, &fs.GetStoragesArgs{})
+		if err != nil {
+			continue
+		}
+		if _, ok := s.(driver.WithDetails); !ok {
+			continue
+		}
+		workerCount++
+		go func(dri driver.Driver, i int) {
+			d, e := op.GetStorageDetails(ctx, dri)
+			if e != nil {
+				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
+					log.Errorf("failed get %s storage details: %+v", dri.GetStorage().MountPath, e)
+				}
+			}
+			detailsChan <- detailWithIndex{idx: i, val: d}
+		}(s, i)
+	}
+	for workerCount > 0 {
+		select {
+		case r := <-detailsChan:
+			details[r.idx] = r.val
+			workerCount--
+		case <-time.After(time.Second):
+			workerCount = 0
+		}
+	}
+
+	// Try select one that has space info
+	selected, ok := selectRandom(details, func(d *model.StorageDetails) uint64 {
+		if d == nil || d.FreeSpace < objSize {
+			return 0
+		}
+		return d.FreeSpace
+	})
+	if !ok {
+		if strict {
+			return "", false
+		} else {
+			// No strict mode, return any of non-details ones
+			noDetails := make([]int, 0, len(details))
+			for i, d := range details {
+				if d == nil {
+					noDetails = append(noDetails, i)
+				}
+			}
+			if len(noDetails) == 0 {
+				return "", false
+			}
+			return reqPath[noDetails[rand.Intn(len(noDetails))]], true
+		}
+	}
+	return reqPath[selected], true
+}
+
+func selectRandom[Item any](arr []Item, getWeight func(Item) uint64) (int, bool) {
+	var totalWeight uint64 = 0
+	for _, i := range arr {
+		totalWeight += getWeight(i)
+	}
+	if totalWeight == 0 {
+		return 0, false
+	}
+	r := rand.Uint64() % totalWeight
+	for i, item := range arr {
+		w := getWeight(item)
+		if r < w {
+			return i, true
+		}
+		r -= w
+	}
+	return 0, false
+}
+
+func (d *Alias) getCopyMovePath(ctx context.Context, srcObj, dstDir model.Obj) ([]string, []string, error) {
+	if d.PutConflictPolicy == DisabledWP {
+		return nil, nil, errs.PermissionDenied
+	}
+	if utils.SliceContains([]string{RandomBalancedRP, BalancedByQuotaP, BalancedByQuotaStrictP}, d.PutConflictPolicy) {
+		return nil, nil, errs.NotImplement
+	}
+	dstPath, err := d.getAllReqPath(ctx, dstDir.GetPath(), true, getWriteAndPutFilterFunc(d.PutConflictPolicy))
+	if err != nil {
+		return nil, nil, err
+	}
+	dstStorageMap := make(map[string][]string)
+	allocatingDst := make(map[string]struct{})
+	for _, dp := range dstPath {
+		storage, e := fs.GetStorage(dp, &fs.GetStoragesArgs{})
+		if e != nil {
+			return nil, nil, errors.WithMessagef(e, "cannot copy or move to virtual path [%s]", dp)
+		}
+		mp := storage.GetStorage().MountPath
+		dstStorageMap[mp] = append(dstStorageMap[mp], dp)
+		allocatingDst[dp] = struct{}{}
+	}
+	srcPath, err := d.getAllReqPath(ctx, srcObj.GetPath(), false, getWriteAndPutFilterFunc(AllWP))
+	if err != nil {
+		return nil, nil, err
+	}
+	srcs := make([]string, 0)
+	dsts := make([]string, 0)
+	for _, sp := range srcPath {
+		storage, e := fs.GetStorage(sp, &fs.GetStoragesArgs{})
+		if e != nil {
+			continue
+		}
+		if dstPaths, ok := dstStorageMap[storage.GetStorage().MountPath]; ok {
+			for _, dp := range dstPaths {
+				srcs = append(srcs, sp)
+				dsts = append(dsts, dp)
+				delete(allocatingDst, dp)
+			}
+			delete(dstStorageMap, storage.GetStorage().MountPath)
+		}
+	}
+	for dp := range allocatingDst {
+		sp := srcs[0]
+		if d.ReadConflictPolicy == RandomBalancedRP {
+			sp = srcs[rand.Intn(len(srcs))]
+		}
+		srcs = append(srcs, sp)
+		dsts = append(dsts, dp)
+	}
+	return srcs, dsts, nil
+}
+
+func (d *Alias) getArchiveMeta(ctx context.Context, reqPath string, args model.ArchiveArgs) (model.ArchiveMeta, error) {
 	storage, reqActualPath, err := op.GetStorageAndActualPath(reqPath)
 	if err != nil {
 		return nil, err
@@ -171,8 +367,7 @@ func (d *Alias) getArchiveMeta(ctx context.Context, dst, sub string, args model.
 	return nil, errs.NotImplement
 }
 
-func (d *Alias) listArchive(ctx context.Context, dst, sub string, args model.ArchiveInnerArgs) ([]model.Obj, error) {
-	reqPath := stdpath.Join(dst, sub)
+func (d *Alias) listArchive(ctx context.Context, reqPath string, args model.ArchiveInnerArgs) ([]model.Obj, error) {
 	storage, reqActualPath, err := op.GetStorageAndActualPath(reqPath)
 	if err != nil {
 		return nil, err
