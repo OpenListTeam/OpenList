@@ -12,7 +12,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -303,9 +302,6 @@ func selectRandom[Item any](arr []Item, getWeight func(Item) uint64) (int, bool)
 func (d *Alias) getCopyMovePath(ctx context.Context, srcObj, dstDir model.Obj) ([]string, []string, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
-	}
-	if utils.SliceContains([]string{RandomBalancedRP, BalancedByQuotaP, BalancedByQuotaStrictP}, d.PutConflictPolicy) {
-		return nil, nil, errs.NotImplement
 	}
 	dstPath, err := d.getAllReqPath(ctx, dstDir.GetPath(), true, getWriteAndPutFilterFunc(d.PutConflictPolicy))
 	if err != nil {
