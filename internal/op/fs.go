@@ -62,7 +62,7 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 		// call hooks
 		go func(reqPath string, files []model.Obj) {
 			HandleObjsUpdateHook(context.WithoutCancel(ctx), reqPath, files)
-		}(utils.GetFullPath(storage.GetStorage().MountPath, path), files)
+		}(utils.GetFullPath(utils.GetActualMountPath(storage.GetStorage().MountPath), path), files)
 
 		// sort objs
 		if storage.Config().LocalSort {

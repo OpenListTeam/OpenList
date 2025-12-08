@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -316,7 +317,7 @@ func (d *Alias) getCopyMovePath(ctx context.Context, srcObj, dstDir model.Obj) (
 		if e != nil {
 			return nil, nil, errors.WithMessagef(e, "cannot copy or move to virtual path [%s]", dp)
 		}
-		mp := storage.GetStorage().MountPath
+		mp := utils.GetActualMountPath(storage.GetStorage().MountPath)
 		dstStorageMap[mp] = append(dstStorageMap[mp], dp)
 		allocatingDst[dp] = struct{}{}
 	}
@@ -331,13 +332,14 @@ func (d *Alias) getCopyMovePath(ctx context.Context, srcObj, dstDir model.Obj) (
 		if e != nil {
 			continue
 		}
-		if dstPaths, ok := dstStorageMap[storage.GetStorage().MountPath]; ok {
+		mp := utils.GetActualMountPath(storage.GetStorage().MountPath)
+		if dstPaths, ok := dstStorageMap[mp]; ok {
 			for _, dp := range dstPaths {
 				srcs = append(srcs, sp)
 				dsts = append(dsts, dp)
 				delete(allocatingDst, dp)
 			}
-			delete(dstStorageMap, storage.GetStorage().MountPath)
+			delete(dstStorageMap, mp)
 		}
 	}
 	for dp := range allocatingDst {

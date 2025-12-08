@@ -8,6 +8,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 type CacheManager struct {
@@ -32,7 +33,7 @@ func NewCacheManager() *CacheManager {
 var Cache = NewCacheManager()
 
 func Key(storage driver.Driver, path string) string {
-	return stdpath.Join(storage.GetStorage().MountPath, path)
+	return stdpath.Join(utils.GetActualMountPath(storage.GetStorage().MountPath), path)
 }
 
 // update object in dirCache.
@@ -162,15 +163,15 @@ func (cm *CacheManager) SetStorageDetails(storage driver.Driver, details *model.
 		return
 	}
 	expiration := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
-	cm.detailCache.SetWithTTL(storage.GetStorage().MountPath, details, expiration)
+	cm.detailCache.SetWithTTL(utils.GetActualMountPath(storage.GetStorage().MountPath), details, expiration)
 }
 
 func (cm *CacheManager) GetStorageDetails(storage driver.Driver) (*model.StorageDetails, bool) {
-	return cm.detailCache.Get(storage.GetStorage().MountPath)
+	return cm.detailCache.Get(utils.GetActualMountPath(storage.GetStorage().MountPath))
 }
 
 func (cm *CacheManager) InvalidateStorageDetails(storage driver.Driver) {
-	cm.detailCache.Delete(storage.GetStorage().MountPath)
+	cm.detailCache.Delete(utils.GetActualMountPath(storage.GetStorage().MountPath))
 }
 
 // clears all caches
