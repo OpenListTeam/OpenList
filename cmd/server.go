@@ -1,6 +1,11 @@
 package cmd
 
 import (
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap"
 	"github.com/spf13/cobra"
 )
@@ -12,7 +17,18 @@ var ServerCmd = &cobra.Command{
 	Long: `Start the server at the specified address
 the address is defined in config file`,
 	Run: func(cmd *cobra.Command, args []string) {
-		bootstrap.Run()
+		bootstrap.Init()
+		defer bootstrap.Release()
+		bootstrap.Start()
+		// Wait for interrupt signal to gracefully shutdown the server with
+		// a timeout of 1 second.
+		quit := make(chan os.Signal, 1)
+		// kill (no param) default send syscanll.SIGTERM
+		// kill -2 is syscall.SIGINT
+		// kill -9 is syscall. SIGKILL but can"t be catch, so don't need add it
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		bootstrap.Shutdown(1 * time.Second)
 	},
 }
 

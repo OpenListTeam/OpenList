@@ -6,10 +6,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
@@ -44,8 +42,48 @@ func Release() {
 	db.Close()
 }
 
-func Run() {
-	Init()
+var (
+	running      bool
+	httpSrv      *http.Server
+	httpRunning  bool
+	httpsSrv     *http.Server
+	httpsRunning bool
+	unixSrv      *http.Server
+	unixRunning  bool
+	quicSrv      *http3.Server
+	quicRunning  bool
+	s3Srv        *http.Server
+	s3Running    bool
+	ftpDriver    *server.FtpMainDriver
+	ftpServer    *ftpserver.FtpServer
+	ftpRunning   bool
+	sftpDriver   *server.SftpDriver
+	sftpServer   *sftpd.SftpServer
+	sftpRunning  bool
+)
+
+// Called by OpenList-Mobile
+func IsRunning(t string) bool {
+	switch t {
+	case "http":
+		return httpRunning
+	case "https":
+		return httpsRunning
+	case "unix":
+		return unixRunning
+	case "quic":
+		return quicRunning
+	case "s3":
+		return s3Running
+	case "sftp":
+		return sftpRunning
+	case "ftp":
+		return ftpRunning
+	}
+	return running
+}
+
+func Start() {
 	if conf.Conf.DelayedStart != 0 {
 		utils.Log.Infof("delayed start for %d seconds", conf.Conf.DelayedStart)
 		time.Sleep(time.Duration(conf.Conf.DelayedStart) * time.Second)
@@ -71,15 +109,15 @@ func Run() {
 	if conf.Conf.Scheme.EnableH2c {
 		httpHandler = h2c.NewHandler(r, &http2.Server{})
 	}
-	var httpSrv, httpsSrv, unixSrv *http.Server
-	var quicSrv *http3.Server
 	if conf.Conf.Scheme.HttpPort != -1 {
 		httpBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpPort)
 		fmt.Printf("start HTTP server @ %s\n", httpBase)
 		utils.Log.Infof("start HTTP server @ %s", httpBase)
 		httpSrv = &http.Server{Addr: httpBase, Handler: httpHandler}
 		go func() {
+			httpRunning = true
 			err := httpSrv.ListenAndServe()
+			httpRunning = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				utils.Log.Errorf("failed to start http: %s", err.Error())
 			}
@@ -91,7 +129,9 @@ func Run() {
 		utils.Log.Infof("start HTTPS server @ %s", httpsBase)
 		httpsSrv = &http.Server{Addr: httpsBase, Handler: r}
 		go func() {
+			httpsRunning = true
 			err := httpsSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+			httpsRunning = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				utils.Log.Errorf("failed to start https: %s", err.Error())
 			}
@@ -108,7 +148,9 @@ func Run() {
 			})
 			quicSrv = &http3.Server{Addr: httpsBase, Handler: r}
 			go func() {
+				quicRunning = true
 				err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+				quicRunning = false
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					utils.Log.Errorf("failed to start http3 (quic): %s", err.Error())
 				}
@@ -125,6 +167,7 @@ func Run() {
 				utils.Log.Errorf("failed to listen unix: %+v", err)
 				return
 			}
+			unixRunning = true
 			// set socket file permission
 			mode, err := strconv.ParseUint(conf.Conf.Scheme.UnixFilePerm, 8, 32)
 			if err != nil {
@@ -136,6 +179,7 @@ func Run() {
 				}
 			}
 			err = unixSrv.Serve(listener)
+			unixRunning = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				utils.Log.Errorf("failed to start unix: %s", err.Error())
 			}
@@ -149,22 +193,21 @@ func Run() {
 		fmt.Printf("start S3 server @ %s\n", s3Base)
 		utils.Log.Infof("start S3 server @ %s", s3Base)
 		go func() {
+			s3Running = true
 			var err error
 			if conf.Conf.S3.SSL {
-				httpsSrv = &http.Server{Addr: s3Base, Handler: s3r}
-				err = httpsSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+				s3Srv = &http.Server{Addr: s3Base, Handler: s3r}
+				err = s3Srv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+			} else {
+				s3Srv = &http.Server{Addr: s3Base, Handler: s3r}
+				err = s3Srv.ListenAndServe()
 			}
-			if !conf.Conf.S3.SSL {
-				httpSrv = &http.Server{Addr: s3Base, Handler: s3r}
-				err = httpSrv.ListenAndServe()
-			}
+			s3Running = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				utils.Log.Errorf("failed to start s3 server: %s", err.Error())
 			}
 		}()
 	}
-	var ftpDriver *server.FtpMainDriver
-	var ftpServer *ftpserver.FtpServer
 	if conf.Conf.FTP.Listen != "" && conf.Conf.FTP.Enable {
 		var err error
 		ftpDriver, err = server.NewMainDriver()
@@ -182,8 +225,6 @@ func Run() {
 			}()
 		}
 	}
-	var sftpDriver *server.SftpDriver
-	var sftpServer *sftpd.SftpServer
 	if conf.Conf.SFTP.Listen != "" && conf.Conf.SFTP.Enable {
 		var err error
 		sftpDriver, err = server.NewSftpDriver()
@@ -201,75 +242,91 @@ func Run() {
 			}()
 		}
 	}
-	// Wait for interrupt signal to gracefully shutdown the server with
-	// a timeout of 1 second.
-	quit := make(chan os.Signal, 1)
-	// kill (no param) default send syscanll.SIGTERM
-	// kill -2 is syscall.SIGINT
-	// kill -9 is syscall. SIGKILL but can"t be catch, so don't need add it
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	running = true
+}
+
+func Shutdown(timeout time.Duration) {
 	utils.Log.Println("Shutdown server...")
 	fs.ArchiveContentUploadTaskManager.RemoveAll()
-	Release()
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var wg sync.WaitGroup
-	if conf.Conf.Scheme.HttpPort != -1 {
+	if httpSrv != nil && conf.Conf.Scheme.HttpPort != -1 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := httpSrv.Shutdown(ctx); err != nil {
 				utils.Log.Error("HTTP server shutdown err: ", err)
 			}
+			httpSrv = nil
 		}()
 	}
-	if conf.Conf.Scheme.HttpsPort != -1 {
+	if httpsSrv != nil && conf.Conf.Scheme.HttpsPort != -1 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := httpsSrv.Shutdown(ctx); err != nil {
 				utils.Log.Error("HTTPS server shutdown err: ", err)
 			}
+			httpsSrv = nil
 		}()
-		if conf.Conf.Scheme.EnableH3 {
+		if quicSrv != nil && conf.Conf.Scheme.EnableH3 {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				if err := quicSrv.Shutdown(ctx); err != nil {
 					utils.Log.Error("HTTP3 (quic) server shutdown err: ", err)
 				}
+				quicSrv = nil
 			}()
 		}
 	}
-	if conf.Conf.Scheme.UnixFile != "" {
+	if unixSrv != nil && conf.Conf.Scheme.UnixFile != "" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := unixSrv.Shutdown(ctx); err != nil {
 				utils.Log.Error("Unix server shutdown err: ", err)
 			}
+			unixSrv = nil
 		}()
 	}
-	if conf.Conf.FTP.Listen != "" && conf.Conf.FTP.Enable && ftpServer != nil && ftpDriver != nil {
+	if s3Srv != nil && conf.Conf.S3.Port != -1 && conf.Conf.S3.Enable {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ftpDriver.Stop()
+			if err := s3Srv.Shutdown(ctx); err != nil {
+				utils.Log.Error("S3 server shutdown err: ", err)
+			}
+			s3Srv = nil
+		}()
+	}
+	if conf.Conf.FTP.Listen != "" && conf.Conf.FTP.Enable && ftpServer != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ftpDriver != nil {
+				ftpDriver.Stop()
+				ftpDriver = nil
+			}
 			if err := ftpServer.Stop(); err != nil {
 				utils.Log.Error("FTP server shutdown err: ", err)
 			}
+			ftpServer = nil
 		}()
 	}
-	if conf.Conf.SFTP.Listen != "" && conf.Conf.SFTP.Enable && sftpServer != nil && sftpDriver != nil {
+	if conf.Conf.SFTP.Listen != "" && conf.Conf.SFTP.Enable && sftpServer != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := sftpServer.Close(); err != nil {
 				utils.Log.Error("SFTP server shutdown err: ", err)
 			}
+			sftpServer = nil
+			sftpDriver = nil
 		}()
 	}
 	wg.Wait()
 	utils.Log.Println("Server exit")
+	running = false
 }
