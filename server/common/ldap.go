@@ -9,6 +9,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -20,16 +21,18 @@ var ErrFailedLdapAuth = errors.New("failed to auth")
 func HandleLdapLogin(username, password string) error {
 	// Auth start
 	ldapServer := setting.GetStr(conf.LdapServer)
+	skipTlsVerify := setting.GetBool(conf.LdapSkipTlsVerify)
 	ldapManagerDN := setting.GetStr(conf.LdapManagerDN)
 	ldapManagerPassword := setting.GetStr(conf.LdapManagerPassword)
 	ldapUserSearchBase := setting.GetStr(conf.LdapUserSearchBase)
 	ldapUserSearchFilter := setting.GetStr(conf.LdapUserSearchFilter) // (uid=%s)
 
 	// Connect to LdapServer
-	l, err := dial(ldapServer)
+	l, err := dial(ldapServer, skipTlsVerify)
 	if err != nil {
 		return errors.WithMessagef(err, "failed to connect to LDAP")
 	}
+	defer l.Close()
 
 	// First bind with a read only user
 	if ldapManagerDN != "" && ldapManagerPassword != "" {
@@ -43,7 +46,7 @@ func HandleLdapLogin(username, password string) error {
 	searchRequest := ldap.NewSearchRequest(
 		ldapUserSearchBase,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(ldapUserSearchFilter, username),
+		fmt.Sprintf(ldapUserSearchFilter, ldap.EscapeFilter(username)),
 		[]string{"dn"},
 		nil,
 	)
@@ -60,9 +63,8 @@ func HandleLdapLogin(username, password string) error {
 	err = l.Bind(userDN, password)
 	if err != nil {
 		return errors.WithMessagef(ErrFailedLdapAuth, "%v", err)
-	} else {
-		log.Infof("LDAP auth successful for %s", username)
 	}
+	log.Infof("LDAP auth successful for %s", username)
 	// Auth finished
 	return nil
 }
@@ -88,7 +90,7 @@ func LdapRegister(username string) (*model.User, error) {
 	return user, nil
 }
 
-func dial(ldapServer string) (*ldap.Conn, error) {
+func dial(ldapServer string, skipTlsVerify ...bool) (*ldap.Conn, error) {
 	tlsEnabled := false
 	if strings.HasPrefix(ldapServer, "ldaps://") {
 		tlsEnabled = true
@@ -98,7 +100,7 @@ func dial(ldapServer string) (*ldap.Conn, error) {
 	}
 
 	if tlsEnabled {
-		return ldap.DialTLS("tcp", ldapServer, &tls.Config{InsecureSkipVerify: true})
+		return ldap.DialTLS("tcp", ldapServer, &tls.Config{InsecureSkipVerify: utils.IsBool(skipTlsVerify...)})
 	} else {
 		return ldap.Dial("tcp", ldapServer)
 	}
