@@ -17,7 +17,7 @@ func FixAliasConfig() {
 			continue
 		}
 		addition := make(map[string]any)
-		err = utils.Json.UnmarshalFromString(s.Addition, addition)
+		err = utils.Json.UnmarshalFromString(s.Addition, &addition)
 		if err != nil {
 			utils.Log.Errorf("[FixAliasConfig] failed to unmarshal addition of [%d]%s: %s", s.ID, s.MountPath, err.Error())
 			continue

@@ -42,6 +42,15 @@ func (d *Alias) Init(ctx context.Context) error {
 	if d.Paths == "" {
 		return errors.New("paths is required")
 	}
+	if !utils.SliceContains(ValidReadConflictPolicy, d.ReadConflictPolicy) {
+		d.ReadConflictPolicy = FirstRWP
+	}
+	if !utils.SliceContains(ValidWriteConflictPolicy, d.WriteConflictPolicy) {
+		d.WriteConflictPolicy = DisabledWP
+	}
+	if !utils.SliceContains(ValidPutConflictPolicy, d.PutConflictPolicy) {
+		d.PutConflictPolicy = DisabledWP
+	}
 	paths := strings.Split(d.Paths, "\n")
 	d.rootOrder = make([]string, 0, len(paths))
 	d.pathMap = make(map[string][]string)
@@ -119,6 +128,8 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 				Obj:          obj,
 				ExactReqPath: p,
 			}
+		} else {
+			obj = &object
 		}
 		if d.ReadConflictPolicy == FirstRWP {
 			return obj, nil
@@ -129,10 +140,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	if len(objs) == 0 {
 		return nil, errs.ObjectNotFound
 	}
-	if d.ReadConflictPolicy == RandomBalancedRP {
-		return objs[rand.Intn(len(objs))], nil
-	}
-	return nil, ErrInvalidConflictPolicy
+	return objs[rand.Intn(len(objs))], nil
 }
 
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
@@ -145,9 +153,10 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	if !ok {
 		return nil, errs.ObjectNotFound
 	}
-	var objs []model.Obj
+	objs := make(map[string][]model.Obj)
 	for _, dst := range dsts {
-		tmp, err := fs.List(ctx, stdpath.Join(dst, sub), &fs.ListArgs{
+		exactPath := stdpath.Join(dst, sub)
+		tmp, err := fs.List(ctx, exactPath, &fs.ListArgs{
 			NoLog:              true,
 			Refresh:            args.Refresh,
 			WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
@@ -161,28 +170,47 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					Modified: obj.ModTime(),
 					IsFolder: obj.IsDir(),
 				}
+				var objRet model.Obj
 				if thumb, ok := model.GetThumb(obj); ok {
-					return &model.ObjThumb{
+					objRet = &model.ObjThumb{
 						Object: objRes,
 						Thumbnail: model.Thumbnail{
 							Thumbnail: thumb,
 						},
-					}, nil
+					}
+				} else {
+					objRet = &objRes
 				}
 				if details, ok := model.GetStorageDetails(obj); ok {
-					return &model.ObjStorageDetails{
-						Obj:                    &objRes,
+					objRet = &model.ObjStorageDetails{
+						Obj:                    objRet,
 						StorageDetailsWithName: *details,
-					}, nil
+					}
 				}
-				return &objRes, nil
+				if !objRet.IsDir() {
+					objRet = &BalancedObj{
+						Obj:          objRet,
+						ExactReqPath: stdpath.Join(exactPath, objRet.GetName()),
+					}
+				}
+				return objRet, nil
 			})
 		}
 		if err == nil {
-			objs = append(objs, tmp...)
+			for _, o := range tmp {
+				objs[o.GetName()] = append(objs[o.GetName()], o)
+			}
 		}
 	}
-	return objs, nil
+	ret := make([]model.Obj, 0, len(objs))
+	for _, snObjs := range objs {
+		if d.ReadConflictPolicy == RandomBalancedRP {
+			ret = append(ret, snObjs[rand.Intn(len(snObjs))])
+		} else {
+			ret = append(ret, snObjs[0])
+		}
+	}
+	return ret, nil
 }
 
 func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {

@@ -18,10 +18,17 @@ const (
 )
 
 var (
-	ErrPathConflict          = errors.New("path conflict")
-	ErrSamePathLeak          = errors.New("leak some of same-name dirs")
-	ErrInvalidConflictPolicy = errors.New("invalid conflict policy")
-	ErrNoEnoughSpace         = errors.New("none of same-name dirs has enough space")
+	ValidReadConflictPolicy  = []string{FirstRWP, RandomBalancedRP}
+	ValidWriteConflictPolicy = []string{DisabledWP, FirstRWP, DeterministicWP, DeterministicOrAllWP, AllWP,
+		AllStrictWP}
+	ValidPutConflictPolicy = []string{DisabledWP, FirstRWP, DeterministicWP, DeterministicOrAllWP, AllWP,
+		AllStrictWP, RandomBalancedRP, BalancedByQuotaP, BalancedByQuotaStrictP}
+)
+
+var (
+	ErrPathConflict  = errors.New("path conflict")
+	ErrSamePathLeak  = errors.New("leak some of same-name dirs")
+	ErrNoEnoughSpace = errors.New("none of same-name dirs has enough space")
 )
 
 type BalancedObj struct {

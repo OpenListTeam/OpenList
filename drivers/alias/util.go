@@ -140,7 +140,9 @@ func (d *Alias) getAllReqPath(ctx context.Context, objPath string, isParent bool
 				return nil, err
 			}
 		}
-		reqPath = append(reqPath, path)
+		if err == nil {
+			reqPath = append(reqPath, path)
+		}
 	}
 	if len(reqPath) == 0 {
 		return nil, errs.ObjectNotFound
@@ -150,8 +152,8 @@ func (d *Alias) getAllReqPath(ctx context.Context, objPath string, isParent bool
 
 func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
 	if policy == AllWP {
-		return func(_ error) (bool, error) {
-			return true, nil
+		return func(err error) (bool, error) {
+			return true, err
 		}
 	}
 	all := true
@@ -170,7 +172,7 @@ func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
 		} else {
 			switch policy {
 			case FirstRWP:
-				return false, nil
+				return true, nil
 			case DeterministicWP:
 				if l > 0 {
 					return false, ErrPathConflict
@@ -182,7 +184,7 @@ func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
 			}
 			l += 1
 		}
-		return true, nil
+		return true, err
 	}
 }
 
