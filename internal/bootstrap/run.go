@@ -21,6 +21,7 @@ import (
 	"github.com/OpenListTeam/sftpd-openlist"
 	ftpserver "github.com/fclairamb/ftpserverlib"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/quic-go/quic-go/http3"
 	log "github.com/sirupsen/logrus"
@@ -119,7 +120,10 @@ func Start() {
 			err := httpSrv.ListenAndServe()
 			httpRunning = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				handleEndpointStartFailedHooks("http", err)
 				utils.Log.Errorf("failed to start http: %s", err.Error())
+			} else {
+				handleEndpointShutdownHooks("http")
 			}
 		}()
 	}
@@ -133,7 +137,10 @@ func Start() {
 			err := httpsSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
 			httpsRunning = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				handleEndpointStartFailedHooks("https", err)
 				utils.Log.Errorf("failed to start https: %s", err.Error())
+			} else {
+				handleEndpointShutdownHooks("https")
 			}
 		}()
 		if conf.Conf.Scheme.EnableH3 {
@@ -152,7 +159,10 @@ func Start() {
 				err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
 				quicRunning = false
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					handleEndpointStartFailedHooks("quic", err)
 					utils.Log.Errorf("failed to start http3 (quic): %s", err.Error())
+				} else {
+					handleEndpointShutdownHooks("quic")
 				}
 			}()
 		}
@@ -181,7 +191,10 @@ func Start() {
 			err = unixSrv.Serve(listener)
 			unixRunning = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				handleEndpointStartFailedHooks("unix", err)
 				utils.Log.Errorf("failed to start unix: %s", err.Error())
+			} else {
+				handleEndpointShutdownHooks("unix")
 			}
 		}()
 	}
@@ -204,7 +217,10 @@ func Start() {
 			}
 			s3Running = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				handleEndpointStartFailedHooks("s3", err)
 				utils.Log.Errorf("failed to start s3 server: %s", err.Error())
+			} else {
+				handleEndpointShutdownHooks("s3")
 			}
 		}()
 	}
@@ -218,9 +234,14 @@ func Start() {
 			utils.Log.Infof("start ftp server on %s", conf.Conf.FTP.Listen)
 			go func() {
 				ftpServer = ftpserver.NewFtpServer(ftpDriver)
+				ftpRunning = true
 				err = ftpServer.ListenAndServe()
+				ftpRunning = false
 				if err != nil {
+					handleEndpointStartFailedHooks("ftp", err)
 					utils.Log.Errorf("problem ftp server listening: %s", err.Error())
+				} else {
+					handleEndpointShutdownHooks("ftp")
 				}
 			}()
 		}
@@ -235,9 +256,14 @@ func Start() {
 			utils.Log.Infof("start sftp server on %s", conf.Conf.SFTP.Listen)
 			go func() {
 				sftpServer = sftpd.NewSftpServer(sftpDriver)
+				sftpRunning = true
 				err = sftpServer.RunServer()
+				sftpRunning = false
 				if err != nil {
+					handleEndpointStartFailedHooks("sftp", err)
 					utils.Log.Errorf("problem sftp server listening: %s", err.Error())
+				} else {
+					handleEndpointShutdownHooks("sftp")
 				}
 			}()
 		}
@@ -329,4 +355,50 @@ func Shutdown(timeout time.Duration) {
 	wg.Wait()
 	utils.Log.Println("Server exit")
 	running = false
+}
+
+type EndpointStartFailedHook func(string, string)
+
+type EndpointShutdownHook func(string)
+
+var (
+	endpointStartFailedHooks map[string]EndpointStartFailedHook
+	endpointShutdownHooks    map[string]EndpointShutdownHook
+)
+
+func RegisterEndpointStartFailedHook(hook EndpointStartFailedHook) string {
+	id := uuid.NewString()
+	endpointStartFailedHooks[id] = hook
+	return id
+}
+
+func RemoveEndpointStartFailedHook(id string) {
+	delete(endpointStartFailedHooks, id)
+}
+
+func RegisterEndpointShutdownHook(hook EndpointShutdownHook) string {
+	id := uuid.NewString()
+	endpointShutdownHooks[id] = hook
+	return id
+}
+
+func RemoveEndpointShutdownHook(id string) {
+	delete(endpointShutdownHooks, id)
+}
+
+func handleEndpointStartFailedHooks(t string, err error) {
+	for _, hook := range endpointStartFailedHooks {
+		hook(t, err.Error())
+	}
+}
+
+func handleEndpointShutdownHooks(t string) {
+	for _, hook := range endpointShutdownHooks {
+		hook(t)
+	}
+}
+
+func init() {
+	endpointShutdownHooks = make(map[string]EndpointShutdownHook)
+	endpointStartFailedHooks = make(map[string]EndpointStartFailedHook)
 }
