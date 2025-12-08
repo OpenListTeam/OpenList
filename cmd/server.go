@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap"
 	"github.com/spf13/cobra"
 )
@@ -13,7 +12,7 @@ var ServerCmd = &cobra.Command{
 	Long: `Start the server at the specified address
 the address is defined in config file`,
 	Run: func(cmd *cobra.Command, args []string) {
-		bootstrap.Run(!flags.Debug && !flags.Dev)
+		bootstrap.Run()
 	},
 }
 

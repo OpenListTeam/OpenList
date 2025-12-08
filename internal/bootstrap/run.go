@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/data"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
@@ -43,7 +44,7 @@ func Release() {
 	db.Close()
 }
 
-func Run(isRelease bool) {
+func Run() {
 	Init()
 	if conf.Conf.DelayedStart != 0 {
 		utils.Log.Infof("delayed start for %d seconds", conf.Conf.DelayedStart)
@@ -52,7 +53,7 @@ func Run(isRelease bool) {
 	InitOfflineDownloadTools()
 	LoadStorages()
 	InitTaskManager()
-	if isRelease {
+	if !flags.Debug && !flags.Dev {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
@@ -80,7 +81,7 @@ func Run(isRelease bool) {
 		go func() {
 			err := httpSrv.ListenAndServe()
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				utils.Log.Fatalf("failed to start http: %s", err.Error())
+				utils.Log.Errorf("failed to start http: %s", err.Error())
 			}
 		}()
 	}
@@ -92,7 +93,7 @@ func Run(isRelease bool) {
 		go func() {
 			err := httpsSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				utils.Log.Fatalf("failed to start https: %s", err.Error())
+				utils.Log.Errorf("failed to start https: %s", err.Error())
 			}
 		}()
 		if conf.Conf.Scheme.EnableH3 {
@@ -109,7 +110,7 @@ func Run(isRelease bool) {
 			go func() {
 				err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
-					utils.Log.Fatalf("failed to start http3 (quic): %s", err.Error())
+					utils.Log.Errorf("failed to start http3 (quic): %s", err.Error())
 				}
 			}()
 		}
@@ -121,7 +122,8 @@ func Run(isRelease bool) {
 		go func() {
 			listener, err := net.Listen("unix", conf.Conf.Scheme.UnixFile)
 			if err != nil {
-				utils.Log.Fatalf("failed to listen unix: %+v", err)
+				utils.Log.Errorf("failed to listen unix: %+v", err)
+				return
 			}
 			// set socket file permission
 			mode, err := strconv.ParseUint(conf.Conf.Scheme.UnixFilePerm, 8, 32)
@@ -135,7 +137,7 @@ func Run(isRelease bool) {
 			}
 			err = unixSrv.Serve(listener)
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				utils.Log.Fatalf("failed to start unix: %s", err.Error())
+				utils.Log.Errorf("failed to start unix: %s", err.Error())
 			}
 		}()
 	}
@@ -157,7 +159,7 @@ func Run(isRelease bool) {
 				err = httpSrv.ListenAndServe()
 			}
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				utils.Log.Fatalf("failed to start s3 server: %s", err.Error())
+				utils.Log.Errorf("failed to start s3 server: %s", err.Error())
 			}
 		}()
 	}
@@ -167,7 +169,7 @@ func Run(isRelease bool) {
 		var err error
 		ftpDriver, err = server.NewMainDriver()
 		if err != nil {
-			utils.Log.Fatalf("failed to start ftp driver: %s", err.Error())
+			utils.Log.Errorf("failed to start ftp driver: %s", err.Error())
 		} else {
 			fmt.Printf("start ftp server on %s\n", conf.Conf.FTP.Listen)
 			utils.Log.Infof("start ftp server on %s", conf.Conf.FTP.Listen)
@@ -175,7 +177,7 @@ func Run(isRelease bool) {
 				ftpServer = ftpserver.NewFtpServer(ftpDriver)
 				err = ftpServer.ListenAndServe()
 				if err != nil {
-					utils.Log.Fatalf("problem ftp server listening: %s", err.Error())
+					utils.Log.Errorf("problem ftp server listening: %s", err.Error())
 				}
 			}()
 		}
@@ -186,7 +188,7 @@ func Run(isRelease bool) {
 		var err error
 		sftpDriver, err = server.NewSftpDriver()
 		if err != nil {
-			utils.Log.Fatalf("failed to start sftp driver: %s", err.Error())
+			utils.Log.Errorf("failed to start sftp driver: %s", err.Error())
 		} else {
 			fmt.Printf("start sftp server on %s", conf.Conf.SFTP.Listen)
 			utils.Log.Infof("start sftp server on %s", conf.Conf.SFTP.Listen)
@@ -194,7 +196,7 @@ func Run(isRelease bool) {
 				sftpServer = sftpd.NewSftpServer(sftpDriver)
 				err = sftpServer.RunServer()
 				if err != nil {
-					utils.Log.Fatalf("problem sftp server listening: %s", err.Error())
+					utils.Log.Errorf("problem sftp server listening: %s", err.Error())
 				}
 			}()
 		}
@@ -218,7 +220,7 @@ func Run(isRelease bool) {
 		go func() {
 			defer wg.Done()
 			if err := httpSrv.Shutdown(ctx); err != nil {
-				utils.Log.Fatal("HTTP server shutdown err: ", err)
+				utils.Log.Error("HTTP server shutdown err: ", err)
 			}
 		}()
 	}
@@ -227,7 +229,7 @@ func Run(isRelease bool) {
 		go func() {
 			defer wg.Done()
 			if err := httpsSrv.Shutdown(ctx); err != nil {
-				utils.Log.Fatal("HTTPS server shutdown err: ", err)
+				utils.Log.Error("HTTPS server shutdown err: ", err)
 			}
 		}()
 		if conf.Conf.Scheme.EnableH3 {
@@ -235,7 +237,7 @@ func Run(isRelease bool) {
 			go func() {
 				defer wg.Done()
 				if err := quicSrv.Shutdown(ctx); err != nil {
-					utils.Log.Fatal("HTTP3 (quic) server shutdown err: ", err)
+					utils.Log.Error("HTTP3 (quic) server shutdown err: ", err)
 				}
 			}()
 		}
@@ -245,7 +247,7 @@ func Run(isRelease bool) {
 		go func() {
 			defer wg.Done()
 			if err := unixSrv.Shutdown(ctx); err != nil {
-				utils.Log.Fatal("Unix server shutdown err: ", err)
+				utils.Log.Error("Unix server shutdown err: ", err)
 			}
 		}()
 	}
@@ -255,7 +257,7 @@ func Run(isRelease bool) {
 			defer wg.Done()
 			ftpDriver.Stop()
 			if err := ftpServer.Stop(); err != nil {
-				utils.Log.Fatal("FTP server shutdown err: ", err)
+				utils.Log.Error("FTP server shutdown err: ", err)
 			}
 		}()
 	}
@@ -264,7 +266,7 @@ func Run(isRelease bool) {
 		go func() {
 			defer wg.Done()
 			if err := sftpServer.Close(); err != nil {
-				utils.Log.Fatal("SFTP server shutdown err: ", err)
+				utils.Log.Error("SFTP server shutdown err: ", err)
 			}
 		}()
 	}
