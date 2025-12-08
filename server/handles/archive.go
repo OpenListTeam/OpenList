@@ -380,6 +380,9 @@ func proxyInternalExtract(c *gin.Context, rc io.ReadCloser, size int64, fileName
 	if contentType == "" {
 		contentType = utils.GetMimeType(fileName)
 	}
+	if strings.HasPrefix(contentType, "image") {
+		headers["Cache-Control"] = "max-age=86400"
+	}
 	c.DataFromReader(200, size, contentType, rc, headers)
 }
 
