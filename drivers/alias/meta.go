@@ -10,7 +10,7 @@ type Addition struct {
 	// driver.RootPath
 	// define other
 	Paths               string `json:"paths" required:"true" type:"text"`
-	ReadConflictPolicy  string `json:"read_conflict_policy" type:"select" options:"first,random" default:"random"`
+	ReadConflictPolicy  string `json:"read_conflict_policy" type:"select" options:"first,random" default:"first"`
 	WriteConflictPolicy string `json:"write_conflict_policy" type:"select" options:"disabled,first,deterministic,deterministic_or_all,all,all_strict" default:"disabled"`
 	PutConflictPolicy   string `json:"put_conflict_policy" type:"select" options:"disabled,first,deterministic,deterministic_or_all,all,all_strict,random,quota,quota_strict" default:"disabled"`
 	DownloadConcurrency int    `json:"download_concurrency" default:"0" required:"false" type:"number" help:"Need to enable proxy"`
