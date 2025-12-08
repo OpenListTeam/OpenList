@@ -93,22 +93,31 @@ func (d *SftpDriver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, erro
 }
 
 func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+	ip := conn.RemoteAddr().String()
+	count, ok := model.LoginCache.Get(ip)
+	if ok && count >= model.DefaultMaxAuthRetries {
+		model.LoginCache.Expire(ip, model.DefaultLockDuration)
+		return nil, errors.New("Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later.")
+	}
+	pass := string(password)
 	userObj, err := op.GetUserByName(conn.User())
+	if err == nil {
+		err = userObj.ValidateRawPassword(pass)
+		if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
+			err = common.HandleLdapLogin(conn.User(), pass)
+		}
+	} else if setting.GetBool(conf.LdapLoginEnabled) && model.CanFTPAccess(int32(setting.GetInt(conf.LdapDefaultPermission, 0))) {
+		userObj, err = tryLdapLoginAndRegister(conn.User(), pass)
+	}
 	if err != nil {
+		model.LoginCache.Set(ip, count+1)
 		return nil, err
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
+		model.LoginCache.Set(ip, count+1)
 		return nil, errors.New("user is not allowed to access via SFTP")
 	}
-	pass := string(password)
-	passHash := model.StaticHash(pass)
-	err = userObj.ValidatePwdStaticHash(passHash)
-	if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
-		err = common.HandleLdapLogin(conn.User(), pass)
-	}
-	if err != nil {
-		return nil, err
-	}
+	model.LoginCache.Del(ip)
 	return nil, nil
 }
 

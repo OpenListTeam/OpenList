@@ -113,6 +113,12 @@ func (d *FtpMainDriver) ClientDisconnected(cc ftpserver.ClientContext) {
 }
 
 func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) (ftpserver.ClientDriver, error) {
+	ip := cc.RemoteAddr().String()
+	count, ok := model.LoginCache.Get(ip)
+	if ok && count >= model.DefaultMaxAuthRetries {
+		model.LoginCache.Expire(ip, model.DefaultLockDuration)
+		return nil, errors.New("Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later.")
+	}
 	var userObj *model.User
 	var err error
 	if user == "anonymous" || user == "guest" {
@@ -122,21 +128,24 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 		}
 	} else {
 		userObj, err = op.GetUserByName(user)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			err = userObj.ValidateRawPassword(pass)
+			if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
+				err = common.HandleLdapLogin(user, pass)
+			}
+		} else if setting.GetBool(conf.LdapLoginEnabled) && model.CanFTPAccess(int32(setting.GetInt(conf.LdapDefaultPermission, 0))) {
+			userObj, err = tryLdapLoginAndRegister(user, pass)
 		}
-		passHash := model.StaticHash(pass)
-		err = userObj.ValidatePwdStaticHash(passHash)
-		if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
-			err = common.HandleLdapLogin(user, pass)
-		}
 		if err != nil {
+			model.LoginCache.Set(ip, count+1)
 			return nil, err
 		}
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
+		model.LoginCache.Set(ip, count+1)
 		return nil, errors.New("user is not allowed to access via FTP")
 	}
+	model.LoginCache.Del(ip)
 
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, conf.UserKey, userObj)
@@ -145,7 +154,7 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 	} else {
 		ctx = context.WithValue(ctx, conf.MetaPassKey, "")
 	}
-	ctx = context.WithValue(ctx, conf.ClientIPKey, cc.RemoteAddr().String())
+	ctx = context.WithValue(ctx, conf.ClientIPKey, ip)
 	ctx = context.WithValue(ctx, conf.ProxyHeaderKey, d.proxyHeader)
 	return ftp.NewAferoAdapter(ctx), nil
 }

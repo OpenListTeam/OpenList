@@ -6,14 +6,13 @@ import (
 	"path"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/OpenList/v4/server/middlewares"
-
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/server/webdav"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -149,14 +148,13 @@ func WebDAVAuth(c *gin.Context) {
 
 func tryLogin(username, password string) (*model.User, bool) {
 	user, err := op.GetUserByName(username)
-	if err != nil {
-		return nil, false
+	if err == nil {
+		err = user.ValidateRawPassword(password)
+		if err != nil && setting.GetBool(conf.LdapLoginEnabled) && user.AllowLdap {
+			err = common.HandleLdapLogin(username, password)
+		}
+	} else if setting.GetBool(conf.LdapLoginEnabled) && model.CanWebdavRead(int32(setting.GetInt(conf.LdapDefaultPermission, 0))) {
+		user, err = tryLdapLoginAndRegister(username, password)
 	}
-	if user.ValidateRawPassword(password) == nil {
-		return user, true
-	}
-	if !setting.GetBool(conf.LdapLoginEnabled) || !user.AllowLdap {
-		return user, false
-	}
-	return user, common.HandleLdapLogin(username, password) == nil
+	return user, err == nil
 }
