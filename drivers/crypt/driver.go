@@ -180,7 +180,8 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 			remoteFullPath = stdpath.Join(d.RemotePath, path)
 			remoteObj, err = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
 			if err != nil {
-				return nil, err
+				// 可能是 虚拟路径+开启文件夹加密：返回NotSupport让op.Get去尝试op.List查找
+				return nil, errs.NotSupport
 			}
 		} else if secondTry && errs.IsObjectNotFound(err) {
 			// try the opposite
