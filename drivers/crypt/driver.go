@@ -123,7 +123,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					continue
 				}
 			} else {
-				size, err = d.cipher.DecryptedSize(obj.GetSize())
+				size, err = d.cipher.DecryptedSize(size)
 				if err != nil {
 					// filter illegal files
 					continue
@@ -203,15 +203,18 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 		if !remoteObj.IsDir() {
 			size, err = d.cipher.DecryptedSize(size)
 			if err != nil {
+				size = remoteObj.GetSize()
 				log.Warnf("DecryptedSize failed for %s ,will use original size, err:%s", path, err)
 			}
 			name, err = d.cipher.DecryptFileName(rawName)
 			if err != nil {
+				name = remoteObj.GetName()
 				log.Warnf("DecryptFileName failed for %s ,will use original name, err:%s", path, err)
 			}
 		} else {
 			name, err = d.cipher.DecryptDirName(rawName)
 			if err != nil {
+				name = remoteObj.GetName()
 				log.Warnf("DecryptDirName failed for %s ,will use original name, err:%s", path, err)
 			}
 		}

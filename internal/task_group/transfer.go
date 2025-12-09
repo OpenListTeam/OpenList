@@ -55,7 +55,7 @@ func RefreshAndRemove(dstPath string, payloads ...any) {
 				log.Error(errors.WithMessage(err, "failed get src storage"))
 				continue
 			}
-			err = verifyAndRemove(context.Background(), srcStorage, dstStorage, srcActualPath, dstActualPath /* , dstNeedRefresh */)
+			err = verifyAndRemove(context.Background(), srcStorage, dstStorage, srcActualPath, dstActualPath)
 			if err != nil {
 				log.Error(err)
 			}
@@ -63,7 +63,7 @@ func RefreshAndRemove(dstPath string, payloads ...any) {
 	}
 }
 
-func verifyAndRemove(ctx context.Context, srcStorage, dstStorage driver.Driver, srcPath, dstPath string /* , refresh bool */) error {
+func verifyAndRemove(ctx context.Context, srcStorage, dstStorage driver.Driver, srcPath, dstPath string) error {
 	srcObj, err := op.GetUnwrap(ctx, srcStorage, srcPath)
 	if err != nil {
 		return errors.WithMessagef(err, "failed get src [%s] file", path.Join(srcStorage.GetStorage().MountPath, srcPath))
@@ -89,13 +89,10 @@ func verifyAndRemove(ctx context.Context, srcStorage, dstStorage driver.Driver, 
 		return errors.WithMessagef(err, "failed list src [%s] objs", path.Join(srcStorage.GetStorage().MountPath, srcPath))
 	}
 
-	// if refresh {
-	// 	op.Cache.DeleteDirectory(dstStorage, dstObjPath)
-	// }
 	hasErr := false
 	for _, obj := range srcObjs {
 		srcSubPath := path.Join(srcPath, obj.GetName())
-		err := verifyAndRemove(ctx, srcStorage, dstStorage, srcSubPath, dstObjPath /* , refresh */)
+		err := verifyAndRemove(ctx, srcStorage, dstStorage, srcSubPath, dstObjPath)
 		if err != nil {
 			log.Error(err)
 			hasErr = true

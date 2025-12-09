@@ -188,22 +188,6 @@ func GetProvider(obj Obj) (string, bool) {
 	}
 }
 
-// func GetRawObject(obj Obj) *Object {
-// 	switch v := obj.(type) {
-// 	case *ObjThumbURL:
-// 		return &v.Object
-// 	case *ObjThumb:
-// 		return &v.Object
-// 	case *ObjectURL:
-// 		return &v.Object
-// 	case *ObjectProvider:
-// 		return &v.Object
-// 	case *Object:
-// 		return v
-// 	}
-// 	return nil
-// }
-
 // Merge
 func NewObjMerge() *ObjMerge {
 	return &ObjMerge{
