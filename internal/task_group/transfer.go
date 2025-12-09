@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
@@ -20,7 +21,7 @@ type SrcPathToRemove string
 // ActualPath
 type DstPathToHook string
 
-func RefreshAndRemove(dstPath string, payloads ...any) {
+func RefreshAndRemove(ctx context.Context, dstPath string, payloads ...any) {
 	dstStorage, dstActualPath, err := op.GetStorageAndActualPath(dstPath)
 	if err != nil {
 		log.Error(errors.WithMessage(err, "failed get dst storage"))
@@ -40,13 +41,15 @@ func RefreshAndRemove(dstPath string, payloads ...any) {
 				if _, ok := handledHook[string(p)]; ok {
 					continue
 				}
-				handledHook[string(p)] = struct{}{}
 				if listLimiter != nil {
-					_ = listLimiter.Wait(context.Background())
+					_ = listLimiter.Wait(ctx)
 				}
-				_, e := op.List(context.Background(), dstStorage, string(p), model.ListArgs{Refresh: true})
+				files, e := op.List(ctx, dstStorage, string(p), model.ListArgs{SkipHook: true})
 				if e != nil {
 					log.Errorf("failed handle objs update hook: %v", e)
+				} else {
+					op.HandleObjsUpdateHook(ctx, utils.GetFullPath(dstStorage.GetStorage().MountPath, string(p)), files)
+					handledHook[string(p)] = struct{}{}
 				}
 			}
 		case SrcPathToRemove:
@@ -55,7 +58,7 @@ func RefreshAndRemove(dstPath string, payloads ...any) {
 				log.Error(errors.WithMessage(err, "failed get src storage"))
 				continue
 			}
-			err = verifyAndRemove(context.Background(), srcStorage, dstStorage, srcActualPath, dstActualPath)
+			err = verifyAndRemove(ctx, srcStorage, dstStorage, srcActualPath, dstActualPath)
 			if err != nil {
 				log.Error(err)
 			}

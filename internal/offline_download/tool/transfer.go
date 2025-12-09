@@ -76,7 +76,7 @@ func (t *TransferTask) Run() error {
 				Mimetype: mimetype,
 				Closers:  utils.NewClosers(r),
 			}
-			return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress, true)
+			return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress)
 		}
 		return transferStdPath(t)
 	}
@@ -98,7 +98,7 @@ func (t *TransferTask) OnSucceeded() {
 			removeObjTemp(t)
 		}
 	}
-	task_group.TransferCoordinator.Done(t.groupID, true)
+	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), t.groupID, true)
 }
 
 func (t *TransferTask) OnFailed() {
@@ -109,7 +109,7 @@ func (t *TransferTask) OnFailed() {
 			removeObjTemp(t)
 		}
 	}
-	task_group.TransferCoordinator.Done(t.groupID, false)
+	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), t.groupID, false)
 }
 
 func (t *TransferTask) SetRetry(retry int, maxRetry int) {
@@ -220,7 +220,7 @@ func transferStdFile(t *TransferTask) error {
 		Closers:  utils.NewClosers(rc),
 	}
 	t.SetTotalBytes(info.Size())
-	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress, true)
+	return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress)
 }
 
 func removeStdTemp(t *TransferTask) {
@@ -332,7 +332,7 @@ func transferObjFile(t *TransferTask) error {
 		return errors.WithMessagef(err, "failed get [%s] stream", t.SrcActualPath)
 	}
 	t.SetTotalBytes(ss.GetSize())
-	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, ss, t.SetProgress, true)
+	return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
 }
 
 func removeObjTemp(t *TransferTask) {

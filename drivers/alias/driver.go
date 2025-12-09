@@ -376,7 +376,7 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 				Obj:      s,
 				Mimetype: s.GetMimetype(),
 				Reader:   s,
-			}, up, true)
+			}, up)
 		} else {
 			file, err := s.CacheFullAndWriter(nil, nil)
 			if err != nil {

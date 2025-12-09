@@ -69,10 +69,13 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 			model.SortFiles(files, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
 		}
 		model.ExtractFolder(files, storage.GetStorage().ExtractFolder)
-		// call hooks
-		go func(reqPath string, files []model.Obj) {
-			HandleObjsUpdateHook(context.WithoutCancel(ctx), reqPath, files)
-		}(utils.GetFullPath(storage.GetStorage().MountPath, path), files)
+
+		if !args.SkipHook {
+			// call hooks
+			go func(reqPath string, files []model.Obj) {
+				HandleObjsUpdateHook(context.WithoutCancel(ctx), reqPath, files)
+			}(utils.GetFullPath(storage.GetStorage().MountPath, path), files)
+		}
 
 		if !storage.Config().NoCache {
 			if len(files) > 0 {
@@ -124,7 +127,7 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 }
 
 // Get object from list of files
-func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...bool) (model.Obj, error) {
+func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj ...bool) (model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
@@ -163,12 +166,12 @@ func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...b
 	dir, name := stdpath.Split(path)
 	dirCache, dirCacheExists := Cache.dirCache.Get(Key(storage, dir))
 	refreshList := false
-	noTemp := utils.IsBool(noTempObj...)
+	excludeTemp := utils.IsBool(excludeTempObj...)
 	if dirCacheExists {
 		files := dirCache.GetSortedObjects(storage)
 		for _, f := range files {
 			if f.GetName() == name {
-				if noTemp && model.ObjHasMask(f, model.Temp) {
+				if excludeTemp && model.ObjHasMask(f, model.Temp) {
 					refreshList = true
 					break
 				}
@@ -193,7 +196,7 @@ func Get(ctx context.Context, storage driver.Driver, path string, noTempObj ...b
 		_, err := list(ctx, storage, dir, model.ListArgs{Refresh: refreshList}, func(objs []model.Obj) error {
 			for _, f := range objs {
 				if f.GetName() == name {
-					if noTemp && model.ObjHasMask(f, model.Temp) {
+					if excludeTemp && model.ObjHasMask(f, model.Temp) {
 						break
 					}
 					obj = f
@@ -359,7 +362,7 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 	return err
 }
 
-func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string, lazyCache ...bool) error {
+func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
@@ -416,25 +419,18 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		}
 	}
 
-	if utils.IsBool(lazyCache...) || !needHandleObjsUpdateHook() {
+	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
 		return nil
 	}
 	if !srcObj.IsDir() {
-		go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 	} else {
-		targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
-		var limiter *rate.Limiter
-		if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
-			if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
-				limiter = rate.NewLimiter(rate.Limit(f), 1)
-			}
-		}
-		go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Join(dstDirPath, srcObj.GetName()), true)
 	}
 	return nil
 }
 
-func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string, lazyCache ...bool) error {
+func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
@@ -464,11 +460,21 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string,
 		newObj = model.ObjAddMask(&model.ObjWrapName{Name: dstName, Obj: srcObj}, model.Temp)
 	}
 	Cache.updateDirectoryObject(storage, stdpath.Dir(srcPath), srcRawObj, wrapObjName(storage, newObj))
+
+	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
+		return nil
+	}
+	dstDirPath := stdpath.Dir(srcPath)
+	if !srcObj.IsDir() {
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
+	} else {
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Join(dstDirPath, srcObj.GetName()), true)
+	}
 	return nil
 }
 
 // Copy Just copy file[s] in a storage
-func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string, lazyCache ...bool) error {
+func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
@@ -513,20 +519,13 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		}
 	}
 
-	if utils.IsBool(lazyCache...) || !needHandleObjsUpdateHook() {
+	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
 		return nil
 	}
 	if !srcObj.IsDir() {
-		go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 	} else {
-		targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
-		var limiter *rate.Limiter
-		if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
-			if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
-				limiter = rate.NewLimiter(rate.Limit(f), 1)
-			}
-		}
-		go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Join(dstDirPath, srcObj.GetName()), true)
 	}
 	return nil
 }
@@ -562,7 +561,7 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 	return errors.WithStack(err)
 }
 
-func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file model.FileStreamer, up driver.UpdateProgress, lazyCache ...bool) error {
+func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file model.FileStreamer, up driver.UpdateProgress) error {
 	close := file.Close
 	defer func() {
 		if err := close(); err != nil {
@@ -644,8 +643,8 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 				cache.UpdateObject(newObj.GetName(), wrapObjName(storage, newObj))
 			}
 		}
-		if !utils.IsBool(lazyCache...) && needHandleObjsUpdateHook() {
-			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
+			go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 		}
 	}
 	log.Debugf("put file [%s] done", file.GetName())
@@ -703,7 +702,7 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	}
 
 	if err == nil && needHandleObjsUpdateHook() {
-		go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 	}
 	log.Debugf("put url [%s](%s) done", dstName, url)
 	return errors.WithStack(err)
@@ -749,7 +748,49 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 	return info, nil
 }
 
+func objsUpdateHook(ctx context.Context, storage driver.Driver, dirPath string, recursive bool) {
+	files, err := List(ctx, storage, dirPath, model.ListArgs{SkipHook: true})
+	if err != nil {
+		return
+	}
+	if !recursive {
+		HandleObjsUpdateHook(ctx, utils.GetFullPath(storage.GetStorage().MountPath, dirPath), files)
+		return
+	}
+	var limiter *rate.Limiter
+	if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
+		if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
+			limiter = rate.NewLimiter(rate.Limit(f), 1)
+		}
+	}
+	recursivelyObjsUpdateHook(ctx, storage, dirPath, files, limiter)
+}
+func recursivelyObjsUpdateHook(ctx context.Context, storage driver.Driver, dirPath string, files []model.Obj, limiter *rate.Limiter) {
+	HandleObjsUpdateHook(ctx, utils.GetFullPath(storage.GetStorage().MountPath, dirPath), files)
+	for _, f := range files {
+		if utils.IsCanceled(ctx) {
+			return
+		}
+		if !f.IsDir() {
+			continue
+		}
+		dstPath := stdpath.Join(dirPath, f.GetName())
+		if limiter != nil {
+			if err := limiter.Wait(ctx); err != nil {
+				return
+			}
+		}
+		files, err := List(ctx, storage, dstPath, model.ListArgs{SkipHook: true})
+		if err == nil {
+			recursivelyObjsUpdateHook(ctx, storage, dstPath, files, limiter)
+		}
+	}
+}
+
 func needHandleObjsUpdateHook() bool {
+	if len(objsUpdateHooks) < 1 {
+		return false
+	}
 	needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterWriting)
 	return needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1")
 }

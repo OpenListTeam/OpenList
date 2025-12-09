@@ -68,32 +68,32 @@ func MakeDir(ctx context.Context, path string) error {
 	return err
 }
 
-func Move(ctx context.Context, srcPath, dstDirPath string, lazyCache ...bool) (task.TaskExtensionInfo, error) {
-	req, err := transfer(ctx, move, srcPath, dstDirPath, lazyCache...)
+func Move(ctx context.Context, srcPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
+	req, err := transfer(ctx, move, srcPath, dstDirPath, skipHook...)
 	if err != nil {
 		log.Errorf("failed move %s to %s: %+v", srcPath, dstDirPath, err)
 	}
 	return req, err
 }
 
-func Copy(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool) (task.TaskExtensionInfo, error) {
-	res, err := transfer(ctx, copy, srcObjPath, dstDirPath, lazyCache...)
+func Copy(ctx context.Context, srcObjPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
+	res, err := transfer(ctx, copy, srcObjPath, dstDirPath, skipHook...)
 	if err != nil {
 		log.Errorf("failed copy %s to %s: %+v", srcObjPath, dstDirPath, err)
 	}
 	return res, err
 }
 
-func Merge(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool) (task.TaskExtensionInfo, error) {
-	res, err := transfer(ctx, merge, srcObjPath, dstDirPath, lazyCache...)
+func Merge(ctx context.Context, srcObjPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
+	res, err := transfer(ctx, merge, srcObjPath, dstDirPath, skipHook...)
 	if err != nil {
 		log.Errorf("failed merge %s to %s: %+v", srcObjPath, dstDirPath, err)
 	}
 	return res, err
 }
 
-func Rename(ctx context.Context, srcPath, dstName string, lazyCache ...bool) error {
-	err := rename(ctx, srcPath, dstName, lazyCache...)
+func Rename(ctx context.Context, srcPath, dstName string, skipHook ...bool) error {
+	err := rename(ctx, srcPath, dstName, skipHook...)
 	if err != nil {
 		log.Errorf("failed rename %s to %s: %+v", srcPath, dstName, err)
 	}
@@ -108,8 +108,8 @@ func Remove(ctx context.Context, path string) error {
 	return err
 }
 
-func PutDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer, lazyCache ...bool) error {
-	err := putDirectly(ctx, dstDirPath, file, lazyCache...)
+func PutDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer, skipHook ...bool) error {
+	err := putDirectly(ctx, dstDirPath, file, skipHook...)
 	if err != nil {
 		log.Errorf("failed put %s: %+v", dstDirPath, err)
 	}

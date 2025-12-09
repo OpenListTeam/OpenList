@@ -22,12 +22,15 @@ import (
 type taskType uint8
 
 func (t taskType) String() string {
-	if t == 0 {
+	switch t {
+	case copy:
 		return "copy"
-	} else if t == 1 {
+	case move:
 		return "move"
-	} else {
+	case merge:
 		return "merge"
+	default:
+		return "unknown"
 	}
 }
 
@@ -79,11 +82,11 @@ func (t *FileTransferTask) Run() error {
 }
 
 func (t *FileTransferTask) OnSucceeded() {
-	task_group.TransferCoordinator.Done(t.groupID, true)
+	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), t.groupID, true)
 }
 
 func (t *FileTransferTask) OnFailed() {
-	task_group.TransferCoordinator.Done(t.groupID, false)
+	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), t.groupID, false)
 }
 
 func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
@@ -100,7 +103,7 @@ func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
 	}
 }
 
-func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath string, lazyCache ...bool) (task.TaskExtensionInfo, error) {
+func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
 	srcStorage, srcObjActualPath, err := op.GetStorageAndActualPath(srcObjPath)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed get src storage")
@@ -111,13 +114,16 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	}
 
 	if srcStorage.GetStorage() == dstStorage.GetStorage() {
+		if utils.IsBool(skipHook...) {
+			ctx = context.WithValue(ctx, conf.SkipHookKey, struct{}{})
+		}
 		if taskType == copy || taskType == merge {
-			err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath, lazyCache...)
+			err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
 			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
 				return nil, err
 			}
 		} else {
-			err = op.Move(ctx, srcStorage, srcObjActualPath, dstDirActualPath, lazyCache...)
+			err = op.Move(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
 			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
 				return nil, err
 			}
@@ -157,7 +163,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 				task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
 			}
 		}
-		task_group.TransferCoordinator.Done(t.groupID, hasSuccess)
+		task_group.TransferCoordinator.Done(context.WithoutCancel(ctx), t.groupID, hasSuccess)
 		return nil, err
 	}
 
@@ -248,7 +254,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 	}
 	t.SetTotalBytes(ss.GetSize())
 	t.Status = "uploading"
-	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, ss, t.SetProgress, true)
+	return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
 }
 
 var (
