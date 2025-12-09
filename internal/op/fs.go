@@ -575,7 +575,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	if storage.Config().OnlyIndices {
 		var link string
 		dstDirPath, link = urlTreeSplitLineFormPath(stdpath.Join(dstDirPath, file.GetName()))
-		file = &stream.FileStream{Obj: &model.Object{Name: file.GetName(), Path: link}}
+		file = &stream.FileStream{Obj: &model.Object{Name: link}}
 	}
 	// if file exist and size = 0, delete it
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
@@ -640,9 +640,11 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 						Ctime:    file.CreateTime(),
 					}, model.Temp)
 				}
-				cache.UpdateObject(newObj.GetName(), wrapObjName(storage, newObj))
+				newObj = wrapObjName(storage, newObj)
+				cache.UpdateObject(newObj.GetName(), newObj)
 			}
 		}
+
 		if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
 			go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 		}
@@ -681,28 +683,35 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	if err != nil {
 		return errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
 	}
-	s, ok := storage.(driver.PutURLResult)
-	if !ok {
+	var newObj model.Obj
+	switch s := storage.(type) {
+	case driver.PutURLResult:
+		newObj, err = s.PutURL(ctx, dstDir, dstName, url)
+	case driver.PutURL:
+		err = s.PutURL(ctx, dstDir, dstName, url)
+	default:
 		return errors.WithStack(errs.NotImplement)
 	}
-	var newObj model.Obj
-	newObj, err = s.PutURL(ctx, dstDir, dstName, url)
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
 		if !storage.Config().NoCache {
-			if newObj != nil {
-				cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath))
-				if exist {
-					cache.UpdateObject(newObj.GetName(), wrapObjName(storage, newObj))
+			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
+				if newObj == nil {
+					t := time.Now()
+					newObj = model.ObjAddMask(&model.Object{
+						Name:     dstName,
+						Modified: t,
+						Ctime:    t,
+					}, model.Temp)
 				}
-			} else {
-				err = errors.New("PutURL returned nil obj")
+				newObj = wrapObjName(storage, newObj)
+				cache.UpdateObject(newObj.GetName(), newObj)
+			}
+
+			if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
+				go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 			}
 		}
-	}
-
-	if err == nil && needHandleObjsUpdateHook() {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 	}
 	log.Debugf("put url [%s](%s) done", dstName, url)
 	return errors.WithStack(err)

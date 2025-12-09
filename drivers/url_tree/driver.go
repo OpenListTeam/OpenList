@@ -259,7 +259,7 @@ func (d *Urls) Put(ctx context.Context, dstDir model.Obj, stream model.FileStrea
 	if node.isFile() {
 		return errs.NotFolder
 	}
-	file, err := parseFileLine(stream.GetPath(), d.HeadSize)
+	file, err := parseFileLine(stream.GetName(), d.HeadSize)
 	if err != nil {
 		return err
 	}

@@ -191,8 +191,9 @@ func PutURL(ctx context.Context, path, dstName, urlStr string) error {
 	if storage.Config().NoUpload {
 		return errors.WithStack(errs.UploadNotSupported)
 	}
+	_, ok := storage.(driver.PutURL)
 	_, okResult := storage.(driver.PutURLResult)
-	if !okResult {
+	if !ok && !okResult {
 		return errs.NotImplement
 	}
 	return op.PutURL(ctx, storage, dstDirActualPath, dstName, urlStr)
