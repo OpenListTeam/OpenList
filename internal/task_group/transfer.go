@@ -21,7 +21,7 @@ type SrcPathToRemove string
 // ActualPath
 type DstPathToHook string
 
-func RefreshAndRemove(ctx context.Context, dstPath string, payloads ...any) {
+func HookAndRemove(ctx context.Context, dstPath string, payloads ...any) {
 	dstStorage, dstActualPath, err := op.GetStorageAndActualPath(dstPath)
 	if err != nil {
 		log.Error(errors.WithMessage(err, "failed get dst storage"))
@@ -33,24 +33,30 @@ func RefreshAndRemove(ctx context.Context, dstPath string, payloads ...any) {
 	if dstNeedHandleHook && dstHandleHookLimit > .0 {
 		listLimiter = rate.NewLimiter(rate.Limit(dstHandleHookLimit), 1)
 	}
-	handledHook := make(map[string]struct{})
+	hookedPaths := make(map[string]struct{})
+	handleHook := func(actualPath string) {
+		if _, ok := hookedPaths[actualPath]; ok {
+			return
+		}
+		if listLimiter != nil {
+			_ = listLimiter.Wait(ctx)
+		}
+		files, e := op.List(ctx, dstStorage, actualPath, model.ListArgs{SkipHook: true})
+		if e != nil {
+			log.Errorf("failed handle objs update hook: %v", e)
+		} else {
+			op.HandleObjsUpdateHook(ctx, utils.GetFullPath(dstStorage.GetStorage().MountPath, actualPath), files)
+			hookedPaths[actualPath] = struct{}{}
+		}
+	}
+	if dstNeedHandleHook {
+		handleHook(dstActualPath)
+	}
 	for _, payload := range payloads {
 		switch p := payload.(type) {
 		case DstPathToHook:
 			if dstNeedHandleHook {
-				if _, ok := handledHook[string(p)]; ok {
-					continue
-				}
-				if listLimiter != nil {
-					_ = listLimiter.Wait(ctx)
-				}
-				files, e := op.List(ctx, dstStorage, string(p), model.ListArgs{SkipHook: true})
-				if e != nil {
-					log.Errorf("failed handle objs update hook: %v", e)
-				} else {
-					op.HandleObjsUpdateHook(ctx, utils.GetFullPath(dstStorage.GetStorage().MountPath, string(p)), files)
-					handledHook[string(p)] = struct{}{}
-				}
+				handleHook(string(p))
 			}
 		case SrcPathToRemove:
 			srcStorage, srcActualPath, err := op.GetStorageAndActualPath(string(p))
@@ -111,4 +117,4 @@ func verifyAndRemove(ctx context.Context, srcStorage, dstStorage driver.Driver, 
 	return nil
 }
 
-var TransferCoordinator *TaskGroupCoordinator = NewTaskGroupCoordinator("RefreshAndRemove", RefreshAndRemove)
+var TransferCoordinator *TaskGroupCoordinator = NewTaskGroupCoordinator("HookAndRemove", HookAndRemove)

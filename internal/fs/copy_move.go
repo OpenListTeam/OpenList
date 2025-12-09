@@ -144,6 +144,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	}
 
 	t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
+	task_group.TransferCoordinator.AddTask(t.groupID, nil)
 	if ctx.Value(conf.NoTaskKey) != nil {
 		var callback func(nextTask *FileTransferTask) error
 		hasSuccess := false
@@ -156,12 +157,9 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 			return err
 		}
 		t.Base.SetCtx(ctx)
-		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 		err = t.RunWithNextTaskCallback(callback)
-		if hasSuccess || err == nil {
-			if taskType == move {
-				task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
-			}
+		if taskType == move {
+			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
 		}
 		task_group.TransferCoordinator.Done(context.WithoutCancel(ctx), t.groupID, hasSuccess)
 		return nil, err
@@ -170,10 +168,9 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	t.Creator, _ = ctx.Value(conf.UserKey).(*model.User)
 	t.ApiUrl = common.GetApiUrl(ctx)
 	if taskType == copy || taskType == merge {
-		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 		CopyTaskManager.Add(t)
 	} else {
-		task_group.TransferCoordinator.AddTask(t.groupID, task_group.SrcPathToRemove(srcObjPath))
+		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
 		MoveTaskManager.Add(t)
 	}
 	return t, nil
