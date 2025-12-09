@@ -48,16 +48,15 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 	}
 
-	dir, err := GetUnwrap(ctx, storage, path)
-	if err != nil {
-		return nil, errors.WithMessage(err, "failed get dir")
-	}
-	log.Debugf("list dir: %+v", dir)
-	if !dir.IsDir() {
-		return nil, errors.WithStack(errs.NotFolder)
-	}
-
 	objs, err, _ := listG.Do(key, func() ([]model.Obj, error) {
+		dir, err := GetUnwrap(ctx, storage, path)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed get dir")
+		}
+		log.Debugf("list dir: %+v", dir)
+		if !dir.IsDir() {
+			return nil, errors.WithStack(errs.NotFolder)
+		}
 		files, err := storage.List(ctx, dir, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to list objs")
