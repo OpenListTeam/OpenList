@@ -562,9 +562,8 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 }
 
 func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file model.FileStreamer, up driver.UpdateProgress) error {
-	close := file.Close
 	defer func() {
-		if err := close(); err != nil {
+		if err := file.Close(); err != nil {
 			log.Errorf("failed to close file streamer, %v", err)
 		}
 	}()
@@ -575,7 +574,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	if storage.Config().OnlyIndices {
 		var link string
 		dstDirPath, link = urlTreeSplitLineFormPath(stdpath.Join(dstDirPath, file.GetName()))
-		file = &stream.FileStream{Obj: &model.Object{Name: link}}
+		file = &stream.FileStream{Obj: &model.Object{Name: link}, Closers: utils.Closers{file}}
 	}
 	// if file exist and size = 0, delete it
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
