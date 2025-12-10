@@ -38,9 +38,6 @@ func (t *ArchiveDownloadTask) GetName() string {
 }
 
 func (t *ArchiveDownloadTask) Run() error {
-	if err := t.ReinitCtx(); err != nil {
-		return err
-	}
 	if t.SrcStorage == nil {
 		if srcStorage, _, err := op.GetStorageAndActualPath(t.SrcStorageMp); err == nil {
 			t.SrcStorage = srcStorage
@@ -155,9 +152,6 @@ func (t *ArchiveContentUploadTask) GetStatus() string {
 }
 
 func (t *ArchiveContentUploadTask) Run() error {
-	if err := t.ReinitCtx(); err != nil {
-		return err
-	}
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()

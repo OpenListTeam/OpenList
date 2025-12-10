@@ -51,9 +51,6 @@ func (t *FileTransferTask) GetName() string {
 }
 
 func (t *FileTransferTask) Run() error {
-	if err := t.ReinitCtx(); err != nil {
-		return err
-	}
 	if t.SrcStorage == nil {
 		if srcStorage, _, err := op.GetStorageAndActualPath(t.SrcStorageMp); err == nil {
 			t.SrcStorage = srcStorage
@@ -90,7 +87,7 @@ func (t *FileTransferTask) OnFailed() {
 }
 
 func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
-	t.TaskExtension.SetRetry(retry, maxRetry)
+	t.TaskData.SetRetry(retry, maxRetry)
 	if retry == 0 &&
 		(len(t.groupID) == 0 || // 重启恢复
 			(t.GetErr() == nil && t.GetState() != tache.StatePending)) { // 手动重试
@@ -194,8 +191,14 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 
 		existedObjs := make(map[string]bool)
 		if t.TaskType == merge {
-			dstObjs, _ := op.List(t.Ctx(), t.DstStorage, dstActualPath, model.ListArgs{})
+			dstObjs, err := op.List(t.Ctx(), t.DstStorage, dstActualPath, model.ListArgs{})
+			if err != nil {
+				return errors.WithMessagef(err, "failed list dst [%s] objs", dstActualPath)
+			}
 			for _, obj := range dstObjs {
+				if err := t.Ctx().Err(); err != nil {
+					return err
+				}
 				if !obj.IsDir() {
 					existedObjs[obj.GetName()] = true
 				}
@@ -203,8 +206,8 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		}
 
 		for _, obj := range objs {
-			if utils.IsCanceled(t.Ctx()) {
-				return nil
+			if err := t.Ctx().Err(); err != nil {
+				return err
 			}
 
 			if t.TaskType == merge && !obj.IsDir() && existedObjs[obj.GetName()] {
@@ -236,6 +239,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		return nil
 	}
 
+	t.Status = "getting src object link"
 	link, srcObj, err := op.Link(t.Ctx(), t.SrcStorage, t.SrcActualPath, model.LinkArgs{})
 	if err != nil {
 		return errors.WithMessagef(err, "failed get [%s] link", t.SrcActualPath)

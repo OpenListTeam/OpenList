@@ -32,9 +32,6 @@ type TransferTask struct {
 }
 
 func (t *TransferTask) Run() error {
-	if err := t.ReinitCtx(); err != nil {
-		return err
-	}
 	if t.SrcStorage == nil && t.SrcStorageMp != "" {
 		if srcStorage, _, err := op.GetStorageAndActualPath(t.SrcStorageMp); err == nil {
 			t.SrcStorage = srcStorage
@@ -119,7 +116,7 @@ func (t *TransferTask) SetRetry(retry int, maxRetry int) {
 		t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
 		task_group.TransferCoordinator.AddTask(t.groupID, nil)
 	}
-	t.TaskExtension.SetRetry(retry, maxRetry)
+	t.TaskData.SetRetry(retry, maxRetry)
 }
 
 var (
