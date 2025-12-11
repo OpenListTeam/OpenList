@@ -1,7 +1,10 @@
 package alias
 
 import (
+	"time"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 )
 
@@ -31,24 +34,37 @@ var (
 	ErrNoEnoughSpace = errors.New("none of same-name dirs has enough space")
 )
 
-type BalancedObj struct {
-	model.Obj
-	ExactReqPath string
+type BalancedObjs []model.Obj
+
+func (b BalancedObjs) GetSize() int64 {
+	return b[0].GetSize()
+}
+func (b BalancedObjs) ModTime() time.Time {
+	return b[0].ModTime()
+}
+func (b BalancedObjs) CreateTime() time.Time {
+	return b[0].CreateTime()
+}
+func (b BalancedObjs) IsDir() bool {
+	return b[0].IsDir()
+}
+func (b BalancedObjs) GetHash() utils.HashInfo {
+	return b[0].GetHash()
+}
+func (b BalancedObjs) GetName() string {
+	return b[0].GetName()
+}
+func (b BalancedObjs) GetPath() string {
+	return b[0].GetPath()
+}
+func (b BalancedObjs) GetID() string {
+	return b[0].GetID()
 }
 
-func (b *BalancedObj) Unwrap() model.Obj {
-	return b.Obj
+func (b BalancedObjs) Unwrap() model.Obj {
+	return b[0]
 }
 
-func GetExactReqPath(obj model.Obj) string {
-	for {
-		switch o := obj.(type) {
-		case *BalancedObj:
-			return o.ExactReqPath
-		case model.ObjUnwrap:
-			obj = o.Unwrap()
-		default:
-			return ""
-		}
-	}
-}
+var _ model.Obj = (BalancedObjs)(nil)
+
+type tempObj struct{ model.Object }

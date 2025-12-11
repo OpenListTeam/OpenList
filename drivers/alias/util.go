@@ -90,16 +90,16 @@ func getPair(path string) (string, string) {
 	return stdpath.Base(path), path
 }
 
-func (d *Alias) getRootAndPath(path string) (string, string) {
-	if d.autoFlatten {
-		return d.oneKey, path
+func (d *Alias) getRootsAndPath(path string) (roots []string, sub string) {
+	if len(d.rootOrder) == 1 {
+		return d.pathMap[d.rootOrder[0]], path
 	}
 	path = strings.TrimPrefix(path, "/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) == 1 {
-		return parts[0], ""
+		return d.pathMap[parts[0]], ""
 	}
-	return parts[0], parts[1]
+	return d.pathMap[parts[0]], parts[1]
 }
 
 func (d *Alias) link(ctx context.Context, reqPath string, args model.LinkArgs) (*model.Link, model.Obj, error) {
@@ -107,48 +107,64 @@ func (d *Alias) link(ctx context.Context, reqPath string, args model.LinkArgs) (
 	if err != nil {
 		return nil, nil, err
 	}
-	if !args.Redirect {
-		return op.Link(ctx, storage, reqActualPath, args)
-	}
-	obj, err := fs.Get(ctx, reqPath, &fs.GetArgs{NoLog: true})
-	if err != nil {
-		return nil, nil, err
-	}
-	if common.ShouldProxy(storage, stdpath.Base(reqPath)) {
-		return nil, obj, nil
+	if args.Redirect && common.ShouldProxy(storage, stdpath.Base(reqPath)) {
+		return nil, nil, nil
 	}
 	return op.Link(ctx, storage, reqActualPath, args)
 }
 
-func (d *Alias) getAllReqPath(ctx context.Context, objPath string, isParent bool, ifContinue func(err error) (bool, error)) ([]string, error) {
-	root, sub := d.getRootAndPath(objPath)
-	if sub == "" && !isParent {
-		return nil, errs.NotSupport
-	}
-	dsts, ok := d.pathMap[root]
-	if !ok {
-		return nil, errs.ObjectNotFound
-	}
-	var reqPath []string
-	for _, dst := range dsts {
-		path := stdpath.Join(dst, sub)
-		_, err := fs.Get(ctx, path, &fs.GetArgs{NoLog: true})
-		cont, err := ifContinue(err)
-		if !cont {
-			if err == nil {
-				return []string{path}, nil
-			} else {
-				return nil, err
+func getAllObjs(ctx context.Context, obj model.Obj, ifContinue func(err error) (bool, error)) (BalancedObjs, error) {
+	objs := obj.(BalancedObjs)
+	isDir := obj.IsDir()
+	length := 0
+	for _, o := range objs {
+		var err error
+		temp, isTemp := o.(*tempObj)
+		if isTemp {
+			obj, err = fs.Get(ctx, o.GetPath(), &fs.GetArgs{NoLog: true})
+			if err == nil && isDir != obj.IsDir() {
+				err = errs.ObjectNotFound
 			}
 		}
-		if err == nil {
-			reqPath = append(reqPath, path)
+
+		cont, err := ifContinue(err)
+		if err != nil {
+			if cont {
+				continue
+			}
+			return nil, err
+		}
+		if isTemp {
+			objRes := temp.Object
+			// objRes.Name = obj.GetName()
+			// objRes.Size = obj.GetSize()
+			// objRes.Modified = obj.ModTime()
+			// objRes.HashInfo = obj.GetHash()
+			objs[length] = &objRes
+		} else {
+			objs[length] = o
+		}
+		length++
+		if !cont {
+			break
 		}
 	}
-	if len(reqPath) == 0 {
+	if length == 0 {
 		return nil, errs.ObjectNotFound
 	}
-	return reqPath, nil
+	return objs[:length], nil
+}
+
+func (d *Alias) getBalancedPath(ctx context.Context, file model.Obj) string {
+	if d.ReadConflictPolicy == FirstRWP {
+		return file.GetPath()
+	}
+	files := file.(BalancedObjs)
+	if rand.Intn(len(files)) == 0 {
+		return file.GetPath()
+	}
+	files, _ = getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllWP))
+	return files[rand.Intn(len(files))].GetPath()
 }
 
 func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
@@ -189,46 +205,47 @@ func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
 	}
 }
 
-func (d *Alias) getWritePath(ctx context.Context, obj model.Obj, isParent bool) ([]string, error) {
+func (d *Alias) getWritePath(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
 	if d.WriteConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
-	reqPath, err := d.getAllReqPath(ctx, obj.GetPath(), isParent, getWriteAndPutFilterFunc(d.WriteConflictPolicy))
-	if err != nil {
-		return nil, err
-	}
-	return reqPath, nil
+	return getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.WriteConflictPolicy))
 }
 
-func (d *Alias) getPutPath(ctx context.Context, obj model.Obj) ([]string, error) {
+func (d *Alias) getPutPath(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
-	reqPath, err := d.getAllReqPath(ctx, obj.GetPath(), true, getWriteAndPutFilterFunc(d.PutConflictPolicy))
+	objs, err := getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.PutConflictPolicy))
 	if err != nil {
 		return nil, err
 	}
-	if d.PutConflictPolicy == RandomBalancedRP {
-		ri := rand.Intn(len(reqPath))
-		return []string{reqPath[ri]}, nil
-	} else if d.PutConflictPolicy == BalancedByQuotaP || d.PutConflictPolicy == BalancedByQuotaStrictP {
-		r, ok := getRandomPathByQuotaBalanced(ctx, reqPath, d.PutConflictPolicy == BalancedByQuotaStrictP, uint64(obj.GetSize()))
+	strict := false
+	switch d.PutConflictPolicy {
+	case RandomBalancedRP:
+		ri := rand.Intn(len(objs))
+		return objs[ri : ri+1], nil
+	case BalancedByQuotaStrictP:
+		strict = true
+		fallthrough
+	case BalancedByQuotaP:
+		objs, ok := getRandomPathByQuotaBalanced(ctx, objs, strict, uint64(obj.GetSize()))
 		if !ok {
 			return nil, ErrNoEnoughSpace
 		}
-		return []string{r}, nil
-	} else {
-		return reqPath, nil
+		return objs, nil
+	default:
+		return objs, nil
 	}
 }
 
-func getRandomPathByQuotaBalanced(ctx context.Context, reqPath []string, strict bool, objSize uint64) (string, bool) {
+func getRandomPathByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, strict bool, objSize uint64) (BalancedObjs, bool) {
 	// Get all space
 	details := make([]*model.StorageDetails, len(reqPath))
 	detailsChan := make(chan detailWithIndex, len(reqPath))
 	workerCount := 0
 	for i, p := range reqPath {
-		s, err := fs.GetStorage(p, &fs.GetStoragesArgs{})
+		s, err := fs.GetStorage(p.GetPath(), &fs.GetStoragesArgs{})
 		if err != nil {
 			continue
 		}
@@ -265,7 +282,7 @@ func getRandomPathByQuotaBalanced(ctx context.Context, reqPath []string, strict 
 	})
 	if !ok {
 		if strict {
-			return "", false
+			return nil, false
 		} else {
 			// No strict mode, return any of non-details ones
 			noDetails := make([]int, 0, len(details))
@@ -275,12 +292,12 @@ func getRandomPathByQuotaBalanced(ctx context.Context, reqPath []string, strict 
 				}
 			}
 			if len(noDetails) == 0 {
-				return "", false
+				return nil, false
 			}
-			return reqPath[noDetails[rand.Intn(len(noDetails))]], true
+			selected = noDetails[rand.Intn(len(noDetails))]
 		}
 	}
-	return reqPath[selected], true
+	return reqPath[selected : selected+1], true
 }
 
 func selectRandom[Item any](arr []Item, getWeight func(Item) uint64) (int, bool) {
@@ -306,13 +323,14 @@ func (d *Alias) getCopyMovePath(ctx context.Context, srcObj, dstDir model.Obj) (
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
 	}
-	dstPath, err := d.getAllReqPath(ctx, dstDir.GetPath(), true, getWriteAndPutFilterFunc(d.PutConflictPolicy))
+	dstObjs, err := getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy))
 	if err != nil {
 		return nil, nil, err
 	}
 	dstStorageMap := make(map[string][]string)
 	allocatingDst := make(map[string]struct{})
-	for _, dp := range dstPath {
+	for _, o := range dstObjs {
+		dp := o.GetPath()
 		storage, e := fs.GetStorage(dp, &fs.GetStoragesArgs{})
 		if e != nil {
 			return nil, nil, errors.WithMessagef(e, "cannot copy or move to virtual path [%s]", dp)
@@ -321,13 +339,14 @@ func (d *Alias) getCopyMovePath(ctx context.Context, srcObj, dstDir model.Obj) (
 		dstStorageMap[mp] = append(dstStorageMap[mp], dp)
 		allocatingDst[dp] = struct{}{}
 	}
-	srcPath, err := d.getAllReqPath(ctx, srcObj.GetPath(), false, getWriteAndPutFilterFunc(AllWP))
+	srcObjs, err := getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllWP))
 	if err != nil {
 		return nil, nil, err
 	}
 	srcs := make([]string, 0)
 	dsts := make([]string, 0)
-	for _, sp := range srcPath {
+	for _, o := range srcObjs {
+		sp := o.GetPath()
 		storage, e := fs.GetStorage(sp, &fs.GetStoragesArgs{})
 		if e != nil {
 			continue
