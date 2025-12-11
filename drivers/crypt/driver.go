@@ -112,12 +112,10 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	for _, obj := range objs {
 		size := obj.GetSize()
 		mask := model.GetObjMask(obj)
-		mask &^= model.Temp
 		name := obj.GetName()
 		if mask&model.Virtual == 0 {
-			rawName := model.UnwrapObjName(obj).GetName()
 			if obj.IsDir() {
-				name, err = d.cipher.DecryptDirName(rawName)
+				name, err = d.cipher.DecryptDirName(model.UnwrapObjName(obj).GetName())
 				if err != nil {
 					// filter illegal files
 					continue
@@ -128,7 +126,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					// filter illegal files
 					continue
 				}
-				name, err = d.cipher.DecryptFileName(rawName)
+				name, err = d.cipher.DecryptFileName(model.UnwrapObjName(obj).GetName())
 				if err != nil {
 					// filter illegal files
 					continue
@@ -138,6 +136,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		if !d.ShowHidden && strings.HasPrefix(name, ".") {
 			continue
 		}
+		mask &^= model.Temp
 		objRes := &model.Object{
 			Path:     stdpath.Join(remoteFullPath, obj.GetName()),
 			Name:     name,
@@ -200,23 +199,25 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 	mask := model.GetObjMask(remoteObj)
 	mask &^= model.Temp
 	if mask&model.Virtual == 0 {
-		rawName := model.UnwrapObjName(remoteObj).GetName()
 		if !remoteObj.IsDir() {
-			size, err = d.cipher.DecryptedSize(size)
+			decryptedSize, err := d.cipher.DecryptedSize(size)
 			if err != nil {
-				size = remoteObj.GetSize()
 				log.Warnf("DecryptedSize failed for %s ,will use original size, err:%s", path, err)
+			} else {
+				size = decryptedSize
 			}
-			name, err = d.cipher.DecryptFileName(rawName)
+			decryptedName, err := d.cipher.DecryptFileName(model.UnwrapObjName(remoteObj).GetName())
 			if err != nil {
-				name = remoteObj.GetName()
 				log.Warnf("DecryptFileName failed for %s ,will use original name, err:%s", path, err)
+			} else {
+				name = decryptedName
 			}
 		} else {
-			name, err = d.cipher.DecryptDirName(rawName)
+			decryptedName, err := d.cipher.DecryptDirName(model.UnwrapObjName(remoteObj).GetName())
 			if err != nil {
-				name = remoteObj.GetName()
 				log.Warnf("DecryptDirName failed for %s ,will use original name, err:%s", path, err)
+			} else {
+				name = decryptedName
 			}
 		}
 	}

@@ -67,14 +67,11 @@ func (t *TaskExtension) GetTotalBytes() int64 {
 
 func (t *TaskExtension) SetRetry(retry int, maxRetry int) {
 	t.Base.SetRetry(retry, maxRetry)
-	if retry > 0 || t.Ctx() == nil {
+	if retry > 0 || !conf.Conf.Tasks.AllowRetryCanceled || t.Ctx() == nil {
 		return
 	}
 	select {
 	case <-t.Ctx().Done():
-		if !conf.Conf.Tasks.AllowRetryCanceled {
-			return
-		}
 		ctx, cancel := context.WithCancel(context.Background())
 		t.SetCtx(ctx)
 		t.SetCancelFunc(cancel)
