@@ -80,6 +80,10 @@ type ObjStorageDetails struct {
 	StorageDetailsWithName
 }
 
+func (o *ObjStorageDetails) Unwrap() Obj {
+	return o.Obj
+}
+
 func (o ObjStorageDetails) GetStorageDetails() *StorageDetailsWithName {
 	return &o.StorageDetailsWithName
 }

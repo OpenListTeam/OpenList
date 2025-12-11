@@ -41,11 +41,14 @@ func (b *BalancedObj) Unwrap() model.Obj {
 }
 
 func GetExactReqPath(obj model.Obj) string {
-	if b, ok := obj.(*BalancedObj); ok {
-		return b.ExactReqPath
+	for {
+		switch o := obj.(type) {
+		case *BalancedObj:
+			return o.ExactReqPath
+		case model.ObjUnwrap:
+			obj = o.Unwrap()
+		default:
+			return ""
+		}
 	}
-	if unwrap, ok := obj.(model.ObjUnwrap); ok {
-		return GetExactReqPath(unwrap.Unwrap())
-	}
-	return ""
 }

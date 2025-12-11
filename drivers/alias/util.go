@@ -35,7 +35,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 			Modified: d.Modified,
 		}
 		idx := len(objs)
-		objs = append(objs, &obj)
+		objs = append(objs, model.ObjAddMask(&obj, model.Virtual))
 		v := d.pathMap[k]
 		if !withDetails || len(v) != 1 {
 			continue

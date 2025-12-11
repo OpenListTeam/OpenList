@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -426,9 +427,10 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		UpdateProgress: up,
 	}
 	dst := stdpath.Join(remoteActualPath, dstDir.GetPath(), d.ChunkPrefix+file.GetName())
+	skipHookCtx := context.WithValue(ctx, conf.SkipHookKey, struct{}{})
 	if d.StoreHash {
 		for ht, value := range file.GetHash().All() {
-			_ = op.Put(ctx, remoteStorage, dst, &stream.FileStream{
+			_ = op.Put(skipHookCtx, remoteStorage, dst, &stream.FileStream{
 				Obj: &model.Object{
 					Name:     fmt.Sprintf("hash_%s_%s%s", ht.Name, value, d.CustomExt),
 					Size:     1,
@@ -436,7 +438,7 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 				},
 				Mimetype: "application/octet-stream",
 				Reader:   bytes.NewReader([]byte{0}), // 兼容不支持空文件的驱动
-			}, nil, true)
+			}, nil)
 		}
 	}
 	fullPartCount := int(file.GetSize() / d.PartSize)
@@ -447,7 +449,7 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	}
 	partIndex := 0
 	for partIndex < fullPartCount {
-		err = op.Put(ctx, remoteStorage, dst, &stream.FileStream{
+		err = op.Put(skipHookCtx, remoteStorage, dst, &stream.FileStream{
 			Obj: &model.Object{
 				Name:     d.getPartName(partIndex),
 				Size:     d.PartSize,
@@ -455,7 +457,7 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 			},
 			Mimetype: file.GetMimetype(),
 			Reader:   io.LimitReader(upReader, d.PartSize),
-		}, nil, true)
+		}, nil)
 		if err != nil {
 			_ = op.Remove(ctx, remoteStorage, dst)
 			return err

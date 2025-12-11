@@ -95,12 +95,12 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	}
 	var objs []model.Obj
 	for _, dst := range dsts {
-		p := stdpath.Join(dst, sub)
-		obj, err := fs.Get(ctx, p, &fs.GetArgs{NoLog: true})
+		rawPath := stdpath.Join(dst, sub)
+		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
 		if err != nil {
 			continue
 		}
-		object := model.Object{
+		ret := model.Object{
 			Path:     path,
 			Name:     obj.GetName(),
 			Size:     obj.GetSize(),
@@ -108,28 +108,26 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 			IsFolder: obj.IsDir(),
 			HashInfo: obj.GetHash(),
 		}
-		if !obj.IsDir() {
-			if d.ProviderPassThrough {
-				storage, e := fs.GetStorage(p, &fs.GetStoragesArgs{})
-				provider := ""
-				if e == nil {
-					provider = storage.Config().Name
-				}
+		obj = &ret
+		if !obj.IsDir() && d.ProviderPassThrough {
+			storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
+			if err == nil {
 				obj = &model.ObjectProvider{
-					Object: object,
+					Object: ret,
 					Provider: model.Provider{
-						Provider: provider,
+						Provider: storage.Config().Name,
 					},
 				}
-			} else {
-				obj = &object
 			}
+		}
+		mask := model.GetObjMask(obj)
+		mask &^= model.Temp
+		obj = model.ObjAddMask(obj, mask)
+		if !obj.IsDir() {
 			obj = &BalancedObj{
 				Obj:          obj,
-				ExactReqPath: p,
+				ExactReqPath: rawPath,
 			}
-		} else {
-			obj = &object
 		}
 		if d.ReadConflictPolicy == FirstRWP {
 			return obj, nil
@@ -163,6 +161,8 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		})
 		if err == nil {
 			tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
+				mask := model.GetObjMask(obj)
+				mask &^= model.Temp
 				objRes := model.Object{
 					Name:     obj.GetName(),
 					Path:     stdpath.Join(path, obj.GetName()),
@@ -193,7 +193,7 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 						ExactReqPath: stdpath.Join(exactPath, objRet.GetName()),
 					}
 				}
-				return objRet, nil
+				return model.ObjAddMask(objRet, mask), nil
 			})
 		}
 		if err == nil {

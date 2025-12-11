@@ -55,8 +55,8 @@ github.com/OpenListTeam/gsync v0.1.0 h1:ywzGybOvA3lW8K1BUjKZ2IUlT2FSlzPO4DOazfYX
 github.com/OpenListTeam/gsync v0.1.0/go.mod h1:h/Rvv9aX/6CdW/7B8di3xK3xNV8dUg45Fehrd/ksZ9s=
 github.com/OpenListTeam/sftpd-openlist v1.0.1 h1:j4S3iPFOpnXCUKRPS7uCT4mF2VCl34GyqvH6lqwnkUU=
 github.com/OpenListTeam/sftpd-openlist v1.0.1/go.mod h1:uO/wKnbvbdq3rBLmClMTZXuCnw7XW4wlAq4dZe91a40=
-github.com/OpenListTeam/tache v0.2.1 h1:Uy/xAr05clHuMrr9+5fXAhv0Z5PGJivp4P5DnRez6cw=
-github.com/OpenListTeam/tache v0.2.1/go.mod h1:qmnZ/VpY2DUlmjg3UoDeNFy/LRqrw0biN3hYEEGc/+A=
+github.com/OpenListTeam/tache v0.2.2 h1:CWFn6sr1AIYaEjC8ONdKs+LrxHyuErheenAjEqRhh4k=
+github.com/OpenListTeam/tache v0.2.2/go.mod h1:qmnZ/VpY2DUlmjg3UoDeNFy/LRqrw0biN3hYEEGc/+A=
 github.com/OpenListTeam/times v0.1.0 h1:qknxw+qj5CYKgXAwydA102UEpPcpU8TYNGRmwRyPYpg=
 github.com/OpenListTeam/times v0.1.0/go.mod h1:Jx7qen5NCYzKk2w14YuvU48YYMcPa1P9a+EJePC15Pc=
 github.com/OpenListTeam/wopan-sdk-go v0.1.5 h1:iKKcVzIqBgtGDbn0QbdWrCazSGxXFmYFyrnFBG+U8dI=
