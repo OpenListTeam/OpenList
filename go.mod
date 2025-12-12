@@ -11,6 +11,7 @@ require (
 	github.com/OpenListTeam/sftpd-openlist v1.0.1
 	github.com/OpenListTeam/tache v0.2.2
 	github.com/OpenListTeam/times v0.1.0
+	github.com/OpenListTeam/wazero-wasip2 v0.0.0-20251015145605-cd3a2c9131d9
 	github.com/OpenListTeam/wopan-sdk-go v0.1.5
 	github.com/ProtonMail/go-crypto v1.3.0
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0
@@ -67,6 +68,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/t3rm1n4l/go-mega v0.0.0-20241213151442-a19cff0ec7b5
 	github.com/tchap/go-patricia/v2 v2.3.3
+	github.com/tetratelabs/wazero v1.9.0
 	github.com/u2takey/ffmpeg-go v0.5.0
 	github.com/upyun/go-sdk/v3 v3.0.4
 	github.com/winfsp/cgofuse v1.6.0
@@ -191,7 +193,7 @@ require (
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/bytedance/sonic v1.13.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/coreos/go-semver v0.3.1 // indirect
+	github.com/coreos/go-semver v0.3.1
 	github.com/crackcomm/go-gitignore v0.0.0-20170627025303-887ab5e44cc3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.1.0 // indirect
@@ -301,3 +303,5 @@ replace github.com/ProtonMail/go-proton-api => github.com/henrybear327/go-proton
 replace github.com/cronokirby/saferith => github.com/Da3zKi7/saferith v0.33.0-fixed
 
 // replace github.com/OpenListTeam/115-sdk-go => ../../OpenListTeam/115-sdk-go
+
+replace google.golang.org/genproto => google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822

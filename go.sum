@@ -59,6 +59,8 @@ github.com/OpenListTeam/tache v0.2.2 h1:CWFn6sr1AIYaEjC8ONdKs+LrxHyuErheenAjEqRh
 github.com/OpenListTeam/tache v0.2.2/go.mod h1:qmnZ/VpY2DUlmjg3UoDeNFy/LRqrw0biN3hYEEGc/+A=
 github.com/OpenListTeam/times v0.1.0 h1:qknxw+qj5CYKgXAwydA102UEpPcpU8TYNGRmwRyPYpg=
 github.com/OpenListTeam/times v0.1.0/go.mod h1:Jx7qen5NCYzKk2w14YuvU48YYMcPa1P9a+EJePC15Pc=
+github.com/OpenListTeam/wazero-wasip2 v0.0.0-20251015145605-cd3a2c9131d9 h1:yddTD9Fxh6bLMLmG0hSR7Eh6XkoK0RMlE4N1e6/+Iy8=
+github.com/OpenListTeam/wazero-wasip2 v0.0.0-20251015145605-cd3a2c9131d9/go.mod h1:+BpydPG2cUQHYFwH3/lVmvXyMl/zxHW+XM+XTSzqu2Q=
 github.com/OpenListTeam/wopan-sdk-go v0.1.5 h1:iKKcVzIqBgtGDbn0QbdWrCazSGxXFmYFyrnFBG+U8dI=
 github.com/OpenListTeam/wopan-sdk-go v0.1.5/go.mod h1:otynv0CgSNUClPpUgZ44qCZGcMRe0dc83Pkk65xAunI=
 github.com/ProtonMail/bcrypt v0.0.0-20210511135022-227b4adcab57/go.mod h1:HecWFHognK8GfRDGnFQbW/LiV7A3MX3gZVs45vk5h8I=
@@ -686,6 +688,8 @@ github.com/taruti/bytepool v0.0.0-20160310082835-5e3a9ea56543 h1:6Y51mutOvRGRx6K
 github.com/taruti/bytepool v0.0.0-20160310082835-5e3a9ea56543/go.mod h1:jpwqYA8KUVEvSUJHkCXsnBRJCSKP1BMa81QZ6kvRpow=
 github.com/tchap/go-patricia/v2 v2.3.3 h1:xfNEsODumaEcCcY3gI0hYPZ/PcpVv5ju6RMAhgwZDDc=
 github.com/tchap/go-patricia/v2 v2.3.3/go.mod h1:VZRHKAb53DLaG+nA9EaYYiaEx6YztwDlLElMsnSHD4k=
+github.com/tetratelabs/wazero v1.9.0 h1:IcZ56OuxrtaEz8UYNRHBrUa9bYeX9oVY93KspZZBf/I=
+github.com/tetratelabs/wazero v1.9.0/go.mod h1:TSbcXCfFP0L2FGkRPxHphadXPjo1T6W+CseNNY7EkjM=
 github.com/tklauser/go-sysconf v0.3.15 h1:VE89k0criAymJ/Os65CSn1IXaol+1wrsFHEB8Ol49K4=
 github.com/tklauser/go-sysconf v0.3.15/go.mod h1:Dmjwr6tYFIseJw7a3dRLJfsHAMXZ3nEnL/aZY+0IuI4=
 github.com/tklauser/numcpus v0.10.0 h1:18njr6LDBk1zuna922MgdjQuJFjrdppsZG60sHGfjso=

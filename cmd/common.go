@@ -17,6 +17,7 @@ func Init() {
 	bootstrap.Log()
 	bootstrap.InitDB()
 	data.InitData()
+	bootstrap.InitPlugins()
 	bootstrap.InitStreamLimit()
 	bootstrap.InitIndex()
 	bootstrap.InitUpgradePatch()

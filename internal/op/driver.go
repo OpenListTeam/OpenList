@@ -15,12 +15,27 @@ type DriverConstructor func() driver.Driver
 var driverMap = map[string]DriverConstructor{}
 var driverInfoMap = map[string]driver.Info{}
 
-func RegisterDriver(driver DriverConstructor) {
+func RegisterDriver(driver DriverConstructor) error {
 	// log.Infof("register driver: [%s]", config.Name)
 	tempDriver := driver()
+	if tempDriver == nil {
+		return errors.New("register driver is null")
+	}
 	tempConfig := tempDriver.Config()
+
+	if driverMap[tempConfig.Name] != nil {
+		return errors.New("driver is registered")
+	}
 	registerDriverItems(tempConfig, tempDriver.GetAddition())
 	driverMap[tempConfig.Name] = driver
+	return nil
+}
+
+func UnRegisterDriver(driver DriverConstructor) {
+	if tempDriver := driver(); tempDriver != nil {
+		tempConfig := tempDriver.Config()
+		delete(driverMap, tempConfig.Name)
+	}
 }
 
 func GetDriver(name string) (DriverConstructor, error) {
@@ -45,12 +60,18 @@ func GetDriverInfoMap() map[string]driver.Info {
 
 func registerDriverItems(config driver.Config, addition driver.Additional) {
 	// log.Debugf("addition of %s: %+v", config.Name, addition)
-	tAddition := reflect.TypeOf(addition)
-	for tAddition.Kind() == reflect.Pointer {
-		tAddition = tAddition.Elem()
+	var additionalItems []driver.Item
+	if v, ok := addition.(driver.IGetItem); ok {
+		additionalItems = v.GetItems()
+	} else {
+		tAddition := reflect.TypeOf(addition)
+		for tAddition.Kind() == reflect.Pointer {
+			tAddition = tAddition.Elem()
+		}
+		additionalItems = getAdditionalItems(tAddition, config.DefaultRoot)
 	}
+
 	mainItems := getMainItems(config)
-	additionalItems := getAdditionalItems(tAddition, config.DefaultRoot)
 	driverInfoMap[config.Name] = driver.Info{
 		Common:     mainItems,
 		Additional: additionalItems,

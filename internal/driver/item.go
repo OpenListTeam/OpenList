@@ -19,6 +19,10 @@ type Info struct {
 	Config     Config `json:"config"`
 }
 
+type IGetItem interface {
+	GetItems() []Item
+}
+
 type IRootPath interface {
 	GetRootPath() string
 }
