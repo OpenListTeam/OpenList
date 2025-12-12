@@ -1,21 +1,13 @@
 package handles
 
 import (
-	"crypto/tls"
-	"errors"
-	"fmt"
-	"strings"
-
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
-	"gopkg.in/ldap.v3"
+	"github.com/pkg/errors"
 )
 
 func LoginLdap(c *gin.Context) {
@@ -24,13 +16,14 @@ func LoginLdap(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	loginLdap(c, &req)
-}
-
-func loginLdap(c *gin.Context, req *LoginReq) {
 	enabled := setting.GetBool(conf.LdapLoginEnabled)
 	if !enabled {
 		common.ErrorStrResp(c, "ldap is not enabled", 403)
+		return
+	}
+	user, err := op.GetUserByName(req.Username)
+	if err == nil && !user.AllowLdap {
+		common.ErrorStrResp(c, "login via ldap is not allowed", 403)
 		return
 	}
 
@@ -43,67 +36,19 @@ func loginLdap(c *gin.Context, req *LoginReq) {
 		return
 	}
 
-	// Auth start
-	ldapServer := setting.GetStr(conf.LdapServer)
-	ldapManagerDN := setting.GetStr(conf.LdapManagerDN)
-	ldapManagerPassword := setting.GetStr(conf.LdapManagerPassword)
-	ldapUserSearchBase := setting.GetStr(conf.LdapUserSearchBase)
-	ldapUserSearchFilter := setting.GetStr(conf.LdapUserSearchFilter) // (uid=%s)
-
-	// Connect to LdapServer
-	l, err := dial(ldapServer)
+	err = common.HandleLdapLogin(req.Username, req.Password)
 	if err != nil {
-		utils.Log.Errorf("failed to connect to LDAP: %v", err)
-		common.ErrorResp(c, err, 500)
-		return
-	}
-
-	// First bind with a read only user
-	if ldapManagerDN != "" && ldapManagerPassword != "" {
-		err = l.Bind(ldapManagerDN, ldapManagerPassword)
-		if err != nil {
-			utils.Log.Errorf("Failed to bind to LDAP: %v", err)
+		if errors.Is(err, common.ErrFailedLdapAuth) {
+			model.LoginCache.Set(ip, count+1)
+			common.ErrorResp(c, err, 400)
+		} else {
 			common.ErrorResp(c, err, 500)
-			return
 		}
-	}
-
-	// Search for the given username
-	searchRequest := ldap.NewSearchRequest(
-		ldapUserSearchBase,
-		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(ldapUserSearchFilter, req.Username),
-		[]string{"dn"},
-		nil,
-	)
-	sr, err := l.Search(searchRequest)
-	if err != nil {
-		utils.Log.Errorf("LDAP search failed: %v", err)
-		common.ErrorResp(c, err, 500)
 		return
 	}
-	if len(sr.Entries) != 1 {
-		utils.Log.Errorf("User does not exist or too many entries returned")
-		common.ErrorResp(c, err, 500)
-		return
-	}
-	userDN := sr.Entries[0].DN
 
-	// Bind as the user to verify their password
-	err = l.Bind(userDN, req.Password)
-	if err != nil {
-		utils.Log.Errorf("Failed to auth. %v", err)
-		common.ErrorResp(c, err, 400)
-		model.LoginCache.Set(ip, count+1)
-		return
-	} else {
-		utils.Log.Infof("Auth successful username:%s", req.Username)
-	}
-	// Auth finished
-
-	user, err := op.GetUserByName(req.Username)
-	if err != nil {
-		user, err = ladpRegister(req.Username)
+	if user == nil {
+		user, err = common.LdapRegister(req.Username)
 		if err != nil {
 			common.ErrorResp(c, err, 400)
 			model.LoginCache.Set(ip, count+1)
@@ -119,39 +64,4 @@ func loginLdap(c *gin.Context, req *LoginReq) {
 	}
 	common.SuccessResp(c, gin.H{"token": token})
 	model.LoginCache.Del(ip)
-}
-
-func ladpRegister(username string) (*model.User, error) {
-	if username == "" {
-		return nil, errors.New("cannot get username from ldap provider")
-	}
-	user := &model.User{
-		ID:         0,
-		Username:   username,
-		Password:   random.String(16),
-		Permission: int32(setting.GetInt(conf.LdapDefaultPermission, 0)),
-		BasePath:   setting.GetStr(conf.LdapDefaultDir),
-		Role:       0,
-		Disabled:   false,
-	}
-	if err := db.CreateUser(user); err != nil {
-		return nil, err
-	}
-	return user, nil
-}
-
-func dial(ldapServer string) (*ldap.Conn, error) {
-	var tlsEnabled bool = false
-	if strings.HasPrefix(ldapServer, "ldaps://") {
-		tlsEnabled = true
-		ldapServer = strings.TrimPrefix(ldapServer, "ldaps://")
-	} else if strings.HasPrefix(ldapServer, "ldap://") {
-		ldapServer = strings.TrimPrefix(ldapServer, "ldap://")
-	}
-
-	if tlsEnabled {
-		return ldap.DialTLS("tcp", ldapServer, &tls.Config{InsecureSkipVerify: true})
-	} else {
-		return ldap.Dial("tcp", ldapServer)
-	}
 }
