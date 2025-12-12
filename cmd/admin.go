@@ -6,6 +6,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -20,8 +21,8 @@ var AdminCmd = &cobra.Command{
 	Aliases: []string{"password"},
 	Short:   "Show admin user's info and some operations about admin user's password",
 	Run: func(cmd *cobra.Command, args []string) {
-		Init()
-		defer Release()
+		bootstrap.Init()
+		defer bootstrap.Release()
 		admin, err := op.GetAdmin()
 		if err != nil {
 			utils.Log.Errorf("failed get admin user: %+v", err)
@@ -61,8 +62,8 @@ var ShowTokenCmd = &cobra.Command{
 	Use:   "token",
 	Short: "Show admin token",
 	Run: func(cmd *cobra.Command, args []string) {
-		Init()
-		defer Release()
+		bootstrap.Init()
+		defer bootstrap.Release()
 		token := setting.GetStr(conf.Token)
 		utils.Log.Infof("show admin token from CLI")
 		fmt.Println("Admin token:", token)
@@ -70,8 +71,8 @@ var ShowTokenCmd = &cobra.Command{
 }
 
 func setAdminPassword(pwd string) {
-	Init()
-	defer Release()
+	bootstrap.Init()
+	defer bootstrap.Release()
 	admin, err := op.GetAdmin()
 	if err != nil {
 		utils.Log.Errorf("failed get admin user: %+v", err)

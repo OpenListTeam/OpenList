@@ -167,7 +167,7 @@ func lookupIP(host string) string {
 	}
 	ips, err := net.LookupIP(host)
 	if err != nil || len(ips) == 0 {
-		utils.Log.Fatalf("given FTP public host is invalid, and the default value will be used: %v", err)
+		utils.Log.Errorf("given FTP public host is invalid, and the default value will be used: %v", err)
 		return ""
 	}
 	for _, ip := range ips {
@@ -272,7 +272,7 @@ func newPortMapper(str string) ftpserver.PasvPortGetter {
 			break
 		}
 		if err != nil {
-			utils.Log.Fatalf("failed to convert FTP PASV port mapper %s: %v, the port mapper will be ignored.", mapper, err)
+			utils.Log.Errorf("failed to convert FTP PASV port mapper %s: %v, the port mapper will be ignored.", mapper, err)
 			return nil
 		}
 	}
