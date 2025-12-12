@@ -30,3 +30,11 @@ func init() {
 		return &HalalCloudOpen{}
 	})
 }
+
+type UploadedFile struct {
+	Identity        string `json:"identity"`
+	UserIdentity    string `json:"user_identity"`
+	Path            string `json:"path"`
+	Size            int64  `json:"size"`
+	ContentIdentity string `json:"content_identity"`
+}
