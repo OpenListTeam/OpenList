@@ -108,7 +108,8 @@ func (d *Open123) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 		return nil, err
 	}
 
-	return &model.Link{URL: res.Data.DownloadUrl}, nil
+	exp := 5 * time.Minute
+	return &model.Link{URL: res.Data.DownloadUrl, Expiration: &exp}, nil
 }
 
 func (d *Open123) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
