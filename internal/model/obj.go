@@ -241,6 +241,10 @@ type ObjMask uint8
 const (
 	Virtual ObjMask = 1 << iota
 	Temp
+	NoRename
+	NoDelete
+	NoMove
+	NoWrite
 )
 
 type maskObj struct {

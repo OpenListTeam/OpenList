@@ -58,12 +58,12 @@ func (d *Alias) Init(ctx context.Context) error {
 	case 1:
 		paths := d.pathMap[d.rootOrder[0]]
 		roots := make(BalancedObjs, 0, len(paths))
-		roots = append(roots, &model.Object{
+		roots = append(roots, model.ObjAddMask(&model.Object{
 			Name:     "root",
 			Path:     paths[0],
 			IsFolder: true,
 			Modified: d.Modified,
-		})
+		}, model.NoRename|model.NoDelete|model.NoMove))
 		for _, path := range paths[1:] {
 			roots = append(roots, &model.Object{
 				Path: path,
@@ -71,12 +71,12 @@ func (d *Alias) Init(ctx context.Context) error {
 		}
 		d.root = roots
 	default:
-		d.root = &model.Object{
+		d.root = model.ObjAddMask(&model.Object{
 			Name:     "root",
 			Path:     "/",
 			IsFolder: true,
 			Modified: d.Modified,
-		}
+		}, model.NoRename|model.NoDelete|model.NoMove|model.NoWrite)
 	}
 
 	if !utils.SliceContains(ValidReadConflictPolicy, d.ReadConflictPolicy) {
@@ -98,6 +98,14 @@ func (d *Alias) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (d *Alias) GetRoot(ctx context.Context) (model.Obj, error) {
+	if d.root == nil {
+		return nil, errs.StorageNotInit
+	}
+	return d.root, nil
+}
+
+// 通过op.Get调用的话，path一定不是根目录"/"
 func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	dsts, sub := d.getRootsAndPath(path)
 	if len(dsts) == 0 {
@@ -130,6 +138,9 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 				}
 			}
 		}
+		if sub == "" {
+			mask |= model.Virtual | model.NoRename | model.NoDelete | model.NoMove
+		}
 		obj = model.ObjAddMask(obj, mask)
 
 		dsts = dsts[idx+1:]
@@ -143,13 +154,6 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		return objs, nil
 	}
 	return nil, errs.ObjectNotFound
-}
-
-func (d *Alias) GetRoot(ctx context.Context) (model.Obj, error) {
-	if d.root == nil {
-		return nil, errs.StorageNotInit
-	}
-	return d.root, nil
 }
 
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
@@ -196,6 +200,8 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					StorageDetailsWithName: *details,
 				}
 			}
+			// alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
+			// op.Get不会从List里寻找对象，所以这里不需要添加额外的mask
 			obj = model.ObjAddMask(objRet, mask)
 			objMap[name] = append(objMap[name], obj)
 		}
@@ -257,6 +263,9 @@ func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, e
 }
 
 func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+	if model.ObjHasMask(parentDir, model.NoWrite) {
+		return errs.PermissionDenied
+	}
 	objs, err := d.getWritePath(ctx, parentDir)
 	if err == nil {
 		for _, obj := range objs {
@@ -267,6 +276,9 @@ func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 }
 
 func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
+	if model.ObjHasMask(srcObj, model.NoMove) || model.ObjHasMask(dstDir, model.NoWrite) {
+		return errs.PermissionDenied
+	}
 	srcs, dsts, err := d.getCopyMovePath(ctx, srcObj, dstDir)
 	if err != nil {
 		return err
@@ -280,6 +292,9 @@ func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
+	if model.ObjHasMask(srcObj, model.NoRename) {
+		return errs.PermissionDenied
+	}
 	objs, err := d.getWritePath(ctx, srcObj)
 	if err == nil {
 		for _, obj := range objs {
@@ -290,6 +305,9 @@ func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 }
 
 func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
+	if model.ObjHasMask(dstDir, model.NoWrite) {
+		return errs.PermissionDenied
+	}
 	srcs, dsts, err := d.getCopyMovePath(ctx, srcObj, dstDir)
 	if err != nil {
 		return err
@@ -303,6 +321,9 @@ func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Alias) Remove(ctx context.Context, obj model.Obj) error {
+	if model.ObjHasMask(obj, model.NoDelete) {
+		return errs.PermissionDenied
+	}
 	objs, err := d.getWritePath(ctx, obj)
 	if err == nil {
 		for _, obj := range objs {
@@ -313,6 +334,9 @@ func (d *Alias) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
+	if model.ObjHasMask(dstDir, model.NoWrite) {
+		return errs.PermissionDenied
+	}
 	objs, err := d.getPutPath(ctx, dstDir)
 	if err == nil {
 		if len(objs) == 1 {
@@ -351,6 +375,9 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 }
 
 func (d *Alias) PutURL(ctx context.Context, dstDir model.Obj, name, url string) error {
+	if model.ObjHasMask(dstDir, model.NoWrite) {
+		return errs.PermissionDenied
+	}
 	objs, err := d.getPutPath(ctx, dstDir)
 	if err == nil {
 		for _, obj := range objs {
