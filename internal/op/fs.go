@@ -330,6 +330,9 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 		if err != nil {
 			return nil, errors.WithMessagef(err, "failed to get parent dir [%s]", parentPath)
 		}
+		if model.ObjHasMask(parentDir, model.NoWrite) {
+			return nil, errors.WithStack(errs.PermissionDenied)
+		}
 
 		var newObj model.Obj
 		switch s := storage.(type) {
@@ -381,10 +384,16 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
 	}
+	if model.ObjHasMask(srcRawObj, model.NoMove) {
+		return errors.WithStack(errs.PermissionDenied)
+	}
 	srcObj := model.UnwrapObjName(srcRawObj)
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get dst dir")
+	}
+	if model.ObjHasMask(dstDir, model.NoWrite) {
+		return errors.WithStack(errs.PermissionDenied)
 	}
 
 	var newObj model.Obj
@@ -444,6 +453,9 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
 	}
+	if model.ObjHasMask(srcRawObj, model.NoRename) {
+		return errors.WithStack(errs.PermissionDenied)
+	}
 	srcObj := model.UnwrapObjName(srcRawObj)
 
 	var newObj model.Obj
@@ -458,14 +470,28 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	if newObj == nil {
-		newObj = &struct {
-			model.ObjWrapName
-		}{
-			model.ObjWrapName{Name: dstName, Obj: model.ObjAddMask(srcObj, model.Temp)},
+
+	dirKey := Key(storage, stdpath.Dir(srcPath))
+	if !srcRawObj.IsDir() {
+		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, srcRawObj.GetName()))
+		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstName))
+	}
+	if !storage.Config().NoCache {
+		if cache, exist := Cache.dirCache.Get(dirKey); exist {
+			if srcRawObj.IsDir() {
+				Cache.deleteDirectoryTree(stdpath.Join(dirKey, srcRawObj.GetName()))
+			}
+			if newObj == nil {
+				newObj = &struct {
+					model.ObjWrapName
+				}{
+					model.ObjWrapName{Name: dstName, Obj: model.ObjAddMask(srcObj, model.Temp)},
+				}
+			}
+			newObj = wrapObjName(storage, newObj)
+			cache.UpdateObject(srcRawObj.GetName(), newObj)
 		}
 	}
-	Cache.updateDirectoryObject(storage, stdpath.Dir(srcPath), srcRawObj, wrapObjName(storage, newObj))
 
 	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
 		return nil
@@ -493,10 +519,16 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
 	}
+	// if model.ObjHasMask(srcRawObj, model.NoCopy) {
+	// 	return errors.WithStack(errs.PermissionDenied)
+	// }
 	srcObj := model.UnwrapObjName(srcRawObj)
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get dst dir")
+	}
+	if model.ObjHasMask(dstDir, model.NoWrite) {
+		return errors.WithStack(errs.PermissionDenied)
 	}
 
 	var newObj model.Obj
@@ -552,6 +584,9 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 			return nil
 		}
 		return errors.WithMessage(err, "failed to get object")
+	}
+	if model.ObjHasMask(rawObj, model.NoRemove) {
+		return errors.WithStack(errs.PermissionDenied)
 	}
 	dirPath := stdpath.Dir(path)
 
@@ -612,6 +647,9 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	// this should not happen
 	if err != nil {
 		return errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
+	}
+	if model.ObjHasMask(parentDir, model.NoWrite) {
+		return errors.WithStack(errs.PermissionDenied)
 	}
 	// if up is nil, set a default to prevent panic
 	if up == nil {
@@ -688,6 +726,9 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
 		return errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
+	}
+	if model.ObjHasMask(dstDir, model.NoWrite) {
+		return errors.WithStack(errs.PermissionDenied)
 	}
 	var newObj model.Obj
 	switch s := storage.(type) {

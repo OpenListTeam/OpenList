@@ -263,9 +263,6 @@ func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, e
 }
 
 func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	if model.ObjHasMask(parentDir, model.NoWrite) {
-		return errs.PermissionDenied
-	}
 	objs, err := d.getWritePath(ctx, parentDir)
 	if err == nil {
 		for _, obj := range objs {
@@ -276,9 +273,6 @@ func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 }
 
 func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	if model.ObjHasMask(srcObj, model.NoMove) || model.ObjHasMask(dstDir, model.NoWrite) {
-		return errs.PermissionDenied
-	}
 	srcs, dsts, err := d.getCopyMovePath(ctx, srcObj, dstDir)
 	if err != nil {
 		return err
@@ -292,9 +286,6 @@ func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	if model.ObjHasMask(srcObj, model.NoRename) {
-		return errs.PermissionDenied
-	}
 	objs, err := d.getWritePath(ctx, srcObj)
 	if err == nil {
 		for _, obj := range objs {
@@ -305,9 +296,6 @@ func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 }
 
 func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	if model.ObjHasMask(dstDir, model.NoWrite) {
-		return errs.PermissionDenied
-	}
 	srcs, dsts, err := d.getCopyMovePath(ctx, srcObj, dstDir)
 	if err != nil {
 		return err
@@ -321,9 +309,6 @@ func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Alias) Remove(ctx context.Context, obj model.Obj) error {
-	if model.ObjHasMask(obj, model.NoDelete) {
-		return errs.PermissionDenied
-	}
 	objs, err := d.getWritePath(ctx, obj)
 	if err == nil {
 		for _, obj := range objs {
@@ -334,9 +319,6 @@ func (d *Alias) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
-	if model.ObjHasMask(dstDir, model.NoWrite) {
-		return errs.PermissionDenied
-	}
 	objs, err := d.getPutPath(ctx, dstDir)
 	if err == nil {
 		if len(objs) == 1 {
@@ -375,9 +357,6 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 }
 
 func (d *Alias) PutURL(ctx context.Context, dstDir model.Obj, name, url string) error {
-	if model.ObjHasMask(dstDir, model.NoWrite) {
-		return errs.PermissionDenied
-	}
 	objs, err := d.getPutPath(ctx, dstDir)
 	if err == nil {
 		for _, obj := range objs {

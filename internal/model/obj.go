@@ -241,12 +241,13 @@ type ObjMask uint8
 const (
 	Temp ObjMask = 1 << iota
 	NoRename
-	NoDelete
+	NoRemove
 	NoMove
+	NoCopy
 	NoWrite
 )
 const (
-	Static  = NoRename | NoDelete | NoMove
+	Static  = NoRename | NoRemove | NoMove
 	Virtual = Static | NoWrite // NoRename | NoDelete | NoMove | NoWrite
 )
 

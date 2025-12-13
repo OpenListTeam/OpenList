@@ -36,27 +36,6 @@ func Key(storage driver.Driver, path string) string {
 	return utils.GetFullPath(storage.GetStorage().MountPath, path)
 }
 
-// update object in dirCache.
-// if it's a directory, remove all its children from dirCache too.
-// if it's a file, remove its link from linkCache.
-func (cm *CacheManager) updateDirectoryObject(storage driver.Driver, dirPath string, oldObj model.Obj, newObj model.Obj) {
-	key := Key(storage, dirPath)
-	if !oldObj.IsDir() {
-		cm.linkCache.DeleteKey(stdpath.Join(key, oldObj.GetName()))
-		cm.linkCache.DeleteKey(stdpath.Join(key, newObj.GetName()))
-	}
-	if storage.Config().NoCache {
-		return
-	}
-
-	if cache, exist := cm.dirCache.Get(key); exist {
-		if oldObj.IsDir() {
-			cm.deleteDirectoryTree(stdpath.Join(key, oldObj.GetName()))
-		}
-		cache.UpdateObject(oldObj.GetName(), newObj)
-	}
-}
-
 // recursively delete directory and its children from dirCache
 func (cm *CacheManager) DeleteDirectoryTree(storage driver.Driver, dirPath string) {
 	if storage.Config().NoCache {
