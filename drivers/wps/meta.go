@@ -8,7 +8,7 @@ import (
 type Addition struct {
 	driver.RootPath
 	Cookie string `json:"cookie" required:"true" type:"text"`
-	Mode   string `json:"mode" type:"select" options:"商业,个人" default:"商业"`
+	Mode   string `json:"mode" type:"select" options:"Business,Personal" default:"Business"`
 }
 
 var config = driver.Config{

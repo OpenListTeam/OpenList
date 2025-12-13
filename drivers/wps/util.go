@@ -590,7 +590,7 @@ func (d *Wps) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	if node.file != nil && node.kind == "folder" {
 		parentID = node.file.ID
 	}
-	f, size, sha1Hex, sha256Hex, err := cacheAndHash(file, model.UpdateProgressWithRange(up, 0, 0.5))
+	f, size, sha1Hex, sha256Hex, err := cacheAndHash(file, func(float64) {})
 	if err != nil {
 		return err
 	}
@@ -605,7 +605,7 @@ func (d *Wps) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 		return err
 	}
 	rf := driver.NewLimitedUploadFile(ctx, f)
-	prog := driver.NewProgress(size, model.UpdateProgressWithRange(up, 0.5, 1))
+	prog := driver.NewProgress(size, model.UpdateProgressWithRange(up, 0, 1))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, info.URL, io.TeeReader(rf, prog))
 	if err != nil {
 		return err
@@ -618,7 +618,9 @@ func (d *Wps) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	if method != "" && method != http.MethodPut {
 		req.Method = method
 	}
-	resp, err := base.RestyClient.GetClient().Do(req)
+	c := *base.RestyClient.GetClient()
+	c.Timeout = 0
+	resp, err := (&c).Do(req)
 	if err != nil {
 		return err
 	}
