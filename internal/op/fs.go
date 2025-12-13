@@ -149,12 +149,14 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 				Name:     RootName,
 				Modified: storage.GetStorage().Modified,
 				IsFolder: true,
+				Mask:     model.Static,
 			}, nil
 		case driver.IRootPath:
 			return &model.Object{
 				Path:     r.GetRootPath(),
 				Name:     RootName,
 				Modified: storage.GetStorage().Modified,
+				Mask:     model.Static,
 				IsFolder: true,
 			}, nil
 		}
@@ -347,12 +349,13 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 		if dirCache, exist := Cache.dirCache.Get(Key(storage, parentPath)); exist {
 			if newObj == nil {
 				t := time.Now()
-				newObj = model.ObjAddMask(&model.Object{
+				newObj = &model.Object{
 					Name:     dirName,
 					IsFolder: true,
 					Modified: t,
 					Ctime:    t,
-				}, model.Temp)
+					Mask:     model.Temp,
+				}
 			}
 			dirCache.UpdateObject("", wrapObjName(storage, newObj))
 		}
@@ -456,7 +459,11 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 		return errors.WithStack(err)
 	}
 	if newObj == nil {
-		newObj = model.ObjAddMask(&model.ObjWrapName{Name: dstName, Obj: srcObj}, model.Temp)
+		newObj = &struct {
+			model.ObjWrapName
+		}{
+			model.ObjWrapName{Name: dstName, Obj: model.ObjAddMask(srcObj, model.Temp)},
+		}
 	}
 	Cache.updateDirectoryObject(storage, stdpath.Dir(srcPath), srcRawObj, wrapObjName(storage, newObj))
 
@@ -631,12 +638,13 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		if !storage.Config().NoCache {
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
 				if newObj == nil {
-					newObj = model.ObjAddMask(&model.Object{
+					newObj = &model.Object{
 						Name:     file.GetName(),
 						Size:     file.GetSize(),
 						Modified: file.ModTime(),
 						Ctime:    file.CreateTime(),
-					}, model.Temp)
+						Mask:     model.Temp,
+					}
 				}
 				newObj = wrapObjName(storage, newObj)
 				cache.UpdateObject(newObj.GetName(), newObj)
@@ -696,11 +704,12 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
 				if newObj == nil {
 					t := time.Now()
-					newObj = model.ObjAddMask(&model.Object{
+					newObj = &model.Object{
 						Name:     dstName,
 						Modified: t,
 						Ctime:    t,
-					}, model.Temp)
+						Mask:     model.Temp,
+					}
 				}
 				newObj = wrapObjName(storage, newObj)
 				cache.UpdateObject(newObj.GetName(), newObj)

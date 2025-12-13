@@ -397,32 +397,35 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 			continue
 		}
 		names := strings.SplitN(strings.TrimPrefix(mountPath[len(prefix):], "/"), "/", 2)
-		idx, ok := set[names[0]]
-		if !ok {
-			set[names[0]] = len(files)
-			obj := model.ObjAddMask(&model.Object{
-				Name:     names[0],
-				Size:     0,
-				Modified: v.GetStorage().Modified,
-				IsFolder: true,
-			}, model.Virtual)
+		if idx, ok := set[names[0]]; ok {
 			if len(names) == 1 {
-				idx = len(files)
-				files = append(files, obj)
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					files[idx] = rootCallback(v, files[idx])
 				}()
-			} else {
-				files = append(files, obj)
 			}
-		} else if len(names) == 1 {
+			continue
+		}
+		set[names[0]] = len(files)
+		obj := &model.Object{
+			Name:     names[0],
+			Size:     0,
+			Modified: v.GetStorage().Modified,
+			IsFolder: true,
+		}
+		if len(names) == 1 {
+			idx := len(files)
+			obj.Mask = model.Static
+			files = append(files, obj)
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				files[idx] = rootCallback(v, files[idx])
 			}()
+		} else {
+			obj.Mask = model.Virtual
+			files = append(files, obj)
 		}
 	}
 	wg.Wait()

@@ -58,12 +58,13 @@ func (d *Alias) Init(ctx context.Context) error {
 	case 1:
 		paths := d.pathMap[d.rootOrder[0]]
 		roots := make(BalancedObjs, 0, len(paths))
-		roots = append(roots, model.ObjAddMask(&model.Object{
+		roots = append(roots, &model.Object{
 			Name:     "root",
 			Path:     paths[0],
 			IsFolder: true,
 			Modified: d.Modified,
-		}, model.NoRename|model.NoDelete|model.NoMove))
+			Mask:     model.Static,
+		})
 		for _, path := range paths[1:] {
 			roots = append(roots, &model.Object{
 				Path: path,
@@ -71,12 +72,13 @@ func (d *Alias) Init(ctx context.Context) error {
 		}
 		d.root = roots
 	default:
-		d.root = model.ObjAddMask(&model.Object{
+		d.root = &model.Object{
 			Name:     "root",
 			Path:     "/",
 			IsFolder: true,
 			Modified: d.Modified,
-		}, model.NoRename|model.NoDelete|model.NoMove|model.NoWrite)
+			Mask:     model.Virtual,
+		}
 	}
 
 	if !utils.SliceContains(ValidReadConflictPolicy, d.ReadConflictPolicy) {
@@ -117,8 +119,10 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		if err != nil {
 			continue
 		}
-		mask := model.GetObjMask(obj)
-		mask &^= model.Temp
+		mask := model.GetObjMask(obj) &^ model.Temp
+		if sub == "" {
+			mask |= model.Static
+		}
 		ret := model.Object{
 			Path:     rawPath,
 			Name:     obj.GetName(),
@@ -126,6 +130,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 			Modified: obj.ModTime(),
 			IsFolder: obj.IsDir(),
 			HashInfo: obj.GetHash(),
+			Mask:     mask,
 		}
 		obj = &ret
 		if d.ProviderPassThrough && !obj.IsDir() {
@@ -138,10 +143,6 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 				}
 			}
 		}
-		if sub == "" {
-			mask |= model.Virtual | model.NoRename | model.NoDelete | model.NoMove
-		}
-		obj = model.ObjAddMask(obj, mask)
 
 		dsts = dsts[idx+1:]
 		objs := make(BalancedObjs, 0, len(dsts)+1)
@@ -174,14 +175,16 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		}
 		for _, obj := range tmp {
 			name := obj.GetName()
-			mask := model.GetObjMask(obj)
-			mask &^= model.Temp
+			// alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
+			// 所以op.Get不会从List里寻找对象，所以这里不需要添加额外的mask
+			mask := model.GetObjMask(obj) &^ model.Temp
 			objRes := model.Object{
 				Name:     name,
 				Path:     stdpath.Join(dirPath, name),
 				Size:     obj.GetSize(),
 				Modified: obj.ModTime(),
 				IsFolder: obj.IsDir(),
+				Mask:     mask,
 			}
 			var objRet model.Obj
 			if thumb, ok := model.GetThumb(obj); ok {
@@ -200,10 +203,7 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					StorageDetailsWithName: *details,
 				}
 			}
-			// alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
-			// op.Get不会从List里寻找对象，所以这里不需要添加额外的mask
-			obj = model.ObjAddMask(objRet, mask)
-			objMap[name] = append(objMap[name], obj)
+			objMap[name] = append(objMap[name], objRet)
 		}
 	}
 	ret := make([]model.Obj, 0, len(objMap))

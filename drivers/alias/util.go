@@ -28,14 +28,15 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 	detailsChan := make(chan detailWithIndex, len(d.pathMap))
 	workerCount := 0
 	for _, k := range d.rootOrder {
-		obj := model.Object{
+		obj := &model.Object{
 			Name:     k,
 			Path:     "/" + k,
 			IsFolder: true,
 			Modified: d.Modified,
+			Mask:     model.Static,
 		}
 		idx := len(objs)
-		objs = append(objs, model.ObjAddMask(&obj, model.Virtual))
+		objs = append(objs, obj)
 		v := d.pathMap[k]
 		if !withDetails || len(v) != 1 {
 			continue
@@ -44,6 +45,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 		if err != nil {
 			continue
 		}
+		obj.Modified = remoteDriver.GetStorage().Modified
 		_, ok := remoteDriver.(driver.WithDetails)
 		if !ok {
 			continue

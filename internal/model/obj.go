@@ -239,12 +239,15 @@ func (om *ObjMerge) Reset() {
 type ObjMask uint8
 
 const (
-	Virtual ObjMask = 1 << iota
-	Temp
+	Temp ObjMask = 1 << iota
 	NoRename
 	NoDelete
 	NoMove
 	NoWrite
+)
+const (
+	Static  = NoRename | NoDelete | NoMove
+	Virtual = Static | NoWrite // NoRename | NoDelete | NoMove | NoWrite
 )
 
 type maskObj struct {
@@ -255,12 +258,15 @@ type maskObj struct {
 func (m *maskObj) Unwrap() Obj {
 	return m.Obj
 }
+func (m *maskObj) ObjMask() *ObjMask {
+	return &m.mask
+}
 
-func getMaskObj(obj Obj) *maskObj {
+func getObjMask(obj Obj) *ObjMask {
 	for {
 		switch o := obj.(type) {
-		case *maskObj:
-			return o
+		case interface{ ObjMask() *ObjMask }:
+			return o.ObjMask()
 		case ObjUnwrap:
 			obj = o.Unwrap()
 		default:
@@ -269,8 +275,8 @@ func getMaskObj(obj Obj) *maskObj {
 	}
 }
 func ObjHasMask(obj Obj, mask ObjMask) bool {
-	if m := getMaskObj(obj); m != nil {
-		return m.mask&mask == mask
+	if m := getObjMask(obj); m != nil {
+		return *m&mask == mask
 	}
 	return false
 }
@@ -278,15 +284,15 @@ func ObjAddMask(obj Obj, mask ObjMask) Obj {
 	if mask == 0 {
 		return obj
 	}
-	if m := getMaskObj(obj); m != nil {
-		m.mask |= mask
+	if m := getObjMask(obj); m != nil {
+		*m |= mask
 		return obj
 	}
-	return &maskObj{Obj: obj, mask: mask}
+	return &maskObj{obj, mask}
 }
 func GetObjMask(obj Obj) ObjMask {
-	if m := getMaskObj(obj); m != nil {
-		return m.mask
+	if m := getObjMask(obj); m != nil {
+		return *m
 	}
 	return 0
 }
