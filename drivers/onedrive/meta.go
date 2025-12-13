@@ -20,6 +20,7 @@ type Addition struct {
 	CustomHost         string `json:"custom_host" help:"Custom host for onedrive download link"`
 	DisableDiskUsage   bool   `json:"disable_disk_usage" default:"false"`
 	EnableDirectUpload bool   `json:"enable_direct_upload" default:"false" help:"Enable direct upload from client to OneDrive"`
+	CreateShareLink    bool   `json:"create_share_link" default:"false" help:"Create share link for file download"`
 }
 
 var config = driver.Config{

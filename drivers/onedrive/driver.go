@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path"
 	"sync"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -105,16 +106,28 @@ func (d *Onedrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 }
 
 func (d *Onedrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	f, err := d.GetFile(file.GetPath())
-	if err != nil {
-		return nil, err
+	var u string
+	var err error
+	var duration time.Duration
+	if d.CreateShareLink {
+		duration = 365 * 24 * time.Hour // cache 1 year
+		u, err = d.createLink(file.GetPath())
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		duration = 5 * time.Minute // cache 5 min
+		f, err := d.GetFile(file.GetPath())
+		if err != nil {
+			return nil, err
+		}
+		if f.File == nil {
+			return nil, errs.NotFile
+		}
+		u = f.Url
 	}
-	if f.File == nil {
-		return nil, errs.NotFile
-	}
-	u := f.Url
 	if d.CustomHost != "" {
-		_u, err := url.Parse(f.Url)
+		_u, err := url.Parse(u)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +135,8 @@ func (d *Onedrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 		u = _u.String()
 	}
 	return &model.Link{
-		URL: u,
+		URL:        u,
+		Expiration: &duration,
 	}, nil
 }
 
