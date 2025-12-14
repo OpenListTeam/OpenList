@@ -254,10 +254,8 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 }
 
 func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
-	if d.ReadConflictPolicy != FirstRWP {
-		return nil, errs.NotSupport
-	}
-	storage, actualPath, err := op.GetStorageAndActualPath(args.Obj.GetPath())
+	reqPath := d.getBalancedPath(ctx, args.Obj)
+	storage, actualPath, err := op.GetStorageAndActualPath(reqPath)
 	if err != nil {
 		return nil, err
 	}
