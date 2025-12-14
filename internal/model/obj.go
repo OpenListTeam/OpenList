@@ -243,13 +243,13 @@ func (m ObjMask) GetObjMask() ObjMask {
 }
 
 const (
-	Temp ObjMask = 1 << iota
-	Virtual
+	Virtual ObjMask = 1 << iota
 	NoRename
 	NoRemove
 	NoMove
 	NoCopy
 	NoWrite
+	Temp
 )
 const (
 	Locked   = NoRename | NoRemove | NoMove
