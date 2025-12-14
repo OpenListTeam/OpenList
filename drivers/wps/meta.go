@@ -13,15 +13,10 @@ type Addition struct {
 
 var config = driver.Config{
 	Name:              "WPS",
-	LocalSort:         false,
-	OnlyProxy:         false,
-	NoCache:           false,
-	NoUpload:          false,
-	NeedMs:            false,
+	LocalSort:         true,
 	DefaultRoot:       "/",
-	CheckStatus:       false,
 	Alert:             "",
-	NoOverwriteUpload: false,
+	NoOverwriteUpload: true,
 }
 
 func init() {
