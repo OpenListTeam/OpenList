@@ -349,6 +349,9 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 		return getStorageVirtualFilesByPath(prefix, nil, filterByName)
 	}
 	return getStorageVirtualFilesByPath(prefix, func(d driver.Driver, obj model.Obj) model.Obj {
+		if _, ok := obj.(*model.ObjStorageDetails); ok {
+			return obj
+		}
 		ret := &model.ObjStorageDetails{
 			Obj: obj,
 			StorageDetailsWithName: model.StorageDetailsWithName{
@@ -385,7 +388,9 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 		return storages[i].GetStorage().Order < storages[j].GetStorage().Order
 	})
 
-	prefix = utils.FixAndCleanPath(prefix)
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
 	set := make(map[string]int)
 	var wg sync.WaitGroup
 	for _, v := range storages {
@@ -394,16 +399,7 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 		if !found || p == "" {
 			continue
 		}
-		slashIdx := strings.Index(p, "/")
-		var name string
-		switch slashIdx {
-		case 0:
-			name, _, found = strings.Cut(p[1:], "/")
-		case -1:
-			name, found = p, false
-		default:
-			continue
-		}
+		name, _, found := strings.Cut(p, "/")
 		if filterByName != "" && name != filterByName {
 			continue
 		}
