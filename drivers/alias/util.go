@@ -336,12 +336,12 @@ func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (
 		dstStorageMap[mp] = append(dstStorageMap[mp], o)
 		allocatingDst[o] = struct{}{}
 	}
-	srcObjs, err := getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllWP))
+	tmpSrcObjs, err := getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllWP))
 	if err != nil {
 		return nil, nil, err
 	}
-	srcIdx, dstIdx := 0, 0
-	for _, src := range srcObjs {
+	srcObjs := make(BalancedObjs, 0, len(dstObjs))
+	for _, src := range tmpSrcObjs {
 		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
 		if e != nil {
 			continue
@@ -349,21 +349,18 @@ func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (
 		mp := utils.GetActualMountPath(storage.GetStorage().MountPath)
 		if tmp, ok := dstStorageMap[mp]; ok {
 			for _, dst := range tmp {
-				srcObjs[srcIdx] = src
-				srcIdx++
-				dstObjs[dstIdx] = dst
-				dstIdx++
+				dstObjs[len(srcObjs)] = dst
+				srcObjs = append(srcObjs, src)
 				delete(allocatingDst, dst)
 			}
 			delete(dstStorageMap, mp)
 		}
 	}
-	srcObjs = srcObjs[:srcIdx]
-	dstObjs = dstObjs[:dstIdx]
+	dstObjs = dstObjs[:len(srcObjs)]
 	for dst := range allocatingDst {
-		src := srcObjs[0]
+		src := tmpSrcObjs[0]
 		if d.ReadConflictPolicy == RandomBalancedRP {
-			src = srcObjs[rand.Intn(len(srcObjs[:srcIdx]))]
+			src = tmpSrcObjs[rand.Intn(len(tmpSrcObjs))]
 		}
 		srcObjs = append(srcObjs, src)
 		dstObjs = append(dstObjs, dst)
