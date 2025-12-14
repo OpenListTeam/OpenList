@@ -187,7 +187,7 @@ func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
 		} else {
 			switch policy {
 			case FirstRWP:
-				return true, nil
+				return false, nil
 			case DeterministicWP:
 				if l > 0 {
 					return false, ErrPathConflict
@@ -203,14 +203,14 @@ func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
 	}
 }
 
-func (d *Alias) getWritePath(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
+func (d *Alias) getWriteObjs(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
 	if d.WriteConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
 	return getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.WriteConflictPolicy))
 }
 
-func (d *Alias) getPutPath(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
+func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
@@ -227,7 +227,7 @@ func (d *Alias) getPutPath(ctx context.Context, obj model.Obj) (BalancedObjs, er
 		strict = true
 		fallthrough
 	case BalancedByQuotaP:
-		objs, ok := getRandomPathByQuotaBalanced(ctx, objs, strict, uint64(obj.GetSize()))
+		objs, ok := getRandomObjByQuotaBalanced(ctx, objs, strict, uint64(obj.GetSize()))
 		if !ok {
 			return nil, ErrNoEnoughSpace
 		}
@@ -237,7 +237,7 @@ func (d *Alias) getPutPath(ctx context.Context, obj model.Obj) (BalancedObjs, er
 	}
 }
 
-func getRandomPathByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, strict bool, objSize uint64) (BalancedObjs, bool) {
+func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, strict bool, objSize uint64) (BalancedObjs, bool) {
 	// Get all space
 	details := make([]*model.StorageDetails, len(reqPath))
 	detailsChan := make(chan detailWithIndex, len(reqPath))
@@ -317,7 +317,7 @@ func selectRandom[Item any](arr []Item, getWeight func(Item) uint64) (int, bool)
 	return 0, false
 }
 
-func (d *Alias) getCopyMovePath(ctx context.Context, srcObj, dstDir model.Obj) ([]string, []string, error) {
+func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (BalancedObjs, BalancedObjs, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
 	}
@@ -325,49 +325,50 @@ func (d *Alias) getCopyMovePath(ctx context.Context, srcObj, dstDir model.Obj) (
 	if err != nil {
 		return nil, nil, err
 	}
-	dstStorageMap := make(map[string][]string)
-	allocatingDst := make(map[string]struct{})
+	dstStorageMap := make(map[string][]model.Obj)
+	allocatingDst := make(map[model.Obj]struct{})
 	for _, o := range dstObjs {
-		dp := o.GetPath()
-		storage, e := fs.GetStorage(dp, &fs.GetStoragesArgs{})
+		storage, e := fs.GetStorage(o.GetPath(), &fs.GetStoragesArgs{})
 		if e != nil {
-			return nil, nil, errors.WithMessagef(e, "cannot copy or move to virtual path [%s]", dp)
+			return nil, nil, errors.WithMessagef(e, "cannot copy or move to virtual path [%s]", o.GetPath())
 		}
 		mp := utils.GetActualMountPath(storage.GetStorage().MountPath)
-		dstStorageMap[mp] = append(dstStorageMap[mp], dp)
-		allocatingDst[dp] = struct{}{}
+		dstStorageMap[mp] = append(dstStorageMap[mp], o)
+		allocatingDst[o] = struct{}{}
 	}
 	srcObjs, err := getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllWP))
 	if err != nil {
 		return nil, nil, err
 	}
-	srcs := make([]string, 0)
-	dsts := make([]string, 0)
-	for _, o := range srcObjs {
-		sp := o.GetPath()
-		storage, e := fs.GetStorage(sp, &fs.GetStoragesArgs{})
+	srcIdx, dstIdx := 0, 0
+	for _, src := range srcObjs {
+		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
 		if e != nil {
 			continue
 		}
 		mp := utils.GetActualMountPath(storage.GetStorage().MountPath)
-		if dstPaths, ok := dstStorageMap[mp]; ok {
-			for _, dp := range dstPaths {
-				srcs = append(srcs, sp)
-				dsts = append(dsts, dp)
-				delete(allocatingDst, dp)
+		if tmp, ok := dstStorageMap[mp]; ok {
+			for _, dst := range tmp {
+				srcObjs[srcIdx] = src
+				srcIdx++
+				dstObjs[dstIdx] = dst
+				dstIdx++
+				delete(allocatingDst, dst)
 			}
 			delete(dstStorageMap, mp)
 		}
 	}
-	for dp := range allocatingDst {
-		sp := srcs[0]
+	srcObjs = srcObjs[:srcIdx]
+	dstObjs = dstObjs[:dstIdx]
+	for dst := range allocatingDst {
+		src := srcObjs[0]
 		if d.ReadConflictPolicy == RandomBalancedRP {
-			sp = srcs[rand.Intn(len(srcs))]
+			src = srcObjs[rand.Intn(len(srcObjs[:srcIdx]))]
 		}
-		srcs = append(srcs, sp)
-		dsts = append(dsts, dp)
+		srcObjs = append(srcObjs, src)
+		dstObjs = append(dstObjs, dst)
 	}
-	return srcs, dsts, nil
+	return srcObjs, dstObjs, nil
 }
 
 func (d *Alias) getArchiveMeta(ctx context.Context, reqPath string, args model.ArchiveArgs) (model.ArchiveMeta, error) {
