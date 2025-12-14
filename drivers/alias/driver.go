@@ -46,10 +46,11 @@ func (d *Alias) Init(ctx context.Context) error {
 			continue
 		}
 		k, v := getPair(path)
-		if _, ok := d.pathMap[k]; !ok {
+		temp, ok := d.pathMap[k]
+		if !ok {
 			d.rootOrder = append(d.rootOrder, k)
 		}
-		d.pathMap[k] = append(d.pathMap[k], v)
+		d.pathMap[k] = append(temp, v)
 	}
 
 	switch len(d.rootOrder) {
@@ -107,20 +108,21 @@ func (d *Alias) GetRoot(ctx context.Context) (model.Obj, error) {
 	return d.root, nil
 }
 
-// 通过op.Get调用的话，path一定不是根目录"/"
+// 通过op.Get调用的话，path一定是子路径(/开头)
 func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
-	dsts, sub := d.getRootsAndPath(path)
-	if len(dsts) == 0 {
+	roots, sub := d.getRootsAndPath(path)
+	if len(roots) == 0 {
 		return nil, errs.ObjectNotFound
 	}
-	for idx, dst := range dsts {
-		rawPath := stdpath.Join(dst, sub)
+	for idx, root := range roots {
+		rawPath := stdpath.Join(root, sub)
 		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
 		if err != nil {
 			continue
 		}
 		mask := model.GetObjMask(obj) &^ model.Temp
 		if sub == "" {
+			// 根目录
 			mask |= model.Static
 		}
 		ret := model.Object{
@@ -144,10 +146,10 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 			}
 		}
 
-		dsts = dsts[idx+1:]
-		objs := make(BalancedObjs, 0, len(dsts)+1)
+		roots = roots[idx+1:]
+		objs := make(BalancedObjs, 0, len(roots)+1)
 		objs = append(objs, obj)
-		for _, d := range dsts {
+		for _, d := range roots {
 			objs = append(objs, &tempObj{model.Object{
 				Path: stdpath.Join(d, sub),
 			}})
@@ -162,7 +164,10 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	if !ok {
 		return d.listRoot(ctx, args.WithStorageDetails && d.DetailsPassThrough, args.Refresh), nil
 	}
-	objMap := make(map[string]BalancedObjs)
+
+	// 因为alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
+	// 所以这里对象不会传回到alias，也就不需要返回BalancedObjs了
+	objMap := make(map[string]model.Obj)
 	for _, dir := range dirs {
 		dirPath := dir.GetPath()
 		tmp, err := fs.List(ctx, dirPath, &fs.ListArgs{
@@ -175,8 +180,9 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		}
 		for _, obj := range tmp {
 			name := obj.GetName()
-			// alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
-			// 所以op.Get不会从List里寻找对象，所以这里不需要添加额外的mask
+			if _, exists := objMap[name]; exists {
+				continue
+			}
 			mask := model.GetObjMask(obj) &^ model.Temp
 			objRes := model.Object{
 				Name:     name,
@@ -203,14 +209,14 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					StorageDetailsWithName: *details,
 				}
 			}
-			objMap[name] = append(objMap[name], objRet)
+			objMap[name] = objRet
 		}
 	}
-	ret := make([]model.Obj, 0, len(objMap))
-	for _, snObjs := range objMap {
-		ret = append(ret, snObjs)
+	objs := make([]model.Obj, 0, len(objMap))
+	for _, obj := range objMap {
+		objs = append(objs, obj)
 	}
-	return ret, nil
+	return objs, nil
 }
 
 func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {

@@ -82,12 +82,8 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 
 // do others that not defined in Driver interface
 func getPair(path string) (string, string) {
-	// path = strings.TrimSpace(path)
-	if strings.Contains(path, ":") {
-		pair := strings.SplitN(path, ":", 2)
-		if !strings.Contains(pair[0], "/") {
-			return pair[0], pair[1]
-		}
+	if name, path, ok := strings.Cut(path, ":"); ok && !strings.Contains(name, "/") {
+		return name, path
 	}
 	return stdpath.Base(path), path
 }
@@ -97,11 +93,11 @@ func (d *Alias) getRootsAndPath(path string) (roots []string, sub string) {
 		return d.pathMap[d.rootOrder[0]], path
 	}
 	path = strings.TrimPrefix(path, "/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) == 1 {
-		return d.pathMap[parts[0]], ""
+	before, after, ok := strings.Cut(path, "/")
+	if !ok {
+		return d.pathMap[path], ""
 	}
-	return d.pathMap[parts[0]], parts[1]
+	return d.pathMap[before], after
 }
 
 func (d *Alias) link(ctx context.Context, reqPath string, args model.LinkArgs) (*model.Link, model.Obj, error) {
