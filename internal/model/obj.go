@@ -238,8 +238,13 @@ func (om *ObjMerge) Reset() {
 
 type ObjMask uint8
 
+func (m ObjMask) GetObjMask() ObjMask {
+	return m
+}
+
 const (
 	Temp ObjMask = 1 << iota
+	Virtual
 	NoRename
 	NoRemove
 	NoMove
@@ -247,53 +252,35 @@ const (
 	NoWrite
 )
 const (
-	Static  = NoRename | NoRemove | NoMove
-	Virtual = Static | NoWrite // NoRename | NoDelete | NoMove | NoWrite
+	Locked   = NoRename | NoRemove | NoMove
+	ReadOnly = Locked | NoWrite // NoRename | NoDelete | NoMove | NoWrite
 )
 
-type maskObj struct {
+type ObjWrapMask struct {
 	Obj
-	mask ObjMask
+	Mask ObjMask
 }
 
-func (m *maskObj) Unwrap() Obj {
+func (m *ObjWrapMask) Unwrap() Obj {
 	return m.Obj
 }
-func (m *maskObj) ObjMask() *ObjMask {
-	return &m.mask
+func (m *ObjWrapMask) GetObjMask() ObjMask {
+	return m.Mask
 }
 
-func getObjMask(obj Obj) *ObjMask {
+func GetObjMask(obj Obj) ObjMask {
 	for {
 		switch o := obj.(type) {
-		case interface{ ObjMask() *ObjMask }:
-			return o.ObjMask()
+		case interface{ GetObjMask() ObjMask }:
+			return o.GetObjMask()
 		case ObjUnwrap:
 			obj = o.Unwrap()
 		default:
-			return nil
+			return 0
 		}
 	}
 }
+
 func ObjHasMask(obj Obj, mask ObjMask) bool {
-	if m := getObjMask(obj); m != nil {
-		return *m&mask == mask
-	}
-	return false
-}
-func ObjAddMask(obj Obj, mask ObjMask) Obj {
-	if mask == 0 {
-		return obj
-	}
-	if m := getObjMask(obj); m != nil {
-		*m |= mask
-		return obj
-	}
-	return &maskObj{obj, mask}
-}
-func GetObjMask(obj Obj) ObjMask {
-	if m := getObjMask(obj); m != nil {
-		return *m
-	}
-	return 0
+	return GetObjMask(obj)&mask != 0
 }

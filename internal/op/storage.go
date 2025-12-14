@@ -416,7 +416,7 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 		}
 		if len(names) == 1 {
 			idx := len(files)
-			obj.Mask = model.Static
+			obj.Mask = model.Locked | model.Virtual
 			files = append(files, obj)
 			wg.Add(1)
 			go func() {
@@ -424,7 +424,7 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 				files[idx] = rootCallback(v, files[idx])
 			}()
 		} else {
-			obj.Mask = model.Virtual
+			obj.Mask = model.ReadOnly | model.Virtual
 			files = append(files, obj)
 		}
 	}

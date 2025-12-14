@@ -142,21 +142,21 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 			}
 			return rootObj, nil
 		}
-		switch r := storage.GetAddition().(type) {
+		switch r := storage.(type) {
 		case driver.IRootId:
 			return &model.Object{
 				ID:       r.GetRootId(),
 				Name:     RootName,
 				Modified: storage.GetStorage().Modified,
 				IsFolder: true,
-				Mask:     model.Static,
+				Mask:     model.Locked,
 			}, nil
 		case driver.IRootPath:
 			return &model.Object{
 				Path:     r.GetRootPath(),
 				Name:     RootName,
 				Modified: storage.GetStorage().Modified,
-				Mask:     model.Static,
+				Mask:     model.Locked,
 				IsFolder: true,
 			}, nil
 		}
@@ -235,10 +235,10 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		mode = storage.(driver.LinkCacheModeResolver).ResolveLinkCacheMode(path)
 	}
 	typeKey := args.Type
-	if mode&driver.LinkCacheIP == driver.LinkCacheIP {
+	if mode&driver.LinkCacheIP != 0 {
 		typeKey += "/" + args.IP
 	}
-	if mode&driver.LinkCacheUA == driver.LinkCacheUA {
+	if mode&driver.LinkCacheUA != 0 {
 		typeKey += "/" + args.Header.Get("User-Agent")
 	}
 	key := Key(storage, path)
@@ -424,9 +424,11 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		}
 		if cache, exist := Cache.dirCache.Get(dstKey); exist {
 			if newObj == nil {
-				newObj = model.ObjAddMask(srcObj, model.Temp)
+				newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
+			} else {
+				newObj = wrapObjName(storage, newObj)
 			}
-			cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, newObj))
+			cache.UpdateObject(srcRawObj.GetName(), newObj)
 		}
 	}
 
@@ -482,11 +484,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 				Cache.deleteDirectoryTree(stdpath.Join(dirKey, srcRawObj.GetName()))
 			}
 			if newObj == nil {
-				newObj = &struct {
-					model.ObjWrapName
-				}{
-					model.ObjWrapName{Name: dstName, Obj: model.ObjAddMask(srcObj, model.Temp)},
-				}
+				newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
 			}
 			newObj = wrapObjName(storage, newObj)
 			cache.UpdateObject(srcRawObj.GetName(), newObj)
@@ -551,9 +549,11 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(dstKey); exist {
 			if newObj == nil {
-				newObj = model.ObjAddMask(srcObj, model.Temp)
+				newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
+			} else {
+				newObj = wrapObjName(storage, newObj)
 			}
-			cache.UpdateObject(srcRawObj.GetName(), wrapObjName(storage, newObj))
+			cache.UpdateObject(srcRawObj.GetName(), newObj)
 		}
 	}
 

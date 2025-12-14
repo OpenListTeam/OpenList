@@ -33,7 +33,7 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 			Path:     "/" + k,
 			IsFolder: true,
 			Modified: d.Modified,
-			Mask:     model.Static,
+			Mask:     model.Locked | model.Virtual,
 		}
 		idx := len(objs)
 		objs = append(objs, obj)

@@ -64,7 +64,7 @@ func (d *Alias) Init(ctx context.Context) error {
 			Path:     paths[0],
 			IsFolder: true,
 			Modified: d.Modified,
-			Mask:     model.Static,
+			Mask:     model.Locked,
 		})
 		for _, path := range paths[1:] {
 			roots = append(roots, &model.Object{
@@ -78,7 +78,7 @@ func (d *Alias) Init(ctx context.Context) error {
 			Path:     "/",
 			IsFolder: true,
 			Modified: d.Modified,
-			Mask:     model.Virtual,
+			Mask:     model.ReadOnly,
 		}
 	}
 
@@ -123,7 +123,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		mask := model.GetObjMask(obj) &^ model.Temp
 		if sub == "" {
 			// 根目录
-			mask |= model.Static
+			mask |= model.Locked | model.Virtual
 		}
 		ret := model.Object{
 			Path:     rawPath,

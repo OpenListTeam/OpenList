@@ -69,8 +69,8 @@ func (o *Object) GetHash() utils.HashInfo {
 	return o.HashInfo
 }
 
-func (o *Object) ObjMask() *ObjMask {
-	return &o.Mask
+func (o *Object) GetObjMask() ObjMask {
+	return o.Mask
 }
 
 type Thumbnail struct {
