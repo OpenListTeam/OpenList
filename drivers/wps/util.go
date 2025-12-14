@@ -87,7 +87,7 @@ func (d *Wps) driveURL(path string) string {
 }
 
 func (d *Wps) origin() string {
-	return d.driveHost() + "/"
+	return d.driveHost()
 }
 
 func (d *Wps) canDownload(f *FileInfo) bool {
