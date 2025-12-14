@@ -65,7 +65,7 @@ func (w countingWriter) Write(p []byte) (int, error) {
 }
 
 func (d *Wps) isPersonal() bool {
-	return strings.TrimSpace(d.Mode) == "个人"
+	return strings.TrimSpace(d.Mode) == "Personal"
 }
 
 func (d *Wps) driveHost() string {
