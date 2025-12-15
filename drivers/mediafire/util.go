@@ -15,6 +15,7 @@ Final opts by @Suyunjing @j2rong4cn @KirCute @Da3zKi7
 */
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -60,7 +61,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	}
 
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Content-Length", "0")
 	req.Header.Set("Cookie", d.Cookie)
@@ -83,7 +84,19 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	var body []byte
+	// Handle gzip decompression if needed
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer gzipReader.Close()
+		body, _ = io.ReadAll(gzipReader)
+	} else {
+		body, err = io.ReadAll(resp.Body)
+	}
+
 	if err != nil {
 		return "", err
 	}
@@ -468,39 +481,32 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 		}
 
 		var reader io.ReadSeeker
-		var rateLimitedRd io.Reader
 		var unitHash string
 
 		// Use lifecycle pattern for proper resource management
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
+			Before: func(ctx context.Context) (err error) {
 				// Skip already uploaded units
 				if d.isUnitUploaded(intWords, unitID) {
 					return ss.DiscardSection(start, size)
 				}
-
-				var err error
 				reader, err = ss.GetSectionReader(start, size)
-				if err != nil {
-					return err
-				}
-				rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
-				return nil
+				return
 			},
-			Do: func(ctx context.Context) error {
+			Do: func(ctx context.Context) (err error) {
 				if reader == nil {
 					return nil // Skip if reader is not initialized (already uploaded)
 				}
+				reader.Seek(0, io.SeekStart)
 
 				if unitHash == "" {
-					reader.Seek(0, io.SeekStart)
 					var err error
 					unitHash, err = utils.HashReader(utils.SHA256, reader)
 					if err != nil {
 						return err
 					}
+					reader.Seek(0, io.SeekStart)
 				}
-				reader.Seek(0, io.SeekStart)
 
 				// Perform upload
 
@@ -515,7 +521,7 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				}
 
 				url := d.apiBase + "/upload/resumable.php"
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, rateLimitedRd)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, driver.NewLimitedUploadStream(ctx, reader))
 				if err != nil {
 					return err
 				}
@@ -579,10 +585,10 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				finalUploadKey = uploadResp.Response.Doupload.Key
 				keyMutex.Unlock()
 
+				up(float64(threadG.Success()+1) * 100 / float64(numUnits+1))
 				return nil
 			},
 			After: func(err error) {
-				up(float64(threadG.Success()) * 100 / float64(numUnits))
 				if reader != nil {
 					// Cleanup resources
 					ss.FreeSectionReader(reader)
@@ -594,7 +600,6 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 	if err := threadG.Wait(); err != nil {
 		return "", err
 	}
-
 	return finalUploadKey, nil
 }
 
@@ -727,3 +732,4 @@ func (d *Mediafire) getFileByHash(ctx context.Context, hash string) (*model.ObjT
 	file := resp.Response.FileInfo[0]
 	return d.fileToObj(file), nil
 }
+

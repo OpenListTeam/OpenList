@@ -194,7 +194,7 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 			return nil, err
 		}
 
-		if f.Truncate((file.GetSize()+int64(maxBufferSize-1))/int64(maxBufferSize)*int64(maxBufferSize)) != nil {
+		if f.Truncate(file.GetSize()) != nil {
 			// fallback to full cache
 			_, _ = f.Close(), os.Remove(f.Name())
 			cache, err := file.CacheFullAndWriter(up, nil)
@@ -204,11 +204,11 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 			return &cachedSectionReader{cache}, nil
 		}
 
-		ss := &fileSectionReader{Reader: file, temp: f}
+		ss := &fileSectionReader{file: file, temp: f}
 		ss.bufPool = &pool.Pool[*offsetWriterWithBase]{
 			New: func() *offsetWriterWithBase {
-				base := ss.fileOff
-				ss.fileOff += int64(maxBufferSize)
+				base := ss.tempOffset
+				ss.tempOffset += int64(maxBufferSize)
 				return &offsetWriterWithBase{io.NewOffsetWriter(ss.temp, base), base}
 			},
 		}
@@ -225,7 +225,7 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 			New: func() []byte {
 				buf, err := mmap.Alloc(maxBufferSize)
 				if err == nil {
-					ss.file.Add(utils.CloseFunc(func() error {
+					file.Add(utils.CloseFunc(func() error {
 						return mmap.Free(buf)
 					}))
 				} else {
@@ -262,11 +262,11 @@ func (s *cachedSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker
 func (*cachedSectionReader) FreeSectionReader(sr io.ReadSeeker) {}
 
 type fileSectionReader struct {
-	io.Reader
-	off     int64
-	temp    *os.File
-	fileOff int64
-	bufPool *pool.Pool[*offsetWriterWithBase]
+	file       model.FileStreamer
+	fileOffset int64
+	temp       *os.File
+	tempOffset int64
+	bufPool    *pool.Pool[*offsetWriterWithBase]
 }
 
 type offsetWriterWithBase struct {
@@ -276,14 +276,14 @@ type offsetWriterWithBase struct {
 
 // 线程不安全
 func (ss *fileSectionReader) DiscardSection(off int64, length int64) error {
-	if off != ss.off {
-		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.off)
+	if off != ss.fileOffset {
+		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
 	}
-	_, err := utils.CopyWithBufferN(io.Discard, ss.Reader, length)
+	n, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
+	ss.fileOffset += n
 	if err != nil {
-		return fmt.Errorf("failed to skip data: (expect =%d) %w", length, err)
+		return fmt.Errorf("failed to skip data: (expect =%d, actual =%d) %w", length, n, err)
 	}
-	ss.off += length
 	return nil
 }
 
@@ -292,17 +292,18 @@ type fileBufferSectionReader struct {
 	fileBuf *offsetWriterWithBase
 }
 
+// 线程不安全
 func (ss *fileSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
-	if off != ss.off {
-		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.off)
+	if off != ss.fileOffset {
+		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
 	}
 	fileBuf := ss.bufPool.Get()
 	_, _ = fileBuf.Seek(0, io.SeekStart)
-	n, err := utils.CopyWithBufferN(fileBuf, ss.Reader, length)
+	n, err := utils.CopyWithBufferN(fileBuf, ss.file, length)
+	ss.fileOffset += n
 	if err != nil {
 		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
 	}
-	ss.off += length
 	return &fileBufferSectionReader{io.NewSectionReader(ss.temp, fileBuf.base, length), fileBuf}, nil
 }
 
@@ -315,21 +316,21 @@ func (ss *fileSectionReader) FreeSectionReader(rs io.ReadSeeker) {
 }
 
 type directSectionReader struct {
-	file    model.FileStreamer
-	off     int64
-	bufPool *pool.Pool[[]byte]
+	file       model.FileStreamer
+	fileOffset int64
+	bufPool    *pool.Pool[[]byte]
 }
 
 // 线程不安全
 func (ss *directSectionReader) DiscardSection(off int64, length int64) error {
-	if off != ss.off {
-		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.off)
+	if off != ss.fileOffset {
+		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
 	}
-	_, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
+	n, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
+	ss.fileOffset += n
 	if err != nil {
-		return fmt.Errorf("failed to skip data: (expect =%d) %w", length, err)
+		return fmt.Errorf("failed to skip data: (expect =%d, actual =%d) %w", length, n, err)
 	}
-	ss.off += length
 	return nil
 }
 
@@ -340,16 +341,16 @@ type bufferSectionReader struct {
 
 // 线程不安全
 func (ss *directSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
-	if off != ss.off {
-		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.off)
+	if off != ss.fileOffset {
+		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
 	}
 	tempBuf := ss.bufPool.Get()
 	buf := tempBuf[:length]
 	n, err := io.ReadFull(ss.file, buf)
+	ss.fileOffset += int64(n)
 	if int64(n) != length {
 		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
 	}
-	ss.off += int64(n)
 	return &bufferSectionReader{bytes.NewReader(buf), buf}, nil
 }
 func (ss *directSectionReader) FreeSectionReader(rs io.ReadSeeker) {

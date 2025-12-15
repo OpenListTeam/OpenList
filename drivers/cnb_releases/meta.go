@@ -6,7 +6,7 @@ import (
 )
 
 type Addition struct {
-	driver.RootPath
+	driver.RootID
 	Repo          string `json:"repo" type:"string" required:"true"`
 	Token         string `json:"token" type:"string" required:"true"`
 	UseTagName    bool   `json:"use_tag_name" type:"bool" default:"false" help:"Use tag name instead of release name"`
@@ -14,9 +14,8 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:        "CNB Releases",
-	LocalSort:   true,
-	DefaultRoot: "/",
+	Name:      "CNB Releases",
+	LocalSort: true,
 }
 
 func init() {

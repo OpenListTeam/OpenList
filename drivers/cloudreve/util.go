@@ -291,6 +291,7 @@ func (d *Cloudreve) upRemote(ctx context.Context, stream model.FileStreamer, u U
 				}
 				return nil
 			},
+			retry.Context(ctx),
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
@@ -351,7 +352,9 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 				default:
 					return nil
 				}
-			}, retry.Attempts(3),
+			},
+			retry.Context(ctx),
+			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
 		)
@@ -414,7 +417,9 @@ func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u Uploa
 					etags = append(etags, etag)
 					return nil
 				}
-			}, retry.Attempts(3),
+			},
+			retry.Context(ctx),
+			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second),
 		)

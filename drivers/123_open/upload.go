@@ -73,25 +73,20 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		// 表单
 		b := bytes.NewBuffer(make([]byte, 0, 2048))
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
-				if reader == nil {
-					var err error
-					// 每个分片一个reader
-					reader, err = ss.GetSectionReader(offset, size)
-					if err != nil {
-						return err
-					}
-					// 计算当前分片的MD5
+			Before: func(ctx context.Context) (err error) {
+				reader, err = ss.GetSectionReader(offset, size)
+				return
+			},
+			Do: func(ctx context.Context) (err error) {
+				reader.Seek(0, io.SeekStart)
+				if sliceMD5 == "" {
+					// 把耗时的计算放在这里，避免阻塞其他协程
 					sliceMD5, err = utils.HashReader(utils.MD5, reader)
 					if err != nil {
 						return err
 					}
+					reader.Seek(0, io.SeekStart)
 				}
-				return nil
-			},
-			Do: func(ctx context.Context) error {
-				// 重置分片reader位置，因为HashReader、上一次失败已经读取到分片EOF
-				reader.Seek(0, io.SeekStart)
 
 				b.Reset()
 				w := multipart.NewWriter(b)
@@ -140,12 +135,13 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				if res.StatusCode != 200 {
 					return fmt.Errorf("slice %d upload failed, status code: %d", partNumber, res.StatusCode)
 				}
-				var resp BaseResp
-				respBody, err := io.ReadAll(res.Body)
+				b.Reset()
+				_, err = b.ReadFrom(res.Body)
 				if err != nil {
 					return err
 				}
-				err = json.Unmarshal(respBody, &resp)
+				var resp BaseResp
+				err = json.Unmarshal(b.Bytes(), &resp)
 				if err != nil {
 					return err
 				}
@@ -153,7 +149,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 					return fmt.Errorf("slice %d upload failed: %s", partNumber, resp.Message)
 				}
 
-				progress := 10.0 + 85.0*float64(threadG.Success())/float64(uploadNums)
+				progress := 100 * float64(threadG.Success()+1) / float64(uploadNums+1)
 				up(progress)
 				return nil
 			},

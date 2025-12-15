@@ -1,7 +1,6 @@
 package quark_open
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -9,12 +8,15 @@ import (
 	"hash"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -174,7 +176,7 @@ func (d *QuarkOpen) Put(ctx context.Context, dstDir model.Obj, stream model.File
 		return err
 	}
 	// 如果预上传已经完成，直接返回--秒传
-	if pre.Data.Finish == true {
+	if pre.Data.Finish {
 		up(100)
 		return nil
 	}
@@ -188,46 +190,48 @@ func (d *QuarkOpen) Put(ctx context.Context, dstDir model.Obj, stream model.File
 	}
 
 	// part up
+	ss, err := streamPkg.NewStreamSectionReader(stream, int(pre.Data.PartSize), &up)
+	if err != nil {
+		return err
+	}
 	total := stream.GetSize()
-	left := total
-	part := make([]byte, pre.Data.PartSize)
 	// 用于存储每个分片的ETag，后续commit时需要
-	etags := make([]string, len(partInfo))
+	etags := make([]string, 0, len(partInfo))
 
 	// 遍历上传每个分片
-	for i, urlInfo := range upUrlInfo.UploadUrls {
+	for i := range len(upUrlInfo.UploadUrls) {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
 		}
 
-		currentSize := int64(urlInfo.PartSize)
-		if left < currentSize {
-			part = part[:left]
-		} else {
-			part = part[:currentSize]
-		}
-
-		// 读取分片数据
-		n, err := io.ReadFull(stream, part)
-		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		offset := int64(i) * pre.Data.PartSize
+		size := min(pre.Data.PartSize, total-offset)
+		rd, err := ss.GetSectionReader(offset, size)
+		if err != nil {
 			return err
 		}
-
-		// 准备上传分片
-		reader := driver.NewLimitedUploadStream(ctx, bytes.NewReader(part))
-		etag, err := d.upPart(ctx, upUrlInfo, i, reader)
+		err = retry.Do(func() error {
+			rd.Seek(0, io.SeekStart)
+			etag, err := d.upPart(ctx, upUrlInfo, i, driver.NewLimitedUploadStream(ctx, rd))
+			if err != nil {
+				return err
+			}
+			etags = append(etags, etag)
+			return nil
+		},
+			retry.Context(ctx),
+			retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second))
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return fmt.Errorf("failed to upload part %d: %w", i, err)
 		}
 
-		// 保存ETag，用于后续commit
-		etags[i] = etag
-
-		// 更新剩余大小和进度
-		left -= int64(n)
-		up(float64(total-left) / float64(total) * 100)
+		up(95 * float64(offset+size) / float64(total))
 	}
 
+	defer up(100)
 	return d.upFinish(ctx, pre, partInfo, etags)
 }
 

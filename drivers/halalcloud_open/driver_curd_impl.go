@@ -2,7 +2,6 @@ package halalcloudopen
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	sdkModel "github.com/halalcloud/golang-sdk-lite/halalcloud/model"
@@ -19,7 +18,7 @@ func (d *HalalCloudOpen) getFiles(ctx context.Context, dir model.Obj) ([]model.O
 		result, err := d.sdkUserFileService.List(ctx, &sdkUserFile.FileListRequest{
 			Parent: &sdkUserFile.File{Path: dir.GetPath()},
 			ListInfo: &sdkModel.ScanListRequest{
-				Limit: strconv.FormatInt(limit, 10),
+				Limit: limit,
 				Token: token,
 			},
 		})

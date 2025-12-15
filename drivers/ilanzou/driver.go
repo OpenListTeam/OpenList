@@ -152,8 +152,7 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	req := base.NoRedirectClient.R()
 
 	req.SetHeaders(map[string]string{
-		"Referer":    d.conf.site + "/",
-		"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+		"Referer": d.conf.site + "/",
 	})
 	if d.Addition.Ip != "" {
 		req.SetHeader("X-Forwarded-For", d.Addition.Ip)
@@ -409,9 +408,10 @@ func (d *ILanZou) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 	if err != nil {
 		return nil, err
 	}
+	vipSize := utils.Json.Get(res, "map", "vipSize").ToUint64() * 1024
 	totalSize := utils.Json.Get(res, "map", "totalSize").ToUint64() * 1024
 	rewardSize := utils.Json.Get(res, "map", "rewardSize").ToUint64() * 1024
-	total := totalSize + rewardSize
+	total := totalSize + rewardSize + vipSize
 	used := utils.Json.Get(res, "map", "usedSize").ToUint64() * 1024
 	return &model.StorageDetails{
 		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
