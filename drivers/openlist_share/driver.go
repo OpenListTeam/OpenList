@@ -68,6 +68,7 @@ func (d *OpenListShare) List(ctx context.Context, dir model.Obj, args model.List
 		file := model.ObjThumb{
 			Object: model.Object{
 				Name:     f.Name,
+				Path:     stdpath.Join(dir.GetPath(), f.Name),
 				Modified: f.Modified,
 				Ctime:    f.Created,
 				Size:     f.Size,

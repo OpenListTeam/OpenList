@@ -28,6 +28,7 @@ func init() {
 		return &Pan123{
 			Addition: Addition{
 				UploadThread: 3,
+				Platform: "web",
 			},
 		}
 	})

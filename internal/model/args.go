@@ -15,6 +15,7 @@ type ListArgs struct {
 	S3ShowPlaceholder  bool
 	Refresh            bool
 	WithStorageDetails bool
+	SkipHook           bool
 }
 
 type LinkArgs struct {
@@ -77,6 +78,7 @@ type ArchiveDecompressArgs struct {
 	ArchiveInnerArgs
 	CacheFull     bool
 	PutIntoNewDir bool
+	Overwrite     bool
 }
 
 type SharingListArgs struct {

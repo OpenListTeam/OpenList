@@ -11,6 +11,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -20,10 +21,13 @@ import (
 	gocache "github.com/OpenListTeam/go-cache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
-var archiveMetaCache = gocache.NewMemCache(gocache.WithShards[*model.ArchiveMetaProvider](64))
-var archiveMetaG singleflight.Group[*model.ArchiveMetaProvider]
+var (
+	archiveMetaCache = gocache.NewMemCache(gocache.WithShards[*model.ArchiveMetaProvider](64))
+	archiveMetaG     singleflight.Group[*model.ArchiveMetaProvider]
+)
 
 func GetArchiveMeta(ctx context.Context, storage driver.Driver, path string, args model.ArchiveMetaArgs) (*model.ArchiveMetaProvider, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -196,8 +200,10 @@ func getArchiveMeta(ctx context.Context, storage driver.Driver, path string, arg
 	return obj, archiveMetaProvider, err
 }
 
-var archiveListCache = gocache.NewMemCache(gocache.WithShards[[]model.Obj](64))
-var archiveListG singleflight.Group[[]model.Obj]
+var (
+	archiveListCache = gocache.NewMemCache(gocache.WithShards[[]model.Obj](64))
+	archiveListG     singleflight.Group[[]model.Obj]
+)
 
 func ListArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -217,15 +223,9 @@ func ListArchive(ctx context.Context, storage driver.Driver, path string, args m
 		// }
 	}
 	objs, err, _ := archiveListG.Do(key, func() ([]model.Obj, error) {
-		obj, files, err := listArchive(ctx, storage, path, args)
+		files, err := listArchive(ctx, storage, path, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to list archive [%s]%s: %+v", path, args.InnerPath, err)
-		}
-		// set path
-		for _, f := range files {
-			if s, ok := f.(model.SetPath); ok && f.GetPath() == "" && obj.GetPath() != "" {
-				s.SetPath(stdpath.Join(obj.GetPath(), args.InnerPath, f.GetName()))
-			}
 		}
 		// warp obj name
 		model.WrapObjsName(files)
@@ -248,24 +248,24 @@ func ListArchive(ctx context.Context, storage driver.Driver, path string, args m
 	return objs, err
 }
 
-func _listArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) (model.Obj, []model.Obj, error) {
+func _listArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
 	storageAr, ok := storage.(driver.ArchiveReader)
 	if ok {
 		obj, err := GetUnwrap(ctx, storage, path)
 		if err != nil {
-			return nil, nil, errors.WithMessage(err, "failed to get file")
+			return nil, errors.WithMessage(err, "failed to get file")
 		}
 		if obj.IsDir() {
-			return nil, nil, errors.WithStack(errs.NotFile)
+			return nil, errors.WithStack(errs.NotFile)
 		}
 		files, err := storageAr.ListArchive(ctx, obj, args.ArchiveInnerArgs)
 		if !errors.Is(err, errs.NotImplement) {
-			return obj, files, err
+			return files, err
 		}
 	}
-	obj, t, ss, err := GetArchiveToolAndStream(ctx, storage, path, args.LinkArgs)
+	_, t, ss, err := GetArchiveToolAndStream(ctx, storage, path, args.LinkArgs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer func() {
 		var e error
@@ -277,11 +277,11 @@ func _listArchive(ctx context.Context, storage driver.Driver, path string, args 
 		}
 	}()
 	files, err := t.List(ss, args.ArchiveInnerArgs)
-	return obj, files, err
+	return files, err
 }
 
-func listArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) (model.Obj, []model.Obj, error) {
-	obj, files, err := _listArchive(ctx, storage, path, args)
+func listArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
+	files, err := _listArchive(ctx, storage, path, args)
 	if errors.Is(err, errs.NotSupport) {
 		var meta model.ArchiveMeta
 		meta, err = GetArchiveMeta(ctx, storage, path, model.ArchiveMetaArgs{
@@ -289,20 +289,17 @@ func listArchive(ctx context.Context, storage driver.Driver, path string, args m
 			Refresh:     args.Refresh,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		files, err = getChildrenFromArchiveMeta(meta, args.InnerPath)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	if err == nil && obj == nil {
-		obj, err = GetUnwrap(ctx, storage, path)
-	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return obj, files, err
+	return files, err
 }
 
 func getChildrenFromArchiveMeta(meta model.ArchiveMeta, innerPath string) ([]model.Obj, error) {
@@ -397,8 +394,10 @@ type objWithLink struct {
 	obj  model.Obj
 }
 
-var extractCache = cache.NewKeyedCache[*objWithLink](5 * time.Minute)
-var extractG = singleflight.Group[*objWithLink]{}
+var (
+	extractCache = cache.NewKeyedCache[*objWithLink](5 * time.Minute)
+	extractG     = singleflight.Group[*objWithLink]{}
+)
 
 func DriverExtract(ctx context.Context, storage driver.Driver, path string, args model.ArchiveInnerArgs) (*model.Link, model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -506,14 +505,18 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		return errors.WithMessage(err, "failed to get dst dir")
 	}
 
+	var newObjs []model.Obj
 	switch s := storage.(type) {
 	case driver.ArchiveDecompressResult:
-		var newObjs []model.Obj
 		newObjs, err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
 		if err == nil {
 			if len(newObjs) > 0 {
-				for _, newObj := range newObjs {
-					Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
+				if !storage.Config().NoCache {
+					if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
+						for _, newObj := range newObjs {
+							cache.UpdateObject(newObj.GetName(), newObj)
+						}
+					}
 				}
 			} else if !utils.IsBool(lazyCache...) {
 				Cache.DeleteDirectory(storage, dstDirPath)
@@ -526,6 +529,32 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		}
 	default:
 		return errs.NotImplement
+	}
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		onlyList := false
+		targetPath := dstDirPath
+		if len(newObjs) == 1 && newObjs[0].IsDir() {
+			targetPath = stdpath.Join(dstDirPath, newObjs[0].GetName())
+		} else if len(newObjs) == 1 && !newObjs[0].IsDir() {
+			onlyList = true
+		} else if args.PutIntoNewDir {
+			targetPath = stdpath.Join(dstDirPath, strings.TrimSuffix(srcObj.GetName(), stdpath.Ext(srcObj.GetName())))
+		} else if innerBase := stdpath.Base(args.InnerPath); innerBase != "." && innerBase != "/" {
+			targetPath = stdpath.Join(dstDirPath, innerBase)
+			dstObj, e := Get(ctx, storage, targetPath)
+			onlyList = e != nil || !dstObj.IsDir()
+		}
+		if onlyList {
+			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		} else {
+			var limiter *rate.Limiter
+			if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
+					limiter = rate.NewLimiter(rate.Limit(f), 1)
+				}
+			}
+			go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
+		}
 	}
 	return errors.WithStack(err)
 }

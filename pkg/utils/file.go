@@ -185,3 +185,20 @@ const (
 	GB
 	TB
 )
+
+// IsSystemFile checks if a filename is a common system file that should be ignored
+// Returns true for files like .DS_Store, desktop.ini, Thumbs.db, and Apple Double files (._*)
+func IsSystemFile(filename string) bool {
+	// Common system files
+	switch filename {
+	case ".DS_Store", "desktop.ini", "Thumbs.db", "@eaDir":
+		return true
+	}
+
+	// Apple Double files (._*)
+	if strings.HasPrefix(filename, "._") {
+		return true
+	}
+
+	return false
+}

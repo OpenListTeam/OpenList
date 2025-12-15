@@ -80,6 +80,13 @@ func getMainItems(config driver.Config) []driver.Item {
 			Required: true,
 			Help:     "The cache expiration time for this storage",
 		})
+		items = append(items, driver.Item{
+			Name:     "custom_cache_policies",
+			Type:     conf.TypeText,
+			Default:  "",
+			Required: false,
+			Help:     "The cache expiration rules for this storage",
+		})
 	}
 	if config.MustProxy() {
 		items = append(items, driver.Item{

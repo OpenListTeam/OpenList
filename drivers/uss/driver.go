@@ -62,6 +62,7 @@ func (d *USS) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	for obj := range objsChan {
 		t := obj.Time
 		f := model.Object{
+			Path:     path.Join(dir.GetPath(), obj.Name),
 			Name:     obj.Name,
 			Size:     obj.Size,
 			Modified: t,

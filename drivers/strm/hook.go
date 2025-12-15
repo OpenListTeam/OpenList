@@ -27,7 +27,7 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 			localPath := stdpath.Join(localParentPath, obj.GetName())
 			generateStrm(ctx, driver, obj, localPath)
 		}
-		deleteExtraFiles(localParentPath, objs)
+		deleteExtraFiles(driver, localParentPath, objs)
 	}
 
 	_ = strmTrie.VisitPrefixes(patricia.Prefix(path), func(needPathPrefix patricia.Prefix, item patricia.Item) error {
@@ -89,13 +89,7 @@ func RemoveStrm(dstPath string, d *Strm) {
 }
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
-	if obj.IsDir() {
-		err := utils.CreateNestedDirectory(localPath)
-		if err != nil {
-			log.Warnf("failed to generate strm dir %s: failed to create dir: %v", localPath, err)
-			return
-		}
-	} else {
+	if !obj.IsDir() {
 		link, err := driver.Link(ctx, obj, model.LinkArgs{})
 		if err != nil {
 			log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
@@ -129,7 +123,7 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 	}
 }
 
-func deleteExtraFiles(localPath string, objs []model.Obj) {
+func deleteExtraFiles(driver *Strm, localPath string, objs []model.Obj) {
 	localFiles, err := getLocalFiles(localPath)
 	if err != nil {
 		log.Errorf("Failed to read local files from %s: %v", localPath, err)
@@ -137,15 +131,29 @@ func deleteExtraFiles(localPath string, objs []model.Obj) {
 	}
 
 	objsSet := make(map[string]struct{})
+	objsBaseNameSet := make(map[string]struct{})
 	for _, obj := range objs {
 		if obj.IsDir() {
 			continue
 		}
-		objsSet[stdpath.Join(localPath, obj.GetName())] = struct{}{}
+		objName := obj.GetName()
+		objsSet[stdpath.Join(localPath, objName)] = struct{}{}
+
+		objBaseName := strings.TrimSuffix(objName, utils.SourceExt(objName))
+		objsBaseNameSet[stdpath.Join(localPath, objBaseName[:len(objBaseName)-1])] = struct{}{}
 	}
 
 	for _, localFile := range localFiles {
 		if _, exists := objsSet[localFile]; !exists {
+			ext := utils.Ext(localFile)
+			localFileName := stdpath.Base(localFile)
+			localFileBaseName := strings.TrimSuffix(localFile, utils.SourceExt(localFileName))
+			_, nameExists := objsBaseNameSet[localFileBaseName[:len(localFileBaseName)-1]]
+			_, downloadFile := driver.downloadSuffix[ext]
+			if driver.KeepLocalDownloadFile && nameExists && downloadFile {
+				continue
+			}
+
 			err := os.Remove(localFile)
 			if err != nil {
 				log.Errorf("Failed to delete file: %s, error: %v\n", localFile, err)

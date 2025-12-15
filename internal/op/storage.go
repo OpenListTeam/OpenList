@@ -358,16 +358,21 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 				DriverName:     d.Config().Name,
 			},
 		}
-		timeoutCtx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
-		details, err := GetStorageDetails(timeoutCtx, d, refresh)
-		if err != nil {
-			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.StorageNotInit) {
-				log.Errorf("failed get %s storage details: %+v", d.GetStorage().MountPath, err)
+		resultChan := make(chan *model.StorageDetails, 1)
+		go func(dri driver.Driver) {
+			details, err := GetStorageDetails(ctx, dri, refresh)
+			if err != nil {
+				if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.StorageNotInit) {
+					log.Errorf("failed get %s storage details: %+v", dri.GetStorage().MountPath, err)
+				}
 			}
-			return ret
+			resultChan <- details
+		}(d)
+		select {
+		case r := <-resultChan:
+			ret.StorageDetails = r
+		case <-time.After(time.Second):
 		}
-		ret.StorageDetails = details
 		return ret
 	})
 }
@@ -395,12 +400,12 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 		idx, ok := set[names[0]]
 		if !ok {
 			set[names[0]] = len(files)
-			obj := &model.Object{
+			obj := model.ObjAddMask(&model.Object{
 				Name:     names[0],
 				Size:     0,
 				Modified: v.GetStorage().Modified,
 				IsFolder: true,
-			}
+			}, model.Virtual)
 			if len(names) == 1 {
 				idx = len(files)
 				files = append(files, obj)

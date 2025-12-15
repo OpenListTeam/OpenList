@@ -3,6 +3,7 @@ package local
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -14,7 +15,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/KarpelesLab/reflink"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/disintegration/imaging"
@@ -148,7 +151,7 @@ func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
 		return nil, nil, err
 	}
 	if d.ThumbCacheFolder != "" {
-		err = os.WriteFile(filepath.Join(d.ThumbCacheFolder, thumbName), buf.Bytes(), 0666)
+		err = os.WriteFile(filepath.Join(d.ThumbCacheFolder, thumbName), buf.Bytes(), 0o666)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -404,4 +407,80 @@ func (m *DirectoryMap) DeleteDirNode(dirname string) error {
 	}
 
 	return nil
+}
+
+func (d *Local) tryCopy(srcPath, dstPath string, info os.FileInfo) error {
+	if info.Mode()&os.ModeDevice != 0 {
+		return errors.New("cannot copy a device")
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return d.copySymlink(srcPath, dstPath)
+	} else if info.Mode()&os.ModeNamedPipe != 0 {
+		return copyNamedPipe(dstPath, info.Mode(), os.FileMode(d.mkdirPerm))
+	} else if info.IsDir() {
+		return d.recurAndTryCopy(srcPath, dstPath)
+	} else {
+		return tryReflinkCopy(srcPath, dstPath)
+	}
+}
+
+func (d *Local) copySymlink(srcPath, dstPath string) error {
+	linkOrig, err := os.Readlink(srcPath)
+	if err != nil {
+		return err
+	}
+	dstDir := filepath.Dir(dstPath)
+	if !filepath.IsAbs(linkOrig) {
+		srcDir := filepath.Dir(srcPath)
+		rel, err := filepath.Rel(dstDir, srcDir)
+		if err != nil {
+			rel, err = filepath.Abs(srcDir)
+		}
+		if err != nil {
+			return err
+		}
+		linkOrig = filepath.Clean(filepath.Join(rel, linkOrig))
+	}
+	err = os.MkdirAll(dstDir, os.FileMode(d.mkdirPerm))
+	if err != nil {
+		return err
+	}
+	return os.Symlink(linkOrig, dstPath)
+}
+
+func (d *Local) recurAndTryCopy(srcPath, dstPath string) error {
+	err := os.MkdirAll(dstPath, os.FileMode(d.mkdirPerm))
+	if err != nil {
+		return err
+	}
+	files, err := readDir(srcPath)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if !f.IsDir() {
+			sp := filepath.Join(srcPath, f.Name())
+			dp := filepath.Join(dstPath, f.Name())
+			if err = d.tryCopy(sp, dp, f); err != nil {
+				return err
+			}
+		}
+	}
+	for _, f := range files {
+		if f.IsDir() {
+			sp := filepath.Join(srcPath, f.Name())
+			dp := filepath.Join(dstPath, f.Name())
+			if err = d.recurAndTryCopy(sp, dp); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func tryReflinkCopy(srcPath, dstPath string) error {
+	err := reflink.Always(srcPath, dstPath)
+	if errors.Is(err, reflink.ErrReflinkUnsupported) || errors.Is(err, reflink.ErrReflinkFailed) || isCrossDeviceError(err) {
+		return errs.NotImplement
+	}
+	return err
 }

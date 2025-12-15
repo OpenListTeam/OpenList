@@ -22,8 +22,8 @@ func (z *Zip) AcceptedExtensions() []string {
 
 func (z *Zip) AcceptedMultipartExtensions() map[string]tool.MultipartExtension {
 	return map[string]tool.MultipartExtension{
-		".zip":     {regexp.MustCompile("^.*\\.z(\\d+)$"), 1},
-		".zip.001": {regexp.MustCompile("^.*\\.zip\\.(\\d+)$"), 2},
+		".zip":     {PartFileFormat: regexp.MustCompile(`^.*\.z(\d+)$`), SecondPartIndex: 1},
+		".zip.001": {PartFileFormat: regexp.MustCompile(`^.*\.zip\.(\d+)$`), SecondPartIndex: 2},
 	}
 }
 
@@ -135,6 +135,6 @@ var _ tool.Tool = (*Zip)(nil)
 
 func init() {
 	tool.RegisterTool(&Zip{
-		traditionalSecondPartRegExp: regexp.MustCompile("^.*\\.z0*1$"),
+		traditionalSecondPartRegExp: regexp.MustCompile(`^.*\.z0*1$`),
 	})
 }
