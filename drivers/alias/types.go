@@ -39,24 +39,37 @@ type BalancedObjs []model.Obj
 func (b BalancedObjs) GetSize() int64 {
 	return b[0].GetSize()
 }
+
 func (b BalancedObjs) ModTime() time.Time {
 	return b[0].ModTime()
 }
+
 func (b BalancedObjs) CreateTime() time.Time {
 	return b[0].CreateTime()
 }
+
 func (b BalancedObjs) IsDir() bool {
 	return b[0].IsDir()
 }
+
 func (b BalancedObjs) GetHash() utils.HashInfo {
-	return b[0].GetHash()
+	ret := make(map[*utils.HashType]string)
+	for _, o := range b {
+		for ht, v := range o.GetHash().All() {
+			ret[ht] = v
+		}
+	}
+	return utils.NewHashInfoByMap(ret)
 }
+
 func (b BalancedObjs) GetName() string {
 	return b[0].GetName()
 }
+
 func (b BalancedObjs) GetPath() string {
 	return b[0].GetPath()
 }
+
 func (b BalancedObjs) GetID() string {
 	return b[0].GetID()
 }

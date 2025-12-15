@@ -111,25 +111,37 @@ func (d *Alias) link(ctx context.Context, reqPath string, args model.LinkArgs) (
 	return op.Link(ctx, storage, reqActualPath, args)
 }
 
-func (d *Alias) getAllObjs(ctx context.Context, obj model.Obj, ifContinue func(err error) (bool, error)) (BalancedObjs, error) {
-	objs := obj.(BalancedObjs)
-	isDir := obj.IsDir()
-	size := obj.GetSize()
+func isConsistent(a, b model.Obj) bool {
+	if a.GetSize() != b.GetSize() {
+		return false
+	}
+	for ht, v := range b.GetHash().All() {
+		ah := a.GetHash().GetHash(ht)
+		if ah != "" && ah != v {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(err error) (bool, error)) (BalancedObjs, error) {
+	objs := bObj.(BalancedObjs)
 	length := 0
 	for _, o := range objs {
 		var err error
+		var obj model.Obj
 		temp, isTemp := o.(*tempObj)
 		if isTemp {
 			obj, err = fs.Get(ctx, o.GetPath(), &fs.GetArgs{NoLog: true})
 			if err == nil {
-				if !isDir {
+				if !bObj.IsDir() {
 					if obj.IsDir() {
 						err = errs.NotFile
-					} else if d.FileSizeStrict && size != obj.GetSize() {
+					} else if d.FileConsistencyCheck && !isConsistent(bObj, obj) {
 						err = errs.ObjectNotFound
 					}
 				} else if !obj.IsDir() {
-					err = errs.NotFolder
+					err = errs.NotFile
 				}
 			}
 		}
