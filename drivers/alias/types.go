@@ -53,13 +53,7 @@ func (b BalancedObjs) IsDir() bool {
 }
 
 func (b BalancedObjs) GetHash() utils.HashInfo {
-	ret := make(map[*utils.HashType]string)
-	for _, o := range b {
-		for ht, v := range o.GetHash().All() {
-			ret[ht] = v
-		}
-	}
-	return utils.NewHashInfoByMap(ret)
+	return b[0].GetHash()
 }
 
 func (b BalancedObjs) GetName() string {

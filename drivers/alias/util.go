@@ -115,8 +115,8 @@ func isConsistent(a, b model.Obj) bool {
 	if a.GetSize() != b.GetSize() {
 		return false
 	}
-	for ht, v := range b.GetHash().All() {
-		ah := a.GetHash().GetHash(ht)
+	for ht, v := range a.GetHash().All() {
+		ah := b.GetHash().GetHash(ht)
 		if ah != "" && ah != v {
 			return false
 		}
@@ -141,7 +141,7 @@ func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(
 						err = errs.ObjectNotFound
 					}
 				} else if !obj.IsDir() {
-					err = errs.NotFile
+					err = errs.NotFolder
 				}
 			}
 		}
