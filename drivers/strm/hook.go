@@ -146,12 +146,17 @@ func deleteExtraFiles(driver *Strm, localPath string, objs []model.Obj) {
 	for _, localFile := range localFiles {
 		if _, exists := objsSet[localFile]; !exists {
 			ext := utils.Ext(localFile)
-			localFileName := stdpath.Base(localFile)
-			localFileBaseName := strings.TrimSuffix(localFile, utils.SourceExt(localFileName))
-			_, nameExists := objsBaseNameSet[localFileBaseName[:len(localFileBaseName)-1]]
 			_, downloadFile := driver.downloadSuffix[ext]
-			if driver.KeepLocalDownloadFile && nameExists && downloadFile {
-				continue
+			if driver.KeepLocalDownloadFile && downloadFile {
+				if !driver.KeepSameNameOnly {
+					continue
+				}
+				localFileName := stdpath.Base(localFile)
+				localFileBaseName := strings.TrimSuffix(localFile, utils.SourceExt(localFileName))
+				_, nameExists := objsBaseNameSet[localFileBaseName[:len(localFileBaseName)-1]]
+				if nameExists {
+					continue
+				}
 			}
 
 			err := os.Remove(localFile)

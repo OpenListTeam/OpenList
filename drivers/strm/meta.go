@@ -16,6 +16,7 @@ type Addition struct {
 	SaveStrmToLocal       bool   `json:"SaveStrmToLocal" default:"false" help:"save strm file locally"`
 	SaveStrmLocalPath     string `json:"SaveStrmLocalPath" type:"text" help:"save strm file local path"`
 	KeepLocalDownloadFile bool   `json:"KeepLocalDownloadFile" default:"false" help:"keep local download files"`
+	KeepSameNameOnly      bool   `json:"KeepSameNameOnly" default:"false" help:"Keep only same name files"`
 	Version               int
 }
 
