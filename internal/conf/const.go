@@ -115,6 +115,7 @@ const (
 	// ldap
 	LdapLoginEnabled      = "ldap_login_enabled"
 	LdapServer            = "ldap_server"
+	LdapSkipTlsVerify     = "ldap_skip_tls_verify"
 	LdapManagerDN         = "ldap_manager_dn"
 	LdapManagerPassword   = "ldap_manager_password"
 	LdapUserSearchBase    = "ldap_user_search_base"
