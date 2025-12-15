@@ -1,6 +1,7 @@
 package wps
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -8,9 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -29,6 +32,18 @@ type resolvedNode struct {
 	file  *FileInfo
 }
 
+type resolveCacheEntry struct {
+	node   *resolvedNode
+	expire time.Time
+}
+
+type resolveCacheStore struct {
+	mu sync.RWMutex
+	m  map[string]resolveCacheEntry
+}
+
+var resolveCaches sync.Map
+
 type apiResult struct {
 	Result string `json:"result"`
 	Msg    string `json:"msg"`
@@ -38,13 +53,22 @@ type uploadCreateUpdateResp struct {
 	apiResult
 	Method  string `json:"method"`
 	URL     string `json:"url"`
+	Store   string `json:"store"`
 	Request struct {
-		Headers map[string]string `json:"headers"`
+		Headers  map[string]string `json:"headers"`
+		FormData map[string]string `json:"formData"`
 	} `json:"request"`
+	Response struct {
+		ExpectCode []int  `json:"expect_code"`
+		ArgsETag   string `json:"args_etag"`
+		ArgsKey    string `json:"args_key"`
+	} `json:"response"`
 }
 
 type uploadPutResp struct {
 	NewFilename string `json:"newfilename"`
+	Sha1        string `json:"sha1"`
+	MD5         string `json:"md5"`
 }
 
 type personalGroupsResp struct {
@@ -111,6 +135,72 @@ func (d *Wps) jsonRequest(ctx context.Context) *resty.Request {
 	return d.request(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Origin", d.origin())
+}
+
+func statusOK(code int, expect []int) bool {
+	if len(expect) == 0 {
+		return code >= 200 && code < 300
+	}
+	for _, v := range expect {
+		if v == code {
+			return true
+		}
+	}
+	return false
+}
+
+func respArg(arg string, resp *http.Response, body []byte) string {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return ""
+	}
+	l := strings.ToLower(arg)
+	if strings.HasPrefix(l, "header.") {
+		h := strings.TrimSpace(arg[len("header."):])
+		if h == "" {
+			return ""
+		}
+		return strings.TrimSpace(resp.Header.Get(h))
+	}
+	if strings.HasPrefix(l, "body.") {
+		k := strings.TrimSpace(arg[len("body."):])
+		if k == "" {
+			return ""
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal(body, &m); err != nil {
+			return ""
+		}
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+func extractXMLTag(v, tag string) string {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return ""
+	}
+	lt := strings.ToLower(tag)
+	open := "<" + lt + ">"
+	clos := "</" + lt + ">"
+	ls := strings.ToLower(s)
+	i := strings.Index(ls, open)
+	if i < 0 {
+		return ""
+	}
+	i += len(open)
+	j := strings.Index(ls[i:], clos)
+	if j < 0 {
+		return ""
+	}
+	r := strings.TrimSpace(s[i : i+j])
+	r = strings.ReplaceAll(r, "&quot;", "")
+	return strings.Trim(r, `"'`)
 }
 
 func checkAPI(resp *resty.Response, result apiResult) error {
@@ -213,23 +303,97 @@ func joinPath(basePath, name string) string {
 	return strings.TrimRight(basePath, "/") + "/" + name
 }
 
+func normalizePath(path string) string {
+	clean := strings.TrimSpace(path)
+	if clean == "" || clean == "/" {
+		return "/"
+	}
+	return "/" + strings.Trim(clean, "/")
+}
+
+func (d *Wps) resolveCacheStore() *resolveCacheStore {
+	if d == nil {
+		return nil
+	}
+	if v, ok := resolveCaches.Load(d); ok {
+		if s, ok := v.(*resolveCacheStore); ok {
+			return s
+		}
+	}
+	s := &resolveCacheStore{m: make(map[string]resolveCacheEntry)}
+	if v, loaded := resolveCaches.LoadOrStore(d, s); loaded {
+		if s2, ok := v.(*resolveCacheStore); ok {
+			return s2
+		}
+	}
+	return s
+}
+
+func (d *Wps) getResolveCache(path string) (*resolvedNode, bool) {
+	s := d.resolveCacheStore()
+	if s == nil {
+		return nil, false
+	}
+	s.mu.RLock()
+	e, ok := s.m[path]
+	s.mu.RUnlock()
+	if !ok || e.node == nil {
+		return nil, false
+	}
+	if !e.expire.IsZero() && time.Now().After(e.expire) {
+		s.mu.Lock()
+		delete(s.m, path)
+		s.mu.Unlock()
+		return nil, false
+	}
+	return e.node, true
+}
+
+func (d *Wps) setResolveCache(path string, node *resolvedNode) {
+	s := d.resolveCacheStore()
+	if s == nil || node == nil {
+		return
+	}
+	s.mu.Lock()
+	s.m[path] = resolveCacheEntry{node: node, expire: time.Now().Add(10 * time.Minute)}
+	s.mu.Unlock()
+}
+
+func (d *Wps) clearResolveCache() {
+	s := d.resolveCacheStore()
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if len(s.m) != 0 {
+		s.m = make(map[string]resolveCacheEntry)
+	}
+	s.mu.Unlock()
+}
+
 func (d *Wps) resolvePath(ctx context.Context, path string) (*resolvedNode, error) {
+	cacheKey := normalizePath(path)
+	if n, ok := d.getResolveCache(cacheKey); ok {
+		return n, nil
+	}
 	clean := strings.TrimSpace(path)
 	if clean == "" {
 		clean = "/"
 	}
 	clean = strings.Trim(clean, "/")
 	if clean == "" {
-		return &resolvedNode{kind: "root"}, nil
+		n := &resolvedNode{kind: "root"}
+		d.setResolveCache("/", n)
+		return n, nil
 	}
-	segs := strings.Split(clean, "/")
+	seg := strings.Split(clean, "/")
 	groups, err := d.getGroups(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var grp *Group
 	for i := range groups {
-		if groups[i].Name == segs[0] {
+		if groups[i].Name == seg[0] {
 			grp = &groups[i]
 			break
 		}
@@ -237,19 +401,22 @@ func (d *Wps) resolvePath(ctx context.Context, path string) (*resolvedNode, erro
 	if grp == nil {
 		return nil, fmt.Errorf("group not found")
 	}
-	if len(segs) == 1 {
-		return &resolvedNode{kind: "group", group: *grp}, nil
+	cur := "/" + seg[0]
+	gn := &resolvedNode{kind: "group", group: *grp}
+	d.setResolveCache(cur, gn)
+	if len(seg) == 1 {
+		return gn, nil
 	}
 	parentID := int64(0)
-	var last FileInfo
-	for i := 1; i < len(segs); i++ {
+	var lastNode *resolvedNode
+	for i := 1; i < len(seg); i++ {
 		files, err := d.getFiles(ctx, grp.GroupID, parentID)
 		if err != nil {
 			return nil, err
 		}
 		var found *FileInfo
 		for j := range files {
-			if files[j].Name == segs[i] {
+			if files[j].Name == seg[i] {
 				found = &files[j]
 				break
 			}
@@ -257,17 +424,24 @@ func (d *Wps) resolvePath(ctx context.Context, path string) (*resolvedNode, erro
 		if found == nil {
 			return nil, fmt.Errorf("path not found")
 		}
-		if i < len(segs)-1 && found.Type != "folder" {
+		if i < len(seg)-1 && found.Type != "folder" {
 			return nil, fmt.Errorf("path not found")
 		}
-		last = *found
-		parentID = found.ID
+		fi := *found
+		parentID = fi.ID
+		cur = cur + "/" + seg[i]
+		kind := "file"
+		if fi.Type == "folder" {
+			kind = "folder"
+		}
+		n := &resolvedNode{kind: kind, group: *grp, file: &fi}
+		d.setResolveCache(cur, n)
+		lastNode = n
 	}
-	kind := "file"
-	if last.Type == "folder" {
-		kind = "folder"
+	if lastNode == nil {
+		return nil, fmt.Errorf("path not found")
 	}
-	return &resolvedNode{kind: kind, group: *grp, file: &last}, nil
+	return lastNode, nil
 }
 
 func (d *Wps) fileToObj(basePath string, f FileInfo) *Obj {
@@ -334,7 +508,9 @@ func (d *Wps) list(ctx context.Context, basePath string) ([]model.Obj, error) {
 				path:  path,
 			}
 			res = append(res, obj)
+			d.setResolveCache(normalizePath(path), &resolvedNode{kind: "group", group: g})
 		}
+		d.setResolveCache("/", &resolvedNode{kind: "root"})
 		return res, nil
 	}
 	if node.kind != "group" && node.kind != "folder" {
@@ -351,6 +527,13 @@ func (d *Wps) list(ctx context.Context, basePath string) ([]model.Obj, error) {
 	res := make([]model.Obj, 0, len(files))
 	for _, f := range files {
 		res = append(res, d.fileToObj(basePath, f))
+		path := normalizePath(joinPath(basePath, f.Name))
+		fi := f
+		kind := "file"
+		if fi.Type == "folder" {
+			kind = "folder"
+		}
+		d.setResolveCache(path, &resolvedNode{kind: kind, group: node.group, file: &fi})
 	}
 	return res, nil
 }
@@ -401,7 +584,11 @@ func (d *Wps) makeDir(ctx context.Context, parentDir model.Obj, dirName string) 
 		"name":     dirName,
 		"parentid": parentID,
 	}
-	return d.doJSON(ctx, http.MethodPost, d.driveURL("/api/v5/files/folder"), body)
+	if err := d.doJSON(ctx, http.MethodPost, d.driveURL("/api/v5/files/folder"), body); err != nil {
+		return err
+	}
+	d.clearResolveCache()
+	return nil
 }
 
 func (d *Wps) move(ctx context.Context, srcObj, dstDir model.Obj) error {
@@ -432,7 +619,29 @@ func (d *Wps) move(ctx context.Context, srcObj, dstDir model.Obj) error {
 		"target_parentid": targetParentID,
 	}
 	url := fmt.Sprintf("/api/v3/groups/%d/files/batch/move", nodeSrc.group.GroupID)
-	return d.doJSON(ctx, http.MethodPost, d.driveURL(url), body)
+	for {
+		var res apiResult
+		resp, err := d.jsonRequest(ctx).
+			SetBody(body).
+			SetResult(&res).
+			SetError(&res).
+			Post(d.driveURL(url))
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode() == 403 && res.Result == "fileTaskDuplicated" {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		if err := checkAPI(resp, res); err != nil {
+			return err
+		}
+		break
+	}
+	d.clearResolveCache()
+	return nil
 }
 
 func (d *Wps) rename(ctx context.Context, srcObj model.Obj, newName string) error {
@@ -448,7 +657,11 @@ func (d *Wps) rename(ctx context.Context, srcObj model.Obj, newName string) erro
 	}
 	url := fmt.Sprintf("/api/v3/groups/%d/files/%d", node.group.GroupID, node.file.ID)
 	body := map[string]string{"fname": newName}
-	return d.doJSON(ctx, http.MethodPut, d.driveURL(url), body)
+	if err := d.doJSON(ctx, http.MethodPut, d.driveURL(url), body); err != nil {
+		return err
+	}
+	d.clearResolveCache()
+	return nil
 }
 
 func (d *Wps) copy(ctx context.Context, srcObj, dstDir model.Obj) error {
@@ -481,7 +694,29 @@ func (d *Wps) copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 		"duplicated_name_model": 1,
 	}
 	url := fmt.Sprintf("/api/v3/groups/%d/files/batch/copy", nodeSrc.group.GroupID)
-	return d.doJSON(ctx, http.MethodPost, d.driveURL(url), body)
+	for {
+		var res apiResult
+		resp, err := d.jsonRequest(ctx).
+			SetBody(body).
+			SetResult(&res).
+			SetError(&res).
+			Post(d.driveURL(url))
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode() == 403 && res.Result == "fileTaskDuplicated" {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		if err := checkAPI(resp, res); err != nil {
+			return err
+		}
+		break
+	}
+	d.clearResolveCache()
+	return nil
 }
 
 func (d *Wps) remove(ctx context.Context, obj model.Obj) error {
@@ -495,11 +730,36 @@ func (d *Wps) remove(ctx context.Context, obj model.Obj) error {
 	if node.kind != "file" && node.kind != "folder" {
 		return errs.NotSupport
 	}
+
 	body := map[string]interface{}{
 		"fileids": []int64{node.file.ID},
 	}
 	url := fmt.Sprintf("/api/v3/groups/%d/files/batch/delete", node.group.GroupID)
-	return d.doJSON(ctx, http.MethodPost, d.driveURL(url), body)
+
+	for {
+		var res apiResult
+		resp, err := d.jsonRequest(ctx).
+			SetBody(body).
+			SetResult(&res).
+			SetError(&res).
+			Post(d.driveURL(url))
+		if err != nil {
+			return err
+		}
+
+		// 无法连续创建文件夹删除。如果一定要删除，每0.5s 尝试一次创建下一个删除请求，应当避免递归删除文件夹
+		if resp.StatusCode() == 403 && res.Result == "fileTaskDuplicated" {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		if err := checkAPI(resp, res); err != nil {
+			return err
+		}
+		break
+	}
+	d.clearResolveCache()
+	return nil
 }
 
 func cacheAndHash(file model.FileStreamer, up driver.UpdateProgress) (model.File, int64, string, string, error) {
@@ -557,17 +817,25 @@ func normalizeETag(v string) string {
 	return strings.Trim(v, `"`)
 }
 
-func (d *Wps) commitUpload(ctx context.Context, etag string, groupID, parentID int64, name, sha1Hex string, size int64) error {
+func (d *Wps) commitUpload(ctx context.Context, etag, key string, groupID, parentID int64, name, sha1Hex string, size int64, store string) error {
+	store = strings.TrimSpace(store)
+	if store == "" {
+		store = "ks3"
+	}
+	storeKey := ""
+	if key != "" {
+		storeKey = key
+	}
 	body := map[string]interface{}{
 		"etag":     etag,
 		"groupid":  groupID,
-		"key":      "",
+		"key":      key,
 		"name":     name,
 		"parentid": parentID,
 		"sha1":     sha1Hex,
 		"size":     size,
-		"store":    "ks3",
-		"storekey": "",
+		"store":    store,
+		"storekey": storeKey,
 	}
 	return d.doJSON(ctx, http.MethodPost, d.driveURL("/api/v5/files/file"), body)
 }
@@ -597,7 +865,16 @@ func (d *Wps) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	if c, ok := f.(io.Closer); ok {
 		defer c.Close()
 	}
-	info, err := d.createUpload(ctx, node.group.GroupID, parentID, file.GetName(), size, sha1Hex, sha256Hex)
+
+	// 在隐藏文件名前加_上传，这是WPS的限制，无法上传隐藏文件，也无法将任何文件重命名为隐藏文件，所有隐藏文件会被自动加上_ 上传
+	// 甚至可以上传前缀是..的文件，但是单个点就是不行
+	realName := file.GetName()
+	uploadName := realName
+	if strings.HasPrefix(realName, ".") {
+		uploadName = "_" + realName
+	}
+
+	info, err := d.createUpload(ctx, node.group.GroupID, parentID, uploadName, size, sha1Hex, sha256Hex)
 	if err != nil {
 		return err
 	}
@@ -606,18 +883,92 @@ func (d *Wps) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	}
 	rf := driver.NewLimitedUploadFile(ctx, f)
 	prog := driver.NewProgress(size, model.UpdateProgressWithRange(up, 0, 1))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, info.URL, io.TeeReader(rf, prog))
-	if err != nil {
-		return err
-	}
-	req.ContentLength = size
-	for k, v := range info.Request.Headers {
-		req.Header.Set(k, v)
-	}
+
 	method := strings.ToUpper(strings.TrimSpace(info.Method))
-	if method != "" && method != http.MethodPut {
-		req.Method = method
+	if method == "" {
+		method = http.MethodPut
 	}
+
+	var req *http.Request
+	if method == http.MethodPost && len(info.Request.FormData) > 0 {
+		if size == 0 {
+			var buf bytes.Buffer
+			mw := multipart.NewWriter(&buf)
+			for k, v := range info.Request.FormData {
+				if err := mw.WriteField(k, v); err != nil {
+					return err
+				}
+			}
+			part, err := mw.CreateFormFile("file", uploadName)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(part, io.TeeReader(rf, prog)); err != nil {
+				return err
+			}
+			if err := mw.Close(); err != nil {
+				return err
+			}
+			req, err = http.NewRequestWithContext(ctx, method, info.URL, bytes.NewReader(buf.Bytes()))
+			if err != nil {
+				return err
+			}
+			for k, v := range info.Request.Headers {
+				req.Header.Set(k, v)
+			}
+			req.Header.Set("Content-Type", mw.FormDataContentType())
+			req.ContentLength = int64(buf.Len())
+			req.Header.Set("Content-Length", strconv.FormatInt(req.ContentLength, 10))
+		} else {
+			pr, pw := io.Pipe()
+			mw := multipart.NewWriter(pw)
+			req, err = http.NewRequestWithContext(ctx, method, info.URL, pr)
+			if err != nil {
+				return err
+			}
+			for k, v := range info.Request.Headers {
+				req.Header.Set(k, v)
+			}
+			req.Header.Set("Content-Type", mw.FormDataContentType())
+			go func() {
+				for k, v := range info.Request.FormData {
+					if err := mw.WriteField(k, v); err != nil {
+						pw.CloseWithError(err)
+						return
+					}
+				}
+				part, err := mw.CreateFormFile("file", uploadName)
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				if _, err := io.Copy(part, io.TeeReader(rf, prog)); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				if err := mw.Close(); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				pw.Close()
+			}()
+		}
+	} else {
+		var body = io.TeeReader(rf, prog)
+		if size == 0 {
+			body = bytes.NewReader(nil)
+		}
+		req, err = http.NewRequestWithContext(ctx, method, info.URL, body)
+		if err != nil {
+			return err
+		}
+		for k, v := range info.Request.Headers {
+			req.Header.Set(k, v)
+		}
+		req.ContentLength = size
+		req.Header.Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+
 	c := *base.RestyClient.GetClient()
 	c.Timeout = 0
 	resp, err := (&c).Do(req)
@@ -625,25 +976,74 @@ func (d *Wps) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+
+	if !statusOK(resp.StatusCode, info.Response.ExpectCode) {
 		io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("http error: %d", resp.StatusCode)
 	}
-	etag := normalizeETag(resp.Header.Get("ETag"))
-	var pr uploadPutResp
-	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return err
 	}
-	sha1FromServer := strings.TrimSpace(pr.NewFilename)
+
+	etag := normalizeETag(respArg(info.Response.ArgsETag, resp, body))
+	if etag == "" {
+		etag = normalizeETag(resp.Header.Get("ETag"))
+	}
+
+	key := strings.TrimSpace(respArg(info.Response.ArgsKey, resp, body))
+	if key == "" {
+		key = strings.TrimSpace(resp.Header.Get("x-obs-save-key"))
+	}
+
+	var pr uploadPutResp
+	sha1FromServer := ""
+	if err := json.Unmarshal(body, &pr); err == nil {
+		sha1FromServer = strings.TrimSpace(pr.NewFilename)
+		if sha1FromServer == "" {
+			sha1FromServer = strings.TrimSpace(pr.Sha1)
+		}
+		if etag == "" && pr.MD5 != "" {
+			etag = strings.TrimSpace(pr.MD5)
+		}
+	}
+
+	if sha1FromServer == "" {
+		if v := extractXMLTag(string(body), "ETag"); v != "" {
+			sha1FromServer = v
+			if etag == "" {
+				etag = v
+			}
+		}
+	}
+	if sha1FromServer == "" && key != "" && len(key) == 40 {
+		sha1FromServer = key
+	}
+	if sha1FromServer == "" {
+		sha1FromServer = sha1Hex
+	}
+
 	if etag == "" {
 		return fmt.Errorf("empty etag")
 	}
 	if sha1FromServer == "" {
-		return fmt.Errorf("empty newfilename")
+		return fmt.Errorf("empty sha1")
 	}
-	if err := d.commitUpload(ctx, etag, node.group.GroupID, parentID, file.GetName(), sha1FromServer, size); err != nil {
+
+	store := strings.TrimSpace(info.Store)
+	commitKey := ""
+	if strings.TrimSpace(info.Response.ArgsKey) != "" {
+		commitKey = key
+		if commitKey == "" {
+			commitKey = sha1FromServer
+		}
+	}
+
+	if err := d.commitUpload(ctx, etag, commitKey, node.group.GroupID, parentID, uploadName, sha1FromServer, size, store); err != nil {
 		return err
 	}
+
 	up(1)
 	return nil
 }
