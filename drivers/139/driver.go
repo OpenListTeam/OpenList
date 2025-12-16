@@ -944,7 +944,7 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	if d.UserDomainID == "" {
 		return nil, errs.NotImplement
 	}
-	var total, free uint64
+	var total, used uint64
 	if d.isFamily() {
 		diskInfo, err := d.getFamilyDiskInfo(ctx)
 		if err != nil {
@@ -959,7 +959,7 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 			return nil, fmt.Errorf("failed convert used size into integer: %+v", err)
 		}
 		total = totalMb * 1024 * 1024
-		free = total - (usedMb * 1024 * 1024)
+		used = usedMb * 1024 * 1024
 	} else {
 		diskInfo, err := d.getPersonalDiskInfo(ctx)
 		if err != nil {
@@ -974,13 +974,10 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 			return nil, fmt.Errorf("failed convert free size into integer: %+v", err)
 		}
 		total = totalMb * 1024 * 1024
-		free = freeMb * 1024 * 1024
+		used = total - (freeMb * 1024 * 1024)
 	}
 	return &model.StorageDetails{
-		DiskUsage: model.DiskUsage{
-			TotalSpace: total,
-			FreeSpace:  free,
-		},
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }
 
