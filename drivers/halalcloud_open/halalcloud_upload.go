@@ -16,6 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	sdkUserFile "github.com/halalcloud/golang-sdk-lite/halalcloud/services/userfile"
 	"github.com/ipfs/go-cid"
+	log "github.com/sirupsen/logrus"
 )
 
 func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
@@ -51,52 +52,39 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 		Version:  1,
 	}
 	blockSize := uploadTask.BlockSize
-	useSingleUpload := true
 	//
-	if fileStream.GetSize() <= int64(blockSize) || d.uploadThread <= 1 {
-		useSingleUpload = true
-	}
 	// Not sure whether FileStream supports concurrent read and write operations, so currently using single-threaded upload to ensure safety.
 	// read file
-	if useSingleUpload {
-		bufferSize := int(blockSize)
-		buffer := make([]byte, bufferSize)
-		reader := driver.NewLimitedUploadStream(ctx, fileStream)
-		teeReader := io.TeeReader(reader, driver.NewProgress(fileStream.GetSize(), up))
-		// fileStream.Seek(0, os.SEEK_SET)
-		for {
-			n, err := teeReader.Read(buffer)
-			if n > 0 {
-				data := buffer[:n]
-				uploadCid, err := postFileSlice(ctx, data, uploadTask.Task, uploadTask.UploadAddress, prefix, retryTimes)
+	bufferSize := int(blockSize)
+	buffer := make([]byte, bufferSize)
+	offset := 0
+	teeReader := io.TeeReader(fileStream, driver.NewProgress(fileStream.GetSize(), up))
+	for {
+		n, err := teeReader.Read(buffer[offset:]) // 这里 len(buf[offset:]) <= 4MB
+		if n > 0 {
+			offset += n
+			if offset == int(blockSize) {
+				uploadCid, err := postFileSlice(ctx, buffer, uploadTask.Task, uploadTask.UploadAddress, prefix, retryTimes)
 				if err != nil {
 					return nil, err
 				}
 				slicesList = append(slicesList, uploadCid.String())
-			}
-			if err == io.EOF || n == 0 {
-				break
+				offset = 0
 			}
 		}
-	} else {
-		// TODO: implement multipart upload, currently using single-threaded upload to ensure safety.
-		bufferSize := int(blockSize)
-		buffer := make([]byte, bufferSize)
-		reader := driver.NewLimitedUploadStream(ctx, fileStream)
-		teeReader := io.TeeReader(reader, driver.NewProgress(fileStream.GetSize(), up))
-		for {
-			n, err := teeReader.Read(buffer)
-			if n > 0 {
-				data := buffer[:n]
-				uploadCid, err := postFileSlice(ctx, data, uploadTask.Task, uploadTask.UploadAddress, prefix, retryTimes)
-				if err != nil {
-					return nil, err
+
+		if err != nil {
+			if err == io.EOF {
+				if offset > 0 {
+					uploadCid, err := postFileSlice(ctx, buffer[:offset], uploadTask.Task, uploadTask.UploadAddress, prefix, retryTimes)
+					if err != nil {
+						return nil, err
+					}
+					slicesList = append(slicesList, uploadCid.String())
 				}
-				slicesList = append(slicesList, uploadCid.String())
-			}
-			if err == io.EOF || n == 0 {
 				break
 			}
+			return nil, err
 		}
 	}
 	newFile, err := makeFile(ctx, slicesList, uploadTask.Task, uploadTask.UploadAddress, retryTimes)
@@ -118,6 +106,7 @@ func makeFile(ctx context.Context, fileSlice []string, taskID string, uploadAddr
 		if ctx.Err() != nil {
 			return nil, err
 		}
+		log.Errorf("make file slice failed, retrying... error: %s", err.Error())
 		if strings.Contains(err.Error(), "not found") {
 			return nil, err
 		}
@@ -156,15 +145,23 @@ func doMakeFile(fileSlice []string, taskID string, uploadAddress string) (*sdkUs
 	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(httpResponse.Body)
 		message := string(b)
+		log.Errorf("make file failed, status code: %d, message: %s", httpResponse.StatusCode, message)
+
 		return nil, fmt.Errorf("mk file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 	}
 	b, _ := io.ReadAll(httpResponse.Body)
-	var result *sdkUserFile.File
+	var result *UploadedFile
 	err = json.Unmarshal(b, &result)
 	if err != nil {
+		log.Errorf("make file failed from response, status code: %d, message: %s", httpResponse.StatusCode, string(b))
 		return nil, err
 	}
-	return result, nil
+	return &sdkUserFile.File{
+		Identity:        result.Identity,
+		Path:            result.Path,
+		Size:            result.Size,
+		ContentIdentity: result.ContentIdentity,
+	}, nil
 }
 func postFileSlice(ctx context.Context, fileSlice []byte, taskID string, uploadAddress string, preix cid.Prefix, retry int) (cid.Cid, error) {
 	var lastError error = nil
@@ -214,9 +211,11 @@ func doPostFileSlice(fileSlice []byte, taskID string, uploadAddress string, prei
 	}
 	httpResponse, err := httpClient.Do(&httpRequest)
 	if err != nil {
+		log.Errorf("access %s failed, method: %s", accessUrl, http.MethodGet)
 		return cid.Undef, err
 	}
 	if httpResponse.StatusCode != http.StatusOK {
+		log.Errorf("access %s failed, method: %s, status code: %d", accessUrl, http.MethodGet, httpResponse.StatusCode)
 		return cid.Undef, fmt.Errorf("upload file slice failed, status code: %d", httpResponse.StatusCode)
 	}
 	var result bool
@@ -250,6 +249,7 @@ func doPostFileSlice(fileSlice []byte, taskID string, uploadAddress string, prei
 	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(httpResponse.Body)
 		message := string(b)
+		log.Errorf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 		return cid.Undef, fmt.Errorf("upload file slice failed, status code: %d, message: %s", httpResponse.StatusCode, message)
 	}
 	//

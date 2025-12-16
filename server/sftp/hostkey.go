@@ -24,7 +24,7 @@ func InitHostKey() {
 	if !utils.Exists(sshPath) {
 		err := utils.CreateNestedDirectory(sshPath)
 		if err != nil {
-			utils.Log.Fatalf("failed to create ssh directory: %+v", err)
+			utils.Log.Errorf("failed to create ssh directory: %+v", err)
 			return
 		}
 	}
@@ -54,30 +54,30 @@ func LoadOrGenerateRSAHostKey(parentDir string) (ssh.Signer, bool) {
 	_ = os.Remove(publicKeyPath)
 	privateKey, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
-		utils.Log.Fatalf("failed to generate RSA private key: %+v", err)
+		utils.Log.Errorf("failed to generate RSA private key: %+v", err)
 		return nil, false
 	}
 	publicKey, err := ssh.NewPublicKey(&privateKey.PublicKey)
 	if err != nil {
-		utils.Log.Fatalf("failed to generate RSA public key: %+v", err)
+		utils.Log.Errorf("failed to generate RSA public key: %+v", err)
 		return nil, false
 	}
 	ret, err := ssh.NewSignerFromKey(privateKey)
 	if err != nil {
-		utils.Log.Fatalf("failed to generate RSA signer: %+v", err)
+		utils.Log.Errorf("failed to generate RSA signer: %+v", err)
 		return nil, false
 	}
 	privateBytes := rsaEncodePrivateKey(privateKey)
 	publicBytes := ssh.MarshalAuthorizedKey(publicKey)
 	err = os.WriteFile(privateKeyPath, privateBytes, 0600)
 	if err != nil {
-		utils.Log.Fatalf("failed to write RSA private key to file: %+v", err)
+		utils.Log.Errorf("failed to write RSA private key to file: %+v", err)
 		return nil, false
 	}
 	err = os.WriteFile(publicKeyPath, publicBytes, 0644)
 	if err != nil {
 		_ = os.Remove(privateKeyPath)
-		utils.Log.Fatalf("failed to write RSA public key to file: %+v", err)
+		utils.Log.Errorf("failed to write RSA public key to file: %+v", err)
 		return nil, false
 	}
 	return ret, true

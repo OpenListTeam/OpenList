@@ -511,8 +511,12 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		newObjs, err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
 		if err == nil {
 			if len(newObjs) > 0 {
-				for _, newObj := range newObjs {
-					Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
+				if !storage.Config().NoCache {
+					if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
+						for _, newObj := range newObjs {
+							cache.UpdateObject(newObj.GetName(), newObj)
+						}
+					}
 				}
 			} else if !utils.IsBool(lazyCache...) {
 				Cache.DeleteDirectory(storage, dstDirPath)
@@ -529,15 +533,15 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
 		onlyList := false
 		targetPath := dstDirPath
-		if newObjs != nil && len(newObjs) == 1 && newObjs[0].IsDir() {
+		if len(newObjs) == 1 && newObjs[0].IsDir() {
 			targetPath = stdpath.Join(dstDirPath, newObjs[0].GetName())
-		} else if newObjs != nil && len(newObjs) == 1 && !newObjs[0].IsDir() {
+		} else if len(newObjs) == 1 && !newObjs[0].IsDir() {
 			onlyList = true
 		} else if args.PutIntoNewDir {
 			targetPath = stdpath.Join(dstDirPath, strings.TrimSuffix(srcObj.GetName(), stdpath.Ext(srcObj.GetName())))
 		} else if innerBase := stdpath.Base(args.InnerPath); innerBase != "." && innerBase != "/" {
 			targetPath = stdpath.Join(dstDirPath, innerBase)
-			dstObj, e := GetUnwrap(ctx, storage, targetPath)
+			dstObj, e := Get(ctx, storage, targetPath)
 			onlyList = e != nil || !dstObj.IsDir()
 		}
 		if onlyList {

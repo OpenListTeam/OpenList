@@ -400,12 +400,12 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 		idx, ok := set[names[0]]
 		if !ok {
 			set[names[0]] = len(files)
-			obj := &model.Object{
+			obj := model.ObjAddMask(&model.Object{
 				Name:     names[0],
 				Size:     0,
 				Modified: v.GetStorage().Modified,
 				IsFolder: true,
-			}
+			}, model.Virtual)
 			if len(names) == 1 {
 				idx = len(files)
 				files = append(files, obj)

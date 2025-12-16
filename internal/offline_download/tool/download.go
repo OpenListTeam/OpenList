@@ -2,6 +2,7 @@ package tool
 
 import (
 	"fmt"
+	"path"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -32,9 +33,6 @@ type DownloadTask struct {
 }
 
 func (t *DownloadTask) Run() error {
-	if err := t.ReinitCtx(); err != nil {
-		return err
-	}
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
@@ -201,11 +199,11 @@ func (t *DownloadTask) Transfer() error {
 				DstStorage:    dstStorage,
 				DstStorageMp:  dstStorage.GetStorage().MountPath,
 			},
-			groupID:      t.DstDirPath,
 			DeletePolicy: t.DeletePolicy,
 			Url:          t.Url,
 		}
 		tsk.SetTotalBytes(t.GetTotalBytes())
+		tsk.groupID = path.Join(tsk.DstStorageMp, tsk.DstActualPath)
 		task_group.TransferCoordinator.AddTask(tsk.groupID, nil)
 		TransferTaskManager.Add(tsk)
 		return nil

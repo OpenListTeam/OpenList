@@ -5,26 +5,9 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap"
-	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/data"
-	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
-
-func Init() {
-	bootstrap.InitConfig()
-	bootstrap.Log()
-	bootstrap.InitDB()
-	data.InitData()
-	bootstrap.InitStreamLimit()
-	bootstrap.InitIndex()
-	bootstrap.InitUpgradePatch()
-}
-
-func Release() {
-	db.Close()
-}
 
 var pid = -1
 var pidFile string

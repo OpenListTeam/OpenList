@@ -56,17 +56,6 @@ func (cm *CacheManager) updateDirectoryObject(storage driver.Driver, dirPath str
 	}
 }
 
-// add new object to dirCache
-func (cm *CacheManager) addDirectoryObject(storage driver.Driver, dirPath string, newObj model.Obj) {
-	if storage.Config().NoCache {
-		return
-	}
-	cache, exist := cm.dirCache.Get(Key(storage, dirPath))
-	if exist {
-		cache.UpdateObject(newObj.GetName(), newObj)
-	}
-}
-
 // recursively delete directory and its children from dirCache
 func (cm *CacheManager) DeleteDirectoryTree(storage driver.Driver, dirPath string) {
 	if storage.Config().NoCache {
@@ -75,10 +64,12 @@ func (cm *CacheManager) DeleteDirectoryTree(storage driver.Driver, dirPath strin
 	cm.deleteDirectoryTree(Key(storage, dirPath))
 }
 func (cm *CacheManager) deleteDirectoryTree(key string) {
-	if dirCache, exists := cm.dirCache.Take(key); exists {
+	if dirCache, exists := cm.dirCache.Pop(key); exists {
 		for _, obj := range dirCache.objs {
 			if obj.IsDir() {
 				cm.deleteDirectoryTree(stdpath.Join(key, obj.GetName()))
+			} else {
+				cm.linkCache.DeleteKey(stdpath.Join(key, obj.GetName()))
 			}
 		}
 	}
