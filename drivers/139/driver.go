@@ -14,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -28,6 +29,7 @@ type Yun139 struct {
 	Account           string
 	ref               *Yun139
 	PersonalCloudHost string
+	RootPath          string
 }
 
 func (d *Yun139) Config() driver.Config {
@@ -41,7 +43,16 @@ func (d *Yun139) GetAddition() driver.Additional {
 func (d *Yun139) Init(ctx context.Context) error {
 	if d.ref == nil {
 		if len(d.Authorization) == 0 {
-			return fmt.Errorf("authorization is empty")
+			if d.Username != "" && d.Password != "" {
+				log.Infof("139yun: authorization is empty, trying to login with password.")
+				newAuth, err := d.loginWithPassword()
+				log.Debugf("newAuth: Ok: %s", newAuth)
+				if err != nil {
+					return fmt.Errorf("login with password failed: %w", err)
+				}
+			} else {
+				return fmt.Errorf("authorization is empty and username/password is not provided")
+			}
 		}
 		err := d.refreshToken()
 		if err != nil {
@@ -92,7 +103,22 @@ func (d *Yun139) Init(ctx context.Context) error {
 		if len(d.Addition.RootFolderID) == 0 {
 			d.RootFolderID = d.CloudID
 		}
+		_, err := d.groupGetFiles(d.RootFolderID)
+		if err != nil {
+			return err
+		}
 	case MetaFamily:
+		if len(d.Addition.RootFolderID) == 0 {
+			// Attempt to obtain data.path as the root via a query and persist it.
+			if root, err := d.getFamilyRootPath(d.CloudID); err == nil && root != "" {
+				d.RootFolderID = root
+				op.MustSaveDriverStorage(d)
+			}
+		}
+		_, err := d.familyGetFiles(d.RootFolderID)
+		if err != nil {
+			return err
+		}
 	default:
 		return errs.NotImplement
 	}
@@ -279,6 +305,42 @@ func (d *Yun139) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 			return nil, err
 		}
 		return srcObj, nil
+	case MetaFamily:
+		pathname := "/isbo/openApi/createBatchOprTask"
+		var contentList []string
+		var catalogList []string
+		if srcObj.IsDir() {
+			catalogList = append(catalogList, path.Join(srcObj.GetPath(), srcObj.GetID()))
+		} else {
+			contentList = append(contentList, path.Join(srcObj.GetPath(), srcObj.GetID()))
+		}
+
+		body := base.Json{
+			"catalogList": catalogList,
+			"accountInfo": base.Json{
+				"accountName": d.getAccount(),
+				"accountType": "1",
+			},
+			"contentList":   contentList,
+			"destCatalogID": dstDir.GetID(),
+			"destGroupID":   d.CloudID,
+			"destPath":      path.Join(dstDir.GetPath(), dstDir.GetID()),
+			"destType":      0,
+			"srcGroupID":    d.CloudID,
+			"srcType":       0,
+			"taskType":      3,
+		}
+
+		var resp CreateBatchOprTaskResp
+		_, err := d.isboPost(pathname, body, &resp)
+		if err != nil {
+			return nil, err
+		}
+		log.Debugf("[139] Move MetaFamily CreateBatchOprTaskResp.Result.ResultCode: %s", resp.Result.ResultCode)
+		if resp.Result.ResultCode != "0" {
+			return nil, fmt.Errorf("failed to move in family cloud: %s", resp.Result.ResultDesc)
+		}
+		return srcObj, nil
 	default:
 		return nil, errs.NotImplement
 	}
@@ -353,19 +415,27 @@ func (d *Yun139) Rename(ctx context.Context, srcObj model.Obj, newName string) e
 		var data base.Json
 		var pathname string
 		if srcObj.IsDir() {
-			// 网页接口不支持重命名家庭云文件夹
-			// data = base.Json{
-			// 	"catalogType": 3,
-			// 	"catalogID":   srcObj.GetID(),
-			// 	"catalogName": newName,
-			// 	"commonAccountInfo": base.Json{
-			// 		"account":     d.getAccount(),
-			// 		"accountType": 1,
-			// 	},
-			// 	"path": srcObj.GetPath(),
-			// }
-			// pathname = "/orchestration/familyCloud-rebuild/photoContent/v1.0/modifyCatalogInfo"
-			return errs.NotImplement
+			pathname = "/modifyCloudDocV2"
+			data = base.Json{
+				"catalogType": 3,
+				"cloudID":     d.CloudID,
+				"commonAccountInfo": base.Json{
+					"account":     d.getAccount(),
+					"accountType": "1",
+				},
+				"docLibName":   newName,
+				"docLibraryID": srcObj.GetID(),
+				"path":         path.Join(srcObj.GetPath(), srcObj.GetID()),
+			}
+			var resp ModifyCloudDocV2Resp
+			_, err = d.andAlbumRequest(pathname, data, &resp)
+			if err != nil {
+				return err
+			}
+			if resp.Result.ResultCode != "0" {
+				return fmt.Errorf("failed to rename family folder: %s", resp.Result.ResultDesc)
+			}
+			return nil
 		} else {
 			data = base.Json{
 				"contentID":   srcObj.GetID(),
@@ -421,6 +491,33 @@ func (d *Yun139) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 		}
 		pathname := "/orchestration/personalCloud/batchOprTask/v1.0/createBatchOprTask"
 		_, err = d.post(pathname, data, nil)
+	case MetaGroup:
+		err = d.handleMetaGroupCopy(ctx, srcObj, dstDir)
+	case MetaFamily:
+		pathname := "/copyContentCatalog"
+		var sourceContentIDs []string
+		var sourceCatalogIDs []string
+		if srcObj.IsDir() {
+			sourceCatalogIDs = append(sourceCatalogIDs, srcObj.GetID())
+		} else {
+			sourceContentIDs = append(sourceContentIDs, srcObj.GetID())
+		}
+
+		body := base.Json{
+			"commonAccountInfo": base.Json{
+				"accountType":   "1",
+				"accountUserId": d.ref.UserDomainID,
+			},
+			"destCatalogID":    dstDir.GetID(),
+			"destCloudID":      d.CloudID,
+			"sourceCatalogIDs": sourceCatalogIDs,
+			"sourceCloudID":    d.CloudID,
+			"sourceContentIDs": sourceContentIDs,
+		}
+
+		var resp base.Json // Assuming a generic JSON response for success/failure
+		_, err = d.andAlbumRequest(pathname, body, &resp)
+		// For now, we assume no error means success.
 	default:
 		err = errs.NotImplement
 	}
@@ -680,6 +777,8 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		return nil
 	case MetaPersonal:
 		fallthrough
+	case MetaGroup:
+		fallthrough
 	case MetaFamily:
 		// 处理冲突
 		// 获取文件列表
@@ -727,12 +826,17 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			},
 		}
 		pathname := "/orchestration/personalCloud/uploadAndDownload/v1.0/pcUploadFileRequest"
-		if d.isFamily() {
+		if d.isFamily() || d.Addition.Type == MetaGroup {
+			uploadPath := path.Join(dstDir.GetPath(), dstDir.GetID())
+			// if dstDir is root folder
+			if dstDir.GetID() == d.RootFolderID {
+				uploadPath = d.RootPath
+			}
 			data = d.newJson(base.Json{
 				"fileCount":    1,
 				"manualRename": 2,
 				"operation":    0,
-				"path":         path.Join(dstDir.GetPath(), dstDir.GetID()),
+				"path":         uploadPath,
 				"seqNo":        random.String(32), // 序列号不能为空
 				"totalSize":    reportSize,
 				"uploadContentList": []base.Json{{
@@ -744,6 +848,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			pathname = "/orchestration/familyCloud-rebuild/content/v1.0/getFileUploadURL"
 		}
 		var resp UploadResp
+		log.Debugf("[139] upload request body: %+v", data)
 		_, err = d.post(pathname, data, &resp)
 		if err != nil {
 			return err
@@ -839,7 +944,7 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	if d.UserDomainID == "" {
 		return nil, errs.NotImplement
 	}
-	var total, free uint64
+	var total, used uint64
 	if d.isFamily() {
 		diskInfo, err := d.getFamilyDiskInfo(ctx)
 		if err != nil {
@@ -854,7 +959,7 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 			return nil, fmt.Errorf("failed convert used size into integer: %+v", err)
 		}
 		total = totalMb * 1024 * 1024
-		free = total - (usedMb * 1024 * 1024)
+		used = usedMb * 1024 * 1024
 	} else {
 		diskInfo, err := d.getPersonalDiskInfo(ctx)
 		if err != nil {
@@ -869,13 +974,10 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 			return nil, fmt.Errorf("failed convert free size into integer: %+v", err)
 		}
 		total = totalMb * 1024 * 1024
-		free = freeMb * 1024 * 1024
+		used = total - (freeMb * 1024 * 1024)
 	}
 	return &model.StorageDetails{
-		DiskUsage: model.DiskUsage{
-			TotalSpace: total,
-			FreeSpace:  free,
-		},
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }
 
