@@ -223,15 +223,9 @@ func ListArchive(ctx context.Context, storage driver.Driver, path string, args m
 		// }
 	}
 	objs, err, _ := archiveListG.Do(key, func() ([]model.Obj, error) {
-		obj, files, err := listArchive(ctx, storage, path, args)
+		files, err := listArchive(ctx, storage, path, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to list archive [%s]%s: %+v", path, args.InnerPath, err)
-		}
-		// set path
-		for _, f := range files {
-			if s, ok := f.(model.SetPath); ok && f.GetPath() == "" && obj.GetPath() != "" {
-				s.SetPath(stdpath.Join(obj.GetPath(), args.InnerPath, f.GetName()))
-			}
 		}
 		// warp obj name
 		model.WrapObjsName(files)
@@ -254,24 +248,24 @@ func ListArchive(ctx context.Context, storage driver.Driver, path string, args m
 	return objs, err
 }
 
-func _listArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) (model.Obj, []model.Obj, error) {
+func _listArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
 	storageAr, ok := storage.(driver.ArchiveReader)
 	if ok {
 		obj, err := GetUnwrap(ctx, storage, path)
 		if err != nil {
-			return nil, nil, errors.WithMessage(err, "failed to get file")
+			return nil, errors.WithMessage(err, "failed to get file")
 		}
 		if obj.IsDir() {
-			return nil, nil, errors.WithStack(errs.NotFile)
+			return nil, errors.WithStack(errs.NotFile)
 		}
 		files, err := storageAr.ListArchive(ctx, obj, args.ArchiveInnerArgs)
 		if !errors.Is(err, errs.NotImplement) {
-			return obj, files, err
+			return files, err
 		}
 	}
-	obj, t, ss, err := GetArchiveToolAndStream(ctx, storage, path, args.LinkArgs)
+	_, t, ss, err := GetArchiveToolAndStream(ctx, storage, path, args.LinkArgs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer func() {
 		var e error
@@ -283,11 +277,11 @@ func _listArchive(ctx context.Context, storage driver.Driver, path string, args 
 		}
 	}()
 	files, err := t.List(ss, args.ArchiveInnerArgs)
-	return obj, files, err
+	return files, err
 }
 
-func listArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) (model.Obj, []model.Obj, error) {
-	obj, files, err := _listArchive(ctx, storage, path, args)
+func listArchive(ctx context.Context, storage driver.Driver, path string, args model.ArchiveListArgs) ([]model.Obj, error) {
+	files, err := _listArchive(ctx, storage, path, args)
 	if errors.Is(err, errs.NotSupport) {
 		var meta model.ArchiveMeta
 		meta, err = GetArchiveMeta(ctx, storage, path, model.ArchiveMetaArgs{
@@ -295,20 +289,17 @@ func listArchive(ctx context.Context, storage driver.Driver, path string, args m
 			Refresh:     args.Refresh,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		files, err = getChildrenFromArchiveMeta(meta, args.InnerPath)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	if err == nil && obj == nil {
-		obj, err = GetUnwrap(ctx, storage, path)
-	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return obj, files, err
+	return files, err
 }
 
 func getChildrenFromArchiveMeta(meta model.ArchiveMeta, innerPath string) ([]model.Obj, error) {
@@ -520,8 +511,12 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 		newObjs, err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
 		if err == nil {
 			if len(newObjs) > 0 {
-				for _, newObj := range newObjs {
-					Cache.addDirectoryObject(storage, dstDirPath, model.WrapObjName(newObj))
+				if !storage.Config().NoCache {
+					if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
+						for _, newObj := range newObjs {
+							cache.UpdateObject(newObj.GetName(), newObj)
+						}
+					}
 				}
 			} else if !utils.IsBool(lazyCache...) {
 				Cache.DeleteDirectory(storage, dstDirPath)
@@ -538,15 +533,15 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
 		onlyList := false
 		targetPath := dstDirPath
-		if newObjs != nil && len(newObjs) == 1 && newObjs[0].IsDir() {
+		if len(newObjs) == 1 && newObjs[0].IsDir() {
 			targetPath = stdpath.Join(dstDirPath, newObjs[0].GetName())
-		} else if newObjs != nil && len(newObjs) == 1 && !newObjs[0].IsDir() {
+		} else if len(newObjs) == 1 && !newObjs[0].IsDir() {
 			onlyList = true
 		} else if args.PutIntoNewDir {
 			targetPath = stdpath.Join(dstDirPath, strings.TrimSuffix(srcObj.GetName(), stdpath.Ext(srcObj.GetName())))
 		} else if innerBase := stdpath.Base(args.InnerPath); innerBase != "." && innerBase != "/" {
 			targetPath = stdpath.Join(dstDirPath, innerBase)
-			dstObj, e := GetUnwrap(ctx, storage, targetPath)
+			dstObj, e := Get(ctx, storage, targetPath)
 			onlyList = e != nil || !dstObj.IsDir()
 		}
 		if onlyList {

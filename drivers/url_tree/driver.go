@@ -44,6 +44,10 @@ func (d *Urls) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (Addition) GetRootPath() string {
+	return "/"
+}
+
 func (d *Urls) Get(ctx context.Context, path string) (model.Obj, error) {
 	d.mutex.RLock()
 	defer d.mutex.RUnlock()

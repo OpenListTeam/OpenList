@@ -17,7 +17,8 @@ func TestIsSystemFile(t *testing.T) {
 		{"._", true},
 		{"._somefile", true},
 		{"._folder_name", true},
-		
+		{"@eaDir", true},
+
 		// Regular files that should not be filtered
 		{"test.txt", false},
 		{"file.pdf", false},
