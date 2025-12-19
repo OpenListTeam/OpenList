@@ -58,12 +58,8 @@ func (d *Alias) Init(ctx context.Context) error {
 		return errors.New("paths is required")
 	case 1:
 		paths := d.pathMap[d.rootOrder[0]]
-		roots := &BalancedObjs{
-			hasFailed:    false,
-			unmappedPath: "/",
-			objs:         make([]model.Obj, 0, len(paths)),
-		}
-		roots.objs = append(roots.objs, &model.Object{
+		roots := make(BalancedObjs, 0, len(paths))
+		roots = append(roots, &model.Object{
 			Name:     "root",
 			Path:     paths[0],
 			IsFolder: true,
@@ -71,7 +67,7 @@ func (d *Alias) Init(ctx context.Context) error {
 			Mask:     model.Locked,
 		})
 		for _, path := range paths[1:] {
-			roots.objs = append(roots.objs, &model.Object{
+			roots = append(roots, &model.Object{
 				Path: path,
 			})
 		}
@@ -118,12 +114,10 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	if len(roots) == 0 {
 		return nil, errs.ObjectNotFound
 	}
-	hasFailed := false
 	for idx, root := range roots {
 		rawPath := stdpath.Join(root, sub)
 		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
 		if err != nil {
-			hasFailed = true
 			continue
 		}
 		mask := model.GetObjMask(obj) &^ model.Temp
@@ -153,14 +147,10 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 
 		roots = roots[idx+1:]
-		objs := &BalancedObjs{
-			objs:         make([]model.Obj, 0, len(roots)+1),
-			hasFailed:    hasFailed,
-			unmappedPath: path,
-		}
-		objs.objs = append(objs.objs, obj)
+		objs := make(BalancedObjs, 0, len(roots)+1)
+		objs = append(objs, obj)
 		for _, d := range roots {
-			objs.objs = append(objs.objs, &tempObj{model.Object{
+			objs = append(objs, &tempObj{model.Object{
 				Path: stdpath.Join(d, sub),
 			}})
 		}
@@ -170,7 +160,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 }
 
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	dirs, ok := dir.(*BalancedObjs)
+	dirs, ok := dir.(BalancedObjs)
 	if !ok {
 		return d.listRoot(ctx, args.WithStorageDetails && d.DetailsPassThrough, args.Refresh), nil
 	}
@@ -178,7 +168,7 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	// 因为alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
 	// 所以这里对象不会传回到alias，也就不需要返回BalancedObjs了
 	objMap := make(map[string]model.Obj)
-	for _, dir := range dirs.objs {
+	for _, dir := range dirs {
 		dirPath := dir.GetPath()
 		tmp, err := fs.List(ctx, dirPath, &fs.ListArgs{
 			NoLog:              true,
@@ -334,7 +324,7 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 	objs, err := d.getPutObjs(ctx, dstDir)
 	if err == nil {
 		if len(objs) == 1 {
-			storage, reqActualPath, err := op.GetStorageAndActualPath(objs[0].GetPath())
+			storage, reqActualPath, err := op.GetStorageAndActualPath(objs.GetPath())
 			if err != nil {
 				return err
 			}

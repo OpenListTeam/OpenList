@@ -124,19 +124,20 @@ func isConsistent(a, b model.Obj) bool {
 	return true
 }
 
-func (d *Alias) getAllObjs(ctx context.Context, objs *BalancedObjs, ifContinue func(err error) (bool, error)) ([]model.Obj, error) {
+func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(err error) (bool, error)) (BalancedObjs, error) {
+	objs := bObj.(BalancedObjs)
 	length := 0
-	for _, o := range objs.objs {
+	for _, o := range objs {
 		var err error
 		var obj model.Obj
 		temp, isTemp := o.(*tempObj)
 		if isTemp {
 			obj, err = fs.Get(ctx, o.GetPath(), &fs.GetArgs{NoLog: true})
 			if err == nil {
-				if !objs.IsDir() {
+				if !bObj.IsDir() {
 					if obj.IsDir() {
 						err = errs.NotFile
-					} else if d.FileConsistencyCheck && !isConsistent(objs, obj) {
+					} else if d.FileConsistencyCheck && !isConsistent(bObj, obj) {
 						err = errs.ObjectNotFound
 					}
 				} else if !obj.IsDir() {
@@ -158,9 +159,9 @@ func (d *Alias) getAllObjs(ctx context.Context, objs *BalancedObjs, ifContinue f
 			// objRes.Size = obj.GetSize()
 			// objRes.Modified = obj.ModTime()
 			// objRes.HashInfo = obj.GetHash()
-			objs.objs[length] = &objRes
+			objs[length] = &objRes
 		} else {
-			objs.objs[length] = o
+			objs[length] = o
 		}
 		length++
 		if !cont {
@@ -170,28 +171,28 @@ func (d *Alias) getAllObjs(ctx context.Context, objs *BalancedObjs, ifContinue f
 	if length == 0 {
 		return nil, errs.ObjectNotFound
 	}
-	return objs.objs[:length], nil
+	return objs[:length], nil
 }
 
 func (d *Alias) getBalancedPath(ctx context.Context, file model.Obj) string {
 	if d.ReadConflictPolicy == FirstRWP {
 		return file.GetPath()
 	}
-	files := file.(*BalancedObjs)
-	if rand.Intn(len(files.objs)) == 0 {
+	files := file.(BalancedObjs)
+	if rand.Intn(len(files)) == 0 {
 		return file.GetPath()
 	}
-	filesObjs, _ := d.getAllObjs(ctx, files, getWriteAndPutFilterFunc(AllWP, files.hasFailed))
-	return filesObjs[rand.Intn(len(files.objs))].GetPath()
+	files, _ = d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllWP))
+	return files[rand.Intn(len(files))].GetPath()
 }
 
-func getWriteAndPutFilterFunc(policy string, hasFailed bool) func(error) (bool, error) {
+func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
 	if policy == AllWP {
 		return func(err error) (bool, error) {
 			return true, err
 		}
 	}
-	all := !hasFailed
+	all := true
 	l := 0
 	return func(err error) (bool, error) {
 		if err != nil {
@@ -223,26 +224,18 @@ func getWriteAndPutFilterFunc(policy string, hasFailed bool) func(error) (bool, 
 	}
 }
 
-func (d *Alias) getWriteObjs(ctx context.Context, obj model.Obj) ([]model.Obj, error) {
+func (d *Alias) getWriteObjs(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
 	if d.WriteConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
-	bObj := obj.(*BalancedObjs)
-	if bObj.hasFailed && d.WriteConflictPolicy == AllStrictWP {
-		return nil, ErrSamePathLeak
-	}
-	return d.getAllObjs(ctx, bObj, getWriteAndPutFilterFunc(d.WriteConflictPolicy, bObj.hasFailed))
+	return d.getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.WriteConflictPolicy))
 }
 
-func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) ([]model.Obj, error) {
+func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
-	bObj := obj.(*BalancedObjs)
-	if bObj.hasFailed && d.PutConflictPolicy == AllStrictWP {
-		return nil, ErrSamePathLeak
-	}
-	objs, err := d.getAllObjs(ctx, bObj, getWriteAndPutFilterFunc(d.PutConflictPolicy, bObj.hasFailed))
+	objs, err := d.getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.PutConflictPolicy))
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +258,7 @@ func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) ([]model.Obj, err
 	}
 }
 
-func getRandomObjByQuotaBalanced(ctx context.Context, reqPath []model.Obj, strict bool, objSize uint64) ([]model.Obj, bool) {
+func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, strict bool, objSize uint64) (BalancedObjs, bool) {
 	// Get all space
 	details := make([]*model.StorageDetails, len(reqPath))
 	detailsChan := make(chan detailWithIndex, len(reqPath))
@@ -345,12 +338,11 @@ func selectRandom[Item any](arr []Item, getWeight func(Item) uint64) (int, bool)
 	return 0, false
 }
 
-func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) ([]model.Obj, []model.Obj, error) {
+func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (BalancedObjs, BalancedObjs, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
 	}
-	bDstDir := dstDir.(*BalancedObjs)
-	dstObjs, err := d.getAllObjs(ctx, bDstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy, bDstDir.hasFailed))
+	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -365,12 +357,11 @@ func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (
 		dstStorageMap[mp] = append(dstStorageMap[mp], o)
 		allocatingDst[o] = struct{}{}
 	}
-	bSrcObj := srcObj.(*BalancedObjs)
-	tmpSrcObjs, err := d.getAllObjs(ctx, bSrcObj, getWriteAndPutFilterFunc(AllWP, bSrcObj.hasFailed))
+	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllWP))
 	if err != nil {
 		return nil, nil, err
 	}
-	srcObjs := make([]model.Obj, 0, len(dstObjs))
+	srcObjs := make(BalancedObjs, 0, len(dstObjs))
 	for _, src := range tmpSrcObjs {
 		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
 		if e != nil {

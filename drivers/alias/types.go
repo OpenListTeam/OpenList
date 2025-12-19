@@ -34,48 +34,44 @@ var (
 	ErrNoEnoughSpace = errors.New("none of same-name dirs has enough space")
 )
 
-type BalancedObjs struct {
-	objs         []model.Obj
-	hasFailed    bool
-	unmappedPath string
+type BalancedObjs []model.Obj
+
+func (b BalancedObjs) GetSize() int64 {
+	return b[0].GetSize()
 }
 
-func (b *BalancedObjs) GetSize() int64 {
-	return b.objs[0].GetSize()
+func (b BalancedObjs) ModTime() time.Time {
+	return b[0].ModTime()
 }
 
-func (b *BalancedObjs) ModTime() time.Time {
-	return b.objs[0].ModTime()
+func (b BalancedObjs) CreateTime() time.Time {
+	return b[0].CreateTime()
 }
 
-func (b *BalancedObjs) CreateTime() time.Time {
-	return b.objs[0].CreateTime()
+func (b BalancedObjs) IsDir() bool {
+	return b[0].IsDir()
 }
 
-func (b *BalancedObjs) IsDir() bool {
-	return b.objs[0].IsDir()
+func (b BalancedObjs) GetHash() utils.HashInfo {
+	return b[0].GetHash()
 }
 
-func (b *BalancedObjs) GetHash() utils.HashInfo {
-	return b.objs[0].GetHash()
+func (b BalancedObjs) GetName() string {
+	return b[0].GetName()
 }
 
-func (b *BalancedObjs) GetName() string {
-	return b.objs[0].GetName()
+func (b BalancedObjs) GetPath() string {
+	return b[0].GetPath()
 }
 
-func (b *BalancedObjs) GetPath() string {
-	return b.objs[0].GetPath()
+func (b BalancedObjs) GetID() string {
+	return b[0].GetID()
 }
 
-func (b *BalancedObjs) GetID() string {
-	return b.objs[0].GetID()
+func (b BalancedObjs) Unwrap() model.Obj {
+	return b[0]
 }
 
-func (b *BalancedObjs) Unwrap() model.Obj {
-	return b.objs[0]
-}
-
-var _ model.Obj = (*BalancedObjs)(nil)
+var _ model.Obj = (BalancedObjs)(nil)
 
 type tempObj struct{ model.Object }
