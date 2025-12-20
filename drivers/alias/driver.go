@@ -147,8 +147,16 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 
 		roots = roots[idx+1:]
-		objs := make(BalancedObjs, 0, len(roots)+1)
+		var objs BalancedObjs
+		if idx > 0 {
+			objs = make(BalancedObjs, 0, len(roots)+2)
+		} else {
+			objs = make(BalancedObjs, 0, len(roots)+1)
+		}
 		objs = append(objs, obj)
+		if idx > 0 {
+			objs = append(objs, nil)
+		}
 		for _, d := range roots {
 			objs = append(objs, &tempObj{model.Object{
 				Path: stdpath.Join(d, sub),

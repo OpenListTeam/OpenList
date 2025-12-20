@@ -144,6 +144,8 @@ func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(
 					err = errs.NotFolder
 				}
 			}
+		} else if o == nil {
+			err = errs.ObjectNotFound
 		}
 
 		cont, err := ifContinue(err)
