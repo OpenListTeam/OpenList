@@ -179,6 +179,9 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	// 所以这里对象不会传回到alias，也就不需要返回BalancedObjs了
 	objMap := make(map[string]model.Obj)
 	for _, dir := range dirs {
+		if dir == nil {
+			continue
+		}
 		dirPath := dir.GetPath()
 		tmp, err := fs.List(ctx, dirPath, &fs.ListArgs{
 			NoLog:              true,
