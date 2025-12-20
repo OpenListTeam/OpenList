@@ -299,8 +299,9 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 }
 
 func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
-	reqPath := d.getBalancedPath(ctx, args.Obj)
-	storage, actualPath, err := op.GetStorageAndActualPath(reqPath)
+	// Other 不应负载均衡，这是因为前端是否调用 /fs/other 的判断条件是返回的 provider 的值
+	// 而 ProviderPassThrough 开启时，返回的 provider 固定为第一个 obj 的后端驱动
+	storage, actualPath, err := op.GetStorageAndActualPath(args.Obj.GetPath())
 	if err != nil {
 		return nil, err
 	}
