@@ -117,7 +117,7 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 			return
 		}
 		defer rc.Close()
-		same, err := SameContent(localPath, size, rc)
+		same, err := isSameContent(localPath, size, rc)
 		if err != nil {
 			log.Warnf("failed to compare content of obj %s: %v", localPath, err)
 			return
@@ -143,7 +143,7 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 	}
 }
 
-func SameContent(localPath string, size int64, rc io.Reader) (bool, error) {
+func isSameContent(localPath string, size int64, rc io.Reader) (bool, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		if os.IsNotExist(err) {
