@@ -108,7 +108,7 @@ func (d *Strm) getLink(ctx context.Context, path string) string {
 	if d.EncodePath {
 		finalPath = utils.EncodePath(path, true)
 	}
-	if d.EnableSign {
+	if d.WithSign {
 		signPath := sign.Sign(path)
 		finalPath = fmt.Sprintf("%s?sign=%s", finalPath, signPath)
 	}

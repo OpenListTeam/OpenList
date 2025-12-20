@@ -299,7 +299,9 @@ func (d *CloudreveV4) Put(ctx context.Context, dstDir model.Obj, file model.File
 		case "onedrive":
 			err = d.upOneDrive(ctx, file, u, up)
 		case "s3":
-			err = d.upS3(ctx, file, u, up)
+			err = d.upS3(ctx, file, u, up, "s3")
+		case "ks3":
+			err = d.upS3(ctx, file, u, up, "ks3")
 		default:
 			return errs.NotImplement
 		}
