@@ -13,7 +13,7 @@ const (
 	FirstRWP               = "first"
 	DeterministicWP        = "deterministic"
 	DeterministicOrAllWP   = "deterministic_or_all"
-	AllWP                  = "all"
+	AllRWP                 = "all"
 	AllStrictWP            = "all_strict"
 	RandomBalancedRP       = "random"
 	BalancedByQuotaP       = "quota"
@@ -21,10 +21,10 @@ const (
 )
 
 var (
-	ValidReadConflictPolicy  = []string{FirstRWP, RandomBalancedRP}
-	ValidWriteConflictPolicy = []string{DisabledWP, FirstRWP, DeterministicWP, DeterministicOrAllWP, AllWP,
+	ValidReadConflictPolicy  = []string{FirstRWP, RandomBalancedRP, AllRWP}
+	ValidWriteConflictPolicy = []string{DisabledWP, FirstRWP, DeterministicWP, DeterministicOrAllWP, AllRWP,
 		AllStrictWP}
-	ValidPutConflictPolicy = []string{DisabledWP, FirstRWP, DeterministicWP, DeterministicOrAllWP, AllWP,
+	ValidPutConflictPolicy = []string{DisabledWP, FirstRWP, DeterministicWP, DeterministicOrAllWP, AllRWP,
 		AllStrictWP, RandomBalancedRP, BalancedByQuotaP, BalancedByQuotaStrictP}
 )
 

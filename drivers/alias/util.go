@@ -184,12 +184,12 @@ func (d *Alias) getBalancedPath(ctx context.Context, file model.Obj) string {
 	if rand.Intn(len(files)) == 0 {
 		return file.GetPath()
 	}
-	files, _ = d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllWP))
+	files, _ = d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllRWP))
 	return files[rand.Intn(len(files))].GetPath()
 }
 
 func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
-	if policy == AllWP {
+	if policy == AllRWP {
 		return func(err error) (bool, error) {
 			return true, err
 		}
@@ -359,7 +359,7 @@ func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (
 		dstStorageMap[mp] = append(dstStorageMap[mp], o)
 		allocatingDst[o] = struct{}{}
 	}
-	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllWP))
+	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllRWP))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -382,7 +382,7 @@ func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (
 	dstObjs = dstObjs[:len(srcObjs)]
 	for dst := range allocatingDst {
 		src := tmpSrcObjs[0]
-		if d.ReadConflictPolicy == RandomBalancedRP {
+		if d.ReadConflictPolicy == RandomBalancedRP || d.ReadConflictPolicy == AllRWP {
 			src = tmpSrcObjs[rand.Intn(len(tmpSrcObjs))]
 		}
 		srcObjs = append(srcObjs, src)

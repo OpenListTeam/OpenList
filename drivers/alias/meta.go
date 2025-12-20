@@ -7,7 +7,7 @@ import (
 
 type Addition struct {
 	Paths                string `json:"paths" required:"true" type:"text"`
-	ReadConflictPolicy   string `json:"read_conflict_policy" type:"select" options:"first,random" default:"first"`
+	ReadConflictPolicy   string `json:"read_conflict_policy" type:"select" options:"first,random,all" default:"first"`
 	WriteConflictPolicy  string `json:"write_conflict_policy" type:"select" options:"disabled,first,deterministic,deterministic_or_all,all,all_strict" default:"disabled"`
 	PutConflictPolicy    string `json:"put_conflict_policy" type:"select" options:"disabled,first,deterministic,deterministic_or_all,all,all_strict,random,quota,quota_strict" default:"disabled"`
 	FileConsistencyCheck bool   `json:"file_consistency_check" type:"bool" default:"false"`
