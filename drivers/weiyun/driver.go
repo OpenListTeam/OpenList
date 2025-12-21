@@ -399,11 +399,9 @@ func (d *WeiYun) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	if err != nil {
 		return nil, err
 	}
+
 	return &model.StorageDetails{
-		DiskUsage: model.DiskUsage{
-			TotalSpace: uint64(info.TotalSpace),
-			FreeSpace:  uint64(max(info.TotalSpace-info.UsedSpace, 0)),
-		},
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(uint64(info.UsedSpace), uint64(info.TotalSpace)),
 	}, nil
 }
 
