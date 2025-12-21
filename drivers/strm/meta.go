@@ -23,8 +23,8 @@ type Addition struct {
 	SaveStrmToLocal       bool   `json:"SaveStrmToLocal" default:"false" help:"save strm file locally"`
 	SaveStrmLocalPath     string `json:"SaveStrmLocalPath" type:"text" help:"save strm file local path"`
 	KeepLocalDownloadFile bool   `json:"KeepLocalDownloadFile" default:"false" help:"keep local download files"`
-	SaveLocalMode     string `json:"SaveLocalMode" type:"select" help:"save strm file locally mode" options:"insert,update,sync" default:"insert"`
-	Version           int
+	SaveLocalMode         string `json:"SaveLocalMode" type:"select" help:"save strm file locally mode" options:"insert,update,sync" default:"insert"`
+	Version               int
 }
 
 var config = driver.Config{
