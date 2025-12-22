@@ -122,7 +122,8 @@ Dank u voor uw ondersteuning en begrip
 
 ## Demo
 
-N.v.t. (wordt opnieuw opgebouwd)
+- 🌎 [Global Demo](https://demo.oplist.org)
+- 🇨🇳 [CN Demo](https://demo.oplist.org.cn)
 
 ## Discussie
 
