@@ -233,7 +233,7 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 }
 
 func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	var resultLink *model.Link
+	var resultLink model.Link
 	if d.ReadConflictPolicy == AllRWP && !args.Redirect {
 		files, err := d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllRWP))
 		if err != nil {
@@ -250,7 +250,11 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 				_ = link.Close()
 				continue
 			}
-			rr, err := stream.GetRangeReaderFromLink(fi.GetSize(), link)
+			size := link.ContentLength
+			if size == 0 {
+				size = fi.GetSize()
+			}
+			rr, err := stream.GetRangeReaderFromLink(size, link)
 			if err != nil {
 				_ = link.Close()
 				continue
@@ -261,7 +265,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		rr := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 			return rrf[rand.Intn(len(rrf))].RangeRead(ctx, httpRange)
 		}
-		resultLink = &model.Link{
+		resultLink = model.Link{
 			RangeReader: stream.RangeReaderFunc(rr),
 			SyncClosers: utils.NewSyncClosers(linkClosers...),
 		}
@@ -280,10 +284,10 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 					sign.Sign(reqPath)),
 			}, nil
 		}
-		resultLink = link
+		resultLink = *link // 复制一份，避免修改到原始link
 		resultLink.SyncClosers = utils.NewSyncClosers(link)
 		if args.Redirect {
-			return resultLink, nil
+			return &resultLink, nil
 		}
 		if resultLink.ContentLength == 0 {
 			resultLink.ContentLength = fi.GetSize()
@@ -295,7 +299,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	if d.DownloadPartSize > 0 {
 		resultLink.PartSize = d.DownloadPartSize * utils.KB
 	}
-	return resultLink, nil
+	return &resultLink, nil
 }
 
 func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
