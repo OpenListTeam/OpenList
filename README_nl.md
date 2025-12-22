@@ -128,6 +128,10 @@ N.v.t. (wordt opnieuw opgebouwd)
 
 Stel algemene vragen in [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions), ***Issues* zijn alleen voor bugmeldingen en feature requests.**
 
+## Sponsoren
+
+[![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
+
 ## Licentie
 
 `OpenList` is open-source software onder de [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) licentie.

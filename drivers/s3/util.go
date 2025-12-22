@@ -217,9 +217,10 @@ func (d *S3) copy(ctx context.Context, src string, dst string, isDir bool) error
 func (d *S3) copyFile(ctx context.Context, src string, dst string) error {
 	srcKey := getKey(src, false)
 	dstKey := getKey(dst, false)
+	encodedKey := strings.ReplaceAll(url.PathEscape(d.Bucket+"/"+srcKey), "+", "%2B")
 	input := &s3.CopyObjectInput{
 		Bucket:     &d.Bucket,
-		CopySource: aws.String(url.PathEscape(d.Bucket + "/" + srcKey)),
+		CopySource: aws.String(encodedKey),
 		Key:        &dstKey,
 	}
 	_, err := d.client.CopyObject(input)
