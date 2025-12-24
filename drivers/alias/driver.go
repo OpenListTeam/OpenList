@@ -233,7 +233,6 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 }
 
 func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	var resultLink *model.Link
 	if d.ReadConflictPolicy == AllRWP && !args.Redirect {
 		files, err := d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllRWP))
 		if err != nil {
@@ -250,7 +249,17 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 				_ = link.Close()
 				continue
 			}
-			rr, err := stream.GetRangeReaderFromLink(fi.GetSize(), link)
+			l := *link // 复制一份，避免修改到原始link
+			if l.ContentLength == 0 {
+				l.ContentLength = fi.GetSize()
+			}
+			if d.DownloadConcurrency > 0 {
+				l.Concurrency = d.DownloadConcurrency
+			}
+			if d.DownloadPartSize > 0 {
+				l.PartSize = d.DownloadPartSize * utils.KB
+			}
+			rr, err := stream.GetRangeReaderFromLink(l.ContentLength, &l)
 			if err != nil {
 				_ = link.Close()
 				continue
@@ -261,33 +270,33 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		rr := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 			return rrf[rand.Intn(len(rrf))].RangeRead(ctx, httpRange)
 		}
-		resultLink = &model.Link{
+		return &model.Link{
 			RangeReader: stream.RangeReaderFunc(rr),
 			SyncClosers: utils.NewSyncClosers(linkClosers...),
-		}
-	} else {
-		reqPath := d.getBalancedPath(ctx, file)
-		link, fi, err := d.link(ctx, reqPath, args)
-		if err != nil {
-			return nil, err
-		}
-		if link == nil {
-			// 重定向且需要通过代理
-			return &model.Link{
-				URL: fmt.Sprintf("%s/p%s?sign=%s",
-					common.GetApiUrl(ctx),
-					utils.EncodePath(reqPath, true),
-					sign.Sign(reqPath)),
-			}, nil
-		}
-		resultLink = link
-		resultLink.SyncClosers = utils.NewSyncClosers(link)
-		if args.Redirect {
-			return resultLink, nil
-		}
-		if resultLink.ContentLength == 0 {
-			resultLink.ContentLength = fi.GetSize()
-		}
+		}, nil
+	}
+
+	reqPath := d.getBalancedPath(ctx, file)
+	link, fi, err := d.link(ctx, reqPath, args)
+	if err != nil {
+		return nil, err
+	}
+	if link == nil {
+		// 重定向且需要通过代理
+		return &model.Link{
+			URL: fmt.Sprintf("%s/p%s?sign=%s",
+				common.GetApiUrl(ctx),
+				utils.EncodePath(reqPath, true),
+				sign.Sign(reqPath)),
+		}, nil
+	}
+	resultLink := *link // 复制一份，避免修改到原始link
+	resultLink.SyncClosers = utils.NewSyncClosers(link)
+	if args.Redirect {
+		return &resultLink, nil
+	}
+	if resultLink.ContentLength == 0 {
+		resultLink.ContentLength = fi.GetSize()
 	}
 	if d.DownloadConcurrency > 0 {
 		resultLink.Concurrency = d.DownloadConcurrency
@@ -295,7 +304,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	if d.DownloadPartSize > 0 {
 		resultLink.PartSize = d.DownloadPartSize * utils.KB
 	}
-	return resultLink, nil
+	return &resultLink, nil
 }
 
 func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
