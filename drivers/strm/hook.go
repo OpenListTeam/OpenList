@@ -1,8 +1,11 @@
 package strm
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"io"
 	"os"
 	stdpath "path"
 	"strings"
@@ -90,6 +93,9 @@ func RemoveStrm(dstPath string, d *Strm) {
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
 	if !obj.IsDir() {
+		if utils.Exists(localPath) && driver.SaveLocalMode == SaveLocalInsertMode {
+			return
+		}
 		link, err := driver.Link(ctx, obj, model.LinkArgs{})
 		if err != nil {
 			log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
@@ -111,6 +117,20 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 			return
 		}
 		defer rc.Close()
+		same, err := isSameContent(localPath, size, rc)
+		if err != nil {
+			log.Warnf("failed to compare content of obj %s: %v", localPath, err)
+			return
+		}
+		if same {
+			return
+		}
+		rc, err = rrf.RangeRead(ctx, http_range.Range{Length: -1})
+		if err != nil {
+			log.Warnf("failed to generate strm of obj %s: failed to reread range: %v", localPath, err)
+			return
+		}
+		defer rc.Close()
 		file, err := utils.CreateNestedFile(localPath)
 		if err != nil {
 			log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
@@ -123,7 +143,38 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 	}
 }
 
+func isSameContent(localPath string, size int64, rc io.Reader) (bool, error) {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if info.Size() != size {
+		return false, nil
+	}
+	localFile, err := os.Open(localPath)
+	if err != nil {
+		return false, err
+	}
+	defer localFile.Close()
+	h1 := sha256.New()
+	h2 := sha256.New()
+	if _, err := io.Copy(h1, localFile); err != nil {
+		return false, err
+	}
+	if _, err := io.Copy(h2, rc); err != nil {
+		return false, err
+	}
+	return bytes.Equal(h1.Sum(nil), h2.Sum(nil)), nil
+}
+
 func deleteExtraFiles(driver *Strm, localPath string, objs []model.Obj) {
+	if driver.SaveLocalMode != SaveLocalSyncMode {
+		return
+	}
 	localFiles, err := getLocalFiles(localPath)
 	if err != nil {
 		log.Errorf("Failed to read local files from %s: %v", localPath, err)
@@ -145,15 +196,6 @@ func deleteExtraFiles(driver *Strm, localPath string, objs []model.Obj) {
 
 	for _, localFile := range localFiles {
 		if _, exists := objsSet[localFile]; !exists {
-			ext := utils.Ext(localFile)
-			localFileName := stdpath.Base(localFile)
-			localFileBaseName := strings.TrimSuffix(localFile, utils.SourceExt(localFileName))
-			_, nameExists := objsBaseNameSet[localFileBaseName[:len(localFileBaseName)-1]]
-			_, downloadFile := driver.downloadSuffix[ext]
-			if driver.KeepLocalDownloadFile && nameExists && downloadFile {
-				continue
-			}
-
 			err := os.Remove(localFile)
 			if err != nil {
 				log.Errorf("Failed to delete file: %s, error: %v\n", localFile, err)
