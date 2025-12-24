@@ -40,7 +40,6 @@ var ( // 不同情况下获取的AccessTokenQPS限制不同 如下模块化易�
 )
 
 func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	retryToken := true
 	for {
 		req := base.RestyClient.R()
 		req.SetHeaders(map[string]string{
@@ -74,8 +73,7 @@ func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCall
 
 		if baseResp.Code == 0 {
 			return body, nil
-		} else if baseResp.Code == 401 && retryToken {
-			retryToken = false
+		} else if baseResp.Code == 401 && !strings.Contains(apiInfo.url, "token") {
 			if err := d.flushAccessToken(); err != nil {
 				return nil, err
 			}
