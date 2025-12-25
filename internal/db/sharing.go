@@ -8,14 +8,14 @@ import (
 
 func GetSharingById(id string) (*model.SharingDB, error) {
 	s := model.SharingDB{ID: id}
-	if err := db.Where(s).First(&s).Error; err != nil {
+	if err := rwDb.R().Where(s).First(&s).Error; err != nil {
 		return nil, errors.Wrapf(err, "failed get sharing")
 	}
 	return &s, nil
 }
 
 func GetSharings(pageIndex, pageSize int) (sharings []model.SharingDB, count int64, err error) {
-	sharingDB := db.Model(&model.SharingDB{})
+	sharingDB := rwDb.R().Model(&model.SharingDB{})
 	if err := sharingDB.Count(&count).Error; err != nil {
 		return nil, 0, errors.Wrapf(err, "failed get sharings count")
 	}
@@ -26,7 +26,7 @@ func GetSharings(pageIndex, pageSize int) (sharings []model.SharingDB, count int
 }
 
 func GetSharingsByCreatorId(creator uint, pageIndex, pageSize int) (sharings []model.SharingDB, count int64, err error) {
-	sharingDB := db.Model(&model.SharingDB{})
+	sharingDB := rwDb.R().Model(&model.SharingDB{})
 	cond := model.SharingDB{CreatorId: creator}
 	if err := sharingDB.Where(cond).Count(&count).Error; err != nil {
 		return nil, 0, errors.Wrapf(err, "failed get sharings count")
@@ -38,6 +38,7 @@ func GetSharingsByCreatorId(creator uint, pageIndex, pageSize int) (sharings []m
 }
 
 func CreateSharing(s *model.SharingDB) (string, error) {
+	db := rwDb.W()
 	if s.ID == "" {
 		id := random.String(8)
 		for len(id) < 12 {
@@ -61,14 +62,14 @@ func CreateSharing(s *model.SharingDB) (string, error) {
 }
 
 func UpdateSharing(s *model.SharingDB) error {
-	return errors.WithStack(db.Save(s).Error)
+	return errors.WithStack(rwDb.W().Save(s).Error)
 }
 
 func DeleteSharingById(id string) error {
 	s := model.SharingDB{ID: id}
-	return errors.WithStack(db.Where(s).Delete(&s).Error)
+	return errors.WithStack(rwDb.W().Where(s).Delete(&s).Error)
 }
 
 func DeleteSharingsByCreatorId(creatorId uint) error {
-	return errors.WithStack(db.Where("creator_id = ?", creatorId).Delete(&model.SharingDB{}).Error)
+	return errors.WithStack(rwDb.W().Where("creator_id = ?", creatorId).Delete(&model.SharingDB{}).Error)
 }

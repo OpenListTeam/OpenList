@@ -6,6 +6,20 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 )
 
+// DBPool defines optional SQL connection pool settings for engines that support them.
+// These settings apply to `mysql` and `postgres`. `sqlite3` uses internal tuning
+// and does not apply these values.
+type DBPool struct {
+	// MaxOpenConns controls the maximum number of open connections to the database.
+	// Set to 0 for unlimited (driver default).
+	MaxOpenConns int `json:"max_open_conns" env:"MAX_OPEN_CONNS"`
+	// MaxIdleConns controls the maximum number of connections in the idle connection pool.
+	MaxIdleConns int `json:"max_idle_conns" env:"MAX_IDLE_CONNS"`
+	// ConnMaxLifetimeSeconds sets the maximum amount of time a connection may be reused.
+	// 0 means connections are reused forever (driver default).
+	ConnMaxLifetimeSeconds int `json:"conn_max_lifetime_seconds" env:"CONN_MAX_LIFETIME_SECONDS"`
+}
+
 type Database struct {
 	Type        string `json:"type" env:"TYPE"`
 	Host        string `json:"host" env:"HOST"`
@@ -17,6 +31,10 @@ type Database struct {
 	TablePrefix string `json:"table_prefix" env:"TABLE_PREFIX"`
 	SSLMode     string `json:"ssl_mode" env:"SSL_MODE"`
 	DSN         string `json:"dsn" env:"DSN"`
+	// Pool holds optional connection pool settings. Effective for `mysql`/`postgres` only.
+	// When omitted, SQL engines fall back to internal defaults; sqlite3 does not use it.
+	// Environment variables use the prefix `OPENLIST_DB_POOL_...`.
+	Pool *DBPool `json:"pool,omitempty" envPrefix:"POOL_"`
 }
 
 type Meilisearch struct {
@@ -157,6 +175,7 @@ func DefaultConfig(dataDir string) *Config {
 			Port:        0,
 			TablePrefix: "x_",
 			DBFile:      dbPath,
+			// Pool intentionally omitted by default to avoid confusion on sqlite3.
 		},
 		Meilisearch: Meilisearch{
 			Host:  "http://localhost:7700",
