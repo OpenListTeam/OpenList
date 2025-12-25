@@ -2,7 +2,9 @@ package fs
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -32,6 +34,20 @@ func remove(ctx context.Context, path string) error {
 		return errors.WithMessage(err, "failed get storage")
 	}
 	return op.Remove(ctx, storage, actualPath)
+}
+
+func transfer_share(ctx context.Context, dstPath, shareURL, validCode string) error {
+	/* get user info then join path */
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok {
+		return fmt.Errorf("failed get user from context")
+	}
+	dstPath, err := user.JoinPath(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed join path: %w", err)
+	}
+	storage, actualPath, err := op.GetStorageAndActualPath(dstPath)
+	return op.TransferShare(ctx, storage, actualPath, shareURL, validCode)
 }
 
 func other(ctx context.Context, args model.FsOtherArgs) (interface{}, error) {

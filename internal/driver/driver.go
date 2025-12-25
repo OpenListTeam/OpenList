@@ -110,6 +110,11 @@ type PutURL interface {
 	PutURL(ctx context.Context, dstDir model.Obj, name, url string) error
 }
 
+type Transfer interface {
+	// save the sharing file to dstDir
+	Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error
+}
+
 //type WriteResult interface {
 //	MkdirResult
 //	MoveResult

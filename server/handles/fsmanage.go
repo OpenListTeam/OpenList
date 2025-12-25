@@ -424,3 +424,23 @@ func Link(c *gin.Context) {
 	defer link.Close()
 	common.SuccessResp(c, link)
 }
+
+type TransferReq struct {
+	SrcURL    string `json:"url" binding:"required,url" form:"url"`
+	DstDir    string `json:"dst_dir" binding:"required" form:"dst_dir"`
+	ValidCode string `json:"valid_code" form:"valid_code"`
+}
+
+func FsTransfer(c *gin.Context) {
+	req := TransferReq{}
+	if err := c.ShouldBind(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	if err := fs.Transfer(c.Request.Context(), req.DstDir, req.SrcURL, req.ValidCode); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	} else {
+		common.SuccessResp(c)
+	}
+}

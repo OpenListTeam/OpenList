@@ -654,6 +654,26 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	return errors.WithStack(err)
 }
 
+func TransferShare(ctx context.Context, storage driver.Driver, dstPath, shareURL, validCode string) error {
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	rawObj, err := Get(ctx, storage, dstPath)
+	if err == nil {
+		return errors.WithStack(errs.ObjectAlreadyExists)
+	}
+	switch s := storage.(type) {
+	case driver.Transfer:
+		err = s.Transfer(ctx, model.UnwrapObj(rawObj), shareURL, validCode)
+		if err != nil {
+			return errors.WithMessagef(err, "failed to transfer share to [%s]", dstPath)
+		}
+	default:
+		return errors.WithStack(errs.NotImplement)
+	}
+	return nil
+}
+
 func GetDirectUploadTools(storage driver.Driver) []string {
 	du, ok := storage.(driver.DirectUploader)
 	if !ok {
