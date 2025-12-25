@@ -8,7 +8,6 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
@@ -206,50 +205,43 @@ func (d *Cloud189) GetDetails(ctx context.Context) (*model.StorageDetails, error
 	}, nil
 }
 
-func (d *Cloud189) Other(ctx context.Context, args model.OtherArgs) (any, error) {
-	switch args.Method {
-	case "transfer":
-		data := args.Data.(map[string]string)
-		shareUrl := data["url"] // the share url
-		code := ""
-		if data["valid_code"] != "" {
-			code = data["valid_code"]
-		} else if code = d.extractCode(shareUrl); code == "" {
-			return nil, fmt.Errorf("need valid code")
+func (d *Cloud189) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	if validCode == "" {
+		validCode = d.extractCode(shareURL)
+		if validCode == "" {
+			return fmt.Errorf("need valid code")
 		}
-		taskInfos := []base.Json{
-			{
-				"fileId":   args.Obj.GetID(),
-				"fileName": args.Obj.GetName(),
-				"isFolder": 1,
-			},
-		}
-
-		if !args.Obj.IsDir() {
-			return nil, fmt.Errorf("it should be in the folder")
-		}
-		taskInfosBytes, err := utils.Json.Marshal(taskInfos)
-		if err != nil {
-			return nil, err
-		}
-		shareid, err := d.getSharedID(code)
-		if err != nil {
-			return nil, err
-		}
-
-		form := map[string]string{
-			"type":           "SHARE_SAVE",
-			"targetFolderId": args.Obj.GetID(),
-			"taskInfos":      string(taskInfosBytes),
-			"shareId":        shareid,
-		}
-		_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
-			req.SetFormData(form)
-		}, nil)
-		return nil, err
-	default:
-		return nil, errs.NotImplement
 	}
+	taskInfos := []base.Json{
+		{
+			"fileId":   dst.GetID(),
+			"fileName": dst.GetName(),
+			"isFolder": 1,
+		},
+	}
+
+	if !dst.IsDir() {
+		return fmt.Errorf("it should be in the folder")
+	}
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	if err != nil {
+		return err
+	}
+	shareid, err := d.getSharedID(validCode)
+	if err != nil {
+		return err
+	}
+
+	form := map[string]string{
+		"type":           "SHARE_SAVE",
+		"targetFolderId": dst.GetID(),
+		"taskInfos":      string(taskInfosBytes),
+		"shareId":        shareid,
+	}
+	_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
+		req.SetFormData(form)
+	}, nil)
+	return err
 }
 
 var _ driver.Driver = (*Cloud189)(nil)
