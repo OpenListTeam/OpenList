@@ -28,6 +28,7 @@ type Object struct {
 	Ctime    time.Time // file create time
 	IsFolder bool
 	HashInfo utils.HashInfo
+	Mask     ObjMask
 }
 
 func (o *Object) GetName() string {
@@ -66,6 +67,10 @@ func (o *Object) SetPath(path string) {
 
 func (o *Object) GetHash() utils.HashInfo {
 	return o.HashInfo
+}
+
+func (o *Object) GetObjMask() ObjMask {
+	return o.Mask
 }
 
 type Thumbnail struct {
