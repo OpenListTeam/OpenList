@@ -106,8 +106,10 @@ func (d *Pan123Share) Link(ctx context.Context, file model.Obj, args model.LinkA
 			return nil, err
 		}
 		log.Debug(res.String())
+		exp := 5 * time.Minute
 		link := model.Link{
-			URL: u_,
+			URL:        u_,
+			Expiration: &exp,
 		}
 		log.Debugln("res code: ", res.StatusCode())
 		if res.StatusCode() == 302 {
