@@ -12,7 +12,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -340,7 +339,7 @@ func selectRandom[Item any](arr []Item, getWeight func(Item) uint64) (int, bool)
 	return 0, false
 }
 
-func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (BalancedObjs, BalancedObjs, error) {
+func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (BalancedObjs, BalancedObjs, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
 	}
@@ -353,9 +352,9 @@ func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (
 	for _, o := range dstObjs {
 		storage, e := fs.GetStorage(o.GetPath(), &fs.GetStoragesArgs{})
 		if e != nil {
-			return nil, nil, errors.WithMessagef(e, "cannot copy or move to virtual path [%s]", o.GetPath())
+			return nil, nil, errors.WithMessagef(e, "cannot copy to virtual path [%s]", o.GetPath())
 		}
-		mp := utils.GetActualMountPath(storage.GetStorage().MountPath)
+		mp := storage.GetStorage().MountPath
 		dstStorageMap[mp] = append(dstStorageMap[mp], o)
 		allocatingDst[o] = struct{}{}
 	}
@@ -369,7 +368,7 @@ func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (
 		if e != nil {
 			continue
 		}
-		mp := utils.GetActualMountPath(storage.GetStorage().MountPath)
+		mp := storage.GetStorage().MountPath
 		if tmp, ok := dstStorageMap[mp]; ok {
 			for _, dst := range tmp {
 				dstObjs[len(srcObjs)] = dst
@@ -386,6 +385,63 @@ func (d *Alias) getCopyMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (
 			src = tmpSrcObjs[rand.Intn(len(tmpSrcObjs))]
 		}
 		srcObjs = append(srcObjs, src)
+		dstObjs = append(dstObjs, dst)
+	}
+	return srcObjs, dstObjs, nil
+}
+
+func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (BalancedObjs, BalancedObjs, error) {
+	if d.PutConflictPolicy == DisabledWP {
+		return nil, nil, errs.PermissionDenied
+	}
+	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy))
+	if err != nil {
+		return nil, nil, err
+	}
+	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllRWP))
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(tmpSrcObjs) < len(dstObjs) {
+		return nil, nil, ErrNotEnoughSrcObjs
+	}
+	dstStorageMap := make(map[string][]model.Obj)
+	allocatingDst := make(map[model.Obj]struct{})
+	for _, o := range dstObjs {
+		storage, e := fs.GetStorage(o.GetPath(), &fs.GetStoragesArgs{})
+		if e != nil {
+			return nil, nil, errors.WithMessagef(e, "cannot move to virtual path [%s]", o.GetPath())
+		}
+		mp := storage.GetStorage().MountPath
+		dstStorageMap[mp] = append(dstStorageMap[mp], o)
+		allocatingDst[o] = struct{}{}
+	}
+	srcObjs := make(BalancedObjs, 0, len(tmpSrcObjs))
+	restSrcObjs := make(BalancedObjs, 0, len(tmpSrcObjs)-len(dstObjs))
+	for _, src := range tmpSrcObjs {
+		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
+		if e != nil {
+			continue
+		}
+		mp := storage.GetStorage().MountPath
+		if tmp, ok := dstStorageMap[mp]; ok {
+			dst := tmp[0]
+			if len(tmp) == 1 {
+				delete(dstStorageMap, mp)
+			} else {
+				dstStorageMap[mp] = tmp[1:]
+			}
+			dstObjs[len(srcObjs)] = dst
+			srcObjs = append(srcObjs, src)
+			delete(allocatingDst, dst)
+		} else {
+			restSrcObjs = append(restSrcObjs, src)
+		}
+	}
+	dstObjs = dstObjs[:len(srcObjs)]
+	// len(restSrcObjs) >= len(allocatingDst)
+	srcObjs = append(srcObjs, restSrcObjs...)
+	for dst := range allocatingDst {
 		dstObjs = append(dstObjs, dst)
 	}
 	return srcObjs, dstObjs, nil

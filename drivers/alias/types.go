@@ -29,9 +29,10 @@ var (
 )
 
 var (
-	ErrPathConflict  = errors.New("path conflict")
-	ErrSamePathLeak  = errors.New("leak some of same-name dirs")
-	ErrNoEnoughSpace = errors.New("none of same-name dirs has enough space")
+	ErrPathConflict     = errors.New("path conflict")
+	ErrSamePathLeak     = errors.New("leak some of same-name dirs")
+	ErrNoEnoughSpace    = errors.New("none of same-name dirs has enough space")
+	ErrNotEnoughSrcObjs = errors.New("cannot move fewer objs to more paths, please try copying")
 )
 
 type BalancedObjs []model.Obj

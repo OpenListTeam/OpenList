@@ -332,11 +332,16 @@ func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 }
 
 func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	srcs, dsts, err := d.getCopyMoveObjs(ctx, srcObj, dstDir)
+	srcs, dsts, err := d.getMoveObjs(ctx, srcObj, dstDir)
 	if err == nil {
-		for i, src := range srcs {
-			dst := dsts[i]
+		for i, dst := range dsts {
+			src := srcs[i]
 			_, e := fs.Move(ctx, src.GetPath(), dst.GetPath())
+			err = errors.Join(err, e)
+		}
+		srcs = srcs[len(dsts):]
+		for _, src := range srcs {
+			e := fs.Remove(ctx, src.GetPath())
 			err = errors.Join(err, e)
 		}
 	}
@@ -354,7 +359,7 @@ func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 }
 
 func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	srcs, dsts, err := d.getCopyMoveObjs(ctx, srcObj, dstDir)
+	srcs, dsts, err := d.getCopyObjs(ctx, srcObj, dstDir)
 	if err == nil {
 		for i, src := range srcs {
 			dst := dsts[i]
@@ -476,7 +481,7 @@ func (d *Alias) Extract(ctx context.Context, obj model.Obj, args model.ArchiveIn
 }
 
 func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) error {
-	srcs, dsts, err := d.getCopyMoveObjs(ctx, srcObj, dstDir)
+	srcs, dsts, err := d.getCopyObjs(ctx, srcObj, dstDir)
 	if err == nil {
 		for i, src := range srcs {
 			dst := dsts[i]
