@@ -206,11 +206,9 @@ func (d *Cloud189) GetDetails(ctx context.Context) (*model.StorageDetails, error
 }
 
 func (d *Cloud189) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
-	if validCode == "" {
-		validCode = d.extractCode(shareURL)
-		if validCode == "" {
-			return fmt.Errorf("need valid code")
-		}
+	sharecode := d.extractCode(shareURL)
+	if sharecode == "" {
+		return fmt.Errorf("need share code")
 	}
 	taskInfos := []base.Json{
 		{

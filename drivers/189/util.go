@@ -11,7 +11,7 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"regexp"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -410,19 +410,13 @@ func (d *Cloud189) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {
 
 func (d *Cloud189) getSharedID(code string) (string, error) {
 	resp := GetSharedInfoResp{}
-	var e Error
-	req := d.client.R().SetError(&e).
-		SetHeader("Accept", "application/json;charset=UTF-8").
-		SetQueryParams(map[string]string{
-			"noCache": random(),
-			"code":    code,
+	_, err := d.request("https://cloud.189.cn/api/open/share/getShareInfoByCodeV2.action", http.MethodGet, func(req *resty.Request) {
+		req.SetHeader("Accept", "application/json;charset=UTF-8")
+		req.SetQueryParams(map[string]string{
+			"code": code,
 		})
-	res, err := req.Execute(http.MethodGet, "https://cloud.189.cn/api/open/share/getShareInfoByCodeV2.action")
+	}, &resp)
 	if err != nil {
-		return "", err
-	}
-	if jsoniter.Get(res.Body(), "res_code").ToInt() != 0 {
-		err = errors.New(jsoniter.Get(res.Body(), "res_message").ToString())
 		return "", err
 	}
 	if resp.ResCode != 0 || resp.ResMessage != "成功" {
@@ -432,10 +426,10 @@ func (d *Cloud189) getSharedID(code string) (string, error) {
 }
 
 func (d *Cloud189) extractCode(str string) string {
-	re := regexp.MustCompile(`code=([0-9]+（提取码=[A-Za-z0-9]+）)`)
-	m := re.FindStringSubmatch(str)
-	if len(m) > 1 {
-		return m[1]
+	u, err := url.Parse(str)
+	if err != nil {
+		fmt.Println("invalid share url")
+		return ""
 	}
-	return ""
+	return u.Query().Get("code")
 }
