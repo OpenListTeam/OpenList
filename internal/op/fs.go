@@ -659,7 +659,7 @@ func TransferShare(ctx context.Context, storage driver.Driver, dstPath, shareURL
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	rawObj, err := Get(ctx, storage, dstPath)
-	if err == nil {
+	if err != nil {
 		return errors.WithStack(errs.ObjectAlreadyExists)
 	}
 	switch s := storage.(type) {
