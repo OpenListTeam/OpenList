@@ -458,13 +458,22 @@ func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, vali
 	}
 
 	form := map[string]string{
-		"type":           "SHARE_SAVE",
 		"targetFolderId": dst.GetID(),
 		"taskInfos":      string(taskInfosBytes),
-		"shareId":        fmt.Sprint(shareid),
+		"shareId":        fmt.Sprintf("%d", shareid),
 	}
-	_, err = y.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
-		req.SetFormData(form)
-	}, nil, nil, false)
-	return err
+
+	resp, err := y.CreateBatchTask("SHARE_SAVE", y.FamilyID, dst.GetID(), form)
+
+	for {
+		state, err := y.CheckBatchTask("SHARE_SAVE", resp.TaskID)
+		if err != nil {
+			return err
+		}
+		switch state.TaskStatus {
+		case 4:
+			return nil
+		}
+		time.Sleep(time.Millisecond * 400)
+	}
 }

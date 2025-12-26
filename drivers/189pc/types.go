@@ -360,7 +360,9 @@ func (f *OldCommitUploadFileResp) toFile() *Cloud189File {
 }
 
 type CreateBatchTaskResp struct {
-	TaskID string `json:"taskId"`
+	ResCode    int    `json:"res_code"`
+	TaskID     string `json:"taskId"`
+	ResMessage string `json:"res_message"`
 }
 
 type BatchTaskStateResp struct {
