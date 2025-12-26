@@ -428,3 +428,43 @@ func (y *Cloud189PC) GetDetails(ctx context.Context) (*model.StorageDetails, err
 		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
 }
+
+func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	sharecode := y.extractCode(shareURL)
+	if sharecode == "" {
+		return fmt.Errorf("need share code")
+	}
+	taskInfos := []base.Json{
+		{
+			"fileId":   dst.GetID(),
+			"fileName": dst.GetName(),
+			"isFolder": 1,
+		},
+	}
+
+	if !dst.IsDir() {
+		return fmt.Errorf("it should be in the folder")
+	}
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	if err != nil {
+		return err
+	}
+	shareid, err := y.getSharedID(sharecode)
+	if err != nil {
+		return err
+	}
+	if shareid == -1 {
+		return fmt.Errorf("failed get share id")
+	}
+
+	form := map[string]string{
+		"type":           "SHARE_SAVE",
+		"targetFolderId": dst.GetID(),
+		"taskInfos":      string(taskInfosBytes),
+		"shareId":        fmt.Sprint(shareid),
+	}
+	_, err = y.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
+		req.SetFormData(form)
+	}, nil, nil, false)
+	return err
+}
