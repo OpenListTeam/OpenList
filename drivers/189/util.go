@@ -408,7 +408,7 @@ func (d *Cloud189) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {
 	return &resp, nil
 }
 
-func (d *Cloud189) getSharedID(code string) (string, error) {
+func (d *Cloud189) getSharedID(code string) (int64, error) {
 	resp := GetSharedInfoResp{}
 	_, err := d.request("https://cloud.189.cn/api/open/share/getShareInfoByCodeV2.action", http.MethodGet, func(req *resty.Request) {
 		req.SetHeader("Accept", "application/json;charset=UTF-8")
@@ -417,10 +417,10 @@ func (d *Cloud189) getSharedID(code string) (string, error) {
 		})
 	}, &resp)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	if resp.ResCode != 0 || resp.ResMessage != "成功" {
-		return "", errors.New(resp.ResMessage)
+		return 0, errors.New(resp.ResMessage)
 	}
 	return resp.ShareID, nil
 }

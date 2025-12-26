@@ -89,6 +89,6 @@ type GetSharedInfoResp struct {
 	ResCode    int    `json:"res_code"`
 	ResMessage string `json:"res_message"`
 	AccessCode string `json:"accessCode"`
-	ShareID    string `json:"shareId"`
+	ShareID    int64  `json:"shareId"`
 	ExpireTime int64  `json:"expireTime"`
 }

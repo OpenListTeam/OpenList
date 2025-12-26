@@ -234,7 +234,7 @@ func (d *Cloud189) Transfer(ctx context.Context, dst model.Obj, shareURL, validC
 		"type":           "SHARE_SAVE",
 		"targetFolderId": dst.GetID(),
 		"taskInfos":      string(taskInfosBytes),
-		"shareId":        shareid,
+		"shareId":        fmt.Sprintf("%d", shareid),
 	}
 	_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
 		req.SetFormData(form)
