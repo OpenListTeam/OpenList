@@ -2,7 +2,9 @@ package _123_open
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 
@@ -10,7 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
@@ -156,20 +158,36 @@ func (d *Open123) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	// 1. 创建文件
+	// 1. 准备参数
 	// parentFileID 父目录id，上传到根目录时填写 0
 	parentFileId, err := strconv.ParseInt(dstDir.GetID(), 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("parse parentFileID error: %v", err)
 	}
-	// etag 文件md5
-	etag := file.GetHash().GetHash(utils.MD5)
-	if len(etag) < utils.MD5.Width {
-		_, etag, err = stream.CacheFullAndHash(file, &up, utils.MD5)
+
+	// 1. 流式计算MD5
+	md5Hash := utils.MD5.NewFunc()
+	size := file.GetSize()
+	chunkSize := int64(10 * 1024 * 1024) // 10MB per chunk for MD5 calculation
+	var offset int64 = 0
+	for offset < size {
+		readSize := min(chunkSize, size-offset)
+		reader, err := file.RangeRead(http_range.Range{Start: offset, Length: readSize})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("range read for MD5 calculation failed: %w", err)
 		}
+		if _, err := io.Copy(md5Hash, reader); err != nil {
+			return nil, fmt.Errorf("calculate MD5 failed: %w", err)
+		}
+		offset += readSize
+
+		progress := 40 * float64(offset) / float64(size)
+		up(progress)
 	}
+
+	etag := hex.EncodeToString(md5Hash.Sum(nil))
+
+	// 2. 创建上传任务
 	createResp, err := d.create(parentFileId, file.GetName(), etag, file.GetSize(), 2, false)
 	if err != nil {
 		return nil, err
@@ -188,13 +206,16 @@ func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 		}
 	}
 
-	// 2. 上传分片
-	err = d.Upload(ctx, file, createResp, up)
+	// 3. 上传分片
+	uploadProgress := func(p float64) {
+		up(40 + p*0.6)
+	}
+	err = d.Upload(ctx, file, createResp, uploadProgress)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. 上传完毕
+	// 4. 合并分片/完成上传
 	for range 60 {
 		uploadCompleteResp, err := d.complete(createResp.Data.PreuploadID)
 		// 返回错误代码未知，如：20103，文档也没有具体说
