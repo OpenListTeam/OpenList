@@ -433,3 +433,28 @@ func (d *Cloud189) extractCode(str string) string {
 	}
 	return u.Query().Get("code")
 }
+
+func (d *Cloud189) transfer(dstDir model.Obj, shareID int64) error {
+	taskInfos := []base.Json{
+		{
+			"fileId":   dstDir.GetID(),
+			"fileName": dstDir.GetName(),
+			"isFolder": 1,
+		},
+	}
+
+	if !dstDir.IsDir() {
+		return fmt.Errorf("it should be in the folder")
+	}
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	form := map[string]string{
+		"type":           "SHARE_SAVE",
+		"targetFolderId": dstDir.GetID(),
+		"taskInfos":      string(taskInfosBytes),
+		"shareId":        fmt.Sprintf("%d", shareID),
+	}
+	_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
+		req.SetFormData(form)
+	}, nil)
+	return err
+}

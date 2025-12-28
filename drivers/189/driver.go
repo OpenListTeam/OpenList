@@ -210,36 +210,13 @@ func (d *Cloud189) Transfer(ctx context.Context, dst model.Obj, shareURL, validC
 	if sharecode == "" {
 		return fmt.Errorf("need share code")
 	}
-	taskInfos := []base.Json{
-		{
-			"fileId":   dst.GetID(),
-			"fileName": dst.GetName(),
-			"isFolder": 1,
-		},
-	}
 
-	if !dst.IsDir() {
-		return fmt.Errorf("it should be in the folder")
-	}
-	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
-	if err != nil {
-		return err
-	}
-	shareid, err := d.getSharedID(validCode)
+	shareid, err := d.getSharedID(sharecode)
 	if err != nil {
 		return err
 	}
 
-	form := map[string]string{
-		"type":           "SHARE_SAVE",
-		"targetFolderId": dst.GetID(),
-		"taskInfos":      string(taskInfosBytes),
-		"shareId":        fmt.Sprintf("%d", shareid),
-	}
-	_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
-		req.SetFormData(form)
-	}, nil)
-	return err
+	return d.transfer(dst, shareid)
 }
 
 var _ driver.Driver = (*Cloud189)(nil)
