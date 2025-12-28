@@ -3,6 +3,7 @@ package quark
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"hash"
 	"io"
 	"net/http"
@@ -229,6 +230,18 @@ func (d *QuarkOrUC) GetDetails(ctx context.Context) (*model.StorageDetails, erro
 	return &model.StorageDetails{
 		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
 	}, nil
+}
+
+func (d *QuarkOrUC) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	pwd_id := d.getPwdID(shareURL)
+	if pwd_id == "" {
+		return errors.New("invalid share url")
+	}
+	shareToken, err := d.getShareToken(pwd_id, validCode)
+	if err != nil {
+		return err
+	}
+	return d.transfer(dst, shareToken)
 }
 
 var _ driver.Driver = (*QuarkOrUC)(nil)
