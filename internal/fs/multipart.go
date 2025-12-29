@@ -13,44 +13,46 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/google/uuid"
 	pkgerrors "github.com/pkg/errors"
 )
 
 const (
-	// DefaultChunkSize is the default chunk size (5MB)
-	DefaultChunkSize = 5 * 1024 * 1024
-	// SessionMaxLifetime is the maximum lifetime of a multipart upload session
-	SessionMaxLifetime = 2 * time.Hour
+	DefaultChunkSize     = 5 * 1024 * 1024
+	SessionMaxLifetime   = 2 * time.Hour
 )
 
-// multipartSessionManager manages multipart upload sessions
 type multipartSessionManager struct {
 	sessions map[string]*model.MultipartUploadSession
 	mu       sync.RWMutex
 }
 
-// Global multipart session manager
-var MultipartSessionManager = NewMultipartSessionManager()
-
-// NewMultipartSessionManager creates a new session manager
-func NewMultipartSessionManager() *multipartSessionManager {
-	return &multipartSessionManager{
-		sessions: make(map[string]*model.MultipartUploadSession),
-	}
+var MultipartSessionManager = &multipartSessionManager{
+	sessions: make(map[string]*model.MultipartUploadSession),
 }
 
-// InitMultipartUpload initializes a new multipart upload session
-func (m *multipartSessionManager) InitMultipartUpload(
-	ctx context.Context,
-	storageID uint,
+// InitOrGetSession initializes a new session or returns existing one
+func (m *multipartSessionManager) InitOrGetSession(
+	uploadID string,
 	dstDirPath string,
 	fileName string,
 	fileSize int64,
 	chunkSize int64,
 	contentType string,
+	overwrite bool,
 ) (*model.MultipartUploadSession, error) {
+	// If uploadID provided, try to get existing session
+	if uploadID != "" {
+		session, err := m.GetSession(uploadID)
+		if err != nil {
+			return nil, err
+		}
+		return session, nil
+	}
+
+	// Create new session
 	if chunkSize <= 0 {
 		chunkSize = DefaultChunkSize
 	}
@@ -63,17 +65,15 @@ func (m *multipartSessionManager) InitMultipartUpload(
 		totalChunks = 1
 	}
 
-	uploadID := uuid.New().String()
-
-	chunkDir := filepath.Join(conf.Conf.TempDir, "uploads", uploadID)
+	newUploadID := uuid.New().String()
+	chunkDir := filepath.Join(conf.Conf.TempDir, "multipart", newUploadID)
 	if err := utils.CreateNestedDirectory(chunkDir); err != nil {
 		return nil, pkgerrors.Wrap(err, "failed to create chunk directory")
 	}
 
 	now := time.Now()
 	session := &model.MultipartUploadSession{
-		UploadID:       uploadID,
-		StorageID:      storageID,
+		UploadID:       newUploadID,
 		DstDirPath:     dstDirPath,
 		FileName:       fileName,
 		FileSize:       fileSize,
@@ -82,27 +82,26 @@ func (m *multipartSessionManager) InitMultipartUpload(
 		ContentType:    contentType,
 		ChunkDir:       chunkDir,
 		UploadedChunks: make(map[int]model.ChunkInfo),
+		Overwrite:      overwrite,
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(SessionMaxLifetime),
 	}
 
 	m.mu.Lock()
-	m.sessions[uploadID] = session
+	m.sessions[newUploadID] = session
 	m.mu.Unlock()
 
-	go m.cleanupSession(uploadID, session.ExpiresAt)
+	go m.cleanupAfterExpiry(newUploadID, session.ExpiresAt)
 
 	return session, nil
 }
 
-// UploadChunk uploads a single chunk
+// UploadChunk uploads a single chunk (idempotent)
 func (m *multipartSessionManager) UploadChunk(
-	ctx context.Context,
 	uploadID string,
 	chunkIndex int,
 	chunkSize int64,
 	reader io.Reader,
-	md5 string,
 ) (*model.ChunkUploadResp, error) {
 	session, err := m.GetSession(uploadID)
 	if err != nil {
@@ -113,9 +112,13 @@ func (m *multipartSessionManager) UploadChunk(
 		return nil, pkgerrors.New("chunk index out of range")
 	}
 
+	m.mu.RLock()
+	_, exists := session.UploadedChunks[chunkIndex]
+	m.mu.RUnlock()
+
 	// Idempotent: if chunk already uploaded, return success
-	if _, exists := session.UploadedChunks[chunkIndex]; exists {
-		return m.getUploadResponse(session), nil
+	if exists {
+		return m.buildResponse(session), nil
 	}
 
 	chunkFileName := fmt.Sprintf("%d.chunk", chunkIndex)
@@ -134,41 +137,40 @@ func (m *multipartSessionManager) UploadChunk(
 
 	if written != chunkSize {
 		os.Remove(chunkFilePath)
-		return nil, pkgerrors.New("chunk size mismatch")
+		return nil, pkgerrors.Errorf("chunk size mismatch: expected %d, got %d", chunkSize, written)
 	}
 
 	m.mu.Lock()
 	session.UploadedChunks[chunkIndex] = model.ChunkInfo{
 		Index:      chunkIndex,
 		Size:       chunkSize,
-		MD5:        md5,
 		UploadedAt: time.Now(),
 	}
 	m.mu.Unlock()
 
-	return m.getUploadResponse(session), nil
+	return m.buildResponse(session), nil
 }
 
-// CompleteMultipartUpload merges all chunks and uploads to storage
-func (m *multipartSessionManager) CompleteMultipartUpload(
+// CompleteUpload merges all chunks and uploads to storage
+func (m *multipartSessionManager) CompleteUpload(
 	ctx context.Context,
 	uploadID string,
-) error {
+	asTask bool,
+) (task.TaskExtensionInfo, error) {
 	session, err := m.GetSession(uploadID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if len(session.UploadedChunks) != session.TotalChunks {
-		return pkgerrors.New(fmt.Sprintf("incomplete upload: %d/%d chunks uploaded",
-			len(session.UploadedChunks), session.TotalChunks))
+		return nil, pkgerrors.Errorf("incomplete upload: %d/%d chunks uploaded",
+			len(session.UploadedChunks), session.TotalChunks)
 	}
 
-	mergedReader, err := NewChunkMergedReader(session)
+	mergedReader, err := newChunkMergedReader(session)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer mergedReader.Close()
 
 	fileStream := &stream.FileStream{
 		Obj: &model.Object{
@@ -176,21 +178,31 @@ func (m *multipartSessionManager) CompleteMultipartUpload(
 			Size:     session.FileSize,
 			Modified: time.Now(),
 		},
-		Reader:   mergedReader,
-		Mimetype: session.ContentType,
+		Reader:       mergedReader,
+		Mimetype:     session.ContentType,
+		WebPutAsTask: asTask,
+		Closers:      utils.NewClosers(mergedReader),
 	}
 
-	err = putDirectly(ctx, session.DstDirPath, fileStream)
+	var t task.TaskExtensionInfo
+	if asTask {
+		t, err = PutAsTask(ctx, session.DstDirPath, fileStream)
+	} else {
+		err = PutDirectly(ctx, session.DstDirPath, fileStream)
+	}
+
 	if err != nil {
-		return err
+		mergedReader.Close()
+		return nil, err
 	}
 
+	// Cleanup session
 	m.mu.Lock()
 	delete(m.sessions, uploadID)
 	m.mu.Unlock()
 
 	m.cleanupSessionFiles(session)
-	return nil
+	return t, nil
 }
 
 // GetSession retrieves a session by upload ID
@@ -214,7 +226,10 @@ func (m *multipartSessionManager) GetSession(uploadID string) (*model.MultipartU
 	return session, nil
 }
 
-func (m *multipartSessionManager) getUploadResponse(session *model.MultipartUploadSession) *model.ChunkUploadResp {
+func (m *multipartSessionManager) buildResponse(session *model.MultipartUploadSession) *model.ChunkUploadResp {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	indices := make([]int, 0, len(session.UploadedChunks))
 	for i := range session.UploadedChunks {
 		indices = append(indices, i)
@@ -226,10 +241,17 @@ func (m *multipartSessionManager) getUploadResponse(session *model.MultipartUplo
 		totalBytes += info.Size
 	}
 
+	chunkIndex := -1
+	if len(indices) > 0 {
+		chunkIndex = indices[len(indices)-1]
+	}
+
 	return &model.ChunkUploadResp{
-		ChunkIndex:     indices[len(indices)-1],
+		UploadID:       session.UploadID,
+		ChunkIndex:     chunkIndex,
 		UploadedChunks: indices,
 		UploadedBytes:  totalBytes,
+		TotalChunks:    session.TotalChunks,
 	}
 }
 
@@ -239,7 +261,7 @@ func (m *multipartSessionManager) cleanupSessionFiles(session *model.MultipartUp
 	}
 }
 
-func (m *multipartSessionManager) cleanupSession(uploadID string, expiresAt time.Time) {
+func (m *multipartSessionManager) cleanupAfterExpiry(uploadID string, expiresAt time.Time) {
 	time.Sleep(time.Until(expiresAt))
 
 	m.mu.Lock()
@@ -254,14 +276,14 @@ func (m *multipartSessionManager) cleanupSession(uploadID string, expiresAt time
 }
 
 // ChunkMergedReader reads chunks in order and merges them
-type ChunkMergedReader struct {
-	session      *model.MultipartUploadSession
-	readers      []io.ReadCloser
-	current      int
+type chunkMergedReader struct {
+	session       *model.MultipartUploadSession
+	readers       []io.ReadCloser
+	current       int
 	currentReader io.Reader
 }
 
-func NewChunkMergedReader(session *model.MultipartUploadSession) (*ChunkMergedReader, error) {
+func newChunkMergedReader(session *model.MultipartUploadSession) (*chunkMergedReader, error) {
 	readers := make([]io.ReadCloser, session.TotalChunks)
 
 	for i := 0; i < session.TotalChunks; i++ {
@@ -278,15 +300,15 @@ func NewChunkMergedReader(session *model.MultipartUploadSession) (*ChunkMergedRe
 		readers[i] = f
 	}
 
-	return &ChunkMergedReader{
-		session:      session,
-		readers:      readers,
-		current:      0,
+	return &chunkMergedReader{
+		session:       session,
+		readers:       readers,
+		current:       0,
 		currentReader: nil,
 	}, nil
 }
 
-func (r *ChunkMergedReader) Read(p []byte) (n int, err error) {
+func (r *chunkMergedReader) Read(p []byte) (n int, err error) {
 	for r.current < len(r.readers) {
 		if r.currentReader == nil {
 			r.currentReader = r.readers[r.current]
@@ -309,7 +331,7 @@ func (r *ChunkMergedReader) Read(p []byte) (n int, err error) {
 	return 0, io.EOF
 }
 
-func (r *ChunkMergedReader) Close() error {
+func (r *chunkMergedReader) Close() error {
 	for _, reader := range r.readers {
 		if reader != nil {
 			reader.Close()

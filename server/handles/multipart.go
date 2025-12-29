@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -17,25 +18,26 @@ import (
 func FsMultipart(c *gin.Context) {
 	action := c.Query("action")
 	switch action {
-	case "init":
-		fsMultipartInit(c)
 	case "upload":
 		fsMultipartUpload(c)
 	case "complete":
 		fsMultipartComplete(c)
 	default:
-		common.ErrorStrResp(c, "invalid action", 400)
+		common.ErrorStrResp(c, "invalid action, must be 'upload' or 'complete'", 400)
 	}
 }
 
-func fsMultipartInit(c *gin.Context) {
-	var req model.MultipartInitReq
-	if err := c.ShouldBind(&req); err != nil {
-		common.ErrorResp(c, err, 400)
-		return
-	}
+func fsMultipartUpload(c *gin.Context) {
+	defer func() {
+		if n, _ := io.ReadFull(c.Request.Body, []byte{0}); n == 1 {
+			_, _ = utils.CopyWithBuffer(io.Discard, c.Request.Body)
+		}
+		_ = c.Request.Body.Close()
+	}()
 
-	path, err := url.PathUnescape(req.Path)
+	// Get File-Path header (already validated by FsUp middleware)
+	path := c.GetHeader("File-Path")
+	path, err := url.PathUnescape(path)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -48,97 +50,129 @@ func fsMultipartInit(c *gin.Context) {
 		return
 	}
 
-	storage, err := fs.GetStorage(path, &fs.GetStoragesArgs{})
+	dir, name := stdpath.Split(path)
+	if shouldIgnoreSystemFile(name) {
+		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 403)
+		return
+	}
+
+	// Get upload ID (optional for first chunk)
+	uploadID := c.GetHeader("X-Upload-Id")
+
+	// Get chunk index (required)
+	chunkIndexStr := c.GetHeader("X-Chunk-Index")
+	chunkIndex, err := strconv.Atoi(chunkIndexStr)
 	if err != nil {
-		common.ErrorResp(c, err, 400)
-		return
-	}
-	if storage.Config().NoUpload {
-		common.ErrorStrResp(c, "Current storage doesn't support upload", 405)
+		common.ErrorStrResp(c, "invalid or missing X-Chunk-Index header", 400)
 		return
 	}
 
-	dstDirPath, fileName := stdpath.Split(path)
-	mimetype := utils.GetMimeType(fileName)
+	// Get chunk size from Content-Length
+	chunkSize := c.Request.ContentLength
+	if chunkSize <= 0 {
+		common.ErrorStrResp(c, "missing Content-Length header", 400)
+		return
+	}
 
-	session, err := fs.MultipartSessionManager.InitMultipartUpload(
-		c.Request.Context(),
-		storage.GetStorage().ID,
-		dstDirPath,
-		fileName,
-		req.FileSize,
-		req.ChunkSize,
-		mimetype,
+	// For first chunk (no uploadID), need file size and chunk size
+	var session *model.MultipartUploadSession
+	if uploadID == "" {
+		// First chunk - initialize session
+		fileSizeStr := c.GetHeader("X-File-Size")
+		fileSize, err := strconv.ParseInt(fileSizeStr, 10, 64)
+		if err != nil || fileSize <= 0 {
+			common.ErrorStrResp(c, "invalid or missing X-File-Size header for first chunk", 400)
+			return
+		}
+
+		expectedChunkSizeStr := c.GetHeader("X-Chunk-Size")
+		expectedChunkSize, err := strconv.ParseInt(expectedChunkSizeStr, 10, 64)
+		if err != nil || expectedChunkSize <= 0 {
+			common.ErrorStrResp(c, "invalid or missing X-Chunk-Size header for first chunk", 400)
+			return
+		}
+
+		overwrite := c.GetHeader("Overwrite") != "false"
+
+		// Check if file exists when not overwriting
+		if !overwrite {
+			if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
+				common.ErrorStrResp(c, "file exists", 403)
+				return
+			}
+		}
+
+		mimetype := c.GetHeader("Content-Type")
+		if mimetype == "" || mimetype == "application/octet-stream" {
+			mimetype = utils.GetMimeType(name)
+		}
+
+		session, err = fs.MultipartSessionManager.InitOrGetSession(
+			"",
+			dir,
+			name,
+			fileSize,
+			expectedChunkSize,
+			mimetype,
+			overwrite,
+		)
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+	} else {
+		// Subsequent chunk - get existing session
+		session, err = fs.MultipartSessionManager.InitOrGetSession(
+			uploadID,
+			"", "", 0, 0, "", false,
+		)
+		if err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+	}
+
+	// Upload chunk
+	resp, err := fs.MultipartSessionManager.UploadChunk(
+		session.UploadID,
+		chunkIndex,
+		chunkSize,
+		c.Request.Body,
 	)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
 
-	common.SuccessResp(c, model.MultipartInitResp{
-		UploadID:    session.UploadID,
-		ChunkSize:   session.ChunkSize,
-		TotalChunks: session.TotalChunks,
-	})
+	common.SuccessResp(c, resp)
 }
 
-func fsMultipartUpload(c *gin.Context) {
+func fsMultipartComplete(c *gin.Context) {
 	uploadID := c.GetHeader("X-Upload-Id")
 	if uploadID == "" {
 		common.ErrorStrResp(c, "missing X-Upload-Id header", 400)
 		return
 	}
 
-	chunkIndexStr := c.GetHeader("X-Chunk-Index")
-	chunkIndex, err := strconv.Atoi(chunkIndexStr)
-	if err != nil {
-		common.ErrorStrResp(c, "invalid X-Chunk-Index header", 400)
-		return
-	}
+	asTask := c.GetHeader("As-Task") == "true"
 
-	chunkSizeStr := c.GetHeader("X-Chunk-Size")
-	chunkSize, err := strconv.ParseInt(chunkSizeStr, 10, 64)
-	if err != nil {
-		common.ErrorStrResp(c, "invalid X-Chunk-Size header", 400)
-		return
-	}
-
-	md5 := c.GetHeader("X-Chunk-Md5")
-
-	resp, err := fs.MultipartSessionManager.UploadChunk(
+	t, err := fs.MultipartSessionManager.CompleteUpload(
 		c.Request.Context(),
 		uploadID,
-		chunkIndex,
-		chunkSize,
-		c.Request.Body,
-		md5,
+		asTask,
 	)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
 
-	io.ReadAll(c.Request.Body)
-	c.Request.Body.Close()
-
-	common.SuccessResp(c, resp)
-}
-
-func fsMultipartComplete(c *gin.Context) {
-	var req model.MultipartCompleteReq
-	if err := c.ShouldBind(&req); err != nil {
-		common.ErrorResp(c, err, 400)
+	if t == nil {
+		common.SuccessResp(c, gin.H{"success": true})
 		return
 	}
 
-	err := fs.MultipartSessionManager.CompleteMultipartUpload(
-		c.Request.Context(),
-		req.UploadID,
-	)
-	if err != nil {
-		common.ErrorResp(c, err, 500)
-		return
-	}
-
-	common.SuccessResp(c, gin.H{"success": true})
+	common.SuccessResp(c, gin.H{
+		"success": true,
+		"task":    getTaskInfo(t),
+	})
 }

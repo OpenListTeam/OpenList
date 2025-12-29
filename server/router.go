@@ -219,7 +219,7 @@ func _fs(g *gin.RouterGroup) {
 	// Direct upload (client-side upload to storage)
 	g.POST("/get_direct_upload_info", middlewares.FsUp, handles.FsGetDirectUploadInfo)
 	// Multipart upload
-	g.POST("/multipart", middlewares.FsUp, handles.FsMultipart)
+	g.PUT("/multipart", middlewares.FsUp, uploadLimiter, handles.FsMultipart)
 }
 
 func _task(g *gin.RouterGroup) {
