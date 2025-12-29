@@ -135,15 +135,26 @@ func (m *multipartSessionManager) UploadChunk(
 		return nil, pkgerrors.Wrap(err, "failed to write chunk")
 	}
 
-	if written != chunkSize {
-		os.Remove(chunkFilePath)
-		return nil, pkgerrors.Errorf("chunk size mismatch: expected %d, got %d", chunkSize, written)
+	isLastChunk := chunkIndex == session.TotalChunks-1
+	if isLastChunk {
+		// For the last chunk, allow a smaller size (the file may not divide evenly by the chunk size),
+		// but still reject chunks that exceed the expected size.
+		if written > chunkSize {
+			os.Remove(chunkFilePath)
+			return nil, pkgerrors.Errorf("chunk size mismatch: expected at most %d, got %d", chunkSize, written)
+		}
+	} else {
+		// For non-final chunks, enforce strict equality with the expected chunk size.
+		if written != chunkSize {
+			os.Remove(chunkFilePath)
+			return nil, pkgerrors.Errorf("chunk size mismatch: expected %d, got %d", chunkSize, written)
+		}
 	}
 
 	m.mu.Lock()
 	session.UploadedChunks[chunkIndex] = model.ChunkInfo{
 		Index:      chunkIndex,
-		Size:       chunkSize,
+		Size:       written,
 		UploadedAt: time.Now(),
 	}
 	m.mu.Unlock()
