@@ -97,7 +97,7 @@ func fsMultipartUpload(c *gin.Context) {
 		// Check if file exists when not overwriting
 		if !overwrite {
 			if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
-				common.ErrorStrResp(c, "file exists", 403)
+				common.ErrorStrResp(c, "file already exists and overwrite is disabled", 403)
 				return
 			}
 		}
