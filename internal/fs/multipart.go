@@ -241,14 +241,8 @@ func (m *multipartSessionManager) buildResponse(session *model.MultipartUploadSe
 		totalBytes += info.Size
 	}
 
-	chunkIndex := -1
-	if len(indices) > 0 {
-		chunkIndex = indices[len(indices)-1]
-	}
-
 	return &model.ChunkUploadResp{
 		UploadID:       session.UploadID,
-		ChunkIndex:     chunkIndex,
 		UploadedChunks: indices,
 		UploadedBytes:  totalBytes,
 		TotalChunks:    session.TotalChunks,
