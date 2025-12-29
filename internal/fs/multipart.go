@@ -162,12 +162,16 @@ func (m *multipartSessionManager) CompleteUpload(
 		return nil, err
 	}
 
+	// Protect access to session.UploadedChunks to avoid races with concurrent chunk uploads.
+	m.mu.RLock()
 	if len(session.UploadedChunks) != session.TotalChunks {
+		m.mu.RUnlock()
 		return nil, pkgerrors.Errorf("incomplete upload: %d/%d chunks uploaded",
 			len(session.UploadedChunks), session.TotalChunks)
 	}
 
 	mergedReader, err := newChunkMergedReader(session)
+	m.mu.RUnlock()
 	if err != nil {
 		return nil, err
 	}
