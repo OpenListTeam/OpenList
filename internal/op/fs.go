@@ -775,7 +775,7 @@ func TransferShare(ctx context.Context, storage driver.Driver, dstPath, shareURL
 	}
 	switch s := storage.(type) {
 	case driver.Transfer:
-		err = s.Transfer(ctx, model.UnwrapObj(rawObj), shareURL, validCode)
+		err = s.Transfer(ctx, model.UnwrapObjName(rawObj), shareURL, validCode)
 		if err != nil {
 			return errors.WithMessagef(err, "failed to transfer share to [%s]", dstPath)
 		}
