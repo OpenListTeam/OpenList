@@ -437,10 +437,15 @@ func FsTransfer(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+
+	if req.DstDir == "" || req.SrcURL == "" {
+		common.ErrorStrResp(c, "dst_dir and url are required", 400)
+		return
+	}
+
 	if err := fs.Transfer(c.Request.Context(), req.DstDir, req.SrcURL, req.ValidCode); err != nil {
 		common.ErrorResp(c, err, 500)
 		return
-	} else {
-		common.SuccessResp(c)
 	}
+	common.SuccessResp(c)
 }

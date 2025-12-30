@@ -7,9 +7,6 @@ import (
 )
 
 func Transfer(ctx context.Context, dstPath, shareURL, validCode string) error {
-	if shareURL == "" {
-		return nil
-	}
 
 	err := transfer_share(ctx, dstPath, shareURL, validCode)
 	if err != nil {
