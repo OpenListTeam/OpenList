@@ -1484,12 +1484,12 @@ func (y *Cloud189PC) getCapacityInfo(ctx context.Context) (*CapacityResp, error)
 	return &resp, nil
 }
 
-func (y *Cloud189PC) getSharedID(code string) (int64, error) {
+func (y *Cloud189PC) getSharedInfo(code string) (int64, string, string, error) {
 	resp := GetSharedInfoResp{}
 	sessionKey := y.getTokenInfo().SessionKey
 	if sessionKey == "" {
 		if err := y.refreshSession(); err != nil {
-			return -1, err
+			return -1, "", "", err
 		}
 	}
 	req := y.getClient().R().
@@ -1506,22 +1506,22 @@ func (y *Cloud189PC) getSharedID(code string) (int64, error) {
 
 	if strings.Contains(res.String(), "userSessionBO is null") {
 		if err = y.refreshSession(); err != nil {
-			return -1, err
+			return -1, "", "", err
 		}
-		return y.getSharedID(code)
+		return y.getSharedInfo(code)
 	}
 
 	if strings.Contains(res.String(), "InvalidSessionKey") {
 		if err = y.refreshSession(); err != nil {
-			return -1, err
+			return -1, "", "", err
 		}
-		return y.getSharedID(code)
+		return y.getSharedInfo(code)
 	}
 
 	if resp.ResCode != 0 || resp.ResMessage != "成功" {
-		return -1, errors.New(resp.ResMessage)
+		return -1, "", "", errors.New(resp.ResMessage)
 	}
-	return resp.ShareID, nil
+	return resp.ShareID, resp.FileId, resp.FileName, nil
 }
 
 func (y *Cloud189PC) extractCode(str string) string {

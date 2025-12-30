@@ -373,6 +373,7 @@ type BatchTaskStateResp struct {
 	SuccessedCount      int     `json:"successedCount"`
 	SuccessedFileIDList []int64 `json:"successedFileIdList"`
 	TaskID              string  `json:"taskId"`
+	ResMessage          string  `json:"res_message"`
 	TaskStatus          int     `json:"taskStatus"` //1 初始化 2 存在冲突 3 执行中，4 完成
 }
 
@@ -436,4 +437,6 @@ type GetSharedInfoResp struct {
 	AccessCode string `json:"accessCode"`
 	ShareID    int64  `json:"shareId"`
 	ExpireTime int64  `json:"expireTime"`
+	FileName   string `json:"fileName"`
+	FileId     string `json:"fileId"`
 }

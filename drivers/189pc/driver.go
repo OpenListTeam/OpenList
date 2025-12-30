@@ -434,10 +434,18 @@ func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, vali
 	if sharecode == "" {
 		return fmt.Errorf("need share code")
 	}
+	shareid, fileid, filename, err := y.getSharedInfo(sharecode)
+	if err != nil {
+		return err
+	}
+	if shareid == -1 {
+		return fmt.Errorf("failed get share id")
+	}
+
 	taskInfos := []base.Json{
 		{
-			"fileId":   dst.GetID(),
-			"fileName": dst.GetName(),
+			"fileId":   fileid,
+			"fileName": filename,
 			"isFolder": 1,
 		},
 	}
@@ -448,13 +456,6 @@ func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, vali
 	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
 	if err != nil {
 		return err
-	}
-	shareid, err := y.getSharedID(sharecode)
-	if err != nil {
-		return err
-	}
-	if shareid == -1 {
-		return fmt.Errorf("failed get share id")
 	}
 
 	form := map[string]string{
@@ -472,7 +473,11 @@ func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, vali
 		}
 		switch state.TaskStatus {
 		case 4:
-			return nil
+			if state.FailedCount == 0 {
+				return nil
+			} else {
+				return fmt.Errorf("transfer failed")
+			}
 		}
 		time.Sleep(time.Millisecond * 400)
 	}
