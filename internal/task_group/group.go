@@ -1,12 +1,13 @@
 package task_group
 
 import (
+	"context"
 	"sync"
 
 	"github.com/sirupsen/logrus"
 )
 
-type OnCompletionFunc func(groupID string, payloads ...any)
+type OnCompletionFunc func(ctx context.Context, groupID string, payloads ...any)
 type TaskGroupCoordinator struct {
 	name string
 	mu   sync.Mutex
@@ -53,7 +54,7 @@ func (tgc *TaskGroupCoordinator) AppendPayload(groupID string, payload any) {
 	tgc.groupPayloads[groupID] = append(tgc.groupPayloads[groupID], payload)
 }
 
-func (tgc *TaskGroupCoordinator) Done(groupID string, success bool) {
+func (tgc *TaskGroupCoordinator) Done(ctx context.Context, groupID string, success bool) {
 	tgc.mu.Lock()
 	defer tgc.mu.Unlock()
 	state, ok := tgc.groupStates[groupID]
@@ -71,7 +72,7 @@ func (tgc *TaskGroupCoordinator) Done(groupID string, success bool) {
 		if tgc.onCompletion != nil && state.hasSuccess {
 			logrus.Debugf("OnCompletion:%s", groupID)
 			tgc.mu.Unlock()
-			tgc.onCompletion(groupID, payloads...)
+			tgc.onCompletion(ctx, groupID, payloads...)
 			tgc.mu.Lock()
 		}
 		return

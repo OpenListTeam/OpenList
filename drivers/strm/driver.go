@@ -117,6 +117,9 @@ func (d *Strm) Init(ctx context.Context) error {
 		d.PathPrefix = "/d"
 		d.Version = 5
 	}
+	if len(d.SaveLocalMode) == 0 {
+		d.SaveLocalMode = SaveLocalInsertMode
+	}
 	return nil
 }
 
@@ -130,14 +133,11 @@ func (d *Strm) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (Addition) GetRootPath() string {
+	return "/"
+}
+
 func (d *Strm) Get(ctx context.Context, path string) (model.Obj, error) {
-	if utils.PathEqual(path, "/") {
-		return &model.Object{
-			Name:     "Root",
-			IsFolder: true,
-			Path:     "/",
-		}, nil
-	}
 	root, sub := d.getRootAndPath(path)
 	dsts, ok := d.pathMap[root]
 	if !ok {

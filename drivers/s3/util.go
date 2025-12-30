@@ -98,8 +98,8 @@ func getPlaceholderName(placeholder string) string {
 	return placeholder
 }
 
-func (d *S3) listV1(prefix string, args model.ListArgs) ([]model.Obj, error) {
-	prefix = getKey(prefix, true)
+func (d *S3) listV1(dirPath string, args model.ListArgs) ([]model.Obj, error) {
+	prefix := getKey(dirPath, true)
 	log.Debugf("list: %s", prefix)
 	files := make([]model.Obj, 0)
 	marker := ""
@@ -117,7 +117,7 @@ func (d *S3) listV1(prefix string, args model.ListArgs) ([]model.Obj, error) {
 		for _, object := range listObjectsResult.CommonPrefixes {
 			name := path.Base(strings.Trim(*object.Prefix, "/"))
 			file := model.Object{
-				//Id:        *object.Key,
+				Path:     path.Join(dirPath, name),
 				Name:     name,
 				Modified: d.Modified,
 				IsFolder: true,
@@ -130,7 +130,7 @@ func (d *S3) listV1(prefix string, args model.ListArgs) ([]model.Obj, error) {
 				continue
 			}
 			file := model.Object{
-				//Id:        *object.Key,
+				Path:     path.Join(dirPath, name),
 				Name:     name,
 				Size:     *object.Size,
 				Modified: *object.LastModified,
@@ -149,8 +149,8 @@ func (d *S3) listV1(prefix string, args model.ListArgs) ([]model.Obj, error) {
 	return files, nil
 }
 
-func (d *S3) listV2(prefix string, args model.ListArgs) ([]model.Obj, error) {
-	prefix = getKey(prefix, true)
+func (d *S3) listV2(dirPath string, args model.ListArgs) ([]model.Obj, error) {
+	prefix := getKey(dirPath, true)
 	files := make([]model.Obj, 0)
 	var continuationToken, startAfter *string
 	for {
@@ -169,7 +169,7 @@ func (d *S3) listV2(prefix string, args model.ListArgs) ([]model.Obj, error) {
 		for _, object := range listObjectsResult.CommonPrefixes {
 			name := path.Base(strings.Trim(*object.Prefix, "/"))
 			file := model.Object{
-				//Id:        *object.Key,
+				Path:     path.Join(dirPath, name),
 				Name:     name,
 				Modified: d.Modified,
 				IsFolder: true,
@@ -185,7 +185,7 @@ func (d *S3) listV2(prefix string, args model.ListArgs) ([]model.Obj, error) {
 				continue
 			}
 			file := model.Object{
-				//Id:        *object.Key,
+				Path:     path.Join(dirPath, name),
 				Name:     name,
 				Size:     *object.Size,
 				Modified: *object.LastModified,
@@ -217,9 +217,10 @@ func (d *S3) copy(ctx context.Context, src string, dst string, isDir bool) error
 func (d *S3) copyFile(ctx context.Context, src string, dst string) error {
 	srcKey := getKey(src, false)
 	dstKey := getKey(dst, false)
+	encodedKey := strings.ReplaceAll(url.PathEscape(d.Bucket+"/"+srcKey), "+", "%2B")
 	input := &s3.CopyObjectInput{
 		Bucket:     &d.Bucket,
-		CopySource: aws.String(url.PathEscape(d.Bucket + "/" + srcKey)),
+		CopySource: aws.String(encodedKey),
 		Key:        &dstKey,
 	}
 	_, err := d.client.CopyObject(input)

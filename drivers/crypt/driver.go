@@ -3,6 +3,7 @@ package crypt
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	stdpath "path"
@@ -109,48 +110,40 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 
 	result := make([]model.Obj, 0, len(objs))
 	for _, obj := range objs {
-		rawName := model.UnwrapObj(obj).GetName()
-		if obj.IsDir() {
-			name, err := d.cipher.DecryptDirName(rawName)
-			if err != nil {
-				// filter illegal files
-				continue
+		size := obj.GetSize()
+		mask := model.GetObjMask(obj)
+		name := obj.GetName()
+		if mask&model.Virtual == 0 {
+			if obj.IsDir() {
+				name, err = d.cipher.DecryptDirName(model.UnwrapObjName(obj).GetName())
+				if err != nil {
+					// filter illegal files
+					continue
+				}
+			} else {
+				size, err = d.cipher.DecryptedSize(size)
+				if err != nil {
+					// filter illegal files
+					continue
+				}
+				name, err = d.cipher.DecryptFileName(model.UnwrapObjName(obj).GetName())
+				if err != nil {
+					// filter illegal files
+					continue
+				}
 			}
-			if !d.ShowHidden && strings.HasPrefix(name, ".") {
-				continue
-			}
-			result = append(result, &model.Object{
-				Path:     stdpath.Join(remoteFullPath, rawName),
-				Name:     name,
-				Size:     0,
-				Modified: obj.ModTime(),
-				IsFolder: obj.IsDir(),
-				Ctime:    obj.CreateTime(),
-				// discarding hash as it's encrypted
-			})
-			continue
-		}
-
-		size, err := d.cipher.DecryptedSize(obj.GetSize())
-		if err != nil {
-			// filter illegal files
-			continue
-		}
-		name, err := d.cipher.DecryptFileName(rawName)
-		if err != nil {
-			// filter illegal files
-			continue
 		}
 		if !d.ShowHidden && strings.HasPrefix(name, ".") {
 			continue
 		}
 		objRes := &model.Object{
-			Path:     stdpath.Join(remoteFullPath, rawName),
+			Path:     stdpath.Join(remoteFullPath, obj.GetName()),
 			Name:     name,
 			Size:     size,
 			Modified: obj.ModTime(),
 			IsFolder: obj.IsDir(),
 			Ctime:    obj.CreateTime(),
+			Mask:     mask &^ model.Temp,
 			// discarding hash as it's encrypted
 		}
 		if !d.Thumbnail || !strings.HasPrefix(args.ReqPath, "/") {
@@ -173,20 +166,23 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	return result, nil
 }
 
-func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
-	if utils.PathEqual(path, "/") {
-		return &model.Object{
-			Name:     "Root",
-			IsFolder: true,
-			Path:     d.RemotePath,
-		}, nil
-	}
+func (a Addition) GetRootPath() string {
+	return a.RemotePath
+}
 
+func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 	firstTryIsFolder, secondTry := guessPath(path)
 	remoteFullPath := stdpath.Join(d.RemotePath, d.encryptPath(path, firstTryIsFolder))
 	remoteObj, err := fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
 	if err != nil {
-		if secondTry && errs.IsObjectNotFound(err) {
+		if errors.Is(err, errs.StorageNotFound) {
+			remoteFullPath = stdpath.Join(d.RemotePath, path)
+			remoteObj, err = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
+			if err != nil {
+				// 可能是 虚拟路径+开启文件夹加密：返回NotSupport让op.Get去尝试op.List查找
+				return nil, errs.NotSupport
+			}
+		} else if secondTry && errs.IsObjectNotFound(err) {
 			// try the opposite
 			remoteFullPath = stdpath.Join(d.RemotePath, d.encryptPath(path, !firstTryIsFolder))
 			remoteObj, err = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
@@ -199,30 +195,40 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 	}
 
 	size := remoteObj.GetSize()
-	name := model.UnwrapObj(remoteObj).GetName()
-	if !remoteObj.IsDir() {
-		size, err = d.cipher.DecryptedSize(size)
-		if err != nil {
-			log.Warnf("DecryptedSize failed for %s ,will use original size, err:%s", path, err)
-		}
-		name, err = d.cipher.DecryptFileName(name)
-		if err != nil {
-			log.Warnf("DecryptFileName failed for %s ,will use original name, err:%s", path, err)
-		}
-	} else {
-		name, err = d.cipher.DecryptDirName(name)
-		if err != nil {
-			log.Warnf("DecryptDirName failed for %s ,will use original name, err:%s", path, err)
+	name := remoteObj.GetName()
+	mask := model.GetObjMask(remoteObj) &^ model.Temp
+	if mask&model.Virtual == 0 {
+		if !remoteObj.IsDir() {
+			decryptedSize, err := d.cipher.DecryptedSize(size)
+			if err != nil {
+				log.Warnf("DecryptedSize failed for %s ,will use original size, err:%s", path, err)
+			} else {
+				size = decryptedSize
+			}
+			decryptedName, err := d.cipher.DecryptFileName(model.UnwrapObjName(remoteObj).GetName())
+			if err != nil {
+				log.Warnf("DecryptFileName failed for %s ,will use original name, err:%s", path, err)
+			} else {
+				name = decryptedName
+			}
+		} else {
+			decryptedName, err := d.cipher.DecryptDirName(model.UnwrapObjName(remoteObj).GetName())
+			if err != nil {
+				log.Warnf("DecryptDirName failed for %s ,will use original name, err:%s", path, err)
+			} else {
+				name = decryptedName
+			}
 		}
 	}
-	obj := &model.Object{
+	return &model.Object{
 		Path:     remoteFullPath,
 		Name:     name,
 		Size:     size,
 		Modified: remoteObj.ModTime(),
 		IsFolder: remoteObj.IsDir(),
-	}
-	return obj, nil
+		Ctime:    remoteObj.CreateTime(),
+		Mask:     mask,
+	}, nil
 }
 
 // https://github.com/rclone/rclone/blob/v1.67.0/backend/crypt/cipher.go#L37

@@ -21,7 +21,6 @@ var config = driver.Config{
 	Name:             "OpenList",
 	LocalSort:        true,
 	DefaultRoot:      "/",
-	CheckStatus:      true,
 	ProxyRangeOption: true,
 	LinkCacheMode:    driver.LinkCacheAuto,
 }

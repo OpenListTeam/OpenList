@@ -8,6 +8,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 type CacheManager struct {
@@ -32,39 +33,7 @@ func NewCacheManager() *CacheManager {
 var Cache = NewCacheManager()
 
 func Key(storage driver.Driver, path string) string {
-	return stdpath.Join(storage.GetStorage().MountPath, path)
-}
-
-// update object in dirCache.
-// if it's a directory, remove all its children from dirCache too.
-// if it's a file, remove its link from linkCache.
-func (cm *CacheManager) updateDirectoryObject(storage driver.Driver, dirPath string, oldObj model.Obj, newObj model.Obj) {
-	key := Key(storage, dirPath)
-	if !oldObj.IsDir() {
-		cm.linkCache.DeleteKey(stdpath.Join(key, oldObj.GetName()))
-		cm.linkCache.DeleteKey(stdpath.Join(key, newObj.GetName()))
-	}
-	if storage.Config().NoCache {
-		return
-	}
-
-	if cache, exist := cm.dirCache.Get(key); exist {
-		if oldObj.IsDir() {
-			cm.deleteDirectoryTree(stdpath.Join(key, oldObj.GetName()))
-		}
-		cache.UpdateObject(oldObj.GetName(), newObj)
-	}
-}
-
-// add new object to dirCache
-func (cm *CacheManager) addDirectoryObject(storage driver.Driver, dirPath string, newObj model.Obj) {
-	if storage.Config().NoCache {
-		return
-	}
-	cache, exist := cm.dirCache.Get(Key(storage, dirPath))
-	if exist {
-		cache.UpdateObject(newObj.GetName(), newObj)
-	}
+	return utils.GetFullPath(storage.GetStorage().MountPath, path)
 }
 
 // recursively delete directory and its children from dirCache
@@ -75,10 +44,12 @@ func (cm *CacheManager) DeleteDirectoryTree(storage driver.Driver, dirPath strin
 	cm.deleteDirectoryTree(Key(storage, dirPath))
 }
 func (cm *CacheManager) deleteDirectoryTree(key string) {
-	if dirCache, exists := cm.dirCache.Take(key); exists {
+	if dirCache, exists := cm.dirCache.Pop(key); exists {
 		for _, obj := range dirCache.objs {
 			if obj.IsDir() {
 				cm.deleteDirectoryTree(stdpath.Join(key, obj.GetName()))
+			} else {
+				cm.linkCache.DeleteKey(stdpath.Join(key, obj.GetName()))
 			}
 		}
 	}
@@ -162,15 +133,15 @@ func (cm *CacheManager) SetStorageDetails(storage driver.Driver, details *model.
 		return
 	}
 	expiration := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
-	cm.detailCache.SetWithTTL(storage.GetStorage().MountPath, details, expiration)
+	cm.detailCache.SetWithTTL(utils.GetActualMountPath(storage.GetStorage().MountPath), details, expiration)
 }
 
 func (cm *CacheManager) GetStorageDetails(storage driver.Driver) (*model.StorageDetails, bool) {
-	return cm.detailCache.Get(storage.GetStorage().MountPath)
+	return cm.detailCache.Get(utils.GetActualMountPath(storage.GetStorage().MountPath))
 }
 
 func (cm *CacheManager) InvalidateStorageDetails(storage driver.Driver) {
-	cm.detailCache.Delete(storage.GetStorage().MountPath)
+	cm.detailCache.Delete(utils.GetActualMountPath(storage.GetStorage().MountPath))
 }
 
 // clears all caches

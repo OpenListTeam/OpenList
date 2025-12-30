@@ -95,6 +95,7 @@ func (d *OpenList) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		file := model.ObjThumb{
 			Object: model.Object{
 				Name:     f.Name,
+				Path:     path.Join(dir.GetPath(), f.Name),
 				Modified: f.Modified,
 				Ctime:    f.Created,
 				Size:     f.Size,

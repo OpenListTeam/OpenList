@@ -55,8 +55,8 @@ github.com/OpenListTeam/gsync v0.1.0 h1:ywzGybOvA3lW8K1BUjKZ2IUlT2FSlzPO4DOazfYX
 github.com/OpenListTeam/gsync v0.1.0/go.mod h1:h/Rvv9aX/6CdW/7B8di3xK3xNV8dUg45Fehrd/ksZ9s=
 github.com/OpenListTeam/sftpd-openlist v1.0.1 h1:j4S3iPFOpnXCUKRPS7uCT4mF2VCl34GyqvH6lqwnkUU=
 github.com/OpenListTeam/sftpd-openlist v1.0.1/go.mod h1:uO/wKnbvbdq3rBLmClMTZXuCnw7XW4wlAq4dZe91a40=
-github.com/OpenListTeam/tache v0.2.1 h1:Uy/xAr05clHuMrr9+5fXAhv0Z5PGJivp4P5DnRez6cw=
-github.com/OpenListTeam/tache v0.2.1/go.mod h1:qmnZ/VpY2DUlmjg3UoDeNFy/LRqrw0biN3hYEEGc/+A=
+github.com/OpenListTeam/tache v0.2.2 h1:CWFn6sr1AIYaEjC8ONdKs+LrxHyuErheenAjEqRhh4k=
+github.com/OpenListTeam/tache v0.2.2/go.mod h1:qmnZ/VpY2DUlmjg3UoDeNFy/LRqrw0biN3hYEEGc/+A=
 github.com/OpenListTeam/times v0.1.0 h1:qknxw+qj5CYKgXAwydA102UEpPcpU8TYNGRmwRyPYpg=
 github.com/OpenListTeam/times v0.1.0/go.mod h1:Jx7qen5NCYzKk2w14YuvU48YYMcPa1P9a+EJePC15Pc=
 github.com/OpenListTeam/wopan-sdk-go v0.1.5 h1:iKKcVzIqBgtGDbn0QbdWrCazSGxXFmYFyrnFBG+U8dI=
@@ -180,6 +180,8 @@ github.com/blevesearch/zapx/v15 v15.4.2 h1:sWxpDE0QQOTjyxYbAVjt3+0ieu8NCE0fDRaFx
 github.com/blevesearch/zapx/v15 v15.4.2/go.mod h1:1pssev/59FsuWcgSnTa0OeEpOzmhtmr/0/11H0Z8+Nw=
 github.com/blevesearch/zapx/v16 v16.2.4 h1:tGgfvleXTAkwsD5mEzgM3zCS/7pgocTCnO1oyAUjlww=
 github.com/blevesearch/zapx/v16 v16.2.4/go.mod h1:Rti/REtuuMmzwsI8/C/qIzRaEoSK/wiFYw5e5ctUKKs=
+github.com/bmatcuk/doublestar/v4 v4.9.1 h1:X8jg9rRZmJd4yRy7ZeNDRnM+T3ZfHv15JiBJ/avrEXE=
+github.com/bmatcuk/doublestar/v4 v4.9.1/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/bodgit/plumbing v1.3.0 h1:pf9Itz1JOQgn7vEOE7v7nlEfBykYqvUYioC61TwWCFU=
 github.com/bodgit/plumbing v1.3.0/go.mod h1:JOTb4XiRu5xfnmdnDJo6GmSbSbtSyufrsyZFByMtKEs=
 github.com/bodgit/sevenzip v1.6.1 h1:kikg2pUMYC9ljU7W9SaqHXhym5HyKm8/M/jd31fYan4=
@@ -283,8 +285,8 @@ github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/foxxorcat/mopan-sdk-go v0.1.6 h1:6J37oI4wMZLj8EPgSCcSTTIbnI5D6RCNW/srX8vQd1Y=
 github.com/foxxorcat/mopan-sdk-go v0.1.6/go.mod h1:UaY6D88yBXWGrcu/PcyLWyL4lzrk5pSxSABPHftOvxs=
-github.com/foxxorcat/weiyun-sdk-go v0.1.3 h1:I5c5nfGErhq9DBumyjCVCggRA74jhgriMqRRFu5jeeY=
-github.com/foxxorcat/weiyun-sdk-go v0.1.3/go.mod h1:TPxzN0d2PahweUEHlOBWlwZSA+rELSUlGYMWgXRn9ps=
+github.com/foxxorcat/weiyun-sdk-go v0.1.4 h1:X2tFvdqikkJ7awCBbMH7XXk7+uQoJlQksJz9CUU6ZgA=
+github.com/foxxorcat/weiyun-sdk-go v0.1.4/go.mod h1:TPxzN0d2PahweUEHlOBWlwZSA+rELSUlGYMWgXRn9ps=
 github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMoQvtojpjFo=
 github.com/fxamacker/cbor/v2 v2.9.0 h1:NpKPmjDBgUfBms6tr6JZkTHtfFGcMKsw3eGcmD/sapM=
 github.com/fxamacker/cbor/v2 v2.9.0/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
@@ -398,6 +400,8 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/halalcloud/golang-sdk-lite v0.0.0-20251006164234-3c629727c499 h1:4ovnBdiGDFi8putQGxhipuuhXItAgh4/YnzufPYkZkQ=
 github.com/halalcloud/golang-sdk-lite v0.0.0-20251006164234-3c629727c499/go.mod h1:8x1h4rm3s8xMcTyJrq848sQ6BJnKzl57mDY4CNshdPM=
+github.com/halalcloud/golang-sdk-lite v0.0.0-20251105081800-78cbb6786c38 h1:lsK2GVgI2Ox0NkRpQnN09GBOH7jtsjFK5tcIgxXlLr0=
+github.com/halalcloud/golang-sdk-lite v0.0.0-20251105081800-78cbb6786c38/go.mod h1:8x1h4rm3s8xMcTyJrq848sQ6BJnKzl57mDY4CNshdPM=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
 github.com/hashicorp/errwrap v1.1.0 h1:OxrOeh75EUXMY8TBjag2fzXGZ40LB6IKw45YeGUDY2I=
 github.com/hashicorp/errwrap v1.1.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=

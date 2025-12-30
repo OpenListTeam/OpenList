@@ -11,15 +11,16 @@ import (
 
 func (d *SFTP) fileToObj(f os.FileInfo, dir string) (model.Obj, error) {
 	symlink := f.Mode()&os.ModeSymlink != 0
+	path := stdpath.Join(dir, f.Name())
 	if !symlink {
 		return &model.Object{
+			Path:     path,
 			Name:     f.Name(),
 			Size:     f.Size(),
 			Modified: f.ModTime(),
 			IsFolder: f.IsDir(),
 		}, nil
 	}
-	path := stdpath.Join(dir, f.Name())
 	// set target path
 	target, err := d.client.ReadLink(path)
 	if err != nil {
@@ -32,6 +33,7 @@ func (d *SFTP) fileToObj(f os.FileInfo, dir string) (model.Obj, error) {
 	if err != nil {
 		if d.IgnoreSymlinkError {
 			return &model.Object{
+				Path:     path,
 				Name:     f.Name(),
 				Size:     f.Size(),
 				Modified: f.ModTime(),

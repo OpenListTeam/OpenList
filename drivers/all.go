@@ -13,6 +13,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/189_tv"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/189pc"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/alias"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/alist_v3"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/aliyundrive"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/aliyundrive_open"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/aliyundrive_share"
@@ -77,11 +78,11 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/webdav"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/weiyun"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/wopan"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/wps"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/yandex_disk"
 )
 
 // All do nothing,just for import
 // same as _ import
 func All() {
-
 }

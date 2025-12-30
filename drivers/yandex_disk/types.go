@@ -42,7 +42,7 @@ type File struct {
 	//Revision   int64     `json:"revision"`
 }
 
-func fileToObj(f File) model.Obj {
+func fileToObj(f File) *model.Object {
 	return &model.Object{
 		Name:     f.Name,
 		Size:     f.Size,

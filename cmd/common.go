@@ -6,24 +6,16 @@ import (
 	"strconv"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap"
-	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/data"
-	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
 func Init() {
-	bootstrap.InitConfig()
-	bootstrap.Log()
-	bootstrap.InitDB()
-	data.InitData()
-	bootstrap.InitStreamLimit()
-	bootstrap.InitIndex()
-	bootstrap.InitUpgradePatch()
+	bootstrap.Init()
 }
 
 func Release() {
-	db.Close()
+	bootstrap.Release()
 }
 
 var pid = -1

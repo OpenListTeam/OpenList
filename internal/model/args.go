@@ -15,6 +15,7 @@ type ListArgs struct {
 	S3ShowPlaceholder  bool
 	Refresh            bool
 	WithStorageDetails bool
+	SkipHook           bool
 }
 
 type LinkArgs struct {

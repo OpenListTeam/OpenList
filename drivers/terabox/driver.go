@@ -62,7 +62,9 @@ func (d *Terabox) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 		return nil, err
 	}
 	return utils.SliceConvert(files, func(src File) (model.Obj, error) {
-		return fileToObj(src), nil
+		obj := fileToObj(src)
+		obj.Path = stdpath.Join(dir.GetPath(), obj.Name)
+		return obj, nil
 	})
 }
 

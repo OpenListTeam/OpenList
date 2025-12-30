@@ -122,11 +122,16 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
 
 ## 演示
 
-N/A（待重建）
+- 🇨🇳 [国内演示站](https://demo.oplist.org.cn)
+- 🌎 [海外演示站](https://demo.oplist.org)
 
 ## 讨论
 
 如有一般性问题请前往 [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) 讨论区，***Issues* 仅用于错误报告和功能请求。**
+
+## 赞助者
+
+[![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
 ## 许可证
 
