@@ -24,7 +24,7 @@ var strmTrie = patricia.NewTrie()
 func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 	path = utils.FixAndCleanPath(path)
 	updateLocal := func(driver *Strm, basePath string, objs []model.Obj) {
-		relParent := strings.TrimPrefix(basePath, driver.MountPath)
+		relParent := strings.TrimPrefix(basePath, utils.GetActualMountPath(driver.MountPath))
 		localParentPath := stdpath.Join(driver.SaveStrmLocalPath, relParent)
 		for _, obj := range objs {
 			localPath := stdpath.Join(localParentPath, obj.GetName())
