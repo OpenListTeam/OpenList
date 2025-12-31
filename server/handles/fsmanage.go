@@ -438,6 +438,12 @@ func FsTransfer(c *gin.Context) {
 		return
 	}
 
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	if !user.CanWrite() {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
+
 	if req.DstDir == "" || req.SrcURL == "" {
 		common.ErrorStrResp(c, "dst_dir and url are required", 400)
 		return

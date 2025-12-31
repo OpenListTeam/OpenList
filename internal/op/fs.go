@@ -770,14 +770,34 @@ func TransferShare(ctx context.Context, storage driver.Driver, dstPath, shareURL
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	rawObj, err := Get(ctx, storage, dstPath)
-	if err != nil {
-		return errors.WithStack(errs.ObjectAlreadyExists)
+	if err == errs.ObjectNotFound {
+		if e := MakeDir(ctx, storage, dstPath); e != nil {
+			return e
+		}
+	} else if err != nil {
+		return err
+	}
+	if rawObj.IsDir() {
+
 	}
 	switch s := storage.(type) {
 	case driver.Transfer:
-		err = s.Transfer(ctx, model.UnwrapObjName(rawObj), shareURL, validCode)
-		if err != nil {
+		if err = s.Transfer(ctx, model.UnwrapObjName(rawObj), shareURL, validCode); err != nil {
 			return errors.WithMessagef(err, "failed to transfer share to [%s]", dstPath)
+		}
+		if dirCache, exist := Cache.dirCache.Get(Key(storage, dstPath)); exist {
+			t := time.Now()
+			newObj := &model.Object{
+				Name:     rawObj.GetName(),
+				IsFolder: true,
+				Modified: t,
+				Ctime:    t,
+				Mask:     model.Temp,
+			}
+			dirCache.UpdateObject("", wrapObjName(storage, newObj))
+		}
+		if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
+			go objsUpdateHook(context.WithoutCancel(ctx), storage, dstPath, false)
 		}
 	default:
 		return errors.WithStack(errs.NotImplement)

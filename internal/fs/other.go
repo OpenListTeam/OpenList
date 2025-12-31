@@ -51,6 +51,9 @@ func transfer_share(ctx context.Context, dstPath, shareURL, validCode string) er
 		return fmt.Errorf("failed join path: %w", err)
 	}
 	storage, actualPath, err := op.GetStorageAndActualPath(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to load driver")
+	}
 	return op.TransferShare(ctx, storage, actualPath, shareURL, validCode)
 }
 
