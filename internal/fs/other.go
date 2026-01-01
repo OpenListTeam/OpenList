@@ -40,16 +40,7 @@ func remove(ctx context.Context, path string) error {
 	return op.Remove(ctx, storage, actualPath)
 }
 
-func transfer_share(ctx context.Context, dstPath, shareURL, validCode string) error {
-	/* get user info then join path */
-	user, ok := ctx.Value(conf.UserKey).(*model.User)
-	if !ok {
-		return fmt.Errorf("failed get user from context")
-	}
-	dstPath, err := user.JoinPath(dstPath)
-	if err != nil {
-		return fmt.Errorf("failed join path: %w", err)
-	}
+func transferShare(ctx context.Context, dstPath, shareURL, validCode string) error {
 	storage, actualPath, err := op.GetStorageAndActualPath(dstPath)
 	if err != nil {
 		return fmt.Errorf("failed to load driver")

@@ -765,44 +765,77 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	return errors.WithStack(err)
 }
 
-func TransferShare(ctx context.Context, storage driver.Driver, dstPath, shareURL, validCode string) error {
+func CanTransfer(storage driver.Driver, path string) bool {
+	_, ok := storage.(driver.Transfer)
+	_, okResult := storage.(driver.TransferResult)
+	if !ok && !okResult {
+		return false
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return false
+	}
+	if maybe, ok := storage.(driver.MaybeCannotTransfer); ok {
+		return maybe.CanTransfer(path)
+	}
+	return true
+}
+
+func TransferShare(ctx context.Context, storage driver.Driver, dstDirPath, shareURL, validCode string) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
-	rawObj, err := Get(ctx, storage, dstPath)
-	if err == errs.ObjectNotFound {
-		if e := MakeDir(ctx, storage, dstPath); e != nil {
-			return e
-		}
-	} else if err != nil {
-		return err
+	err := MakeDir(ctx, storage, dstDirPath)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to make dir [%s]", dstDirPath)
 	}
-	if !rawObj.IsDir() {
-		return errors.WithStack(errs.NotFolder)
+	parentDir, err := GetUnwrap(ctx, storage, dstDirPath)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
 	}
+	if model.ObjHasMask(parentDir, model.NoWrite) {
+		return errors.WithStack(errs.PermissionDenied)
+	}
+	var newObjs []model.Obj
 	switch s := storage.(type) {
-	case driver.Transfer:
-		if err = s.Transfer(ctx, model.UnwrapObjName(rawObj), shareURL, validCode); err != nil {
-			return errors.WithMessagef(err, "failed to transfer share to [%s]", dstPath)
-		}
-		if dirCache, exist := Cache.dirCache.Get(Key(storage, dstPath)); exist {
-			t := time.Now()
-			newObj := &model.Object{
-				Name:     rawObj.GetName(),
-				IsFolder: true,
-				Modified: t,
-				Ctime:    t,
-				Mask:     model.Temp,
+	case driver.TransferResult:
+		newObjs, err = s.Transfer(ctx, parentDir, shareURL, validCode)
+		if err == nil {
+			if len(newObjs) > 0 {
+				if !storage.Config().NoCache {
+					if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
+						for _, newObj := range newObjs {
+							cache.UpdateObject(newObj.GetName(), newObj)
+						}
+					}
+				}
+			} else {
+				Cache.DeleteDirectory(storage, dstDirPath)
 			}
-			dirCache.UpdateObject("", wrapObjName(storage, newObj))
+		} else {
+			err = errors.WithMessagef(err, "failed to transfer share to [%s]", dstDirPath)
 		}
-		if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
-			go objsUpdateHook(context.WithoutCancel(ctx), storage, dstPath, false)
+	case driver.Transfer:
+		if err = s.Transfer(ctx, parentDir, shareURL, validCode); err != nil {
+			err = errors.WithMessagef(err, "failed to transfer share to [%s]", dstDirPath)
+		} else {
+			Cache.DeleteDirectory(storage, dstDirPath)
 		}
 	default:
 		return errors.WithStack(errs.NotImplement)
 	}
-	return nil
+	if err == nil && ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
+		onlyList := false
+		targetPath := dstDirPath
+		if newObjs != nil && len(newObjs) == 1 && newObjs[0].IsDir() {
+			targetPath = stdpath.Join(dstDirPath, newObjs[0].GetName())
+		} else if newObjs != nil && !utils.SliceMeet(newObjs, nil, func(item model.Obj, _ any) bool {
+			return item.IsDir()
+		}) {
+			onlyList = true
+		}
+		go objsUpdateHook(ctx, storage, targetPath, !onlyList)
+	}
+	return err
 }
 
 func GetDirectUploadTools(storage driver.Driver) []string {

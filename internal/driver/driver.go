@@ -111,8 +111,17 @@ type PutURL interface {
 }
 
 type Transfer interface {
-	// save the sharing file to dstDir
+	// Transfer save the sharing file to dstDir
 	Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error
+}
+
+type TransferResult interface {
+	// Transfer save the sharing file to dstDir and return results
+	Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) ([]model.Obj, error)
+}
+
+type MaybeCannotTransfer interface {
+	CanTransfer(path string) bool
 }
 
 //type WriteResult interface {
