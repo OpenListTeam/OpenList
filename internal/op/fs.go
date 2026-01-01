@@ -777,8 +777,8 @@ func TransferShare(ctx context.Context, storage driver.Driver, dstPath, shareURL
 	} else if err != nil {
 		return err
 	}
-	if rawObj.IsDir() {
-
+	if !rawObj.IsDir() {
+		return errors.WithStack(errs.NotFolder)
 	}
 	switch s := storage.(type) {
 	case driver.Transfer:
