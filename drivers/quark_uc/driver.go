@@ -241,7 +241,10 @@ func (d *QuarkOrUC) Transfer(ctx context.Context, dst model.Obj, shareURL, valid
 	if err != nil {
 		return err
 	}
-	return d.transfer(dst, shareToken)
+	if shareToken == "" {
+		return errors.New("getting share token error")
+	}
+	return d.transfer(dst, shareToken, pwd_id)
 }
 
 var _ driver.Driver = (*QuarkOrUC)(nil)

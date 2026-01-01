@@ -368,7 +368,8 @@ func (d *QuarkOrUC) getPwdID(shareURL string) string {
 	if len(codeParts) == 0 {
 		return ""
 	}
-	return codeParts[0]
+	pwd_id := strings.Split(codeParts[0], "#")[0]
+	return pwd_id
 }
 
 func (d *QuarkOrUC) getShareToken(pwd_id, passcode string) (string, error) {
@@ -378,9 +379,10 @@ func (d *QuarkOrUC) getShareToken(pwd_id, passcode string) (string, error) {
 		req.SetQueryParam("__t", strconv.FormatInt(time.Now().UnixMilli(), 10))
 		req.SetQueryParam("__dt", strconv.FormatInt(random.RangeInt64(100, 500), 10))
 		req.SetBody(base.Json{
-			"pwd_id":     pwd_id,
-			"passcode":   passcode,
-			"share_from": "",
+			"pwd_id":                            pwd_id,
+			"passcode":                          passcode,
+			"share_from":                        "",
+			"support_visit_limit_private_share": true,
 		})
 	}, &resp)
 	if err != nil {
@@ -392,17 +394,20 @@ func (d *QuarkOrUC) getShareToken(pwd_id, passcode string) (string, error) {
 	return "", errors.New("unknown error")
 }
 
-func (d *QuarkOrUC) transfer(dstDir model.Obj, shareToken string) error {
+func (d *QuarkOrUC) transfer(dstDir model.Obj, shareToken, pwdId string) error {
 	resp := SaveShareResp{}
 	data := base.Json{
 		"stoken":        shareToken,
-		"pdir_fid":      dstDir.GetID(),
+		"pdir_fid":      "0",
 		"to_pdir_fid":   dstDir.GetID(),
+		"pwd_id":        pwdId,
+		"scene":         "link",
 		"pdir_save_all": true,
-		"scene":         "line",
 	}
 	_, err := d.request("/share/sharepage/save", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
+		req.SetQueryParam("__t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+		req.SetQueryParam("__dt", strconv.FormatInt(random.RangeInt64(100, 500), 10))
 	}, &resp)
 	if err != nil {
 		return err
@@ -411,8 +416,12 @@ func (d *QuarkOrUC) transfer(dstDir model.Obj, shareToken string) error {
 		retry_index := 0
 		for {
 			check_resp := TaskCheckResp{}
-			_, err := d.request("/share/sharepage/task/check", http.MethodGet, func(req *resty.Request) {
+			_, err := d.request("/task", http.MethodGet, func(req *resty.Request) {
 				req.SetQueryParam("task_id", resp.Data.TaskID)
+				req.SetQueryParam("__t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+				req.SetQueryParam("__dt", strconv.FormatInt(random.RangeInt64(100, 500), 10))
+				req.SetQueryParam("retry_index", strconv.Itoa(retry_index))
+				req.SetQueryParam("uc_param_str", "")
 			}, &check_resp)
 			if err != nil {
 				return err

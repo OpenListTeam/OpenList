@@ -286,7 +286,7 @@ type MemberResp struct {
 type ShareTokenResp struct {
 	Resp
 	Data struct {
-		ShareToken string `json:"shareToken"`
+		ShareToken string `json:"stoken"`
 	}
 }
 
@@ -310,5 +310,5 @@ type TaskCheckResp struct {
 	Resp
 	Data struct {
 		Status int `json:"status"`
-	}
+	} `json:"data"`
 }
