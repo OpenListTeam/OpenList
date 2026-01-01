@@ -115,14 +115,14 @@ type FilePath []struct {
 	UpdateTime          int64  `json:"update_time"`
 }
 
-type GetFileUrlResp struct {
+type GetDownloadInfoResp struct {
 	BaseResp
 	Data struct {
-		FileUrls []struct {
-			URI     string `json:"uri"`
-			MainURL string `json:"main_url"`
-			BackURL string `json:"back_url"`
-		} `json:"file_urls"`
+		DownloadInfos []struct {
+			NodeID    string `json:"node_id"`
+			MainURL   string `json:"main_url"`
+			BackupURL string `json:"backup_url"`
+		} `json:"download_infos"`
 	} `json:"data"`
 }
 

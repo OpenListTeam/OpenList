@@ -270,16 +270,12 @@ func (d *Chunk) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	// 检查0号块不等于-1 以支持空文件
 	// 如果块数量大于1 最后一块不可能为0
 	// 只检查中间块是否有0
-	for i, l := 0, len(chunkFile.chunkSizes)-2; ; i++ {
-		if i == 0 {
-			if chunkFile.chunkSizes[i] == -1 {
-				return nil, fmt.Errorf("chunk part[%d] are missing", i)
-			}
-		} else if chunkFile.chunkSizes[i] == 0 {
+	if chunkFile.chunkSizes[0] == -1 {
+		return nil, fmt.Errorf("chunk part[%d] are missing", 0)
+	}
+	for i, l := 1, len(chunkFile.chunkSizes)-1; i < l; i++ {
+		if chunkFile.chunkSizes[i] == 0 {
 			return nil, fmt.Errorf("chunk part[%d] are missing", i)
-		}
-		if i >= l {
-			break
 		}
 	}
 	fileSize := chunkFile.GetSize()

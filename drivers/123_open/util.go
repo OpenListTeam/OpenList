@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
@@ -22,8 +21,6 @@ import (
 var ( // 不同情况下获取的AccessTokenQPS限制不同 如下模块化易于拓展
 	Api = "https://open-api.123pan.com"
 
-	AccessToken    = InitApiInfo(Api+"/api/v1/access_token", 1)
-	RefreshToken   = InitApiInfo(Api+"/api/v1/oauth2/access_token", 1)
 	UserInfo       = InitApiInfo(Api+"/api/v1/user/info", 1)
 	FileList       = InitApiInfo(Api+"/api/v2/file/list", 3)
 	DownloadInfo   = InitApiInfo(Api+"/api/v1/file/download_info", 5)
@@ -40,11 +37,14 @@ var ( // 不同情况下获取的AccessTokenQPS限制不同 如下模块化易�
 )
 
 func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	retryToken := true
 	for {
+		token, err := d.getAccessToken(false)
+		if err != nil {
+			return nil, err
+		}
 		req := base.RestyClient.R()
 		req.SetHeaders(map[string]string{
-			"authorization": "Bearer " + d.AccessToken,
+			"authorization": "Bearer " + token,
 			"platform":      "open_platform",
 			"Content-Type":  "application/json",
 		})
@@ -74,9 +74,9 @@ func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCall
 
 		if baseResp.Code == 0 {
 			return body, nil
-		} else if baseResp.Code == 401 && retryToken {
-			retryToken = false
-			if err := d.flushAccessToken(); err != nil {
+		} else if baseResp.Code == 401 {
+			// 强制刷新Token, 有小概率会 race condition 导致多次刷新Token，但不影响正确运行
+			if _, err := d.getAccessToken(true); err != nil {
 				return nil, err
 			}
 		} else if baseResp.Code == 429 {
@@ -86,42 +86,6 @@ func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCall
 			return nil, errors.New(baseResp.Message)
 		}
 	}
-}
-
-func (d *Open123) flushAccessToken() error {
-	if d.ClientID != "" {
-		if d.RefreshToken != "" {
-			var resp RefreshTokenResp
-			_, err := d.Request(RefreshToken, http.MethodPost, func(req *resty.Request) {
-				req.SetQueryParam("client_id", d.ClientID)
-				if d.ClientSecret != "" {
-					req.SetQueryParam("client_secret", d.ClientSecret)
-				}
-				req.SetQueryParam("grant_type", "refresh_token")
-				req.SetQueryParam("refresh_token", d.RefreshToken)
-			}, &resp)
-			if err != nil {
-				return err
-			}
-			d.AccessToken = resp.AccessToken
-			d.RefreshToken = resp.RefreshToken
-			op.MustSaveDriverStorage(d)
-		} else if d.ClientSecret != "" {
-			var resp AccessTokenResp
-			_, err := d.Request(AccessToken, http.MethodPost, func(req *resty.Request) {
-				req.SetBody(base.Json{
-					"clientID":     d.ClientID,
-					"clientSecret": d.ClientSecret,
-				})
-			}, &resp)
-			if err != nil {
-				return err
-			}
-			d.AccessToken = resp.Data.AccessToken
-			op.MustSaveDriverStorage(d)
-		}
-	}
-	return nil
 }
 
 func (d *Open123) SignURL(originURL, privateKey string, uid uint64, validDuration time.Duration) (newURL string, err error) {

@@ -117,6 +117,9 @@ func (d *Strm) Init(ctx context.Context) error {
 		d.PathPrefix = "/d"
 		d.Version = 5
 	}
+	if len(d.SaveLocalMode) == 0 {
+		d.SaveLocalMode = SaveLocalInsertMode
+	}
 	return nil
 }
 

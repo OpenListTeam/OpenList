@@ -18,6 +18,7 @@ type Open123 struct {
 	model.Storage
 	Addition
 	UID uint64
+	tm  *tokenManager
 }
 
 func (d *Open123) Config() driver.Config {
@@ -31,6 +32,24 @@ func (d *Open123) GetAddition() driver.Additional {
 func (d *Open123) Init(ctx context.Context) error {
 	if d.UploadThread < 1 || d.UploadThread > 32 {
 		d.UploadThread = 3
+	}
+
+	if d.RefreshToken != "" {
+		// refresh token 直接主动刷新
+		d.AccessToken = ""
+		d.tm = &tokenManager{}
+	} else {
+		// 避免个人 token 刷新产生的多个登录，被动刷新
+		// 默认过期时间90天，jwt exp 不可靠
+		d.tm = &tokenManager{
+			// accessToken: d.AccessToken,
+			expiredAt: time.Now().Add(90 * 24 * time.Hour),
+		}
+	}
+
+	_, err := d.getAccessToken(false)
+	if err != nil {
+		return fmt.Errorf("init get access token error: %w", err)
 	}
 
 	return nil

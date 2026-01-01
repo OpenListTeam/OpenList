@@ -15,7 +15,7 @@ import (
 func list(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error) {
 	meta, _ := ctx.Value(conf.MetaKey).(*model.Meta)
 	user, _ := ctx.Value(conf.UserKey).(*model.User)
-	virtualFiles := op.GetStorageVirtualFilesWithDetailsByPath(ctx, path, !args.WithStorageDetails, args.Refresh)
+	virtualFiles := op.GetStorageVirtualFilesWithDetailsByPath(ctx, path, !args.WithStorageDetails, args.Refresh, "")
 	storage, actualPath, err := op.GetStorageAndActualPath(path)
 	if err != nil && len(virtualFiles) == 0 {
 		return nil, errors.WithMessage(err, "failed get storage")

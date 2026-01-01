@@ -122,7 +122,8 @@ Thank you for your support and understanding of the OpenList project.
 
 ## Demo
 
-N/A (to be rebuilt)
+- 🌎 [Global Demo](https://demo.oplist.org)
+- 🇨🇳 [CN Demo](https://demo.oplist.org.cn)
 
 ## Discussion
 

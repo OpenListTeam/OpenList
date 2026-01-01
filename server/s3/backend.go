@@ -281,6 +281,11 @@ func (b *s3Backend) PutObject(
 		ti, _ = swift.FloatStringToTime(val)
 	}
 
+	// If Modified is not set, use current time
+	if ti.IsZero() {
+		ti = time.Now()
+	}
+
 	obj := model.Object{
 		Name:     path.Base(fp),
 		Size:     size,

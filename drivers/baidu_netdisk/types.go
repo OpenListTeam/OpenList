@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 var (
@@ -76,9 +75,7 @@ func fileToObj(f File) *model.ObjThumb {
 			Modified: time.Unix(f.ServerMtime, 0),
 			Ctime:    time.Unix(f.ServerCtime, 0),
 			IsFolder: f.Isdir == 1,
-
-			// 直接获取的MD5是错误的
-			HashInfo: utils.NewHashInfo(utils.MD5, DecryptMd5(f.Md5)),
+			// 百度API返回的MD5不可信，不使用HashInfo
 		},
 		Thumbnail: model.Thumbnail{Thumbnail: f.Thumbs.Url3},
 	}
