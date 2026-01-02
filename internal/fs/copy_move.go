@@ -191,10 +191,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 
 		existedObjs := make(map[string]bool)
 		if t.TaskType == merge {
-			dstObjs, err := op.List(t.Ctx(), t.DstStorage, dstActualPath, model.ListArgs{})
-			if err != nil {
-				return errors.WithMessagef(err, "failed list dst [%s] objs", dstActualPath)
-			}
+			dstObjs, _ := op.List(t.Ctx(), t.DstStorage, dstActualPath, model.ListArgs{})
 			for _, obj := range dstObjs {
 				if err := t.Ctx().Err(); err != nil {
 					return err
