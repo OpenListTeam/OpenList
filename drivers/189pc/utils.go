@@ -1494,8 +1494,7 @@ func (y *Cloud189PC) getSharedInfo(code string) (int64, string, string, error) {
 	}
 	req := y.getClient().R().
 		SetHeader("Accept", "application/json;charset=UTF-8").
-		SetHeader("Referer", "https://cloud.189.cn/web/share?code=2QFRjyiMfiue").
-		SetHeader("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36").
+		SetHeader("Referer", fmt.Sprintf("https://cloud.189.cn/web/share?code=%s", code)).
 		SetHeader("SessionKey", y.getTokenInfo().SessionKey).
 		SetQueryParams(map[string]string{
 			"noCache":   random_num(),
