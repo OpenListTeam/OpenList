@@ -437,19 +437,21 @@ func FsTransfer(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-
+	if req.DstDir == "" || req.SrcURL == "" {
+		common.ErrorStrResp(c, "dst_dir and url are required", 400)
+		return
+	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if !user.CanWrite() {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-
-	if req.DstDir == "" || req.SrcURL == "" {
-		common.ErrorStrResp(c, "dst_dir and url are required", 400)
+	reqDir, err := user.JoinPath(req.DstDir)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
 		return
 	}
-
-	if err := fs.Transfer(c.Request.Context(), req.DstDir, req.SrcURL, req.ValidCode); err != nil {
+	if err := fs.Transfer(c.Request.Context(), reqDir, req.SrcURL, req.ValidCode); err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}

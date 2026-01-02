@@ -140,8 +140,8 @@ func ArchiveList(ctx context.Context, path string, args model.ArchiveListArgs) (
 	return objs, err
 }
 
-func ArchiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args model.ArchiveDecompressArgs, lazyCache ...bool) (task.TaskExtensionInfo, error) {
-	t, err := archiveDecompress(ctx, srcObjPath, dstDirPath, args, lazyCache...)
+func ArchiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args model.ArchiveDecompressArgs) (task.TaskExtensionInfo, error) {
+	t, err := archiveDecompress(ctx, srcObjPath, dstDirPath, args)
 	if err != nil {
 		log.Errorf("failed decompress [%s]%s: %+v", srcObjPath, args.InnerPath, err)
 	}
@@ -208,12 +208,10 @@ func GetDirectUploadInfo(ctx context.Context, tool, path, dstName string, fileSi
 }
 
 func Transfer(ctx context.Context, dstPath, shareURL, validCode string) error {
-
-	err := transfer_share(ctx, dstPath, shareURL, validCode)
+	err := transferShare(ctx, dstPath, shareURL, validCode)
 	if err != nil {
 		log.Errorf("failed transfer %s: %+v", dstPath, err)
 		return err
 	}
-
 	return nil
 }
