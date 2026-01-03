@@ -49,6 +49,18 @@ type downloadResp struct {
 	Result string `json:"result"`
 }
 
+type spacesResp struct {
+	Id        int64  `json:"id"`
+	Name      string `json:"name"`
+	Result    string `json:"result"`
+	Total     uint64 `json:"total"`
+	Used      uint64 `json:"used"`
+	UsedParts []struct {
+		Type string `json:"type"`
+		Used uint64 `json:"used"`
+	} `json:"used_parts"`
+}
+
 type Obj struct {
 	id          string
 	name        string

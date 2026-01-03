@@ -356,6 +356,16 @@ func (d *MoPan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	}, nil
 }
 
+func (d *MoPan) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	quota, err := d.client.UsedSpace()
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(uint64(quota.Used), uint64(quota.Capacity)),
+	}, nil
+}
+
 var _ driver.Driver = (*MoPan)(nil)
 var _ driver.MkdirResult = (*MoPan)(nil)
 var _ driver.MoveResult = (*MoPan)(nil)

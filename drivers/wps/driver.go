@@ -75,4 +75,14 @@ func (d *Wps) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	return d.put(ctx, dstDir, file, up)
 }
 
+func (d *Wps) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	quota, err := d.spaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(quota.Used, quota.Total),
+	}, nil
+}
+
 var _ driver.Driver = (*Wps)(nil)
