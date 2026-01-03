@@ -195,6 +195,16 @@ func (d *Mega) Put(ctx context.Context, dstDir model.Obj, stream model.FileStrea
 	return fmt.Errorf("unable to convert dir to mega n")
 }
 
+func (d *Mega) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	quota, err := d.c.GetQuota()
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: driver.DiskUsageFromUsedAndTotal(quota.Mstrg, quota.Cstrg),
+	}, nil
+}
+
 //func (d *Mega) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}
