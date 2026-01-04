@@ -430,6 +430,10 @@ func (y *Cloud189PC) GetDetails(ctx context.Context) (*model.StorageDetails, err
 }
 
 func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	if !dst.IsDir() {
+		return fmt.Errorf("it should be in the folder")
+	}
+
 	sharecode := y.extractCode(shareURL)
 	if sharecode == "" {
 		return fmt.Errorf("need share code")
@@ -450,9 +454,6 @@ func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, vali
 		},
 	}
 
-	if !dst.IsDir() {
-		return fmt.Errorf("it should be in the folder")
-	}
 	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
 	if err != nil {
 		return err
