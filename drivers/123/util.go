@@ -48,7 +48,6 @@ const (
 	OfflineResolve    = MainApi + "/v2/offline_download/task/resolve"
 	OfflineSubmit     = MainApi + "/v2/offline_download/task/submit"
 	OfflineTaskList   = MainApi + "/offline_download/task/list"
-	OfflineTaskStatus = MainApi + "/offline_download/task/status"
 	OfflineTaskDelete = MainApi + "/offline_download/task/delete"
 	// AuthKeySalt      = "8-8D$sL8gPjom7bk#cY"
 )
@@ -342,17 +341,6 @@ func (d *Pan123) GetOfflineTask(ctx context.Context, taskID int64) (*offlineTask
 		page++
 	}
 	return nil, ErrOfflineTaskNotFound
-}
-
-func (d *Pan123) GetOfflineDownloadStatus(ctx context.Context) (int, error) {
-	var resp offlineTaskStatusResp
-	_, err := d.Request(OfflineTaskStatus, http.MethodPost, func(req *resty.Request) {
-		req.SetContext(ctx).SetBody(base.Json{})
-	}, &resp)
-	if err != nil {
-		return 0, err
-	}
-	return resp.Data.Status, nil
 }
 
 func (d *Pan123) DeleteOfflineTasks(ctx context.Context, taskIDs []int64) error {

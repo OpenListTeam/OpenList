@@ -165,14 +165,6 @@ type offlineTaskListResp struct {
 	} `json:"data"`
 }
 
-type offlineTaskStatusResp struct {
-	Data struct {
-		Status          int   `json:"status"`
-		Speed           int64 `json:"speed"`
-		IntervalSeconds int   `json:"intervalSeconds"`
-	} `json:"data"`
-}
-
 type offlineTask struct {
 	TaskID     int64   `json:"task_id"`
 	Name       string  `json:"name"`

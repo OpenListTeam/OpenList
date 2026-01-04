@@ -2,7 +2,6 @@ package _123_pan
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 
@@ -104,38 +103,9 @@ func (*Pan123) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		return nil, fmt.Errorf("unsupported storage driver for offline download, only 123Pan is supported")
 	}
 
-	t, getErr := driver123.GetOfflineTask(context.Background(), taskID)
-	if getErr != nil {
-		if errors.Is(getErr, _123.ErrOfflineTaskNotFound) {
-			status, err := driver123.GetOfflineDownloadStatus(context.Background())
-			if err != nil {
-				return nil, err
-			}
-			switch status {
-			case 2:
-				return &tool.Status{
-					Progress:  100,
-					Completed: true,
-					Status:    "succeed",
-					Err:       nil,
-				}, nil
-			case 0:
-				return &tool.Status{
-					Progress:  0,
-					Completed: false,
-					Status:    "searching",
-					Err:       nil,
-				}, nil
-			default:
-				return &tool.Status{
-					Progress:  0,
-					Completed: false,
-					Status:    fmt.Sprintf("queue_status_%d", status),
-					Err:       nil,
-				}, nil
-			}
-		}
-		return nil, getErr
+	t, err := driver123.GetOfflineTask(context.Background(), taskID)
+	if err != nil {
+		return nil, err
 	}
 
 	var statusStr string
