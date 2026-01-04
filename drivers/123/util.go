@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	jsoniter "github.com/json-iterator/go"
@@ -43,8 +44,16 @@ const (
 	S3Auth           = MainApi + "/file/s3_upload_object/auth"
 	UploadCompleteV2 = MainApi + "/file/upload_complete/v2"
 	S3Complete       = MainApi + "/file/s3_complete_multipart_upload"
+
+	OfflineResolve    = MainApi + "/v2/offline_download/task/resolve"
+	OfflineSubmit     = MainApi + "/v2/offline_download/task/submit"
+	OfflineTaskList   = MainApi + "/offline_download/task/list"
+	OfflineTaskStatus = MainApi + "/offline_download/task/status"
+	OfflineTaskDelete = MainApi + "/offline_download/task/delete"
 	// AuthKeySalt      = "8-8D$sL8gPjom7bk#cY"
 )
+
+var ErrOfflineTaskNotFound = errors.New("offline task not found")
 
 func signPath(path string, os string, version string) (k string, v string) {
 	table := []byte{'a', 'd', 'e', 'f', 'g', 'h', 'l', 'm', 'y', 'i', 'j', 'n', 'o', 'p', 'k', 'q', 'r', 's', 't', 'u', 'b', 'c', 'v', 'w', 's', 'z'}
@@ -236,6 +245,179 @@ do:
 		return nil, errors.New(jsoniter.Get(body, "message").ToString())
 	}
 	return body, nil
+}
+
+type offlineResolveResp struct {
+	Data struct {
+		List []struct {
+			Result  int    `json:"result"`
+			ID      int64  `json:"id"`
+			ErrCode int    `json:"err_code"`
+			ErrMsg  string `json:"err_msg"`
+			Files   []struct {
+				ID int64 `json:"id"`
+			} `json:"files"`
+		} `json:"list"`
+	} `json:"data"`
+}
+
+type offlineSubmitResp struct {
+	Data struct {
+		TaskList []struct {
+			TaskID int64 `json:"task_id"`
+			Result int   `json:"result"`
+		} `json:"task_list"`
+	} `json:"data"`
+}
+
+type offlineTaskListResp struct {
+	Data struct {
+		HasRun bool          `json:"has_run"`
+		List   []offlineTask `json:"list"`
+		Total  int           `json:"total"`
+	} `json:"data"`
+}
+
+type offlineTaskStatusResp struct {
+	Data struct {
+		Status          int   `json:"status"`
+		Speed           int64 `json:"speed"`
+		IntervalSeconds int   `json:"intervalSeconds"`
+	} `json:"data"`
+}
+
+type offlineTask struct {
+	TaskID     int64   `json:"task_id"`
+	Name       string  `json:"name"`
+	Status     int     `json:"status"`
+	Size       int64   `json:"size"`
+	ThirdTask  string  `json:"third_task_id"`
+	Downloaded int64   `json:"downloaded"`
+	Progress   float64 `json:"progress"`
+	UploadIDR  int64   `json:"upload_idr"`
+	UploadName string  `json:"upload_name"`
+	Type       string  `json:"type"`
+	Speed      int64   `json:"speed"`
+}
+
+func (d *Pan123) OfflineDownload(ctx context.Context, uri string, dstDir model.Obj) (int64, error) {
+	var resolveResp offlineResolveResp
+	_, err := d.Request(OfflineResolve, http.MethodPost, func(req *resty.Request) {
+		req.SetContext(ctx).SetBody(base.Json{
+			"urls": uri,
+		})
+	}, &resolveResp)
+	if err != nil {
+		return 0, err
+	}
+	if len(resolveResp.Data.List) == 0 {
+		return 0, fmt.Errorf("offline resolve failed: empty response")
+	}
+	if resolveResp.Data.List[0].Result != 0 {
+		msg := resolveResp.Data.List[0].ErrMsg
+		if msg == "" {
+			msg = "offline resolve failed"
+		}
+		return 0, fmt.Errorf("%s", msg)
+	}
+	resourceID := resolveResp.Data.List[0].ID
+	if resourceID == 0 {
+		return 0, fmt.Errorf("offline resolve failed: empty resource id")
+	}
+	selectFileIDs := make([]int64, 0, len(resolveResp.Data.List[0].Files))
+	for _, f := range resolveResp.Data.List[0].Files {
+		if f.ID > 0 {
+			selectFileIDs = append(selectFileIDs, f.ID)
+		}
+	}
+	if len(selectFileIDs) == 0 {
+		return 0, fmt.Errorf("offline resolve failed: empty file list")
+	}
+	uploadDir, err := strconv.ParseInt(dstDir.GetID(), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid destination dir id: %s", dstDir.GetID())
+	}
+
+	var submitResp offlineSubmitResp
+	_, err = d.Request(OfflineSubmit, http.MethodPost, func(req *resty.Request) {
+		req.SetContext(ctx).SetBody(base.Json{
+			"resource_list": []base.Json{
+				{
+					"resource_id":    resourceID,
+					"select_file_id": selectFileIDs,
+				},
+			},
+			"upload_dir": uploadDir,
+		})
+	}, &submitResp)
+	if err != nil {
+		return 0, err
+	}
+	if len(submitResp.Data.TaskList) == 0 {
+		return 0, fmt.Errorf("offline submit failed: empty task list")
+	}
+	if submitResp.Data.TaskList[0].Result != 0 {
+		return 0, fmt.Errorf("offline submit failed")
+	}
+	if submitResp.Data.TaskList[0].TaskID == 0 {
+		return 0, fmt.Errorf("offline submit failed: empty task id")
+	}
+	return submitResp.Data.TaskList[0].TaskID, nil
+}
+
+func (d *Pan123) GetOfflineTask(ctx context.Context, taskID int64) (*offlineTask, error) {
+	if taskID == 0 {
+		return nil, fmt.Errorf("invalid task id")
+	}
+	page := 1
+	pageSize := 100
+	statusArr := []int{0, 1, 2, 3, 4}
+	for {
+		var listResp offlineTaskListResp
+		_, err := d.Request(OfflineTaskList, http.MethodPost, func(req *resty.Request) {
+			req.SetContext(ctx).SetBody(base.Json{
+				"current_page": page,
+				"page_size":    pageSize,
+				"status_arr":   statusArr,
+			})
+		}, &listResp)
+		if err != nil {
+			return nil, err
+		}
+		for i := range listResp.Data.List {
+			if listResp.Data.List[i].TaskID == taskID {
+				return &listResp.Data.List[i], nil
+			}
+		}
+		if len(listResp.Data.List) == 0 || page*pageSize >= listResp.Data.Total {
+			break
+		}
+		page++
+	}
+	return nil, ErrOfflineTaskNotFound
+}
+
+func (d *Pan123) GetOfflineDownloadStatus(ctx context.Context) (int, error) {
+	var resp offlineTaskStatusResp
+	_, err := d.Request(OfflineTaskStatus, http.MethodPost, func(req *resty.Request) {
+		req.SetContext(ctx).SetBody(base.Json{})
+	}, &resp)
+	if err != nil {
+		return 0, err
+	}
+	return resp.Data.Status, nil
+}
+
+func (d *Pan123) DeleteOfflineTasks(ctx context.Context, taskIDs []int64) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	_, err := d.Request(OfflineTaskDelete, http.MethodPost, func(req *resty.Request) {
+		req.SetContext(ctx).SetBody(base.Json{
+			"task_ids": taskIDs,
+		})
+	}, nil)
+	return err
 }
 
 func (d *Pan123) getFiles(ctx context.Context, parentId string, name string) ([]File, error) {
