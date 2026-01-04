@@ -147,11 +147,11 @@ func (*Pan123) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	case 2:
 		statusStr = "succeed"
 		completed = true
-	case 4:
-		statusStr = "pending"
 	case 1:
 		statusStr = "failed"
 		taskErr = fmt.Errorf("offline download failed")
+	case 3:
+		statusStr = "retrying"
 	default:
 		statusStr = fmt.Sprintf("status_%d", t.Status)
 	}

@@ -247,59 +247,6 @@ do:
 	return body, nil
 }
 
-type offlineResolveResp struct {
-	Data struct {
-		List []struct {
-			Result  int    `json:"result"`
-			ID      int64  `json:"id"`
-			ErrCode int    `json:"err_code"`
-			ErrMsg  string `json:"err_msg"`
-			Files   []struct {
-				ID int64 `json:"id"`
-			} `json:"files"`
-		} `json:"list"`
-	} `json:"data"`
-}
-
-type offlineSubmitResp struct {
-	Data struct {
-		TaskList []struct {
-			TaskID int64 `json:"task_id"`
-			Result int   `json:"result"`
-		} `json:"task_list"`
-	} `json:"data"`
-}
-
-type offlineTaskListResp struct {
-	Data struct {
-		HasRun bool          `json:"has_run"`
-		List   []offlineTask `json:"list"`
-		Total  int           `json:"total"`
-	} `json:"data"`
-}
-
-type offlineTaskStatusResp struct {
-	Data struct {
-		Status          int   `json:"status"`
-		Speed           int64 `json:"speed"`
-		IntervalSeconds int   `json:"intervalSeconds"`
-	} `json:"data"`
-}
-
-type offlineTask struct {
-	TaskID     int64   `json:"task_id"`
-	Name       string  `json:"name"`
-	Status     int     `json:"status"`
-	Size       int64   `json:"size"`
-	ThirdTask  string  `json:"third_task_id"`
-	Downloaded int64   `json:"downloaded"`
-	Progress   float64 `json:"progress"`
-	UploadIDR  int64   `json:"upload_idr"`
-	UploadName string  `json:"upload_name"`
-	Type       string  `json:"type"`
-	Speed      int64   `json:"speed"`
-}
-
 func (d *Pan123) OfflineDownload(ctx context.Context, uri string, dstDir model.Obj) (int64, error) {
 	var resolveResp offlineResolveResp
 	_, err := d.Request(OfflineResolve, http.MethodPost, func(req *resty.Request) {
@@ -371,7 +318,7 @@ func (d *Pan123) GetOfflineTask(ctx context.Context, taskID int64) (*offlineTask
 	}
 	page := 1
 	pageSize := 100
-	statusArr := []int{0, 1, 2, 3, 4}
+	statusArr := []int{0, 1, 2, 3}
 	for {
 		var listResp offlineTaskListResp
 		_, err := d.Request(OfflineTaskList, http.MethodPost, func(req *resty.Request) {
