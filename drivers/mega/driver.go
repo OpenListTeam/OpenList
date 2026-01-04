@@ -152,7 +152,7 @@ func (d *Mega) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 
 func (d *Mega) Remove(ctx context.Context, obj model.Obj) error {
 	if node, ok := obj.(*MegaNode); ok {
-		return d.c.Delete(node.n, false)
+		return d.c.Delete(node.n, !d.MoveToTrash)
 	}
 	return fmt.Errorf("unable to convert dir to mega n")
 }
