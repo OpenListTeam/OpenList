@@ -207,15 +207,18 @@ func (d *Degoo) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	if err != nil {
 		return nil, err
 	}
-	used, err := strconv.ParseUint(quota.GetUserInfo3.UsedQuota, 10, 64)
+	used, err := strconv.ParseInt(quota.GetUserInfo3.UsedQuota, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse used quota: %v", err)
 	}
-	total, err := strconv.ParseUint(quota.GetUserInfo3.TotalQuota, 10, 64)
+	total, err := strconv.ParseInt(quota.GetUserInfo3.TotalQuota, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse total quota: %v", err)
 	}
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
 	}, nil
 }

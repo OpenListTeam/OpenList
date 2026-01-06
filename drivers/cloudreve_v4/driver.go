@@ -351,7 +351,10 @@ func (d *CloudreveV4) GetDetails(ctx context.Context) (*model.StorageDetails, er
 		return nil, err
 	}
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(r.Used, r.Total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: r.Total,
+			UsedSpace:  r.Used,
+		},
 	}, nil
 }
 

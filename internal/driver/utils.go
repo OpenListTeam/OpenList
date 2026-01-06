@@ -61,10 +61,3 @@ type ReaderWithCtx = stream.ReaderWithCtx
 type ReaderUpdatingProgress = stream.ReaderUpdatingProgress
 
 type SimpleReaderWithSize = stream.SimpleReaderWithSize
-
-func DiskUsageFromUsedAndTotal(used, total uint64) model.DiskUsage {
-	return model.DiskUsage{
-		TotalSpace: max(used, total),
-		FreeSpace:  total - min(used, total),
-	}
-}

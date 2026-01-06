@@ -252,8 +252,8 @@ func (d *Pan115) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	}
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
-			TotalSpace: uint64(info.SpaceInfo.AllTotal.Size),
-			FreeSpace:  uint64(info.SpaceInfo.AllRemain.Size),
+			TotalSpace: info.SpaceInfo.AllTotal.Size,
+			UsedSpace:  info.SpaceInfo.AllUse.Size,
 		},
 	}, nil
 }

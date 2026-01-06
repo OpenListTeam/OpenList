@@ -53,11 +53,11 @@ type spacesResp struct {
 	Id        int64  `json:"id"`
 	Name      string `json:"name"`
 	Result    string `json:"result"`
-	Total     uint64 `json:"total"`
-	Used      uint64 `json:"used"`
+	Total     int64  `json:"total"`
+	Used      int64  `json:"used"`
 	UsedParts []struct {
 		Type string `json:"type"`
-		Used uint64 `json:"used"`
+		Used int64  `json:"used"`
 	} `json:"used_parts"`
 }
 

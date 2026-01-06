@@ -206,7 +206,7 @@ type FolderSummaryResp struct {
 }
 
 type CapacityResp struct {
-	Total uint64 `json:"total"`
-	Used  uint64 `json:"used"`
+	Total int64 `json:"total"`
+	Used  int64 `json:"used"`
 	// StoragePackTotal uint64 `json:"storage_pack_total"`
 }

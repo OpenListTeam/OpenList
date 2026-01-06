@@ -200,7 +200,10 @@ func (d *Cloud189) GetDetails(ctx context.Context) (*model.StorageDetails, error
 		return nil, err
 	}
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(capacityInfo.CloudCapacityInfo.UsedSize, capacityInfo.CloudCapacityInfo.TotalSize),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: capacityInfo.CloudCapacityInfo.TotalSize,
+			UsedSpace:  capacityInfo.CloudCapacityInfo.UsedSize,
+		},
 	}, nil
 }
 

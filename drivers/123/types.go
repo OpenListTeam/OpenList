@@ -127,9 +127,9 @@ type UserInfoResp struct {
 	Data struct {
 		Uid            int64  `json:"UID"`
 		Nickname       string `json:"Nickname"`
-		SpaceUsed      uint64 `json:"SpaceUsed"`
-		SpacePermanent uint64 `json:"SpacePermanent"`
-		SpaceTemp      uint64 `json:"SpaceTemp"`
+		SpaceUsed      int64  `json:"SpaceUsed"`
+		SpacePermanent int64  `json:"SpacePermanent"`
+		SpaceTemp      int64  `json:"SpaceTemp"`
 		FileCount      int    `json:"FileCount"`
 	} `json:"data"`
 }
