@@ -242,15 +242,6 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.StreamMaxClientUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerDownloadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
-
-		// HTTP Server 超时配置（支持大文件传输）
-		{Key: conf.HTTPServerReadTimeout, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP读取请求超时(秒)，0表示无限制，建议设为0以支持大文件上传"},
-		{Key: conf.HTTPServerWriteTimeout, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP写入响应超时(秒)，0表示无限制，建议设为0以支持大文件下载"},
-		{Key: conf.HTTPServerIdleTimeout, Value: "120", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP空闲连接超时(秒)，建议120秒允许网络短暂波动"},
-		{Key: conf.HTTPServerReadHeaderTimeout, Value: "30", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP读取Header超时(秒)，防止慢速攻击，建议30秒"},
-		{Key: conf.HTTPServerMaxHeaderBytes, Value: "1048576", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP Header最大字节数，默认1MB(1048576)"},
-		// 分片上传配置（绕过 Cloudflare CDN 限制）
-		{Key: conf.ChunkedUploadChunkSize, Value: "95", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PUBLIC, Help: "分片上传阈值(MB)，超过此大小的文件将自动分片上传，建议设为95以绕过Cloudflare 100MB限制"},
 	}
 	additionalSettingItems := tool.Tools.Items()
 	// 固定顺序
@@ -267,4 +258,3 @@ func InitialSettings() []model.SettingItem {
 	}
 	return initialSettingItems
 }
- 

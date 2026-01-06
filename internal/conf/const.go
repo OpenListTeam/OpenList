@@ -77,6 +77,9 @@ const (
 	// 115
 	Pan115TempDir = "115_temp_dir"
 
+	// 123
+	Pan123TempDir = "123_temp_dir"
+
 	// 115_open
 	Pan115OpenTempDir = "115_open_temp_dir"
 
@@ -158,16 +161,6 @@ const (
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
-
-	// HTTP Server Timeouts (传输超时配置)
-	HTTPServerReadTimeout       = "http_server_read_timeout"        // 读取请求超时（秒），0表示无限制
-	HTTPServerWriteTimeout      = "http_server_write_timeout"       // 写入响应超时（秒），0表示无限制
-	HTTPServerIdleTimeout       = "http_server_idle_timeout"        // 空闲连接超时（秒）
-	HTTPServerReadHeaderTimeout = "http_server_read_header_timeout" // 读取Header超时（秒）
-	HTTPServerMaxHeaderBytes    = "http_server_max_header_bytes"    // Header最大字节数
-
-	// Chunked Upload (分片上传配置)
-	ChunkedUploadChunkSize = "chunked_upload_chunk_size" // 分片大小（MB），超过此大小的文件将自动分片上传
 )
 
 const (
@@ -199,4 +192,3 @@ const (
 	SharingIDKey
 	SkipHookKey
 )
- 
