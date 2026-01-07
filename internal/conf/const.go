@@ -136,6 +136,7 @@ const (
 	// 123 open offline download
 	Pan123OpenOfflineDownloadCallbackUrl = "123_open_callback_url"
 	Pan123OpenTempDir                    = "123_open_temp_dir"
+	Pan123TempDir                        = "123_temp_dir"
 
 	// ftp
 	FTPPublicHost            = "ftp_public_host"
@@ -199,4 +200,3 @@ const (
 	SharingIDKey
 	SkipHookKey
 )
- 
