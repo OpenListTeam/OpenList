@@ -92,18 +92,17 @@ func (d *DoubaoShare) Link(ctx context.Context, file model.Obj, args model.LinkA
 
 			downloadUrl = r.Data.OriginalMediaInfo.MainURL
 		default:
-			var r GetFileUrlResp
-			_, err := d.request("/alice/message/get_file_url", http.MethodPost, func(req *resty.Request) {
+			var r GetDownloadInfoResp
+			_, err := d.request("/samantha/aispace/get_download_info", http.MethodPost, func(req *resty.Request) {
 				req.SetBody(base.Json{
-					"uris": []string{u.Key},
-					"type": FileNodeType[u.NodeType],
+					"requests": []base.Json{{"node_id": file.GetID()}},
 				})
 			}, &r)
 			if err != nil {
 				return nil, err
 			}
 
-			downloadUrl = r.Data.FileUrls[0].MainURL
+			downloadUrl = r.Data.DownloadInfos[0].MainURL
 		}
 
 		// 生成标准的Content-Disposition

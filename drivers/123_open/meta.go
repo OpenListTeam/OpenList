@@ -13,7 +13,7 @@ type Addition struct {
 	ClientID     string `json:"ClientID" required:"false"`
 	ClientSecret string `json:"ClientSecret" required:"false"`
 
-	//  直接写入AccessToken
+	//  直接写入AccessToken, AccessToken有过期时间，不建议直接填写
 	AccessToken string `json:"AccessToken" required:"false"`
 
 	//  用户名+密码方式登录的AccessToken可以兼容

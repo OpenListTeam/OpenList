@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"strings"
 
 	_ "github.com/OpenListTeam/OpenList/v4/drivers"
@@ -69,13 +68,31 @@ func writeFile(name string, data interface{}) {
 		log.Errorf("failed to unmarshal json: %+v", err)
 		return
 	}
-	if reflect.DeepEqual(oldData, newData) {
+	if mergeJson(newData, oldData) {
 		log.Infof("%s.json no changed, skip", name)
 	} else {
 		log.Infof("%s.json changed, update file", name)
 		//log.Infof("old: %+v\nnew:%+v", oldData, data)
-		utils.WriteJsonToFile(fmt.Sprintf("lang/%s.json", name), newData, true)
+		utils.WriteJsonToFile(fmt.Sprintf("lang/%s.json", name), oldData, true)
 	}
+}
+
+func mergeJson(source, target map[string]interface{}) bool {
+	equal := true
+	for k, v := range source {
+		tgtV, tgtOk := target[k]
+		if !tgtOk {
+			equal = false
+			target[k] = v
+		} else {
+			srcMap, srcIsMap := v.(map[string]interface{})
+			tgtMap, tgtIsMap := tgtV.(map[string]interface{})
+			if srcIsMap && tgtIsMap {
+				equal = mergeJson(srcMap, tgtMap) && equal
+			}
+		}
+	}
+	return equal
 }
 
 func generateDriversJson() {
