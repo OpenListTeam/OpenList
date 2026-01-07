@@ -5,9 +5,18 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
+
+func Init() {
+	bootstrap.Init()
+}
+
+func Release() {
+	bootstrap.Release()
+}
 
 var pid = -1
 var pidFile string

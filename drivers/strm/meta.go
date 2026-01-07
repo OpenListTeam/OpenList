@@ -5,6 +5,12 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
+const (
+	SaveLocalInsertMode = "insert"
+	SaveLocalUpdateMode = "update"
+	SaveLocalSyncMode   = "sync"
+)
+
 type Addition struct {
 	Paths                 string `json:"paths" required:"true" type:"text"`
 	SiteUrl               string `json:"siteUrl" type:"text" required:"false" help:"The prefix URL of the strm file"`
@@ -17,6 +23,7 @@ type Addition struct {
 	SaveStrmToLocal       bool   `json:"SaveStrmToLocal" default:"false" help:"save strm file locally"`
 	SaveStrmLocalPath     string `json:"SaveStrmLocalPath" type:"text" help:"save strm file local path"`
 	KeepLocalDownloadFile bool   `json:"KeepLocalDownloadFile" default:"false" help:"keep local download files"`
+	SaveLocalMode         string `json:"SaveLocalMode" type:"select" help:"save strm file locally mode" options:"insert,update,sync" default:"insert"`
 	Version               int
 }
 

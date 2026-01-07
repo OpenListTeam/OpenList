@@ -341,16 +341,17 @@ func getStoragesByPath(path string) []driver.Driver {
 // for example, there are: /a/b,/a/c,/a/d/e,/a/b.balance1,/av
 // GetStorageVirtualFilesByPath(/a) => b,c,d
 func GetStorageVirtualFilesByPath(prefix string) []model.Obj {
-	return getStorageVirtualFilesByPath(prefix, func(_ driver.Driver, obj model.Obj) model.Obj {
-		return obj
-	})
+	return getStorageVirtualFilesByPath(prefix, nil, "")
 }
 
-func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string, hideDetails, refresh bool) []model.Obj {
+func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string, hideDetails, refresh bool, filterByName string) []model.Obj {
 	if hideDetails {
-		return GetStorageVirtualFilesByPath(prefix)
+		return getStorageVirtualFilesByPath(prefix, nil, filterByName)
 	}
 	return getStorageVirtualFilesByPath(prefix, func(d driver.Driver, obj model.Obj) model.Obj {
+		if _, ok := obj.(*model.ObjStorageDetails); ok {
+			return obj
+		}
 		ret := &model.ObjStorageDetails{
 			Obj: obj,
 			StorageDetailsWithName: model.StorageDetailsWithName{
@@ -374,10 +375,10 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 		case <-time.After(time.Second):
 		}
 		return ret
-	})
+	}, filterByName)
 }
 
-func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver, model.Obj) model.Obj) []model.Obj {
+func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver, model.Obj) model.Obj, filterByName string) []model.Obj {
 	files := make([]model.Obj, 0)
 	storages := storagesMap.Values()
 	sort.Slice(storages, func(i, j int) bool {
@@ -387,45 +388,60 @@ func getStorageVirtualFilesByPath(prefix string, rootCallback func(driver.Driver
 		return storages[i].GetStorage().Order < storages[j].GetStorage().Order
 	})
 
-	prefix = utils.FixAndCleanPath(prefix)
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
 	set := make(map[string]int)
 	var wg sync.WaitGroup
 	for _, v := range storages {
-		mountPath := utils.GetActualMountPath(v.GetStorage().MountPath)
 		// Exclude prefix itself and non prefix
-		if len(prefix) >= len(mountPath) || !utils.IsSubPath(prefix, mountPath) {
+		p, found := strings.CutPrefix(utils.GetActualMountPath(v.GetStorage().MountPath), prefix)
+		if !found || p == "" {
 			continue
 		}
-		names := strings.SplitN(strings.TrimPrefix(mountPath[len(prefix):], "/"), "/", 2)
-		idx, ok := set[names[0]]
-		if !ok {
-			set[names[0]] = len(files)
-			obj := model.ObjAddMask(&model.Object{
-				Name:     names[0],
-				Size:     0,
-				Modified: v.GetStorage().Modified,
-				IsFolder: true,
-			}, model.Virtual)
-			if len(names) == 1 {
-				idx = len(files)
-				files = append(files, obj)
+		name, _, found := strings.Cut(p, "/")
+		if filterByName != "" && name != filterByName {
+			continue
+		}
+
+		if idx, ok := set[name]; ok {
+			if !found {
+				files[idx].(*model.Object).Mask = model.Locked | model.Virtual
+				if rootCallback != nil {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						files[idx] = rootCallback(v, files[idx])
+					}()
+				}
+			}
+			continue
+		}
+		set[name] = len(files)
+		obj := &model.Object{
+			Name:     name,
+			Modified: v.GetStorage().Modified,
+			IsFolder: true,
+		}
+		if !found {
+			idx := len(files)
+			obj.Mask = model.Locked | model.Virtual
+			files = append(files, obj)
+			if rootCallback != nil {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					files[idx] = rootCallback(v, files[idx])
 				}()
-			} else {
-				files = append(files, obj)
 			}
-		} else if len(names) == 1 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				files[idx] = rootCallback(v, files[idx])
-			}()
+		} else {
+			obj.Mask = model.ReadOnly | model.Virtual
+			files = append(files, obj)
 		}
 	}
-	wg.Wait()
+	if rootCallback != nil {
+		wg.Wait()
+	}
 	return files
 }
 
