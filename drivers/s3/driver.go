@@ -278,48 +278,7 @@ func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 		return nil, errors.WithMessage(err, "failed to head object")
 	}
 
-	// If HeadObject fails with 404, check if it's a directory
-	prefix := getKey(path, true)
-	var contents []*s3.Object
-	var commonPrefixes []*s3.CommonPrefix
-	switch d.ListObjectVersion {
-	case "v1":
-		listInput := &s3.ListObjectsInput{
-			Bucket:  &d.Bucket,
-			Prefix:  &prefix,
-			MaxKeys: aws.Int64(1), // Only need to check if at least one object exists
-		}
-		listResult, err := d.client.ListObjectsWithContext(ctx, listInput)
-		if err != nil {
-			return nil, errors.WithMessage(err, "failed to list objects with prefix")
-		}
-		contents = listResult.Contents
-		commonPrefixes = listResult.CommonPrefixes
-	case "v2":
-		listInput := &s3.ListObjectsV2Input{
-			Bucket:  &d.Bucket,
-			Prefix:  &prefix,
-			MaxKeys: aws.Int64(1),
-		}
-		listResult, err := d.client.ListObjectsV2WithContext(ctx, listInput)
-		if err != nil {
-			return nil, errors.WithMessage(err, "failed to list objects v2 with prefix")
-		}
-		contents = listResult.Contents
-		commonPrefixes = listResult.CommonPrefixes
-	default:
-		return nil, fmt.Errorf("unsupported ListObjectVersion: %s", d.ListObjectVersion)
-	}
-	if len(contents) > 0 || len(commonPrefixes) > 0 {
-		dirName := stdpath.Base(path + "/")
-		return &model.Object{
-			Name:     dirName,
-			Modified: d.Modified,
-			IsFolder: true,
-			Path:     path,
-		}, nil
-	}
-	return nil, errs.ObjectNotFound
+	return nil, errs.NotSupport
 }
 
 var _ driver.Driver = (*S3)(nil)
