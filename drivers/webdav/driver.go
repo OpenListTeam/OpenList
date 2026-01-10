@@ -2,11 +2,13 @@ package webdav
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
@@ -30,6 +32,10 @@ func (d *WebDav) GetAddition() driver.Additional {
 }
 
 func (d *WebDav) Init(ctx context.Context) error {
+	if d.Addition.Enable302 {
+		config.OnlyProxy = false
+		d.WebProxy = false
+	}
 	err := d.setClient()
 	if err == nil {
 		d.cron = cron.NewCron(time.Hour * 12)
@@ -67,6 +73,21 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 	url, header, err := d.client.Link(file.GetPath())
 	if err != nil {
 		return nil, err
+	}
+	if d.Addition.Enable302 {
+		// get the url after redirect
+		req := base.NoRedirectClient.R()
+
+		req.Header = header
+		res, err := req.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		if (res.StatusCode() == 302 || res.StatusCode() == 307 || res.StatusCode() == 308) && res.Header().Get("location") != "" {
+			url = res.Header().Get("location")
+		} else {
+			return nil, fmt.Errorf("redirect failed, status: %d, msg: %s", res.StatusCode(), res.Body())
+		}
 	}
 	return &model.Link{
 		URL:    url,
