@@ -77,7 +77,6 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 	if d.Addition.Enable302 {
 		// get the url after redirect
 		req := base.NoRedirectClient.R()
-
 		req.Header = header
 		res, err := req.Get(url)
 		if err != nil {
@@ -86,7 +85,7 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		if (res.StatusCode() == 302 || res.StatusCode() == 307 || res.StatusCode() == 308) && res.Header().Get("location") != "" {
 			url = res.Header().Get("location")
 		} else {
-			return nil, fmt.Errorf("redirect failed, status: %d, msg: %s", res.StatusCode(), res.Body())
+			return nil, fmt.Errorf("redirect failed, status: %d", res.StatusCode())
 		}
 	}
 	return &model.Link{
