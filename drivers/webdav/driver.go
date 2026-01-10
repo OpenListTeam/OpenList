@@ -78,10 +78,12 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		// get the url after redirect
 		req := base.NoRedirectClient.R()
 		req.Header = header
+		req.SetDoNotParseResponse(true)
 		res, err := req.Get(url)
 		if err != nil {
 			return nil, err
 		}
+		_ = res.RawResponse.Body.Close()
 		if (res.StatusCode() == 302 || res.StatusCode() == 307 || res.StatusCode() == 308) && res.Header().Get("location") != "" {
 			url = res.Header().Get("location")
 		} else {
