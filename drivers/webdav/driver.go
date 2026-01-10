@@ -74,7 +74,7 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 	if err != nil {
 		return nil, err
 	}
-	if d.Addition.Enable302 {
+	if d.Addition.Enable302 && args.Redirect {
 		// get the url after redirect
 		req := base.NoRedirectClient.R()
 		req.Header = header
