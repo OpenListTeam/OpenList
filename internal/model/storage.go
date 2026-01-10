@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -58,8 +59,20 @@ func (p Proxy) WebdavProxyURL() bool {
 }
 
 type DiskUsage struct {
-	TotalSpace uint64 `json:"total_space"`
-	FreeSpace  uint64 `json:"free_space"`
+	TotalSpace int64
+	UsedSpace  int64
+}
+
+func (d DiskUsage) FreeSpace() int64 {
+	return d.TotalSpace - d.UsedSpace
+}
+
+func (d DiskUsage) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"total_space": d.TotalSpace,
+		"used_space":  d.UsedSpace,
+		"free_space":  d.FreeSpace(),
+	})
 }
 
 type StorageDetails struct {

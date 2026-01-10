@@ -136,7 +136,6 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		if !d.ShowHidden && strings.HasPrefix(name, ".") {
 			continue
 		}
-		mask &^= model.Temp
 		objRes := &model.Object{
 			Path:     stdpath.Join(remoteFullPath, obj.GetName()),
 			Name:     name,
@@ -144,10 +143,11 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			Modified: obj.ModTime(),
 			IsFolder: obj.IsDir(),
 			Ctime:    obj.CreateTime(),
+			Mask:     mask &^ model.Temp,
 			// discarding hash as it's encrypted
 		}
 		if !d.Thumbnail || !strings.HasPrefix(args.ReqPath, "/") {
-			result = append(result, model.ObjAddMask(objRes, mask))
+			result = append(result, objRes)
 			continue
 		}
 		thumbPath := stdpath.Join(args.ReqPath, ".thumbnails", name+".webp")
@@ -155,12 +155,12 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			common.GetApiUrl(ctx),
 			utils.EncodePath(thumbPath, true),
 			sign.Sign(thumbPath))
-		result = append(result, model.ObjAddMask(&model.ObjThumb{
+		result = append(result, &model.ObjThumb{
 			Object: *objRes,
 			Thumbnail: model.Thumbnail{
 				Thumbnail: thumb,
 			},
-		}, mask))
+		})
 	}
 
 	return result, nil
@@ -196,8 +196,7 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 
 	size := remoteObj.GetSize()
 	name := remoteObj.GetName()
-	mask := model.GetObjMask(remoteObj)
-	mask &^= model.Temp
+	mask := model.GetObjMask(remoteObj) &^ model.Temp
 	if mask&model.Virtual == 0 {
 		if !remoteObj.IsDir() {
 			decryptedSize, err := d.cipher.DecryptedSize(size)
@@ -221,15 +220,15 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 			}
 		}
 	}
-	obj := &model.Object{
+	return &model.Object{
 		Path:     remoteFullPath,
 		Name:     name,
 		Size:     size,
 		Modified: remoteObj.ModTime(),
 		IsFolder: remoteObj.IsDir(),
 		Ctime:    remoteObj.CreateTime(),
-	}
-	return model.ObjAddMask(obj, mask), nil
+		Mask:     mask,
+	}, nil
 }
 
 // https://github.com/rclone/rclone/blob/v1.67.0/backend/crypt/cipher.go#L37

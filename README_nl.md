@@ -122,11 +122,16 @@ Dank u voor uw ondersteuning en begrip
 
 ## Demo
 
-N.v.t. (wordt opnieuw opgebouwd)
+- 🌎 [Global Demo](https://demo.oplist.org)
+- 🇨🇳 [CN Demo](https://demo.oplist.org.cn)
 
 ## Discussie
 
 Stel algemene vragen in [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions), ***Issues* zijn alleen voor bugmeldingen en feature requests.**
+
+## Sponsoren
+
+[![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
 ## Licentie
 

@@ -122,11 +122,16 @@ Thank you for your support and understanding of the OpenList project.
 
 ## Demo
 
-N/A (to be rebuilt)
+- 🌎 [Global Demo](https://demo.oplist.org)
+- 🇨🇳 [CN Demo](https://demo.oplist.org.cn)
 
 ## Discussion
 
 Please refer to [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) for raising general questions, ***Issues* is for bug reports and feature requests only.**
+
+## Sponsor
+
+[![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
 ## License
 

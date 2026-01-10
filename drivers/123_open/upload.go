@@ -116,6 +116,10 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				head := bytes.NewReader(b.Bytes()[:headSize])
 				tail := bytes.NewReader(b.Bytes()[headSize:])
 				rateLimitedRd = driver.NewLimitedUploadStream(ctx, io.MultiReader(head, reader, tail))
+				token, err := d.getAccessToken(false)
+				if err != nil {
+					return err
+				}
 				// 创建请求并设置header
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadDomain+"/upload/v2/file/slice", rateLimitedRd)
 				if err != nil {
@@ -123,7 +127,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				}
 
 				// 设置请求头
-				req.Header.Add("Authorization", "Bearer "+d.AccessToken)
+				req.Header.Add("Authorization", "Bearer "+token)
 				req.Header.Add("Content-Type", w.FormDataContentType())
 				req.Header.Add("Platform", "open_platform")
 
