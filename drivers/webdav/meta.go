@@ -12,13 +12,11 @@ type Addition struct {
 	Password string `json:"password" required:"true"`
 	driver.RootPath
 	TlsInsecureSkipVerify bool `json:"tls_insecure_skip_verify" default:"false"`
-	Enable302             bool `json:"enable_302" default:"false" help:"Return redirected URL instead of proxying"`
 }
 
 var config = driver.Config{
 	Name:        "WebDav",
 	LocalSort:   true,
-	OnlyProxy:   true,
 	DefaultRoot: "/",
 }
 

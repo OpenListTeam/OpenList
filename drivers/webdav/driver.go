@@ -32,10 +32,6 @@ func (d *WebDav) GetAddition() driver.Additional {
 }
 
 func (d *WebDav) Init(ctx context.Context) error {
-	if d.Addition.Enable302 {
-		config.OnlyProxy = false
-		d.WebProxy = false
-	}
 	err := d.setClient()
 	if err == nil {
 		d.cron = cron.NewCron(time.Hour * 12)
@@ -74,7 +70,7 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 	if err != nil {
 		return nil, err
 	}
-	if d.Addition.Enable302 && args.Redirect {
+	if args.Redirect {
 		// get the url after redirect
 		req := base.NoRedirectClient.R()
 		req.Header = header
