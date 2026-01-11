@@ -282,6 +282,11 @@ func FsRemove(c *gin.Context) {
 		return
 	}
 	for _, name := range req.Names {
+		// Skip invalid item names (empty string, whitespace, ".", "/","\t\t","..") to prevent accidental removal of current directory
+		if strings.TrimSpace(utils.FixAndCleanPath(name)) == "/" {
+			utils.Log.Warnf("FsRemove: invalid item skipped: %s (parent directory: %s)\n", name, reqDir)
+			continue
+		}
 		err := fs.Remove(c.Request.Context(), stdpath.Join(reqDir, name))
 		if err != nil {
 			common.ErrorResp(c, err, 500)
