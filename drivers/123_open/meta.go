@@ -32,10 +32,11 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:        "123 Open",
-	DefaultRoot: "0",
-	LocalSort:   true,
-	PreferProxy: true,
+	Name:          "123 Open",
+	DefaultRoot:   "0",
+	LocalSort:     true,
+	LinkCacheMode: driver.LinkCacheIP,
+	PreferProxy:   true,
 }
 
 func init() {
