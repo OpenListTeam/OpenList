@@ -15,7 +15,8 @@ type OpScheduler struct {
 	Name           string
 	scheduler      gocron.Scheduler
 	jobCancelMap   jobCancelMap
-	jobDisabledMap *SafeMap[uuid.UUID, bool]
+	jobDisabledMap *safeMap[uuid.UUID, bool]
+	jobsMap        *safeMap[uuid.UUID, *OpJob]
 }
 
 func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, error) {
@@ -24,9 +25,11 @@ func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, 
 		return nil, err
 	}
 	return &OpScheduler{
-		scheduler:    scheduler,
-		Name:         name,
-		jobCancelMap: NewJobCancelMap(),
+		scheduler:      scheduler,
+		Name:           name,
+		jobCancelMap:   newJobCancelMap(),
+		jobDisabledMap: newSafeMap[uuid.UUID, bool](),
+		jobsMap:        newSafeMap[uuid.UUID, *OpJob](),
 	}, nil
 }
 
@@ -35,15 +38,15 @@ func (o *OpScheduler) NewJob(
 	jobName string,
 	cron gocron.JobDefinition,
 	labels []JobLabels,
-	runner JobRunner, pararms ...any) (*OpJob, error) {
+	runner JobRunner, params ...any) (*OpJob, error) {
 	jobCtx, cancel := context.WithCancel(ctx)
-	var finnalParams []any
-	if len(pararms) == 0 {
-		finnalParams = []any{jobCtx}
+	var finalParams []any
+	if len(params) == 0 {
+		finalParams = []any{jobCtx}
 	} else {
-		finnalParams = make([]any, 0, len(pararms)+1)
-		finnalParams = append(finnalParams, jobCtx)
-		finnalParams = append(finnalParams, pararms...)
+		finalParams = make([]any, 0, len(params)+1)
+		finalParams = append(finalParams, jobCtx)
+		finalParams = append(finalParams, params...)
 	}
 	jobUUID := uuid.New()
 	task := gocron.NewTask(func(ctx context.Context, params ...any) error {
@@ -52,7 +55,7 @@ func (o *OpScheduler) NewJob(
 			return nil
 		}
 		return runner(ctx, params...)
-	}, finnalParams...)
+	}, finalParams...)
 	var tags []string
 	if len(labels) > 0 {
 		for _, label := range labels {
@@ -72,7 +75,9 @@ func (o *OpScheduler) NewJob(
 	if !exists {
 		disabled = false
 	}
-	return newOpJob(job, disabled), nil
+	opJob := newOpJob(job, disabled)
+	o.jobsMap.Set(jobUUID, opJob)
+	return opJob, nil
 }
 
 // RunNow runs a job immediately by its UUID.
@@ -93,7 +98,7 @@ func (o *OpScheduler) UpdateJob(
 	cron gocron.JobDefinition,
 	disabled bool,
 	labels []JobLabels,
-	runner JobRunner, pararms ...any) error {
+	runner JobRunner, params ...any) error {
 	if _, exists := o.GetJob(jobUUID); !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
@@ -102,14 +107,15 @@ func (o *OpScheduler) UpdateJob(
 	if err != nil {
 		return err
 	}
+	o.jobsMap.Delete(jobUUID)
 	jobCtx, cancel := context.WithCancel(ctx)
-	var finnalParams []any
-	if len(pararms) == 0 {
-		finnalParams = []any{jobCtx}
+	var finalParams []any
+	if len(params) == 0 {
+		finalParams = []any{jobCtx}
 	} else {
-		finnalParams = make([]any, 0, len(pararms)+1)
-		finnalParams = append(finnalParams, jobCtx)
-		finnalParams = append(finnalParams, pararms...)
+		finalParams = make([]any, 0, len(params)+1)
+		finalParams = append(finalParams, jobCtx)
+		finalParams = append(finalParams, params...)
 	}
 	task := gocron.NewTask(func(ctx context.Context, params ...any) error {
 		// 判断是否被禁用
@@ -117,7 +123,7 @@ func (o *OpScheduler) UpdateJob(
 			return nil
 		}
 		return runner(ctx, params...)
-	}, finnalParams...)
+	}, finalParams...)
 	var tags []string
 	if len(labels) > 0 {
 		for _, label := range labels {
@@ -126,7 +132,7 @@ func (o *OpScheduler) UpdateJob(
 			}
 		}
 	}
-	_, err = o.scheduler.Update(
+	job, err := o.scheduler.Update(
 		jobUUID, cron, task,
 		gocron.WithContext(jobCtx), gocron.WithName(jobName), gocron.WithTags(tags...),
 	)
@@ -138,47 +144,37 @@ func (o *OpScheduler) UpdateJob(
 	o.jobCancelMap.Set(jobUUID, cancel)
 	// 更新禁用状态
 	o.jobDisabledMap.Set(jobUUID, disabled)
+	// 更新 jobsMap
+	opJob := newOpJob(job, disabled)
+	o.jobsMap.Set(jobUUID, opJob)
 	return nil
 }
 
 // GetJob retrieves a job by its UUID.
 func (o *OpScheduler) GetJob(jobUUID uuid.UUID) (*OpJob, bool) {
-	jobs := o.scheduler.Jobs()
-	for _, job := range jobs {
-		if job.ID() == jobUUID {
-			disabled, exists := o.jobDisabledMap.Get(jobUUID)
-			if !exists {
-				disabled = false
-			}
-			return newOpJob(job, disabled), true
-		}
-	}
-	return nil, false
+	return o.jobsMap.Get(jobUUID)
 }
 
 // GetJobsByLabels retrieves jobs that have all of the provided labels.
 func (o *OpScheduler) GetJobsByLabels(labels ...JobLabels) []*OpJob {
-	jobs := o.scheduler.Jobs()
 	result := make([]*OpJob, 0)
-	for _, job := range jobs {
+	o.jobsMap.ForEach(func(_ uuid.UUID, opJob *OpJob) {
 		matched := true
 		for _, label := range labels {
 			for k, v := range label {
-				exists := sliceHasItem(job.Tags(), k+labelSep+v)
-				if !exists {
+				if val, exists := opJob.Label(k); !exists || val != v {
 					matched = false
 					break
 				}
 			}
+			if !matched {
+				break
+			}
 		}
 		if matched {
-			disabled, exists := o.jobDisabledMap.Get(job.ID())
-			if !exists {
-				disabled = false
-			}
-			result = append(result, newOpJob(job, disabled))
+			result = append(result, opJob)
 		}
-	}
+	})
 	return result
 }
 
@@ -234,6 +230,8 @@ func (o *OpScheduler) RemoveJobs(jobUUID ...uuid.UUID) error {
 		o.jobCancelMap.Delete(jobID)
 		// remove disabled mark
 		o.jobDisabledMap.Delete(jobID)
+		// remove from jobsMap
+		o.jobsMap.Delete(jobID)
 	}
 	return nil
 }
@@ -343,5 +341,6 @@ func (o *OpScheduler) RemoveAllJobs() error {
 	}
 	o.jobCancelMap.Clear()
 	o.jobDisabledMap.Clear()
+	o.jobsMap.Clear()
 	return nil
 }

@@ -12,48 +12,46 @@ import (
 
 type JobRunner func(ctx context.Context, params ...any) error
 
-type taskFactory func() gocron.Task
-
-type jobCancelMap = *SafeMap[uuid.UUID, context.CancelFunc]
+type jobCancelMap = *safeMap[uuid.UUID, context.CancelFunc]
 
 type JobLabels = map[string]string
 
-func NewJobCancelMap() jobCancelMap {
-	return NewSafeMap[uuid.UUID, context.CancelFunc]()
+func newJobCancelMap() jobCancelMap {
+	return newSafeMap[uuid.UUID, context.CancelFunc]()
 }
 
 // 泛型的读写锁map
-type SafeMap[K comparable, V any] struct {
+type safeMap[K comparable, V any] struct {
 	lock sync.RWMutex
 	data map[K]V
 }
 
-func NewSafeMap[K comparable, V any]() *SafeMap[K, V] {
-	return &SafeMap[K, V]{
+func newSafeMap[K comparable, V any]() *safeMap[K, V] {
+	return &safeMap[K, V]{
 		data: make(map[K]V),
 	}
 }
 
-func (sm *SafeMap[K, V]) Get(key K) (V, bool) {
+func (sm *safeMap[K, V]) Get(key K) (V, bool) {
 	sm.lock.RLock()
 	defer sm.lock.RUnlock()
 	value, exists := sm.data[key]
 	return value, exists
 }
 
-func (sm *SafeMap[K, V]) Set(key K, value V) {
+func (sm *safeMap[K, V]) Set(key K, value V) {
 	sm.lock.Lock()
 	defer sm.lock.Unlock()
 	sm.data[key] = value
 }
 
-func (sm *SafeMap[K, V]) Delete(key K) {
+func (sm *safeMap[K, V]) Delete(key K) {
 	sm.lock.Lock()
 	defer sm.lock.Unlock()
 	delete(sm.data, key)
 }
 
-func (sm *SafeMap[K, V]) GetAll() map[K]V {
+func (sm *safeMap[K, V]) GetAll() map[K]V {
 	sm.lock.RLock()
 	defer sm.lock.RUnlock()
 	result := make(map[K]V)
@@ -63,12 +61,20 @@ func (sm *SafeMap[K, V]) GetAll() map[K]V {
 	return result
 }
 
-func (sm *SafeMap[K, V]) Clear() {
+func (sm *safeMap[K, V]) Clear() {
 	sm.lock.Lock()
 	defer sm.lock.Unlock()
 	// 移除所有元素，但保持底层map不变
 	for k := range sm.data {
 		delete(sm.data, k)
+	}
+}
+
+func (sm *safeMap[K, V]) ForEach(fn func(K, V)) {
+	sm.lock.RLock()
+	defer sm.lock.RUnlock()
+	for k, v := range sm.data {
+		fn(k, v)
 	}
 }
 
