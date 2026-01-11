@@ -191,16 +191,16 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 
 		existedObjs := make(map[string]bool)
 		if t.TaskType == merge {
+			// 检查目标目录是否存在，如果不存在则跳过（existedObjs保持为空map，所有文件都会被复制）
 			dstObjs, err := op.List(t.Ctx(), t.DstStorage, dstActualPath, model.ListArgs{})
-			if err != nil {
-				return errors.WithMessagef(err, "failed list dst [%s] objs", dstActualPath)
-			}
-			for _, obj := range dstObjs {
-				if err := t.Ctx().Err(); err != nil {
-					return err
-				}
-				if !obj.IsDir() {
-					existedObjs[obj.GetName()] = true
+			if err == nil {
+				for _, obj := range dstObjs {
+					if err := t.Ctx().Err(); err != nil {
+						return err
+					}
+					if !obj.IsDir() {
+						existedObjs[obj.GetName()] = true
+					}
 				}
 			}
 		}
