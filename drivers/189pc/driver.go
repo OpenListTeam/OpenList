@@ -271,29 +271,35 @@ func (y *Cloud189PC) Rename(ctx context.Context, srcObj model.Obj, newName strin
 		queryParam["familyId"] = y.FamilyID
 	}
 
-	var newObj model.Obj
-	switch f := srcObj.(type) {
+	switch srcObj.(type) {
 	case *Cloud189File:
 		fullUrl += "/renameFile.action"
 		queryParam["fileId"] = srcObj.GetID()
 		queryParam["destFileName"] = newName
-		newObj = &Cloud189File{Icon: f.Icon} // 复用预览
 	case *Cloud189Folder:
 		fullUrl += "/renameFolder.action"
 		queryParam["folderId"] = srcObj.GetID()
 		queryParam["destFolderName"] = newName
-		newObj = &Cloud189Folder{}
 	default:
 		return nil, errs.NotSupport
 	}
-
+	var resp RenameResp
 	_, err := y.request(fullUrl, method, func(req *resty.Request) {
 		req.SetContext(ctx).SetQueryParams(queryParam)
-	}, nil, newObj, isFamily)
+	}, nil, resp, isFamily)
 	if err != nil {
+		if resp.ResCode == "FileAlreadyExists" {
+			return nil, errs.ObjectAlreadyExists
+		}
 		return nil, err
 	}
-	return newObj, nil
+	switch f := srcObj.(type) {
+	case *Cloud189File:
+		return resp.toFile(f), nil
+	case *Cloud189Folder:
+		return resp.toFolder(), nil
+	}
+	return nil, errs.NotSupport
 }
 
 func (y *Cloud189PC) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
@@ -430,4 +436,55 @@ func (y *Cloud189PC) GetDetails(ctx context.Context) (*model.StorageDetails, err
 			UsedSpace:  used,
 		},
 	}, nil
+}
+
+func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	sharecode := y.extractCode(shareURL)
+	if sharecode == "" {
+		return fmt.Errorf("need share code")
+	}
+	shareid, fileid, filename, err := y.getSharedInfo(sharecode)
+	if err != nil {
+		return err
+	}
+	if shareid == -1 {
+		return fmt.Errorf("failed get share id")
+	}
+
+	taskInfos := []base.Json{
+		{
+			"fileId":   fileid,
+			"fileName": filename,
+			"isFolder": 1,
+		},
+	}
+
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	if err != nil {
+		return err
+	}
+
+	form := map[string]string{
+		"targetFolderId": dst.GetID(),
+		"taskInfos":      string(taskInfosBytes),
+		"shareId":        fmt.Sprintf("%d", shareid),
+	}
+
+	resp, err := y.CreateBatchTask("SHARE_SAVE", y.FamilyID, dst.GetID(), form)
+
+	for {
+		state, err := y.CheckBatchTask("SHARE_SAVE", resp.TaskID)
+		if err != nil {
+			return err
+		}
+		switch state.TaskStatus {
+		case 4:
+			if state.FailedCount == 0 {
+				return nil
+			} else {
+				return fmt.Errorf("transfer failed")
+			}
+		}
+		time.Sleep(time.Millisecond * 400)
+	}
 }
