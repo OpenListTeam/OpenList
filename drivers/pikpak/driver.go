@@ -267,16 +267,19 @@ func (d *PikPak) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	if err != nil {
 		return nil, err
 	}
-	total, err := strconv.ParseUint(about.Quota.Limit, 10, 64)
+	total, err := strconv.ParseInt(about.Quota.Limit, 10, 64)
 	if err != nil {
 		return nil, err
 	}
-	used, err := strconv.ParseUint(about.Quota.Usage, 10, 64)
+	used, err := strconv.ParseInt(about.Quota.Usage, 10, 64)
 	if err != nil {
 		return nil, err
 	}
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
 	}, nil
 }
 

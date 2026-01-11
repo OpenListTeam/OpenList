@@ -12,7 +12,6 @@ import (
 	"unicode"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -390,7 +389,7 @@ func (d *BaiduNetdisk) quota(ctx context.Context) (model.DiskUsage, error) {
 	if err != nil {
 		return model.DiskUsage{}, err
 	}
-	return driver.DiskUsageFromUsedAndTotal(resp.Used, resp.Total), nil
+	return model.DiskUsage{TotalSpace: resp.Total, UsedSpace: resp.Used}, nil
 }
 
 // getUploadUrl 从开放平台获取上传域名/地址，并发请求会被合并，结果会在 uploadid 生命周期内复用。

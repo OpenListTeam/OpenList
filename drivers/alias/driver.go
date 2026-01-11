@@ -492,6 +492,32 @@ func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj,
 	return err
 }
 
+func (d *Alias) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if !d.DetailsPassThrough {
+		return nil, errs.NotImplement
+	}
+	if len(d.rootOrder) != 1 {
+		return nil, errs.NotImplement
+	}
+	backends := d.pathMap[d.rootOrder[0]]
+	var storage driver.Driver
+	for _, backend := range backends {
+		s, err := fs.GetStorage(backend, &fs.GetStoragesArgs{})
+		if err != nil {
+			return nil, errs.NotImplement
+		}
+		if storage == nil {
+			storage = s
+		} else if storage.GetStorage().MountPath != s.GetStorage().MountPath {
+			return nil, errs.NotImplement
+		}
+	}
+	if storage == nil { // should never access
+		return nil, errs.NotImplement
+	}
+	return op.GetStorageDetails(ctx, storage)
+}
+
 func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 	roots, sub := d.getRootsAndPath(path)
 	if len(roots) == 0 {

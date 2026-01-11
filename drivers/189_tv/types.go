@@ -322,15 +322,15 @@ type CapacityResp struct {
 	ResMessage        string `json:"res_message"`
 	Account           string `json:"account"`
 	CloudCapacityInfo struct {
-		FreeSize     int64  `json:"freeSize"`
-		MailUsedSize uint64 `json:"mail189UsedSize"`
-		TotalSize    uint64 `json:"totalSize"`
-		UsedSize     uint64 `json:"usedSize"`
+		FreeSize     int64 `json:"freeSize"`
+		MailUsedSize int64 `json:"mail189UsedSize"`
+		TotalSize    int64 `json:"totalSize"`
+		UsedSize     int64 `json:"usedSize"`
 	} `json:"cloudCapacityInfo"`
 	FamilyCapacityInfo struct {
-		FreeSize  int64  `json:"freeSize"`
-		TotalSize uint64 `json:"totalSize"`
-		UsedSize  uint64 `json:"usedSize"`
+		FreeSize  int64 `json:"freeSize"`
+		TotalSize int64 `json:"totalSize"`
+		UsedSize  int64 `json:"usedSize"`
 	} `json:"familyCapacityInfo"`
 	TotalSize uint64 `json:"totalSize"`
 }

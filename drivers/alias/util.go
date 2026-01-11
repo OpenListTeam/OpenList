@@ -249,7 +249,7 @@ func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) (BalancedObjs, er
 		strict = true
 		fallthrough
 	case BalancedByQuotaP:
-		objs, ok := getRandomObjByQuotaBalanced(ctx, objs, strict, uint64(obj.GetSize()))
+		objs, ok := getRandomObjByQuotaBalanced(ctx, objs, strict, obj.GetSize())
 		if !ok {
 			return nil, ErrNoEnoughSpace
 		}
@@ -259,7 +259,7 @@ func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) (BalancedObjs, er
 	}
 }
 
-func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, strict bool, objSize uint64) (BalancedObjs, bool) {
+func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, strict bool, objSize int64) (BalancedObjs, bool) {
 	// Get all space
 	details := make([]*model.StorageDetails, len(reqPath))
 	detailsChan := make(chan detailWithIndex, len(reqPath))
@@ -295,10 +295,10 @@ func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, stri
 
 	// Try select one that has space info
 	selected, ok := selectRandom(details, func(d *model.StorageDetails) uint64 {
-		if d == nil || d.FreeSpace < objSize {
+		if d == nil || d.FreeSpace() < objSize {
 			return 0
 		}
-		return d.FreeSpace
+		return uint64(d.FreeSpace())
 	})
 	if !ok {
 		if strict {
