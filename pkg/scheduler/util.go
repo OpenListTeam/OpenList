@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -20,11 +19,6 @@ func filterLabels(j jobsMapType, call func(j *OpJob), labels JobLabels) {
 			call(opJob)
 		}
 	})
-}
-
-// sliceHasItem checks if a string exists in a slice of strings.
-func sliceHasItem(slice []string, item string) bool {
-	return slices.Contains(slice, item)
 }
 
 // escape escapes backslashes and colons in a string.
