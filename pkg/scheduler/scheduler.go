@@ -12,11 +12,10 @@ import (
 const labelSep = "="
 
 type OpScheduler struct {
-	Name           string
-	scheduler      gocron.Scheduler
-	jobCancelMap   jobCancelMap
-	jobDisabledMap *safeMap[uuid.UUID, bool]
-	jobsMap        *safeMap[uuid.UUID, *OpJob]
+	Name         string
+	scheduler    gocron.Scheduler
+	jobCancelMap jobCancelMap
+	jobsMap      *safeMap[uuid.UUID, *OpJob]
 }
 
 func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, error) {
@@ -25,11 +24,10 @@ func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, 
 		return nil, err
 	}
 	return &OpScheduler{
-		scheduler:      scheduler,
-		Name:           name,
-		jobCancelMap:   newJobCancelMap(),
-		jobDisabledMap: newSafeMap[uuid.UUID, bool](),
-		jobsMap:        newSafeMap[uuid.UUID, *OpJob](),
+		scheduler:    scheduler,
+		Name:         name,
+		jobCancelMap: newJobCancelMap(),
+		jobsMap:      newSafeMap[uuid.UUID, *OpJob](),
 	}, nil
 }
 
@@ -51,7 +49,13 @@ func (o *OpScheduler) NewJob(
 	jobUUID := uuid.New()
 	task := gocron.NewTask(func(ctx context.Context, params ...any) error {
 		// 判断是否被禁用
-		if disabled, exists := o.jobDisabledMap.Get(jobUUID); exists && disabled {
+		j, exists := o.jobsMap.Get(jobUUID)
+		// 理论上不会不存在，但为了保险起见加个判断
+		if !exists {
+			return nil
+		}
+		// 被禁用则不执行
+		if j.disabled {
 			return nil
 		}
 		return runner(ctx, params...)
@@ -71,11 +75,8 @@ func (o *OpScheduler) NewJob(
 	}
 	// 保存取消函数
 	o.jobCancelMap.Set(jobUUID, cancel)
-	disabled, exists := o.jobDisabledMap.Get(jobUUID)
-	if !exists {
-		disabled = false
-	}
-	opJob := newOpJob(job, disabled)
+	// 保存 job
+	opJob := newOpJob(job, false)
 	o.jobsMap.Set(jobUUID, opJob)
 	return opJob, nil
 }
@@ -119,7 +120,13 @@ func (o *OpScheduler) UpdateJob(
 	}
 	task := gocron.NewTask(func(ctx context.Context, params ...any) error {
 		// 判断是否被禁用
-		if disabled, exists := o.jobDisabledMap.Get(jobUUID); exists && disabled {
+		j, exists := o.jobsMap.Get(jobUUID)
+		// 理论上不会不存在，但为了保险起见加个判断
+		if !exists {
+			return nil
+		}
+		// 被禁用则不执行
+		if j.disabled {
 			return nil
 		}
 		return runner(ctx, params...)
@@ -142,8 +149,6 @@ func (o *OpScheduler) UpdateJob(
 	}
 	// 保存取消函数
 	o.jobCancelMap.Set(jobUUID, cancel)
-	// 更新禁用状态
-	o.jobDisabledMap.Set(jobUUID, disabled)
 	// 更新 jobsMap
 	opJob := newOpJob(job, disabled)
 	o.jobsMap.Set(jobUUID, opJob)
@@ -178,23 +183,23 @@ func (o *OpScheduler) GetJobsByLabels(labels ...JobLabels) []*OpJob {
 	return result
 }
 
-// DisableJob disables a job by its UUID.
-func (o *OpScheduler) DisableJob(jobUUID uuid.UUID) error {
-	_, exists := o.GetJob(jobUUID)
+// EnableJob enables a job by its UUID.
+func (o *OpScheduler) EnableJob(jobUUID uuid.UUID) error {
+	opJob, exists := o.GetJob(jobUUID)
 	if !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	o.jobDisabledMap.Set(jobUUID, true)
+	opJob.disabled = false
 	return nil
 }
 
-// EnableJob enables a job by its UUID.
-func (o *OpScheduler) EnableJob(jobUUID uuid.UUID) error {
-	_, exists := o.GetJob(jobUUID)
+// DisableJob disables a job by its UUID.
+func (o *OpScheduler) DisableJob(jobUUID uuid.UUID) error {
+	opJob, exists := o.GetJob(jobUUID)
 	if !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	o.jobDisabledMap.Set(jobUUID, false)
+	opJob.disabled = true
 	return nil
 }
 
@@ -228,8 +233,6 @@ func (o *OpScheduler) RemoveJobs(jobUUID ...uuid.UUID) error {
 		}
 		// remove cancel func
 		o.jobCancelMap.Delete(jobID)
-		// remove disabled mark
-		o.jobDisabledMap.Delete(jobID)
 		// remove from jobsMap
 		o.jobsMap.Delete(jobID)
 	}
@@ -340,7 +343,6 @@ func (o *OpScheduler) RemoveAllJobs() error {
 		o.scheduler.RemoveJob(job.ID())
 	}
 	o.jobCancelMap.Clear()
-	o.jobDisabledMap.Clear()
 	o.jobsMap.Clear()
 	return nil
 }
