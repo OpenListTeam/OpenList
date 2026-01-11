@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// label的连接符
+// labelSep is the separator used in job tags for labels.
 const labelSep = "="
 
 // OpScheduler is the main scheduler struct that manages jobs.
