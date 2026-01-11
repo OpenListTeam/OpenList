@@ -72,13 +72,13 @@ func (o *OpScheduler) buildJobParams(ctx context.Context, jobUUID uuid.UUID, run
 		finalParams = append(finalParams, params...)
 	}
 	task := gocron.NewTask(func(ctx context.Context, params ...any) error {
-		// 判断是否被禁用
+		// check if job is exists and not disabled
 		j, exists := o.jobsMap.Get(jobUUID)
-		// 理论上不会不存在，但为了保险起见加个判断
+		// In theory the job should always exist, but check just in case
 		if !exists {
 			return nil
 		}
-		// 被禁用则不执行
+		// check disabled status
 		j.disableRWMutex.RLock()
 		disabled := j.disabled
 		j.disableRWMutex.RUnlock()
@@ -105,9 +105,9 @@ func (o *OpScheduler) NewJob(
 		cancel()
 		return nil, err
 	}
-	// 保存取消函数
+	// save the cancel func
 	o.jobCancelMap.Set(jobUUID, cancel)
-	// 保存 job
+	// save the job
 	opJob := newOpJob(job, false)
 	o.jobsMap.Set(jobUUID, opJob)
 	return opJob, nil
@@ -193,8 +193,11 @@ func (o *OpScheduler) StopAndDisableJob(jobUUID uuid.UUID) error {
 }
 
 // StopJobs stops jobs by their UUIDs.
-func (o *OpScheduler) StopJobs(jobUUID ...uuid.UUID) error {
-	for _, jobID := range jobUUID {
+func (o *OpScheduler) StopJobs(jobUUIDs ...uuid.UUID) error {
+	if len(jobUUIDs) == 0 {
+		return nil
+	}
+	for _, jobID := range jobUUIDs {
 		cancelFunc, exists := o.jobCancelMap.Get(jobID)
 		if !exists {
 			return errors.New("job not found: " + jobID.String())
@@ -205,15 +208,18 @@ func (o *OpScheduler) StopJobs(jobUUID ...uuid.UUID) error {
 }
 
 // RemoveJobs removes jobs by their UUIDs.
-func (o *OpScheduler) RemoveJobs(jobUUID ...uuid.UUID) error {
-	for _, jobID := range jobUUID {
+func (o *OpScheduler) RemoveJobs(jobUUIDs ...uuid.UUID) error {
+	if len(jobUUIDs) == 0 {
+		return nil
+	}
+	for _, jobID := range jobUUIDs {
 		err := o.scheduler.RemoveJob(jobID)
 		if err != nil {
 			return err
 		}
-		// remove cancel func
+		// Remove the cancel func
 		o.jobCancelMap.Delete(jobID)
-		// remove from jobsMap
+		// Remove from jobsMap
 		o.jobsMap.Delete(jobID)
 	}
 	return nil

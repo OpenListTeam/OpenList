@@ -117,6 +117,8 @@ func (o *OpJob) Label(key string) (string, bool) {
 
 // Disabled indicates whether the job is disabled.
 func (o *OpJob) Disabled() bool {
+	o.disableRWMutex.RLock()
+	defer o.disableRWMutex.RUnlock()
 	return o.disabled
 }
 
