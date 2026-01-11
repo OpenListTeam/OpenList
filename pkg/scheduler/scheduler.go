@@ -14,8 +14,10 @@ type OpScheduler struct {
 	Name         string
 	scheduler    gocron.Scheduler
 	jobCancelMap jobCancelMap
-	jobsMap      *safeMap[uuid.UUID, *OpJob]
+	jobsMap      jobsMapType
 }
+
+type jobsMapType = *safeMap[uuid.UUID, *OpJob]
 
 // NewOpScheduler creates a new OpScheduler instance.
 func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, error) {
@@ -37,8 +39,7 @@ func (o *OpScheduler) RunNow(jobUUID uuid.UUID) error {
 	if !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	err := opJob.job.RunNow()
-	return err
+	return opJob.job.RunNow()
 }
 
 func (o *OpScheduler) jobLabels2Tags(labels JobLabels) []string {
@@ -151,24 +152,10 @@ func (o *OpScheduler) GetJob(jobUUID uuid.UUID) (*OpJob, bool) {
 
 // GetJobsByLabels retrieves jobs that have all of the provided labels.
 func (o *OpScheduler) GetJobsByLabels(labels ...JobLabels) []*OpJob {
-	result := make([]*OpJob, 0)
-	o.jobsMap.ForEach(func(_ uuid.UUID, opJob *OpJob) {
-		matched := true
-		for _, label := range labels {
-			for k, v := range label {
-				if val, exists := opJob.Label(k); !exists || val != v {
-					matched = false
-					break
-				}
-			}
-			if !matched {
-				break
-			}
-		}
-		if matched {
-			result = append(result, opJob)
-		}
-	})
+	var result []*OpJob
+	filterLabels(o.jobsMap, func(j *OpJob) {
+		result = append(result, j)
+	}, labels...)
 	return result
 }
 
@@ -238,23 +225,13 @@ func (o *OpScheduler) RemoveJobByLabels(labels ...JobLabels) error {
 		return nil
 	}
 	needRemovedJobsUUID := make([]uuid.UUID, 0)
-	o.jobsMap.ForEach(func(jobUUID uuid.UUID, opJob *OpJob) {
-		matched := true
-		for _, label := range labels {
-			for k, v := range label {
-				if val, exists := opJob.Label(k); !exists || val != v {
-					matched = false
-					break
-				}
-			}
-			if !matched {
-				break
-			}
-		}
-		if matched {
-			needRemovedJobsUUID = append(needRemovedJobsUUID, jobUUID)
-		}
-	})
+	filterLabels(
+		o.jobsMap,
+		func(j *OpJob) {
+			needRemovedJobsUUID = append(needRemovedJobsUUID, j.ID())
+		},
+		labels...,
+	)
 	if len(needRemovedJobsUUID) > 0 {
 		return o.RemoveJobs(needRemovedJobsUUID...)
 	}
@@ -267,23 +244,13 @@ func (o *OpScheduler) StopJobByLabels(labels ...JobLabels) error {
 		return nil
 	}
 	needStopJobsUUID := make([]uuid.UUID, 0)
-	o.jobsMap.ForEach(func(jobUUID uuid.UUID, opJob *OpJob) {
-		matched := true
-		for _, label := range labels {
-			for k, v := range label {
-				if val, exists := opJob.Label(k); !exists || val != v {
-					matched = false
-					break
-				}
-			}
-			if !matched {
-				break
-			}
-		}
-		if matched {
-			needStopJobsUUID = append(needStopJobsUUID, jobUUID)
-		}
-	})
+	filterLabels(
+		o.jobsMap,
+		func(j *OpJob) {
+			needStopJobsUUID = append(needStopJobsUUID, j.ID())
+		},
+		labels...,
+	)
 	if len(needStopJobsUUID) > 0 {
 		return o.StopJobs(needStopJobsUUID...)
 	}
@@ -312,9 +279,8 @@ func (o *OpScheduler) StopAndRemoveJobByLabels(labels ...JobLabels) error {
 }
 
 // Start starts the scheduler.
-func (o *OpScheduler) Start() error {
+func (o *OpScheduler) Start() {
 	o.scheduler.Start()
-	return nil
 }
 
 // Close is an alias for Shutdown.
@@ -324,8 +290,7 @@ func (o *OpScheduler) Close() error {
 
 // Shutdown stops the scheduler.
 func (o *OpScheduler) Shutdown() error {
-	o.scheduler.Shutdown()
-	return nil
+	return o.scheduler.Shutdown()
 }
 
 // StopAllJobs stops all jobs in the scheduler.
@@ -338,11 +303,19 @@ func (o *OpScheduler) StopAllJobs() error {
 
 // RemoveAllJobs removes all jobs from the scheduler.
 func (o *OpScheduler) RemoveAllJobs() error {
-	o.scheduler.StopJobs()
+	var errs []error
+	if err := o.scheduler.StopJobs(); err != nil {
+		errs = append(errs, err)
+	}
 	for _, job := range o.scheduler.Jobs() {
-		o.scheduler.RemoveJob(job.ID())
+		if err := o.scheduler.RemoveJob(job.ID()); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	o.jobCancelMap.Clear()
 	o.jobsMap.Clear()
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }

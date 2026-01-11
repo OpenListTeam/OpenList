@@ -73,10 +73,8 @@ func (sm *safeMap[K, V]) GetAll() map[K]V {
 func (sm *safeMap[K, V]) Clear() {
 	sm.lock.Lock()
 	defer sm.lock.Unlock()
-	// 移除所有元素，但保持底层map不变
-	for k := range sm.data {
-		delete(sm.data, k)
-	}
+	// reinitialize the map to clear all entries
+	sm.data = make(map[K]V)
 }
 
 // ForEach iterates over all key-value pairs in the safeMap and applies the provided function.
