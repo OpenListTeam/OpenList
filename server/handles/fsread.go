@@ -54,6 +54,7 @@ type FsListResp struct {
 	Write             bool      `json:"write"`
 	Provider          string    `json:"provider"`
 	DirectUploadTools []string  `json:"direct_upload_tools,omitempty"`
+	CanTransfer       bool      `json:"can_transfer"`
 }
 
 func FsListSplit(c *gin.Context) {
@@ -108,10 +109,12 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	}
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
+	canTransfer := false
 	var directUploadTools []string
 	if user.CanWrite() {
-		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+		if storage, actualPath, err := op.GetStorageAndActualPath(reqPath); err == nil {
 			directUploadTools = op.GetDirectUploadTools(storage)
+			canTransfer = op.CanTransfer(storage, actualPath)
 		}
 	}
 	common.SuccessResp(c, FsListResp{
@@ -122,6 +125,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		Write:             user.CanWrite() || common.CanWrite(meta, reqPath),
 		Provider:          provider,
 		DirectUploadTools: directUploadTools,
+		CanTransfer:       canTransfer,
 	})
 }
 

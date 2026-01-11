@@ -282,3 +282,33 @@ type MemberResp struct {
 		ServerCurTime uint64 `json:"server_cur_time"`
 	} `json:"metadata"`
 }
+
+type ShareTokenResp struct {
+	Resp
+	Data struct {
+		ShareToken string `json:"stoken"`
+	}
+}
+
+type ShareInfoResp struct {
+	Resp
+	Data struct {
+		Share struct {
+			ShareID string `json:"share_id"`
+		} `json:"share"`
+	} `json:"data"`
+}
+
+type SaveShareResp struct {
+	Resp
+	Data struct {
+		TaskID string `json:"task_id"`
+	}
+}
+
+type TaskCheckResp struct {
+	Resp
+	Data struct {
+		Status int `json:"status"`
+	} `json:"data"`
+}
