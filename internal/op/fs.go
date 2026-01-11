@@ -470,7 +470,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 		return errs.NotImplement
 	}
 	if err != nil {
-		return err // 这里最底层不需要套用WithStack
+		return errors.WithStack(err)
 	}
 
 	dirKey := Key(storage, stdpath.Dir(srcPath))
@@ -632,7 +632,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		} else if storage.Config().NoOverwriteUpload {
 			// try to rename old obj
 			err = Rename(ctx, storage, dstPath, tempName)
-			if err != nil && err != errs.ObjectAlreadyExists {
+			if err != nil {
 				return err
 			}
 		} else {

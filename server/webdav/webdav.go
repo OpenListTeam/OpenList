@@ -296,7 +296,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
-		return http.StatusForbidden, err
+		return 403, err
 	}
 	// TODO: return MultiStatus where appropriate.
 

@@ -271,35 +271,29 @@ func (y *Cloud189PC) Rename(ctx context.Context, srcObj model.Obj, newName strin
 		queryParam["familyId"] = y.FamilyID
 	}
 
-	switch srcObj.(type) {
+	var newObj model.Obj
+	switch f := srcObj.(type) {
 	case *Cloud189File:
 		fullUrl += "/renameFile.action"
 		queryParam["fileId"] = srcObj.GetID()
 		queryParam["destFileName"] = newName
+		newObj = &Cloud189File{Icon: f.Icon} // 复用预览
 	case *Cloud189Folder:
 		fullUrl += "/renameFolder.action"
 		queryParam["folderId"] = srcObj.GetID()
 		queryParam["destFolderName"] = newName
+		newObj = &Cloud189Folder{}
 	default:
 		return nil, errs.NotSupport
 	}
-	var resp RenameResp
+
 	_, err := y.request(fullUrl, method, func(req *resty.Request) {
 		req.SetContext(ctx).SetQueryParams(queryParam)
-	}, nil, resp, isFamily)
+	}, nil, newObj, isFamily)
 	if err != nil {
-		if resp.ResCode == "FileAlreadyExists" {
-			return nil, errs.ObjectAlreadyExists
-		}
 		return nil, err
 	}
-	switch f := srcObj.(type) {
-	case *Cloud189File:
-		return resp.toFile(f), nil
-	case *Cloud189Folder:
-		return resp.toFolder(), nil
-	}
-	return nil, errs.NotSupport
+	return newObj, nil
 }
 
 func (y *Cloud189PC) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
