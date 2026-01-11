@@ -9,8 +9,19 @@ import (
 	"github.com/google/uuid"
 )
 
-// labelSep is the separator used in job tags for labels.
-const labelSep = "="
+// escape escapes backslashes and colons in a string.
+func escape(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, ":", "\\:")
+	return s
+}
+
+// unescape unescapes backslashes and colons in a string.
+func unescape(s string) string {
+	s = strings.ReplaceAll(s, "\\\\", "\\")
+	s = strings.ReplaceAll(s, "\\:", ":")
+	return s
+}
 
 // OpScheduler is the main scheduler struct that manages jobs.
 type OpScheduler struct {
@@ -47,7 +58,7 @@ func (o *OpScheduler) RunNow(jobUUID uuid.UUID) error {
 func (o *OpScheduler) jobLabels2Tags(labels JobLabels) []string {
 	tags := make([]string, 0, len(labels))
 	for k, v := range labels {
-		tags = append(tags, k+labelSep+v)
+		tags = append(tags, escape(k)+":"+escape(v))
 	}
 	return tags
 }
@@ -55,9 +66,9 @@ func (o *OpScheduler) jobLabels2Tags(labels JobLabels) []string {
 func (o *OpScheduler) tags2JobLabels(tags []string) JobLabels {
 	labels := make(JobLabels)
 	for _, tag := range tags {
-		parts := strings.SplitN(tag, labelSep, 2)
+		parts := strings.SplitN(tag, ":", 2)
 		if len(parts) == 2 {
-			labels[parts[0]] = parts[1]
+			labels[unescape(parts[0])] = unescape(parts[1])
 		}
 	}
 	return labels

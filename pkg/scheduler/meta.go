@@ -141,9 +141,9 @@ func (o *OpJob) NextRuns(n int) ([]time.Time, error) {
 func newOpJob(job gocron.Job, disabled bool) *OpJob {
 	labels := make(JobLabels)
 	for _, tag := range job.Tags() {
-		parts := strings.SplitN(tag, labelSep, 1)
+		parts := strings.SplitN(tag, ":", 2)
 		if len(parts) == 2 {
-			labels[parts[0]] = parts[1]
+			labels[unescape(parts[0])] = unescape(parts[1])
 		}
 	}
 	return &OpJob{
