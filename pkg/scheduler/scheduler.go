@@ -151,11 +151,11 @@ func (o *OpScheduler) GetJob(jobUUID uuid.UUID) (*OpJob, bool) {
 }
 
 // GetJobsByLabels retrieves jobs that have all of the provided labels.
-func (o *OpScheduler) GetJobsByLabels(labels ...JobLabels) []*OpJob {
+func (o *OpScheduler) GetJobsByLabels(labels JobLabels) []*OpJob {
 	var result []*OpJob
 	filterLabels(o.jobsMap, func(j *OpJob) {
 		result = append(result, j)
-	}, labels...)
+	}, labels)
 	return result
 }
 
@@ -220,7 +220,7 @@ func (o *OpScheduler) RemoveJobs(jobUUID ...uuid.UUID) error {
 }
 
 // RemoveJobByTags removes all jobs that have all of the provided labels.
-func (o *OpScheduler) RemoveJobByLabels(labels ...JobLabels) error {
+func (o *OpScheduler) RemoveJobByLabels(labels JobLabels) error {
 	if len(labels) == 0 {
 		return nil
 	}
@@ -230,7 +230,7 @@ func (o *OpScheduler) RemoveJobByLabels(labels ...JobLabels) error {
 		func(j *OpJob) {
 			needRemovedJobsUUID = append(needRemovedJobsUUID, j.ID())
 		},
-		labels...,
+		labels,
 	)
 	if len(needRemovedJobsUUID) > 0 {
 		return o.RemoveJobs(needRemovedJobsUUID...)
@@ -239,7 +239,7 @@ func (o *OpScheduler) RemoveJobByLabels(labels ...JobLabels) error {
 }
 
 // StopJobByLabels stops all jobs that have all of the provided labels.
-func (o *OpScheduler) StopJobByLabels(labels ...JobLabels) error {
+func (o *OpScheduler) StopJobByLabels(labels JobLabels) error {
 	if len(labels) == 0 {
 		return nil
 	}
@@ -249,7 +249,7 @@ func (o *OpScheduler) StopJobByLabels(labels ...JobLabels) error {
 		func(j *OpJob) {
 			needStopJobsUUID = append(needStopJobsUUID, j.ID())
 		},
-		labels...,
+		labels,
 	)
 	if len(needStopJobsUUID) > 0 {
 		return o.StopJobs(needStopJobsUUID...)
@@ -271,11 +271,11 @@ func (o *OpScheduler) StopAndRemoveJobs(jobUUID ...uuid.UUID) error {
 }
 
 // StopAndRemoveJobByLabels stops and removes jobs by their labels.
-func (o *OpScheduler) StopAndRemoveJobByLabels(labels ...JobLabels) error {
-	if err := o.StopJobByLabels(labels...); err != nil {
+func (o *OpScheduler) StopAndRemoveJobByLabels(labels JobLabels) error {
+	if err := o.StopJobByLabels(labels); err != nil {
 		return err
 	}
-	return o.RemoveJobByLabels(labels...)
+	return o.RemoveJobByLabels(labels)
 }
 
 // Start starts the scheduler.

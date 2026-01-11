@@ -7,17 +7,12 @@ import (
 	"github.com/google/uuid"
 )
 
-func filterLabels(j jobsMapType, call func(j *OpJob), labels ...JobLabels) {
+func filterLabels(j jobsMapType, call func(j *OpJob), labels JobLabels) {
 	j.ForEach(func(_ uuid.UUID, opJob *OpJob) {
 		matched := true
-		for _, label := range labels {
-			for k, v := range label {
-				if val, exists := opJob.Label(k); !exists || val != v {
-					matched = false
-					break
-				}
-			}
-			if !matched {
+		for k, v := range labels {
+			if val, exists := opJob.Label(k); !exists || val != v {
+				matched = false
 				break
 			}
 		}
