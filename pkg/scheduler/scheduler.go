@@ -105,9 +105,9 @@ func (o *OpScheduler) NewJob(
 		cancel()
 		return nil, err
 	}
-	// save the cancel func
+	// Save the cancel func
 	o.jobCancelMap.Set(jobUUID, cancel)
-	// save the job
+	// Save the job
 	opJob := newOpJob(job, false)
 	o.jobsMap.Set(jobUUID, opJob)
 	return opJob, nil
@@ -137,9 +137,9 @@ func (o *OpScheduler) UpdateJob(
 		cancel()
 		return err
 	}
-	// save cancel func
+	// Save cancel func
 	o.jobCancelMap.Set(jobUUID, cancel)
-	// save job
+	// Save job
 	opJob := newOpJob(job, disabled)
 	o.jobsMap.Set(jobUUID, opJob)
 	return nil
