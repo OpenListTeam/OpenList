@@ -295,10 +295,13 @@ func (d *AliyundriveOpen) GetDetails(ctx context.Context) (*model.StorageDetails
 	if err != nil {
 		return nil, err
 	}
-	total := utils.Json.Get(res, "personal_space_info", "total_size").ToUint64()
-	used := utils.Json.Get(res, "personal_space_info", "used_size").ToUint64()
+	total := utils.Json.Get(res, "personal_space_info", "total_size").ToInt64()
+	used := utils.Json.Get(res, "personal_space_info", "used_size").ToInt64()
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
 	}, nil
 }
 

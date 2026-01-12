@@ -175,21 +175,24 @@ func (d *GoogleDrive) GetDetails(ctx context.Context) (*model.StorageDetails, er
 	if err != nil {
 		return nil, err
 	}
-	var total, used uint64
+	var total, used int64
 	if about.StorageQuota.Limit == nil {
 		total = 0
 	} else {
-		total, err = strconv.ParseUint(*about.StorageQuota.Limit, 10, 64)
+		total, err = strconv.ParseInt(*about.StorageQuota.Limit, 10, 64)
 		if err != nil {
 			return nil, err
 		}
 	}
-	used, err = strconv.ParseUint(about.StorageQuota.Usage, 10, 64)
+	used, err = strconv.ParseInt(about.StorageQuota.Usage, 10, 64)
 	if err != nil {
 		return nil, err
 	}
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
 	}, nil
 }
 

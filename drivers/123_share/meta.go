@@ -19,6 +19,7 @@ var config = driver.Config{
 	LocalSort:   true,
 	NoUpload:    true,
 	DefaultRoot: "0",
+	PreferProxy: true,
 }
 
 func init() {

@@ -24,6 +24,8 @@ type Config struct {
 	LinkCacheMode `json:"-"`
 	// if the driver only store indices of files (e.g. UrlTree)
 	OnlyIndices bool `json:"only_indices"`
+	// prefer proxy download even if direct link is available
+	PreferProxy bool `json:"prefer_proxy"`
 }
 type LinkCacheMode int8
 
@@ -39,4 +41,8 @@ const (
 
 func (c Config) MustProxy() bool {
 	return c.OnlyProxy || c.NoLinkURL
+}
+
+func (c Config) DefaultProxy() bool {
+	return c.PreferProxy
 }

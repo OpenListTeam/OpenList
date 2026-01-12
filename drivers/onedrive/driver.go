@@ -233,7 +233,7 @@ func (d *Onedrive) GetDetails(ctx context.Context) (*model.StorageDetails, error
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
 			TotalSpace: drive.Quota.Total,
-			FreeSpace:  drive.Quota.Remaining,
+			UsedSpace:  drive.Quota.Used,
 		},
 	}, nil
 }
