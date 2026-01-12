@@ -218,8 +218,8 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			}
 			if details, ok := model.GetStorageDetails(obj); ok {
 				objRet = &model.ObjStorageDetails{
-					Obj:                    objRet,
-					StorageDetailsWithName: *details,
+					Obj:            objRet,
+					StorageDetails: details,
 				}
 			}
 			objMap[name] = objRet

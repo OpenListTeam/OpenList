@@ -50,11 +50,8 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 			continue
 		}
 		objs[idx] = &model.ObjStorageDetails{
-			Obj: objs[idx],
-			StorageDetailsWithName: model.StorageDetailsWithName{
-				StorageDetails: nil,
-				DriverName:     remoteDriver.Config().Name,
-			},
+			Obj:            objs[idx],
+			StorageDetails: nil,
 		}
 		workerCount++
 		go func(dri driver.Driver, i int) {
