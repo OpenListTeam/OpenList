@@ -442,10 +442,6 @@ func (d *Cloud189) transfer(dstDir model.Obj, shareID int64) error {
 			"isFolder": 1,
 		},
 	}
-
-	if !dstDir.IsDir() {
-		return fmt.Errorf("it should be in the folder")
-	}
 	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
 	form := map[string]string{
 		"type":           "SHARE_SAVE",
