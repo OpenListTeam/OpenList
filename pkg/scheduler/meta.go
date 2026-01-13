@@ -13,14 +13,6 @@ import (
 // JobRunner defines the function signature for job runners
 type JobRunner func(ctx context.Context, params ...any) error
 
-// jobCancelMap is a thread-safe map for storing job cancel functions
-type jobCancelMap = *safeMap[uuid.UUID, context.CancelFunc]
-
-// newJobCancelMap creates a new jobCancelMap instance
-func newJobCancelMap() jobCancelMap {
-	return newSafeMap[uuid.UUID, context.CancelFunc]()
-}
-
 // JobLabels the type for job labels
 type JobLabels = map[string]string
 
@@ -88,20 +80,23 @@ func (sm *safeMap[K, V]) ForEach(fn func(K, V)) {
 
 // OpJob represents an operational job with its metadata.
 type OpJob struct {
-	job            gocron.Job
-	labels         JobLabels
-	disableRWMutex sync.RWMutex
-	disabled       bool
+	id         uuid.UUID
+	name       string
+	lastRun    time.Time
+	lastRunErr error
+	nextRun10  []time.Time
+	labels     JobLabels
+	disabled   bool
 }
 
 // ID returns the UUID of the job.
 func (o *OpJob) ID() uuid.UUID {
-	return o.job.ID()
+	return o.id
 }
 
 // Name returns the name of the job.
 func (o *OpJob) Name() string {
-	return o.job.Name()
+	return o.name
 }
 
 // Labels returns the labels of the job.
@@ -117,24 +112,22 @@ func (o *OpJob) Label(key string) (string, bool) {
 
 // Disabled indicates whether the job is disabled.
 func (o *OpJob) Disabled() bool {
-	o.disableRWMutex.RLock()
-	defer o.disableRWMutex.RUnlock()
 	return o.disabled
 }
 
 // LastRun returns the last run time of the job.
 func (o *OpJob) LastRun() (time.Time, error) {
-	return o.job.LastRun()
+	return o.lastRun, o.lastRunErr
 }
 
 // NextRun returns the next run time of the job.
-func (o *OpJob) NextRun() (time.Time, error) {
-	return o.job.NextRun()
+func (o *OpJob) NextRun() time.Time {
+	return o.nextRun10[0]
 }
 
 // NextRuns returns the next n run times of the job.
-func (o *OpJob) NextRuns(n int) ([]time.Time, error) {
-	return o.job.NextRuns(n)
+func (o *OpJob) NextRuns10() []time.Time {
+	return o.nextRun10
 }
 
 // newOpJob creates a new OpJob instance from a gocron.Job and its disabled status.
@@ -146,9 +139,18 @@ func newOpJob(job gocron.Job, disabled bool) *OpJob {
 			labels[unescape(parts[0])] = unescape(parts[1])
 		}
 	}
+	lastRun, lastRunErr := job.LastRun()
+	nextRun10, err := job.NextRuns(10)
+	if err != nil {
+		nextRun10 = []time.Time{}
+	}
 	return &OpJob{
-		job:      job,
-		labels:   labels,
-		disabled: disabled,
+		id:         job.ID(),
+		name:       job.Name(),
+		lastRun:    lastRun,
+		lastRunErr: lastRunErr,
+		nextRun10:  nextRun10,
+		labels:     labels,
+		disabled:   disabled,
 	}
 }

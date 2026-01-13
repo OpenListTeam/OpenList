@@ -9,15 +9,16 @@ import (
 	"github.com/google/uuid"
 )
 
+type jobsMapType = *safeMap[uuid.UUID, gocron.Job]
+type boolMapType = *safeMap[uuid.UUID, bool]
+
 // OpScheduler is the main scheduler struct that manages jobs.
 type OpScheduler struct {
-	Name         string
-	scheduler    gocron.Scheduler
-	jobCancelMap jobCancelMap
-	jobsMap      jobsMapType
+	Name           string
+	scheduler      gocron.Scheduler
+	jobsMap        jobsMapType
+	jobDisabledMap boolMapType
 }
-
-type jobsMapType = *safeMap[uuid.UUID, *OpJob]
 
 // NewOpScheduler creates a new OpScheduler instance.
 func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, error) {
@@ -26,20 +27,20 @@ func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, 
 		return nil, err
 	}
 	return &OpScheduler{
-		scheduler:    scheduler,
-		Name:         name,
-		jobCancelMap: newJobCancelMap(),
-		jobsMap:      newSafeMap[uuid.UUID, *OpJob](),
+		scheduler:      scheduler,
+		Name:           name,
+		jobDisabledMap: newSafeMap[uuid.UUID, bool](),
+		jobsMap:        newSafeMap[uuid.UUID, gocron.Job](),
 	}, nil
 }
 
 // RunNow runs a job immediately by its UUID.
 func (o *OpScheduler) RunNow(jobUUID uuid.UUID) error {
-	opJob, exists := o.GetJob(jobUUID)
+	job, exists := o.getCronJob(jobUUID)
 	if !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	return opJob.job.RunNow()
+	return job.RunNow()
 }
 
 func (o *OpScheduler) jobLabels2Tags(labels JobLabels) []string {
@@ -61,33 +62,39 @@ func (o *OpScheduler) tags2JobLabels(tags []string) JobLabels {
 	return labels
 }
 
-func (o *OpScheduler) buildJobParams(ctx context.Context, jobUUID uuid.UUID, runner JobRunner, params ...any) (gocron.Task, context.Context, context.CancelFunc) {
-	jobCtx, cancel := context.WithCancel(ctx)
+func (o *OpScheduler) jobIsDisabled(jobUUID uuid.UUID) bool {
+	disabled, exists := o.jobDisabledMap.Get(jobUUID)
+	return exists && disabled
+}
+
+func (o *OpScheduler) buildJobParams(
+	ctx context.Context,
+	jobUUID uuid.UUID,
+	runner JobRunner,
+	params ...any,
+) gocron.Task {
 	var finalParams []any
 	if len(params) == 0 {
-		finalParams = []any{jobCtx}
+		finalParams = []any{ctx}
 	} else {
 		finalParams = make([]any, 0, len(params)+1)
-		finalParams = append(finalParams, jobCtx)
+		finalParams = append(finalParams, ctx)
 		finalParams = append(finalParams, params...)
 	}
 	task := gocron.NewTask(func(ctx context.Context, params ...any) error {
 		// check if job is exists and not disabled
-		j, exists := o.jobsMap.Get(jobUUID)
+		j, exists := o.getCronJob(jobUUID)
 		// In theory the job should always exist, but check just in case
 		if !exists {
 			return nil
 		}
 		// check disabled status
-		j.disableRWMutex.RLock()
-		disabled := j.disabled
-		j.disableRWMutex.RUnlock()
-		if disabled {
+		if o.jobIsDisabled(j.ID()) {
 			return nil
 		}
 		return runner(ctx, params...)
 	}, finalParams...)
-	return task, jobCtx, cancel
+	return task
 }
 
 // NewJob creates and schedules a new job.
@@ -99,18 +106,20 @@ func (o *OpScheduler) NewJob(
 	runner JobRunner, params ...any) (*OpJob, error) {
 	jobUUID := uuid.New()
 	tags := o.jobLabels2Tags(labels)
-	task, jobCtx, cancel := o.buildJobParams(ctx, jobUUID, runner, params...)
-	job, err := o.scheduler.NewJob(cron, task, gocron.WithIdentifier(jobUUID), gocron.WithContext(jobCtx), gocron.WithName(jobName), gocron.WithTags(tags...))
+	task := o.buildJobParams(ctx, jobUUID, runner, params...)
+	job, err := o.scheduler.NewJob(
+		cron,
+		task,
+		gocron.WithIdentifier(jobUUID),
+		gocron.WithContext(ctx),
+		gocron.WithName(jobName),
+		gocron.WithTags(tags...),
+	)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
-	// Save the cancel func
-	o.jobCancelMap.Set(jobUUID, cancel)
-	// Save the job
-	opJob := newOpJob(job, false)
-	o.jobsMap.Set(jobUUID, opJob)
-	return opJob, nil
+	o.jobsMap.Set(jobUUID, job)
+	return newOpJob(job, false), nil
 }
 
 // UpdateJob updates an existing job by its UUID.
@@ -127,83 +136,64 @@ func (o *OpScheduler) UpdateJob(
 	if err != nil {
 		return err
 	}
-	task, jobCtx, cancel := o.buildJobParams(ctx, jobUUID, runner, params...)
+	task := o.buildJobParams(ctx, jobUUID, runner, params...)
 	tags := o.jobLabels2Tags(labels)
 	job, err := o.scheduler.Update(
 		jobUUID, cron, task,
-		gocron.WithContext(jobCtx), gocron.WithName(jobName), gocron.WithTags(tags...),
+		gocron.WithContext(ctx), gocron.WithName(jobName), gocron.WithTags(tags...),
 	)
 	if err != nil {
-		cancel()
 		return err
 	}
-	// Save cancel func
-	o.jobCancelMap.Set(jobUUID, cancel)
 	// Save job
-	opJob := newOpJob(job, disabled)
-	o.jobsMap.Set(jobUUID, opJob)
+	o.jobsMap.Set(jobUUID, job)
 	return nil
+}
+
+// exists
+func (o *OpScheduler) Exists(uuid uuid.UUID) bool {
+	_, exists := o.getCronJob(uuid)
+	return exists
+}
+
+// getCronJob retrieves a gocron.Job by its UUID.
+func (o *OpScheduler) getCronJob(jobUUID uuid.UUID) (gocron.Job, bool) {
+	return o.jobsMap.Get(jobUUID)
 }
 
 // GetJob retrieves a job by its UUID.
 func (o *OpScheduler) GetJob(jobUUID uuid.UUID) (*OpJob, bool) {
-	return o.jobsMap.Get(jobUUID)
+	job, exists := o.getCronJob(jobUUID)
+	if !exists {
+		return nil, false
+	}
+	return newOpJob(job, o.jobIsDisabled(jobUUID)), true
 }
 
 // GetJobsByLabels retrieves jobs that have all of the provided labels.
 func (o *OpScheduler) GetJobsByLabels(labels JobLabels) []*OpJob {
 	var result []*OpJob
-	filterLabels(o.jobsMap, func(j *OpJob) {
-		result = append(result, j)
-	}, labels)
+	o.filterLabels(labels, func(j gocron.Job, jobLabels JobLabels) {
+		result = append(result, newOpJob(j, o.jobIsDisabled(j.ID())))
+	})
 	return result
 }
 
 // EnableJob enables a job by its UUID.
 func (o *OpScheduler) EnableJob(jobUUID uuid.UUID) error {
-	opJob, exists := o.GetJob(jobUUID)
-	if !exists {
+	if !o.Exists(jobUUID) {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	opJob.disableRWMutex.Lock()
-	opJob.disabled = false
-	opJob.disableRWMutex.Unlock()
+	o.jobDisabledMap.Delete(jobUUID)
 	return nil
 }
 
 // DisableJob disables a job by its UUID.
 func (o *OpScheduler) DisableJob(jobUUID uuid.UUID) error {
-	opJob, exists := o.GetJob(jobUUID)
-	if !exists {
+	if !o.Exists(jobUUID) {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	opJob.disableRWMutex.Lock()
-	opJob.disabled = true
-	opJob.disableRWMutex.Unlock()
-	return nil
-}
-
-// StopAndDisableJob stops and disables a job by its UUID.
-func (o *OpScheduler) StopAndDisableJob(jobUUID uuid.UUID) error {
-	err := o.StopJobs(jobUUID)
-	if err != nil {
-		return err
-	}
-	return o.DisableJob(jobUUID)
-}
-
-// StopJobs stops jobs by their UUIDs.
-func (o *OpScheduler) StopJobs(jobUUIDs ...uuid.UUID) error {
-	if len(jobUUIDs) == 0 {
-		return nil
-	}
-	for _, jobID := range jobUUIDs {
-		cancelFunc, exists := o.jobCancelMap.Get(jobID)
-		if !exists {
-			return errors.New("job not found: " + jobID.String())
-		}
-		cancelFunc()
-	}
+	o.jobDisabledMap.Set(jobUUID, true)
 	return nil
 }
 
@@ -212,17 +202,42 @@ func (o *OpScheduler) RemoveJobs(jobUUIDs ...uuid.UUID) error {
 	if len(jobUUIDs) == 0 {
 		return nil
 	}
+	var errs []error
 	for _, jobID := range jobUUIDs {
 		err := o.scheduler.RemoveJob(jobID)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
-		// Remove the cancel func
-		o.jobCancelMap.Delete(jobID)
 		// Remove from jobsMap
 		o.jobsMap.Delete(jobID)
+		// Remove from disabled map
+		o.jobDisabledMap.Delete(jobID)
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
+}
+
+// filterLabels filters jobs in the jobsMap based on the provided labels and applies the action function to matching jobs.
+func (o *OpScheduler) filterLabels(
+	labels JobLabels,
+	action func(gocron.Job, JobLabels),
+) {
+	o.jobsMap.ForEach(func(_ uuid.UUID, job gocron.Job) {
+		jobLabels := o.tags2JobLabels(job.Tags())
+		matches := true
+		for k, v := range labels {
+			if jobVal, exists := jobLabels[k]; !exists || jobVal != v {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			action(job, jobLabels)
+		}
+	})
 }
 
 // RemoveJobByTags removes all jobs that have all of the provided labels.
@@ -231,57 +246,16 @@ func (o *OpScheduler) RemoveJobByLabels(labels JobLabels) error {
 		return nil
 	}
 	needRemovedJobsUUID := make([]uuid.UUID, 0)
-	filterLabels(
-		o.jobsMap,
-		func(j *OpJob) {
+	o.filterLabels(
+		labels,
+		func(j gocron.Job, jobLabels JobLabels) {
 			needRemovedJobsUUID = append(needRemovedJobsUUID, j.ID())
 		},
-		labels,
 	)
 	if len(needRemovedJobsUUID) > 0 {
 		return o.RemoveJobs(needRemovedJobsUUID...)
 	}
 	return nil
-}
-
-// StopJobByLabels stops all jobs that have all of the provided labels.
-func (o *OpScheduler) StopJobByLabels(labels JobLabels) error {
-	if len(labels) == 0 {
-		return nil
-	}
-	needStopJobsUUID := make([]uuid.UUID, 0)
-	filterLabels(
-		o.jobsMap,
-		func(j *OpJob) {
-			needStopJobsUUID = append(needStopJobsUUID, j.ID())
-		},
-		labels,
-	)
-	if len(needStopJobsUUID) > 0 {
-		return o.StopJobs(needStopJobsUUID...)
-	}
-	return nil
-}
-
-// StopAndRemoveJobs stops and removes jobs by their UUIDs.
-func (o *OpScheduler) StopAndRemoveJobs(jobUUID ...uuid.UUID) error {
-	for _, jobID := range jobUUID {
-		if err := o.StopJobs(jobID); err != nil {
-			return err
-		}
-		if err := o.RemoveJobs(jobID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// StopAndRemoveJobByLabels stops and removes jobs by their labels.
-func (o *OpScheduler) StopAndRemoveJobByLabels(labels JobLabels) error {
-	if err := o.StopJobByLabels(labels); err != nil {
-		return err
-	}
-	return o.RemoveJobByLabels(labels)
 }
 
 // Start starts the scheduler.
@@ -301,10 +275,7 @@ func (o *OpScheduler) Shutdown() error {
 
 // StopAllJobs stops all jobs in the scheduler.
 func (o *OpScheduler) StopAllJobs() error {
-	o.jobCancelMap.ForEach(func(u uuid.UUID, cf context.CancelFunc) {
-		cf()
-	})
-	return nil
+	return o.scheduler.StopJobs()
 }
 
 // RemoveAllJobs removes all jobs from the scheduler.
@@ -318,7 +289,7 @@ func (o *OpScheduler) RemoveAllJobs() error {
 			errs = append(errs, err)
 		}
 	}
-	o.jobCancelMap.Clear()
+	o.jobDisabledMap.Clear()
 	o.jobsMap.Clear()
 	if len(errs) > 0 {
 		return errors.Join(errs...)
