@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +87,7 @@ type OpJob struct {
 	lastRun    time.Time
 	lastRunErr error
 	nextRun10  []time.Time
+	nextRunErr error
 	labels     JobLabels
 	disabled   bool
 }
@@ -121,13 +124,20 @@ func (o *OpJob) LastRun() (time.Time, error) {
 }
 
 // NextRun returns the next run time of the job.
-func (o *OpJob) NextRun() time.Time {
-	return o.nextRun10[0]
+func (o *OpJob) NextRun() (time.Time, error) {
+	if len(o.nextRun10) == 0 {
+		if o.nextRunErr == nil {
+			return time.Time{}, errors.New("no next run time available")
+		} else {
+			return time.Time{}, o.nextRunErr
+		}
+	}
+	return o.nextRun10[0], nil
 }
 
 // NextRuns returns the next n run times of the job.
-func (o *OpJob) NextRuns10() []time.Time {
-	return o.nextRun10
+func (o *OpJob) NextRuns10() ([]time.Time, error) {
+	return o.nextRun10, o.nextRunErr
 }
 
 // newOpJob creates a new OpJob instance from a gocron.Job and its disabled status.
@@ -136,21 +146,21 @@ func newOpJob(job gocron.Job, disabled bool) *OpJob {
 	for _, tag := range job.Tags() {
 		parts := strings.SplitN(tag, ":", 2)
 		if len(parts) == 2 {
-			labels[unescape(parts[0])] = unescape(parts[1])
+			labels[unescapeTagStr(parts[0])] = unescapeTagStr(parts[1])
 		}
 	}
 	lastRun, lastRunErr := job.LastRun()
-	nextRun10, err := job.NextRuns(10)
-	if err != nil {
-		nextRun10 = []time.Time{}
-	}
+	nextRun10, nextRunErr := job.NextRuns(10)
+	labelsCopy := make(JobLabels)
+	maps.Copy(labelsCopy, labels)
 	return &OpJob{
 		id:         job.ID(),
 		name:       job.Name(),
 		lastRun:    lastRun,
 		lastRunErr: lastRunErr,
 		nextRun10:  nextRun10,
-		labels:     labels,
+		nextRunErr: nextRunErr,
+		labels:     labelsCopy,
 		disabled:   disabled,
 	}
 }

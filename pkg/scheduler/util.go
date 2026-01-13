@@ -4,15 +4,15 @@ import (
 	"strings"
 )
 
-// escape escapes backslashes and colons in a string.
-func escape(s string) string {
+// escapeTagStr escapes backslashes and colons in a string.
+func escapeTagStr(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, ":", "\\:")
 	return s
 }
 
-// unescape unescapes backslashes and colons in a string.
-func unescape(s string) string {
+// unescapeTagStr unescapes backslashes and colons in a string.
+func unescapeTagStr(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); i++ {
@@ -28,4 +28,19 @@ func unescape(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// splitEscapedTag splits the first unescaped colon to separate key and value.
+// It expects the input to be produced by escapeTagStr.
+func splitEscapedTag(tag string) (string, string, bool) {
+	for i := 0; i < len(tag); i++ {
+		if tag[i] == '\\' {
+			i++ // Skip the escaped character
+			continue
+		}
+		if tag[i] == ':' {
+			return tag[:i], tag[i+1:], true
+		}
+	}
+	return "", "", false
 }

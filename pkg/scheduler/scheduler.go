@@ -3,21 +3,23 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
 )
 
+// jobsMapType is a thread-safe map for storing jobs.
 type jobsMapType = *safeMap[uuid.UUID, gocron.Job]
-type boolMapType = *safeMap[uuid.UUID, bool]
+
+// jobDisabledMapType is a thread-safe map for storing boolean values.
+type jobDisabledMapType = *safeMap[uuid.UUID, bool]
 
 // OpScheduler is the main scheduler struct that manages jobs.
 type OpScheduler struct {
 	Name           string
 	scheduler      gocron.Scheduler
 	jobsMap        jobsMapType
-	jobDisabledMap boolMapType
+	jobDisabledMap jobDisabledMapType
 }
 
 // NewOpScheduler creates a new OpScheduler instance.
@@ -35,38 +37,47 @@ func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, 
 }
 
 // RunNow runs a job immediately by its UUID.
-func (o *OpScheduler) RunNow(jobUUID uuid.UUID) error {
+func (o *OpScheduler) RunNow(jobUUID uuid.UUID, force bool) error {
 	job, exists := o.getCronJob(jobUUID)
 	if !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
+	if !force && o.jobIsDisabled(jobUUID) {
+		// job is disabled, do not run
+		return nil
+	}
 	return job.RunNow()
 }
 
+// jobLabels2Tags converts JobLabels to a slice of tags.
 func (o *OpScheduler) jobLabels2Tags(labels JobLabels) []string {
 	tags := make([]string, 0, len(labels))
 	for k, v := range labels {
-		tags = append(tags, escape(k)+":"+escape(v))
+		tags = append(tags, escapeTagStr(k)+":"+escapeTagStr(v))
 	}
 	return tags
 }
 
+// tags2JobLabels converts a slice of tags to JobLabels.
 func (o *OpScheduler) tags2JobLabels(tags []string) JobLabels {
 	labels := make(JobLabels)
 	for _, tag := range tags {
-		parts := strings.SplitN(tag, ":", 2)
-		if len(parts) == 2 {
-			labels[unescape(parts[0])] = unescape(parts[1])
+		keyPart, valPart, ok := splitEscapedTag(tag)
+		if !ok {
+			continue
 		}
+		labels[unescapeTagStr(keyPart)] = unescapeTagStr(valPart)
 	}
 	return labels
 }
 
+// jobIsDisabled checks if a job is disabled.
 func (o *OpScheduler) jobIsDisabled(jobUUID uuid.UUID) bool {
 	disabled, exists := o.jobDisabledMap.Get(jobUUID)
 	return exists && disabled
 }
 
+// buildJobParams builds a gocron.Task with the provided parameters.
 func (o *OpScheduler) buildJobParams(
 	ctx context.Context,
 	jobUUID uuid.UUID,
@@ -102,8 +113,10 @@ func (o *OpScheduler) NewJob(
 	ctx context.Context,
 	jobName string,
 	cron gocron.JobDefinition,
+	disabled bool,
 	labels JobLabels,
-	runner JobRunner, params ...any) (*OpJob, error) {
+	runner JobRunner,
+	params ...any) (*OpJob, error) {
 	jobUUID := uuid.New()
 	tags := o.jobLabels2Tags(labels)
 	task := o.buildJobParams(ctx, jobUUID, runner, params...)
@@ -119,6 +132,9 @@ func (o *OpScheduler) NewJob(
 		return nil, err
 	}
 	o.jobsMap.Set(jobUUID, job)
+	if disabled {
+		o.jobDisabledMap.Set(jobUUID, true)
+	}
 	return newOpJob(job, false), nil
 }
 
@@ -132,9 +148,8 @@ func (o *OpScheduler) UpdateJob(
 	labels JobLabels,
 	runner JobRunner, params ...any) error {
 	// Stop and remove the existing job
-	err := o.RemoveJobs(jobUUID)
-	if err != nil {
-		return err
+	if exists := o.Exists(jobUUID); !exists {
+		return errors.New("job not found: " + jobUUID.String())
 	}
 	task := o.buildJobParams(ctx, jobUUID, runner, params...)
 	tags := o.jobLabels2Tags(labels)
@@ -147,6 +162,10 @@ func (o *OpScheduler) UpdateJob(
 	}
 	// Save job
 	o.jobsMap.Set(jobUUID, job)
+	// Set disabled status
+	if disabled {
+		o.jobDisabledMap.Set(jobUUID, true)
+	}
 	return nil
 }
 
