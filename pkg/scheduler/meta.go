@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"maps"
-	"strings"
 	"sync"
 	"time"
 
@@ -10,7 +9,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// JobRunner defines the function signature for job runners
+// JobRunner defines the expected function signature for job runners.
+//
+// Implementations must be functions that accept a context.Context as the first
+// parameter, followed by zero or more additional parameters, and return an error.
+//
+// A canonical example is:
+//
+//	func(ctx context.Context, args ...any) error
+//
+// While JobRunner is typed as any for flexibility, callers are expected to
+// adhere to this function shape.
 type JobRunner any
 
 // JobLabels the type for job labels
@@ -68,23 +77,26 @@ func (sm *safeMap[K, V]) Clear() {
 }
 
 // ForEach iterates over all key-value pairs in the safeMap and applies the provided function.
+// The callback is executed while holding a read lock; it should be fast and must not call
+// methods on the same safeMap that acquire the lock (e.g., Set, Delete, Clear) to avoid deadlocks.
 func (sm *safeMap[K, V]) ForEach(fn func(K, V)) {
-	snapshot := sm.GetAll()
-	for k, v := range snapshot {
+	sm.lock.RLock()
+	defer sm.lock.RUnlock()
+	for k, v := range sm.data {
 		fn(k, v)
 	}
 }
 
 // OpJob represents an operational job with its metadata.
 type OpJob struct {
-	id         uuid.UUID
-	name       string
-	lastRun    time.Time
-	lastRunErr error
-	nextRun10  []time.Time
-	nextRunErr error
-	labels     JobLabels
-	disabled   bool
+	id          uuid.UUID
+	name        string
+	lastRun     time.Time
+	lastRunErr  error
+	nextTenRuns []time.Time
+	nextRunErr  error
+	labels      JobLabels
+	disabled    bool
 }
 
 // ID returns the UUID of the job.
@@ -123,35 +135,36 @@ func (o *OpJob) NextRun() (time.Time, error) {
 	if o.nextRunErr != nil {
 		return time.Time{}, o.nextRunErr
 	}
-	return o.nextRun10[0], nil
+	return o.nextTenRuns[0], nil
 }
 
-// NextRuns returns the next n run times of the job.
-func (o *OpJob) NextRuns10() ([]time.Time, error) {
-	return o.nextRun10, o.nextRunErr
+// GetNextTenRuns returns the next 10 run times of the job.
+func (o *OpJob) GetNextTenRuns() ([]time.Time, error) {
+	return o.nextTenRuns, o.nextRunErr
 }
 
 // newOpJob creates a new OpJob instance from a gocron.Job and its disabled status.
 func newOpJob(job gocron.Job, disabled bool) *OpJob {
 	labels := make(JobLabels)
 	for _, tag := range job.Tags() {
-		parts := strings.SplitN(tag, ":", 2)
-		if len(parts) == 2 {
-			labels[unescapeTagStr(parts[0])] = unescapeTagStr(parts[1])
+		key, value, ok := splitEscapedTag(tag)
+		if !ok {
+			continue
 		}
+		labels[key] = value
 	}
 	lastRun, lastRunErr := job.LastRun()
 	nextRun10, nextRunErr := job.NextRuns(10)
 	labelsCopy := make(JobLabels)
 	maps.Copy(labelsCopy, labels)
 	return &OpJob{
-		id:         job.ID(),
-		name:       job.Name(),
-		lastRun:    lastRun,
-		lastRunErr: lastRunErr,
-		nextRun10:  nextRun10,
-		nextRunErr: nextRunErr,
-		labels:     labelsCopy,
-		disabled:   disabled,
+		id:          job.ID(),
+		name:        job.Name(),
+		lastRun:     lastRun,
+		lastRunErr:  lastRunErr,
+		nextTenRuns: nextRun10,
+		nextRunErr:  nextRunErr,
+		labels:      labelsCopy,
+		disabled:    disabled,
 	}
 }

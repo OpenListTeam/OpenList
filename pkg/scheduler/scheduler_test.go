@@ -84,7 +84,6 @@ func TestSchedulerNormal(t *testing.T) {
 	afterCreated, err := s.NewJob(
 		ctx,
 		"test-job",
-		// run every 10 seconds
 		gocron.DurationJob(
 			5*time.Second,
 		),

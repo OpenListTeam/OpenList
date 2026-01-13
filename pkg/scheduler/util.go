@@ -36,6 +36,9 @@ func splitEscapedTag(tag string) (string, string, bool) {
 	for i := 0; i < len(tag); i++ {
 		if tag[i] == '\\' {
 			i++ // Skip the escaped character
+			if i >= len(tag) {
+				break
+			}
 			continue
 		}
 		if tag[i] == ':' {

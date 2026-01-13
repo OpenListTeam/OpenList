@@ -92,16 +92,15 @@ func (o *OpScheduler) buildJobParams(
 		return nil, errors.New("runner is nil")
 	}
 	if len(params)+1 != f.Type().NumIn() {
-		return nil, errors.New("number of params does not match runner function signature")
+		return nil, errors.New("number of params does not match runner function signature (expected N params plus context parameter)")
 	}
-	// check runner and params
 	// check runner as function and NumIn is match params length
 	task := gocron.NewTask(func(_ctx context.Context, params []any) error {
 		// check if job is exists and not disabled
 		j, exists := o.getCronJob(jobUUID)
 		// In theory the job should always exist, but check just in case
 		if !exists {
-			return nil
+			return errors.New("cron job not found")
 		}
 		// check disabled status
 		if o.jobIsDisabled(j.ID()) {
@@ -112,10 +111,10 @@ func (o *OpScheduler) buildJobParams(
 		for k, param := range params {
 			in[k+1] = reflect.ValueOf(param)
 		}
+		// call runner with params appended context at first
 		returnValues := f.Call(in)
-		// call runner with params
 		result := returnValues[0].Interface()
-		// if runner returns err, return it
+		// if runner returns an error, return it
 		if result == nil {
 			return nil
 		}
@@ -133,6 +132,12 @@ func (o *OpScheduler) NewJob(
 	labels JobLabels,
 	runner JobRunner,
 	params ...any) (*OpJob, error) {
+	if runner == nil {
+		return nil, errors.New("runner is nil")
+	}
+	if jobName == "" {
+		return nil, errors.New("jobName is empty")
+	}
 	jobUUID := uuid.New()
 	tags := o.jobLabels2Tags(labels)
 	task, err := o.buildJobParams(jobUUID, runner, params)
@@ -154,7 +159,7 @@ func (o *OpScheduler) NewJob(
 	if disabled {
 		o.jobDisabledMap.Set(jobUUID, true)
 	}
-	return newOpJob(job, false), nil
+	return newOpJob(job, disabled), nil
 }
 
 // UpdateJob updates an existing job by its UUID.
@@ -187,6 +192,8 @@ func (o *OpScheduler) UpdateJob(
 	// Set disabled status
 	if disabled {
 		o.jobDisabledMap.Set(jobUUID, true)
+	} else {
+		o.jobDisabledMap.Delete(jobUUID)
 	}
 	return nil
 }
