@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"errors"
 	"maps"
 	"strings"
 	"sync"
@@ -121,12 +120,8 @@ func (o *OpJob) LastRun() (time.Time, error) {
 
 // NextRun returns the next run time of the job.
 func (o *OpJob) NextRun() (time.Time, error) {
-	if len(o.nextRun10) == 0 {
-		if o.nextRunErr == nil {
-			return time.Time{}, errors.New("no next run time available")
-		} else {
-			return time.Time{}, o.nextRunErr
-		}
+	if o.nextRunErr != nil {
+		return time.Time{}, o.nextRunErr
 	}
 	return o.nextRun10[0], nil
 }

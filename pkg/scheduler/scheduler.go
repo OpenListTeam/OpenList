@@ -115,7 +115,7 @@ func (o *OpScheduler) buildJobParams(
 		returnValues := f.Call(in)
 		// call runner with params
 		result := returnValues[0].Interface()
-		// 如果为空，返回空
+		// if runner returns err, return it
 		if result == nil {
 			return nil
 		}
@@ -191,7 +191,7 @@ func (o *OpScheduler) UpdateJob(
 	return nil
 }
 
-// exists
+// Exists checks whether a job with the given UUID is registered in the scheduler.
 func (o *OpScheduler) Exists(uuid uuid.UUID) bool {
 	_, exists := o.getCronJob(uuid)
 	return exists
@@ -281,7 +281,7 @@ func (o *OpScheduler) filterLabels(
 	})
 }
 
-// RemoveJobByTags removes all jobs that have all of the provided labels.
+// RemoveJobByLabels removes all jobs that have all of the provided labels.
 func (o *OpScheduler) RemoveJobByLabels(labels JobLabels) error {
 	if len(labels) == 0 {
 		return nil

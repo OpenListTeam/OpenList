@@ -16,26 +16,37 @@ func TestGoCron(t *testing.T) {
 	s.Start()
 	defer s.Shutdown()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	arg0 := 0
 	arg1 := "arg1"
+	executeCalled := make(chan bool, 1)
 	job, err := s.NewJob(
 		gocron.DurationJob(5*time.Second),
 		gocron.NewTask(
 			func(ctx context.Context, arg0 int, arg1 string) error {
 				t.Logf("task is running with args: %d, %s", arg0, arg1)
+				executeCalled <- true
 				return nil
 			},
 			arg0, arg1,
 		),
 		gocron.WithContext(ctx),
 	)
-	defer cancel()
 	t.Logf("job ID: %d", job.ID())
 	err = job.RunNow()
 	if err != nil {
 		t.Fatalf("failed to run job now: %v", err)
 	}
-	time.Sleep(30 * time.Second)
+	select {
+	case <-executeCalled:
+		t.Log("job executed successfully")
+	case <-ctx.Done():
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Fatalf("job did not execute within the expected time")
+		} else if ctx.Err() != nil {
+			t.Fatalf("context error: %v", ctx.Err())
+		}
+	}
 }
 
 func TestSchedulerNormal(t *testing.T) {
@@ -69,7 +80,7 @@ func TestSchedulerNormal(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	t.Log("regsitry Job")
+	t.Log("registry Job")
 	afterCreated, err := s.NewJob(
 		ctx,
 		"test-job",
