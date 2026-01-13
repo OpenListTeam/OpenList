@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"reflect"
 
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
@@ -79,20 +80,20 @@ func (o *OpScheduler) jobIsDisabled(jobUUID uuid.UUID) bool {
 
 // buildJobParams builds a gocron.Task with the provided parameters.
 func (o *OpScheduler) buildJobParams(
-	ctx context.Context,
 	jobUUID uuid.UUID,
 	runner JobRunner,
-	params ...any,
-) gocron.Task {
-	var finalParams []any
-	if len(params) == 0 {
-		finalParams = []any{ctx}
-	} else {
-		finalParams = make([]any, 0, len(params)+1)
-		finalParams = append(finalParams, ctx)
-		finalParams = append(finalParams, params...)
+	params []any,
+) (gocron.Task, error) {
+	f := reflect.ValueOf(runner)
+	if f.IsZero() {
+		return nil, errors.New("runner is nil")
 	}
-	task := gocron.NewTask(func(ctx context.Context, params ...any) error {
+	if len(params)+1 != f.Type().NumIn() {
+		return nil, errors.New("number of params does not match runner function signature")
+	}
+	// check runner and params
+	// check runner as function and NumIn is match params length
+	task := gocron.NewTask(func(_ctx context.Context, params []any) error {
 		// check if job is exists and not disabled
 		j, exists := o.getCronJob(jobUUID)
 		// In theory the job should always exist, but check just in case
@@ -103,9 +104,21 @@ func (o *OpScheduler) buildJobParams(
 		if o.jobIsDisabled(j.ID()) {
 			return nil
 		}
-		return runner(ctx, params...)
-	}, finalParams...)
-	return task
+		in := make([]reflect.Value, len(params)+1)
+		in[0] = reflect.ValueOf(_ctx)
+		for k, param := range params {
+			in[k+1] = reflect.ValueOf(param)
+		}
+		returnValues := f.Call(in)
+		// call runner with params
+		result := returnValues[0].Interface()
+		// 如果为空，返回空
+		if result == nil {
+			return nil
+		}
+		return result.(error)
+	}, params)
+	return task, nil
 }
 
 // NewJob creates and schedules a new job.
@@ -119,7 +132,10 @@ func (o *OpScheduler) NewJob(
 	params ...any) (*OpJob, error) {
 	jobUUID := uuid.New()
 	tags := o.jobLabels2Tags(labels)
-	task := o.buildJobParams(ctx, jobUUID, runner, params...)
+	task, err := o.buildJobParams(jobUUID, runner, params)
+	if err != nil {
+		return nil, err
+	}
 	job, err := o.scheduler.NewJob(
 		cron,
 		task,
@@ -151,7 +167,10 @@ func (o *OpScheduler) UpdateJob(
 	if exists := o.Exists(jobUUID); !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	task := o.buildJobParams(ctx, jobUUID, runner, params...)
+	task, err := o.buildJobParams(jobUUID, runner, params)
+	if err != nil {
+		return err
+	}
 	tags := o.jobLabels2Tags(labels)
 	job, err := o.scheduler.Update(
 		jobUUID, cron, task,

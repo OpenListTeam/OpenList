@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"context"
 	"errors"
 	"maps"
 	"strings"
@@ -13,7 +12,7 @@ import (
 )
 
 // JobRunner defines the function signature for job runners
-type JobRunner func(ctx context.Context, params ...any) error
+type JobRunner any
 
 // JobLabels the type for job labels
 type JobLabels = map[string]string
