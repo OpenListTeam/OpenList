@@ -56,9 +56,7 @@ func (sm *safeMap[K, V]) GetAll() map[K]V {
 	sm.lock.RLock()
 	defer sm.lock.RUnlock()
 	result := make(map[K]V)
-	for k, v := range sm.data {
-		result[k] = v
-	}
+	maps.Copy(result, sm.data)
 	return result
 }
 
@@ -72,9 +70,8 @@ func (sm *safeMap[K, V]) Clear() {
 
 // ForEach iterates over all key-value pairs in the safeMap and applies the provided function.
 func (sm *safeMap[K, V]) ForEach(fn func(K, V)) {
-	sm.lock.RLock()
-	defer sm.lock.RUnlock()
-	for k, v := range sm.data {
+	snapshot := sm.GetAll()
+	for k, v := range snapshot {
 		fn(k, v)
 	}
 }

@@ -17,6 +17,9 @@ type jobDisabledMapType = *safeMap[uuid.UUID, bool]
 
 // OpScheduler is the main scheduler struct that manages jobs.
 type OpScheduler struct {
+	// Name is an optional human-readable identifier for this scheduler instance.
+	// Callers can use it for logging, metrics, or debugging when working with
+	// multiple OpScheduler instances.
 	Name           string
 	scheduler      gocron.Scheduler
 	jobsMap        jobsMapType
