@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"log"
 	"testing"
 	"time"
 
@@ -125,4 +126,233 @@ func TestSchedulerNormal(t *testing.T) {
 			t.Fatalf("context error: %v", ctx.Err())
 		}
 	}
+}
+
+func TestDisabledJob(t *testing.T) {
+	t.Log("start test for disabled job")
+	s, err := NewOpScheduler("test-scheduler-disabled", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	labels := JobLabels{
+		"env":  "test",
+		"team": "devops",
+	}
+	chanCount := make(chan int, 1)
+	var runner JobRunner = func(ctx context.Context) error {
+		t.Fatalf("disabled job should not run")
+		chanCount <- 1
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	t.Log("register disabled job")
+	afterCreated, err := s.NewJob(
+		ctx,
+		"test-job",
+		// runs every 5 hours, but is disabled
+		gocron.DurationJob(
+			5*time.Second,
+		),
+		true, // disabled
+		labels,
+		runner,
+	)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+	// runNow
+	t.Log("attempt to run disabled job immediately")
+	err = s.RunNow(afterCreated.ID(), false)
+	if err != nil {
+		t.Fatalf("failed to run disabled job now: %v", err)
+	}
+	// check the channel to see if the job ran
+	select {
+	case count := <-chanCount:
+		t.Fatalf("disabled job ran unexpectedly, count: %d", count)
+	case <-time.After(5 * time.Second):
+		t.Log("disabled job did not run as expected")
+	}
+	t.Log("test complete for disabled job")
+}
+
+// TestEnableJob
+func TestEnableJob(t *testing.T) {
+	t.Log("start test for enable job")
+	s, err := NewOpScheduler("test-scheduler-disabled", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	labels := JobLabels{
+		"env":  "test",
+		"team": "devops",
+	}
+	chanCount := make(chan int, 1)
+	var runner JobRunner = func(ctx context.Context) error {
+		t.Log("job has run")
+		chanCount <- 1
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	t.Log("register disabled job")
+	afterCreated, err := s.NewJob(
+		ctx,
+		"test-job",
+		// runs every 5 seconds, but is disabled
+		gocron.DurationJob(
+			5*time.Second,
+		),
+		true, // disabled
+		labels,
+		runner,
+	)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+	// enabled
+	err = s.EnableJob(afterCreated.ID())
+	if err != nil {
+		t.Fatalf("enable job fail %v", err)
+	}
+	// check the channel to see if the job ran
+	select {
+	case count := <-chanCount:
+		t.Logf("success run, count: %d", count)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("enabled job did not run as expected")
+	}
+	t.Log("test complete for enable job")
+}
+
+func TestUpdateJob(t *testing.T) {
+	// create job donothing
+	t.Log("start test for enable job")
+	s, err := NewOpScheduler("test-scheduler-disabled", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	labels := JobLabels{
+		"env":  "test",
+		"team": "devops",
+	}
+	chanCount := make(chan int, 1)
+	var runner JobRunner = func(ctx context.Context) error {
+		t.Log("donothing")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	t.Log("register disabled job")
+	afterCreated, err := s.NewJob(
+		ctx,
+		"test-job",
+		// runs every 5 second, but is disabled
+		gocron.DurationJob(
+			5*time.Second,
+		),
+		false, // disabled
+		labels,
+		runner,
+	)
+	// wait for 10 seconds
+	time.Sleep(10 * time.Second)
+	var runner2 JobRunner = func(ctx context.Context) error {
+		t.Log("change the chancount")
+		chanCount <- 1
+		return nil
+	}
+	err = s.UpdateJob(
+		ctx, afterCreated.ID(),
+		"afterUpdate",
+		gocron.DurationJob(
+			1*time.Second,
+		),
+		false,
+		labels,
+		runner2,
+	)
+	if err != nil {
+		log.Fatalf("update found err: %v", err)
+	}
+	j, exists := s.GetJob(afterCreated.ID())
+	if !exists {
+		log.Fatalf("can't found after update")
+	}
+	if j.Name() != "afterUpdate" {
+		log.Fatalf("update name faild")
+	}
+	if j.Disabled() {
+		log.Fatalf("update diabled faild")
+	}
+	select {
+	case count := <-chanCount:
+		t.Logf("success run, count: %d", count)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("enabled job did not run as expected")
+	}
+	t.Log("test complete for enable job")
+}
+
+func TestRemoveJob(t *testing.T) {
+	t.Log("start test remove job")
+	// create job donothing
+	t.Log("start test for enable job")
+	s, err := NewOpScheduler("test-scheduler-disabled", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	labels := JobLabels{
+		"env":  "test",
+		"team": "devops",
+	}
+	chanCount := make(chan int, 1)
+	var runner JobRunner = func(ctx context.Context) error {
+		chanCount <- 1
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	t.Log("register disabled job")
+	afterCreated, err := s.NewJob(
+		ctx,
+		"test-job",
+		// runs every 5 second, but is disabled
+		gocron.DurationJob(
+			5*time.Second,
+		),
+		false, // disabled
+		labels,
+		runner,
+	)
+	err = s.RemoveJobs(afterCreated.ID())
+	if err != nil {
+		t.Fatalf("remove job err : %v", err)
+	}
+	j, exists := s.GetJob(afterCreated.ID())
+	if exists || j != nil {
+		t.Fatalf("job exists after removed")
+	}
+	// reset chanCoun
+	chanCount <- 0
+	// check the channel to see if the job ran
+	select {
+	case count := <-chanCount:
+		if count > 0 {
+			t.Fatalf("removed job ran unexpectedly, count: %d", count)
+		}
+	case <-time.After(10 * time.Second):
+		t.Log("removed job did not run as expected")
+	}
+	t.Log("test complete for removed job")
+
 }
