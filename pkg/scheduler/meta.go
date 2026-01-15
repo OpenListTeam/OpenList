@@ -23,7 +23,7 @@ import (
 // adhere to this function shape.
 type JobRunner any
 
-// JobLabels is the type for job labels
+// JobLabels is the type for job labels.
 type JobLabels = map[string]string
 
 // safeMap is a thread-safe map implementation
