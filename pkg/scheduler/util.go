@@ -30,6 +30,34 @@ func unescapeTagStr(s string) string {
 	return b.String()
 }
 
+// jobLabels2Tags converts JobLabels to a slice of tags.
+func jobLabels2Tags(labels JobLabels) []string {
+	tags := make([]string, 0, len(labels))
+	if len(labels) == 0 {
+		return tags
+	}
+	for k, v := range labels {
+		tags = append(tags, escapeTagStr(k)+":"+escapeTagStr(v))
+	}
+	return tags
+}
+
+// tags2JobLabels converts a slice of tags to JobLabels.
+func tags2JobLabels(tags []string) JobLabels {
+	labels := make(JobLabels)
+	if len(tags) == 0 {
+		return labels
+	}
+	for _, tag := range tags {
+		keyPart, valPart, ok := splitEscapedTag(tag)
+		if !ok {
+			continue
+		}
+		labels[unescapeTagStr(keyPart)] = unescapeTagStr(valPart)
+	}
+	return labels
+}
+
 // splitEscapedTag splits the first unescaped colon to separate key and value.
 // It expects the input to be produced by escapeTagStr.
 func splitEscapedTag(tag string) (string, string, bool) {

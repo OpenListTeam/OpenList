@@ -145,14 +145,7 @@ func (o *OpJob) GetNextTenRuns() ([]time.Time, error) {
 
 // newOpJob creates a new OpJob instance from a gocron.Job and its disabled status.
 func newOpJob(job gocron.Job, disabled bool) *OpJob {
-	labels := make(JobLabels)
-	for _, tag := range job.Tags() {
-		key, value, ok := splitEscapedTag(tag)
-		if !ok {
-			continue
-		}
-		labels[key] = value
-	}
+	labels := tags2JobLabels(job.Tags())
 	lastRun, lastRunErr := job.LastRun()
 	nextRun10, nextRunErr := job.NextRuns(10)
 	labelsCopy := make(JobLabels)

@@ -53,28 +53,6 @@ func (o *OpScheduler) RunNow(jobUUID uuid.UUID, force bool) error {
 	return job.RunNow()
 }
 
-// jobLabels2Tags converts JobLabels to a slice of tags.
-func (o *OpScheduler) jobLabels2Tags(labels JobLabels) []string {
-	tags := make([]string, 0, len(labels))
-	for k, v := range labels {
-		tags = append(tags, escapeTagStr(k)+":"+escapeTagStr(v))
-	}
-	return tags
-}
-
-// tags2JobLabels converts a slice of tags to JobLabels.
-func (o *OpScheduler) tags2JobLabels(tags []string) JobLabels {
-	labels := make(JobLabels)
-	for _, tag := range tags {
-		keyPart, valPart, ok := splitEscapedTag(tag)
-		if !ok {
-			continue
-		}
-		labels[unescapeTagStr(keyPart)] = unescapeTagStr(valPart)
-	}
-	return labels
-}
-
 // jobIsDisabled checks if a job is disabled.
 func (o *OpScheduler) jobIsDisabled(jobUUID uuid.UUID) bool {
 	disabled, exists := o.jobDisabledMap.Get(jobUUID)
@@ -139,7 +117,7 @@ func (o *OpScheduler) NewJob(
 		return nil, errors.New("jobName is empty")
 	}
 	jobUUID := uuid.New()
-	tags := o.jobLabels2Tags(labels)
+	tags := jobLabels2Tags(labels)
 	task, err := o.buildJobParams(jobUUID, runner, params)
 	if err != nil {
 		return nil, err
@@ -179,7 +157,7 @@ func (o *OpScheduler) UpdateJob(
 	if err != nil {
 		return err
 	}
-	tags := o.jobLabels2Tags(labels)
+	tags := jobLabels2Tags(labels)
 	job, err := o.scheduler.Update(
 		jobUUID, cron, task,
 		gocron.WithContext(ctx), gocron.WithName(jobName), gocron.WithTags(tags...),
@@ -273,8 +251,11 @@ func (o *OpScheduler) filterLabels(
 	labels JobLabels,
 	action func(gocron.Job, JobLabels),
 ) {
+	if len(o.jobsMap.data) == 0 {
+		return
+	}
 	o.jobsMap.ForEach(func(_ uuid.UUID, job gocron.Job) {
-		jobLabels := o.tags2JobLabels(job.Tags())
+		jobLabels := tags2JobLabels(job.Tags())
 		matches := true
 		for k, v := range labels {
 			if jobVal, exists := jobLabels[k]; !exists || jobVal != v {
