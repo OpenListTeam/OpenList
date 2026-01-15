@@ -155,6 +155,9 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 		}
 		t.Base.SetCtx(ctx)
 		err = t.RunWithNextTaskCallback(callback)
+		if err == nil {
+			hasSuccess = true
+		}
 		if taskType == move {
 			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
 		}
