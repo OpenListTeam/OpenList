@@ -170,5 +170,5 @@ type AtTime struct {
 	hours, minutes, seconds uint
 }
 
-// AtTimes define a list of AtTime
+// AtTimes defines a list of AtTime
 type AtTimes []AtTime

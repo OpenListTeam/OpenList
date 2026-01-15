@@ -50,8 +50,9 @@ func (jb *jobBuilder) Name(name string) *jobBuilder {
 	return jb
 }
 
-// rawCron sets the job cron definition.
-func (jb *jobBuilder) rawCron(cron gocron.JobDefinition) *jobBuilder {
+// _internalCron sets the job cron definition.
+// This is an internal method; prefer using the By... methods.
+func (jb *jobBuilder) _internalCron(cron gocron.JobDefinition) *jobBuilder {
 	jb.cron = cron
 	return jb
 }
@@ -63,13 +64,13 @@ func (jb *jobBuilder) rawCron(cron gocron.JobDefinition) *jobBuilder {
 // crontab in the form `TZ=America/Chicago * * * * *` or
 // `CRON_TZ=America/Chicago * * * * *`
 func (jb *jobBuilder) ByCrontab(crontab string, withSeconds bool) *jobBuilder {
-	return jb.rawCron(gocron.CronJob(crontab, withSeconds))
+	return jb._internalCron(gocron.CronJob(crontab, withSeconds))
 }
 
 // ByDuration defines a new job using time.Duration
 // for the interval.
 func (jb *jobBuilder) ByDuration(d time.Duration) *jobBuilder {
-	return jb.rawCron(gocron.DurationJob(d))
+	return jb._internalCron(gocron.DurationJob(d))
 }
 
 // ByDurationRandomJob defines a new job that runs on a random interval
@@ -83,17 +84,17 @@ func (jb *jobBuilder) ByDuration(d time.Duration) *jobBuilder {
 // up to 1 min of jitter to the interval, you could use
 // ByDurationRandomJob(4*time.Minute, 6*time.Minute)
 func (jb *jobBuilder) ByDurationRandomJob(min, max time.Duration) *jobBuilder {
-	return jb.rawCron(gocron.DurationRandomJob(min, max))
+	return jb._internalCron(gocron.DurationRandomJob(min, max))
 }
 
 // ByDaily defines a new job that runs daily at the specified time.
 func (jb *jobBuilder) ByDaily(interval uint, atTimes AtTimes) *jobBuilder {
-	return jb.rawCron(gocron.DailyJob(interval, newAtTimes(atTimes)))
+	return jb._internalCron(gocron.DailyJob(interval, newAtTimes(atTimes)))
 }
 
 // ByWeekly defines a new job that runs weekly at the specified time.
 func (jb *jobBuilder) ByWeekly(interval uint, weekdays []time.Weekday, atTimes AtTimes) *jobBuilder {
-	return jb.rawCron(gocron.WeeklyJob(interval, newWeekdays(weekdays), newAtTimes(atTimes)))
+	return jb._internalCron(gocron.WeeklyJob(interval, newWeekdays(weekdays), newAtTimes(atTimes)))
 }
 
 // ByMonthly runs the job on the interval of months, on the specific days of the month
@@ -113,7 +114,7 @@ func (jb *jobBuilder) ByWeekly(interval uint, weekdays []time.Weekday, atTimes A
 //   - For example: an interval of 2 months on the 31st of each month, starting 12/31
 //     would skip Feb, April, June, and next run would be in August.
 func (jb *jobBuilder) ByMonthly(interval uint, daysOfTheMonth []int, atTimes AtTimes) *jobBuilder {
-	return jb.rawCron(gocron.MonthlyJob(
+	return jb._internalCron(gocron.MonthlyJob(
 		interval,
 		newDaysOfTheMonth(daysOfTheMonth),
 		newAtTimes(atTimes)))
@@ -121,19 +122,19 @@ func (jb *jobBuilder) ByMonthly(interval uint, daysOfTheMonth []int, atTimes AtT
 
 // ByOneTimeJobStartImmediately tells the scheduler to run the one time job immediately.
 func (jb *jobBuilder) ByOneTimeJobStartImmediately() *jobBuilder {
-	return jb.rawCron(gocron.OneTimeJob(gocron.OneTimeJobStartImmediately()))
+	return jb._internalCron(gocron.OneTimeJob(gocron.OneTimeJobStartImmediately()))
 }
 
 // ByOneTimeJobStartDateTime sets the date & time at which the job should run.
 // This datetime must be in the future (according to the scheduler clock).
 func (jb *jobBuilder) ByOneTimeJobStartDateTime(start time.Time) *jobBuilder {
-	return jb.rawCron(gocron.OneTimeJob(gocron.OneTimeJobStartDateTime(start)))
+	return jb._internalCron(gocron.OneTimeJob(gocron.OneTimeJobStartDateTime(start)))
 }
 
 // ByOneTimeJobStartDateTimes sets the date & times at which the job should run.
 // At least one of the date/times must be in the future (according to the scheduler clock).
 func (jb *jobBuilder) ByOneTimeJobStartDateTimes(times ...time.Time) *jobBuilder {
-	return jb.rawCron(gocron.OneTimeJob(gocron.OneTimeJobStartDateTimes(times...)))
+	return jb._internalCron(gocron.OneTimeJob(gocron.OneTimeJobStartDateTimes(times...)))
 }
 
 // Disabled sets the job disabled status.

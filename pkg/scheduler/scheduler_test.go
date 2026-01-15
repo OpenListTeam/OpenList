@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	fasterInterval = 20 * time.Millisecond
 	fastInterval   = 50 * time.Millisecond
 	shortWait      = 300 * time.Millisecond
 	defaultTimeout = 10 * time.Second
