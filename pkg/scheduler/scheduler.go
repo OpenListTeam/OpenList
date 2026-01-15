@@ -42,7 +42,7 @@ func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, 
 
 // RunNow runs a job immediately by its UUID.
 func (o *OpScheduler) RunNow(jobUUID uuid.UUID, force bool) error {
-	job, exists := o.getCronJob(jobUUID)
+	job, exists := o._internalGetCronJob(jobUUID)
 	if !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
@@ -75,7 +75,7 @@ func (o *OpScheduler) buildJobParams(
 	// check runner as function and NumIn is match params length
 	task := gocron.NewTask(func(_ctx context.Context, params []any) error {
 		// check if job is exists and not disabled
-		j, exists := o.getCronJob(jobUUID)
+		j, exists := o._internalGetCronJob(jobUUID)
 		// In theory the job should always exist, but check just in case
 		if !exists {
 			return errors.New("cron job not found")
@@ -101,8 +101,38 @@ func (o *OpScheduler) buildJobParams(
 	return task, nil
 }
 
-// NewJob creates and schedules a new job.
-func (o *OpScheduler) NewJob(
+// NewJobByBuilder creates and shedules a new job by builder
+func (o *OpScheduler) NewJob(jb *jobBuilder) (*OpJob, error) {
+	return o._internalNewJob(
+		jb.ctx,
+		jb.jobName,
+		jb.cron,
+		jb.disabled,
+		jb.labels,
+		jb.runner,
+		jb.params...,
+	)
+}
+
+// UpdateJob updates an existing job by its UUID using a job builder.
+func (o *OpScheduler) UpdateJob(
+	jobUUID uuid.UUID,
+	jb *jobBuilder,
+) error {
+	return o._internalUpdateJob(
+		jobUUID,
+		jb.ctx,
+		jb.jobName,
+		jb.cron,
+		jb.disabled,
+		jb.labels,
+		jb.runner,
+		jb.params...,
+	)
+}
+
+// _internalNewJob creates and schedules a new job.
+func (o *OpScheduler) _internalNewJob(
 	ctx context.Context,
 	jobName string,
 	cron gocron.JobDefinition,
@@ -140,10 +170,10 @@ func (o *OpScheduler) NewJob(
 	return newOpJob(job, disabled), nil
 }
 
-// UpdateJob updates an existing job by its UUID.
-func (o *OpScheduler) UpdateJob(
-	ctx context.Context,
+// _internalUpdateJob updates an existing job by its UUID.
+func (o *OpScheduler) _internalUpdateJob(
 	jobUUID uuid.UUID,
+	ctx context.Context,
 	jobName string,
 	cron gocron.JobDefinition,
 	disabled bool,
@@ -178,18 +208,18 @@ func (o *OpScheduler) UpdateJob(
 
 // Exists checks whether a job with the given UUID is registered in the scheduler.
 func (o *OpScheduler) Exists(uuid uuid.UUID) bool {
-	_, exists := o.getCronJob(uuid)
+	_, exists := o._internalGetCronJob(uuid)
 	return exists
 }
 
-// getCronJob retrieves a gocron.Job by its UUID.
-func (o *OpScheduler) getCronJob(jobUUID uuid.UUID) (gocron.Job, bool) {
+// _internalGetCronJob retrieves a gocron.Job by its UUID.
+func (o *OpScheduler) _internalGetCronJob(jobUUID uuid.UUID) (gocron.Job, bool) {
 	return o.jobsMap.Get(jobUUID)
 }
 
 // GetJob retrieves a job by its UUID.
 func (o *OpScheduler) GetJob(jobUUID uuid.UUID) (*OpJob, bool) {
-	job, exists := o.getCronJob(jobUUID)
+	job, exists := o._internalGetCronJob(jobUUID)
 	if !exists {
 		return nil, false
 	}

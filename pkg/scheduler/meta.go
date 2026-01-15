@@ -161,3 +161,10 @@ func newOpJob(job gocron.Job, disabled bool) *OpJob {
 		disabled:    disabled,
 	}
 }
+
+type AtTime struct {
+	hours, minutes, seconds uint
+}
+
+// AtTimes define a list of AtTime
+type AtTimes []AtTime

@@ -15,6 +15,8 @@ const (
 	shortWait      = 300 * time.Millisecond
 )
 
+var donothingRunner = func(ctx context.Context) error { return nil }
+
 // TestGoCron sanity-checks direct gocron usage with immediate execution.
 func TestGoCron(t *testing.T) {
 	s, err := gocron.NewScheduler(gocron.WithLocation(time.Local))
@@ -91,13 +93,12 @@ func TestSchedulerNormal(t *testing.T) {
 	defer cancel()
 	t.Log("registry Job")
 	afterCreated, err := s.NewJob(
-		ctx,
-		"test-job",
-		gocron.DurationJob(fastInterval),
-		false,
-		labels,
-		runner,
-		arg0, arg1,
+		NewJobBuilder().
+			Ctx(ctx).
+			ByDuration(fastInterval).
+			Name("test-job").
+			Labels(labels).
+			Runner(runner, arg0, arg1),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -157,13 +158,11 @@ func TestDisabledJob(t *testing.T) {
 	defer cancel()
 	t.Log("register disabled job")
 	afterCreated, err := s.NewJob(
-		ctx,
-		"test-job",
-		// runs every 5 hours, but is disabled
-		gocron.DurationJob(fastInterval),
-		true, // disabled
-		labels,
-		runner,
+		NewJobBuilder().Ctx(ctx).
+			Name("test-job").
+			ByDuration(fastInterval).
+			Labels(labels).
+			Runner(runner),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -212,13 +211,12 @@ func TestEnableJob(t *testing.T) {
 	defer cancel()
 	t.Log("register disabled job")
 	afterCreated, err := s.NewJob(
-		ctx,
-		"test-job",
-		// runs every 5 seconds, but is disabled
-		gocron.DurationJob(fastInterval),
-		true, // disabled
-		labels,
-		runner,
+		NewJobBuilder().Ctx(ctx).
+			Name("test-job").
+			ByDuration(fastInterval).
+			Disabled(true).
+			Labels(labels).
+			Runner(runner),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -267,13 +265,12 @@ func TestRemoveJob(t *testing.T) {
 	defer cancel()
 	t.Log("register disabled job")
 	afterCreated, err := s.NewJob(
-		ctx,
-		"test-job",
-		// runs every 5 second, but is disabled
-		gocron.DurationJob(time.Hour),
-		false, // disabled
-		labels,
-		runner,
+		NewJobBuilder().
+			Ctx(ctx).
+			Name("test-job").
+			ByDuration(time.Hour).
+			Labels(labels).
+			Runner(runner),
 	)
 	// avoid blocking if the channel already has a value
 	select {
@@ -314,15 +311,15 @@ func TestDisableJobMethod(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 	job, err := s.NewJob(
-		ctx,
-		"disable-job",
-		gocron.DurationJob(time.Hour),
-		false,
-		labels,
-		func(ctx context.Context) error {
-			executed <- true
-			return nil
-		},
+		NewJobBuilder().
+			Ctx(ctx).
+			Name("test-job").
+			ByDuration(time.Hour).
+			Labels(labels).
+			Runner(func(ctx context.Context) error {
+				executed <- true
+				return nil
+			}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -357,15 +354,16 @@ func TestRunNowForceExecutesJob(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 	job, err := s.NewJob(
-		ctx,
-		"force-run",
-		gocron.DurationJob(time.Hour),
-		false,
-		labels,
-		func(ctx context.Context) error {
-			executed <- true
-			return nil
-		},
+		NewJobBuilder().
+			Ctx(ctx).
+			Name("force-run-job").
+			ByDuration(time.Hour).
+			Labels(labels).
+			Disabled(true).
+			Runner(func(ctx context.Context) error {
+				executed <- true
+				return nil
+			}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -396,12 +394,13 @@ func TestUpdateJobLabelsAndEnable(t *testing.T) {
 	defer cancel()
 	initialLabels := JobLabels{"env": "old", "team": "ops"}
 	job, err := s.NewJob(
-		ctx,
-		"update-job",
-		gocron.DurationJob(time.Hour),
-		true,
-		initialLabels,
-		func(ctx context.Context) error { return nil },
+		NewJobBuilder().
+			Ctx(ctx).
+			Name("update-job").
+			ByDuration(time.Hour).
+			Labels(initialLabels).
+			Disabled(true).
+			Runner(donothingRunner),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -409,16 +408,11 @@ func TestUpdateJobLabelsAndEnable(t *testing.T) {
 	updatedLabels := JobLabels{"env": "new", "team": "dev"}
 	executed := make(chan bool, 1)
 	if err := s.UpdateJob(
-		ctx,
 		job.ID(),
-		"update-job-new",
-		gocron.DurationJob(fastInterval),
-		false,
-		updatedLabels,
-		func(ctx context.Context) error {
+		NewJobBuilder().Ctx(ctx).Name("update-job-new").ByDuration(fastInterval).Labels(updatedLabels).Runner(func(ctx context.Context) error {
 			executed <- true
 			return nil
-		},
+		}),
 	); err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
@@ -455,23 +449,36 @@ func TestRemoveJobsLeavesOthers(t *testing.T) {
 	defer cancel()
 	keepRan := make(chan bool, 1)
 	removeRan := make(chan bool, 1)
-	jobRemove, err := s.NewJob(ctx, "remove-me", gocron.DurationJob(time.Hour), false, JobLabels{"env": "remove"}, func(ctx context.Context) error {
-		removeRan <- true
-		return nil
-	})
+	jobRemove, err := s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("remove-me").ByDuration(fastInterval).Label("env", "remove").
+			Runner(
+				func(ctx context.Context) error {
+					removeRan <- true
+					return nil
+				},
+			),
+	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
-	jobKeep, err := s.NewJob(ctx, "keep-me", gocron.DurationJob(fastInterval), false, JobLabels{"env": "keep"}, func(ctx context.Context) error {
-		keepRan <- true
-		return nil
-	})
+	jobKeep, err := s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("keep-me").ByDuration(fastInterval).Label("env", "keep").
+			Runner(
+				func(ctx context.Context) error {
+					keepRan <- true
+					return nil
+				},
+			),
+	)
 	if err != nil {
 		t.Fatalf("failed to create keep job: %v", err)
 	}
 	if err := s.RemoveJobs(jobRemove.ID()); err != nil {
 		t.Fatalf("remove jobs failed for %s: %v", jobRemove.ID(), err)
 	}
+	// reset channels
+	removeRan <- false
+	keepRan <- false
 	if _, ok := s.GetJob(jobRemove.ID()); ok {
 		t.Fatalf("removed job still exists: %s", jobRemove.ID())
 	}
@@ -508,15 +515,22 @@ func TestRemoveJobByLabels(t *testing.T) {
 	defer cancel()
 	labelsDev := JobLabels{"env": "dev"}
 	labelsProd := JobLabels{"env": "prod"}
-	_, err = s.NewJob(ctx, "dev-1", gocron.DurationJob(time.Hour), false, labelsDev, func(ctx context.Context) error { return nil })
+
+	_, err = s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("dev-1").ByDuration(time.Hour).Labels(labelsDev).Runner(donothingRunner),
+	)
 	if err != nil {
 		t.Fatalf("failed to create dev-1: %v", err)
 	}
-	devTwo, err := s.NewJob(ctx, "dev-2", gocron.DurationJob(time.Hour), false, labelsDev, func(ctx context.Context) error { return nil })
+	devTwo, err := s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("dev-2").ByDuration(time.Hour).Labels(labelsDev).Runner(donothingRunner),
+	)
 	if err != nil {
 		t.Fatalf("failed to create dev-2: %v", err)
 	}
-	prod, err := s.NewJob(ctx, "prod", gocron.DurationJob(time.Hour), false, labelsProd, func(ctx context.Context) error { return nil })
+	prod, err := s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("dev-2").ByDuration(time.Hour).Labels(labelsProd).Runner(donothingRunner),
+	)
 	if err != nil {
 		t.Fatalf("failed to create prod: %v", err)
 	}
@@ -544,15 +558,21 @@ func TestGetJobsByLabelsFilters(t *testing.T) {
 	labelsA := JobLabels{"env": "dev", "team": "a"}
 	labelsB := JobLabels{"env": "dev", "team": "b"}
 	labelsC := JobLabels{"env": "prod", "team": "a"}
-	jobA, err := s.NewJob(ctx, "job-a", gocron.DurationJob(time.Hour), false, labelsA, func(ctx context.Context) error { return nil })
+	jobA, err := s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("job-a").ByDuration(time.Hour).Labels(labelsA).Runner(donothingRunner),
+	)
 	if err != nil {
 		t.Fatalf("failed to create job-a: %v", err)
 	}
-	jobB, err := s.NewJob(ctx, "job-b", gocron.DurationJob(time.Hour), true, labelsB, func(ctx context.Context) error { return nil })
+	jobB, err := s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("job-b").ByDuration(time.Hour).Labels(labelsB).Runner(donothingRunner),
+	)
 	if err != nil {
 		t.Fatalf("failed to create job-b: %v", err)
 	}
-	_, err = s.NewJob(ctx, "job-c", gocron.DurationJob(time.Hour), false, labelsC, func(ctx context.Context) error { return nil })
+	_, err = s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("job-c").ByDuration(time.Hour).Labels(labelsC).Runner(donothingRunner),
+	)
 	if err != nil {
 		t.Fatalf("failed to create job-c: %v", err)
 	}
@@ -585,11 +605,15 @@ func TestRemoveAllJobs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 	labels := JobLabels{"env": "test"}
-	job1, err := s.NewJob(ctx, "job-1", gocron.DurationJob(time.Hour), false, labels, func(ctx context.Context) error { return nil })
+	job1, err := s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("job-1").ByDuration(time.Hour).Labels(labels).Runner(donothingRunner),
+	)
 	if err != nil {
 		t.Fatalf("failed to create job1: %v", err)
 	}
-	job2, err := s.NewJob(ctx, "job-2", gocron.DurationJob(time.Hour), false, labels, func(ctx context.Context) error { return nil })
+	job2, err := s.NewJob(
+		NewJobBuilder().Ctx(ctx).Name("job-2").ByDuration(time.Hour).Labels(labels).Runner(donothingRunner),
+	)
 	if err != nil {
 		t.Fatalf("failed to create job2: %v", err)
 	}
