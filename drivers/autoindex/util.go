@@ -1,8 +1,13 @@
 package autoindex
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/antchfx/xpath"
+	"github.com/pkg/errors"
 )
 
 var units = map[string]int64{
@@ -36,10 +41,17 @@ func splitUnit(s string) (string, string) {
 	return "", s
 }
 
-func ParseSize(s string) int64 {
+func parseSize(a any) (int64, error) {
+	if f, ok := a.(float64); ok {
+		return int64(f), nil
+	}
+	s, err := parseString(a)
+	if err != nil {
+		return 0, err
+	}
 	s = strings.TrimSpace(s)
 	if s == "-" {
-		return 0
+		return 0, nil
 	}
 	nbs, unit := splitUnit(s)
 	mul, ok := units[strings.ToLower(unit)]
@@ -50,11 +62,45 @@ func ParseSize(s string) int64 {
 	if err != nil {
 		fnb, err := strconv.ParseFloat(nbs, 64)
 		if err != nil {
-			return 0
+			return 0, fmt.Errorf("failed to convert %s to number", nbs)
 		}
 		nb = int64(fnb * float64(mul))
 	} else {
 		nb = nb * mul
 	}
-	return nb
+	return nb, nil
+}
+
+func parseString(res any) (string, error) {
+	if r, ok := res.(string); ok {
+		if len(r) == 0 {
+			return "", fmt.Errorf("empty result")
+		}
+		return r, nil
+	}
+	n, ok := res.(*xpath.NodeIterator)
+	if !ok {
+		return "", fmt.Errorf("unsupported evaluating result")
+	}
+	if !n.MoveNext() {
+		return "", fmt.Errorf("no matched nodes")
+	}
+	ns := n.Current().Value()
+	if len(ns) == 0 {
+		return "", fmt.Errorf("empty result")
+	}
+	return ns, nil
+}
+
+func parseTime(res any, format string) (time.Time, error) {
+	s, err := parseString(res)
+	if err != nil {
+		return time.Now(), err
+	}
+	s = strings.TrimSpace(s)
+	t, err := time.Parse(format, s)
+	if err != nil {
+		return time.Now(), errors.WithMessagef(err, "failed to convert %s to time", s)
+	}
+	return t, nil
 }

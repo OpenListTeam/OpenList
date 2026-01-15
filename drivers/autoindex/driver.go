@@ -3,7 +3,6 @@ package autoindex
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -12,6 +11,7 @@ import (
 	"github.com/antchfx/htmlquery"
 	"github.com/antchfx/xpath"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 type Autoindex struct {
@@ -100,25 +100,26 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to parse [%s]", dir.GetPath())
 	}
-	items := htmlquery.QuerySelectorAll(doc, d.itemXPath)
-	objs := make([]model.Obj, 0, len(items))
-	for _, item := range items {
-		nameElem := htmlquery.QuerySelector(item, d.nameXPath)
-		if nameElem == nil {
+	itemsIter := d.itemXPath.Select(htmlquery.CreateXPathNavigator(doc))
+	var objs []model.Obj
+	for itemsIter.MoveNext() {
+		nameFull, err := parseString(d.nameXPath.Evaluate(itemsIter.Current()))
+		if err != nil {
+			log.Warnf("skip invalid name evaluating result: %v", err)
 			continue
 		}
-		nameFull := strings.TrimSpace(htmlquery.InnerText(nameElem))
+		nameFull = strings.TrimSpace(nameFull)
 		name, isDir := strings.CutSuffix(nameFull, "/")
 		if _, ok := d.ignores[name]; ok {
 			continue
 		}
-		var size int64 = 0
-		if sizeElem := htmlquery.QuerySelector(item, d.sizeXPath); sizeElem != nil {
-			size = ParseSize(htmlquery.InnerText(sizeElem))
+		size, err := parseSize(d.sizeXPath.Evaluate(itemsIter.Current()))
+		if err != nil {
+			log.Errorf("failed to parse size of %s: %v", name, err)
 		}
-		var modified time.Time
-		if modifiedElem := htmlquery.QuerySelector(item, d.modifiedXPath); modifiedElem != nil {
-			modified, _ = time.Parse(d.ModifiedTimeFormat, strings.TrimSpace(htmlquery.InnerText(modifiedElem)))
+		modified, err := parseTime(d.modifiedXPath.Evaluate(itemsIter.Current()), d.ModifiedTimeFormat)
+		if err != nil {
+			log.Errorf("failed to parse modified time of %s: %v", name, err)
 		}
 		objs = append(objs, &model.Object{
 			Name:     name,

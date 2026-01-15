@@ -34,7 +34,7 @@ func TestParseSize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := ParseSize(tt.input)
+			got, _ := parseSize(tt.input)
 			if got != tt.want {
 				t.Errorf("ParseSize(%q) = %d, want %d", tt.input, got, tt.want)
 			}
