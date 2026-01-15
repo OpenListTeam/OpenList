@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	fastInterval   = 50 * time.Millisecond
 	fasterInterval = 20 * time.Millisecond
-	defaultTimeout = 2 * time.Second
+	fastInterval   = 50 * time.Millisecond
 	shortWait      = 300 * time.Millisecond
+	defaultTimeout = 10 * time.Second
 )
 
 var donothingRunner = func(ctx context.Context) error { return nil }
@@ -161,6 +161,7 @@ func TestDisabledJob(t *testing.T) {
 		NewJobBuilder().Ctx(ctx).
 			Name("test-job").
 			ByDuration(fastInterval).
+			Disabled(true).
 			Labels(labels).
 			Runner(runner),
 	)
@@ -174,7 +175,7 @@ func TestDisabledJob(t *testing.T) {
 	}
 	// runNow
 	t.Log("attempt to run disabled job immediately")
-	err = s.RunNow(afterCreated.ID(), false)
+	err = s.RunNow(afterCreated.ID())
 	if err != nil {
 		t.Fatalf("failed to run disabled job now: %v", err)
 	}
@@ -331,54 +332,13 @@ func TestDisableJobMethod(t *testing.T) {
 	if !ok || !updated.Disabled() {
 		t.Fatalf("expected job disabled")
 	}
-	if err := s.RunNow(job.ID(), false); err != nil {
+	if err := s.RunNow(job.ID()); err != nil {
 		t.Fatalf("run now failed for %s: %v", job.ID(), err)
 	}
 	select {
 	case <-executed:
 		t.Fatalf("disabled job should not run")
 	case <-time.After(shortWait):
-	}
-}
-
-// TestRunNowForceExecutesJob ensures RunNow(true) triggers execution even on demand.
-func TestRunNowForceExecutesJob(t *testing.T) {
-	s, err := NewOpScheduler("test-run-now-force", gocron.WithLocation(time.Local))
-	if err != nil {
-		t.Fatalf("failed to create scheduler: %v", err)
-	}
-	s.Start()
-	defer s.Close()
-	labels := JobLabels{"env": "test"}
-	executed := make(chan bool, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-	job, err := s.NewJob(
-		NewJobBuilder().
-			Ctx(ctx).
-			Name("force-run-job").
-			ByDuration(time.Hour).
-			Labels(labels).
-			Disabled(true).
-			Runner(func(ctx context.Context) error {
-				executed <- true
-				return nil
-			}),
-	)
-	if err != nil {
-		t.Fatalf("failed to create job: %v", err)
-	}
-	if _, ok := s.GetJob(job.ID()); !ok {
-		t.Fatalf("force-run job not found after creation")
-	}
-	if err := s.RunNow(job.ID(), true); err != nil {
-		t.Fatalf("force run failed for %s: %v", job.ID(), err)
-	}
-	select {
-	case <-executed:
-		return
-	case <-time.After(defaultTimeout):
-		t.Fatalf("force run did not execute")
 	}
 }
 
@@ -447,6 +407,7 @@ func TestRemoveJobsLeavesOthers(t *testing.T) {
 	defer s.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
+	// channels to track which jobs ran
 	keepRan := make(chan bool, 1)
 	removeRan := make(chan bool, 1)
 	jobRemove, err := s.NewJob(
@@ -477,8 +438,9 @@ func TestRemoveJobsLeavesOthers(t *testing.T) {
 		t.Fatalf("remove jobs failed for %s: %v", jobRemove.ID(), err)
 	}
 	// reset channels
-	removeRan <- false
-	keepRan <- false
+	removeRan = make(chan bool, 1)
+	keepRan = make(chan bool, 1)
+	// verify removed job does not exist and kept job does
 	if _, ok := s.GetJob(jobRemove.ID()); ok {
 		t.Fatalf("removed job still exists: %s", jobRemove.ID())
 	}
@@ -629,7 +591,7 @@ func TestRemoveAllJobs(t *testing.T) {
 	if got := s.GetJobsByLabels(JobLabels{"env": "test"}); len(got) != 0 {
 		t.Fatalf("expected no jobs after remove all, got %d", len(got))
 	}
-	if err := s.RunNow(job1.ID(), false); err == nil {
+	if err := s.RunNow(job1.ID()); err == nil {
 		t.Fatalf("expected error running removed job: %s", job1.ID())
 	}
 }

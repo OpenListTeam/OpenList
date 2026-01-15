@@ -40,13 +40,13 @@ func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, 
 	}, nil
 }
 
-// RunNow runs a job immediately by its UUID.
-func (o *OpScheduler) RunNow(jobUUID uuid.UUID, force bool) error {
+// RunNow runs a job immediately by its UUID if the job is enabled.
+func (o *OpScheduler) RunNow(jobUUID uuid.UUID) error {
 	job, exists := o._internalGetCronJob(jobUUID)
 	if !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	if !force && o.jobIsDisabled(jobUUID) {
+	if o.jobIsDisabled(jobUUID) {
 		// job is disabled, do not run
 		return nil
 	}
