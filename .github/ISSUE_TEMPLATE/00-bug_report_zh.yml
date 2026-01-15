@@ -13,7 +13,7 @@ body:
     attributes:
       label: 请确认以下事项
       description: |
-        您必须确认、同意并勾选以下内容，否则您的问题一定会被直接关闭。
+        您必须阅读并检查以下内容，否则您的问题一定会被直接关闭。
         或者您可以去[讨论区](https://github.com/OpenListTeam/OpenList/discussions)。
       options:
         - label: |
@@ -34,6 +34,8 @@ body:
             我认为此问题必须由`OpenList`处理，而非第三方。
         - label: |
             我已确认这个问题在最新版本中没有被修复。
+        - label: |
+            我没有阅读这个清单，只是闭眼选中了所有的复选框，请关闭这个 Issue
 
   - type: input
     id: version
