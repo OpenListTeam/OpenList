@@ -9,14 +9,19 @@ import (
 )
 
 type jobBuilder struct {
-	id       uuid.UUID
-	ctx      context.Context
-	jobName  string
-	cron     gocron.JobDefinition
-	disabled bool
-	labels   JobLabels
-	runner   JobRunner
-	params   []any
+	id                                  uuid.UUID
+	ctx                                 context.Context
+	jobName                             string
+	cron                                gocron.JobDefinition
+	disabled                            bool
+	labels                              JobLabels
+	runner                              JobRunner
+	params                              []any
+	afterJobRuns                        []func(jobID uuid.UUID, jobName string)
+	afterJobRunsWithErrors              []func(jobID uuid.UUID, jobName string, runErr error)
+	afterJobRunsWithPanics              []func(jobID uuid.UUID, jobName string, panicData any)
+	beforeJobRuns                       []func(jobID uuid.UUID, jobName string)
+	beforeJobRunsSkipIfBeforeFuncErrors []func(jobID uuid.UUID, jobName string) error
 }
 
 // NewJobBuilder create a jobBuilder
@@ -159,6 +164,109 @@ func (jb *jobBuilder) Runner(runner JobRunner, params ...any) *jobBuilder {
 	jb.runner = runner
 	jb.params = params
 	return jb
+}
+
+// AfterJobRuns sets functions to be called after the job runs.
+func (jb *jobBuilder) AfterJobRuns(eventListenerFunc func(jobID uuid.UUID, jobName string)) *jobBuilder {
+	jb.afterJobRuns = append(jb.afterJobRuns, eventListenerFunc)
+	return jb
+}
+
+// AfterJobRunsWithError is used to listen for when a job has run and returned an error, and then run the provided function.
+func (jb *jobBuilder) AfterJobRunsWithError(eventListenerFunc func(jobID uuid.UUID, jobName string, runErr error)) *jobBuilder {
+	jb.afterJobRunsWithErrors = append(jb.afterJobRunsWithErrors, eventListenerFunc)
+	return jb
+}
+
+// AfterJobRunsWithPanic is used to listen for when a job has run and returned panicked recover data, and then run the provided function.
+func (jb *jobBuilder) AfterJobRunsWithPanic(eventListenerFunc func(jobID uuid.UUID, jobName string, panicData any)) *jobBuilder {
+	jb.afterJobRunsWithPanics = append(jb.afterJobRunsWithPanics, eventListenerFunc)
+	return jb
+}
+
+// BeforeJobRuns sets functions to be called before the job runs.
+func (jb *jobBuilder) BeforeJobRuns(eventListenerFunc func(jobID uuid.UUID, jobName string)) *jobBuilder {
+	jb.beforeJobRuns = append(jb.beforeJobRuns, eventListenerFunc)
+	return jb
+}
+
+// BeforeJobRunsSkipIfBeforeFuncErrors sets functions to be called before the job runs.
+// If any of these functions return an error, the job run will be skipped.
+func (jb *jobBuilder) BeforeJobRunsSkipIfBeforeFuncErrors(eventListenerFunc func(jobID uuid.UUID, jobName string) error) *jobBuilder {
+	jb.beforeJobRunsSkipIfBeforeFuncErrors = append(jb.beforeJobRunsSkipIfBeforeFuncErrors, eventListenerFunc)
+	return jb
+}
+
+func (jb *jobBuilder) _internalGetOrCreateID() uuid.UUID {
+	if jb.id == uuid.Nil {
+		jb.id = uuid.New()
+	}
+	return jb.id
+}
+
+func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
+	tags := jobLabels2Tags(jb.labels)
+	opts := []gocron.JobOption{
+		gocron.WithIdentifier(jb._internalGetOrCreateID()),
+		gocron.WithContext(jb.ctx),
+		gocron.WithName(jb.jobName),
+		gocron.WithTags(tags...),
+	}
+
+	if jb.afterJobRuns != nil {
+		opts = append(opts, gocron.WithEventListeners(
+			gocron.AfterJobRuns(
+				func(jobID uuid.UUID, jobName string) {
+					for _, e := range jb.afterJobRuns {
+						e(jobID, jobName)
+					}
+				}),
+		))
+	}
+	if jb.afterJobRunsWithErrors != nil {
+		opts = append(opts, gocron.WithEventListeners(
+			gocron.AfterJobRunsWithError(
+				func(jobID uuid.UUID, jobName string, runErr error) {
+					for _, e := range jb.afterJobRunsWithErrors {
+						e(jobID, jobName, runErr)
+					}
+				}),
+		))
+	}
+	if jb.afterJobRunsWithPanics != nil {
+		opts = append(opts, gocron.WithEventListeners(
+			gocron.AfterJobRunsWithPanic(
+				func(jobID uuid.UUID, jobName string, panicData any) {
+					for _, e := range jb.afterJobRunsWithPanics {
+						e(jobID, jobName, panicData)
+					}
+				}),
+		))
+	}
+	if jb.beforeJobRuns != nil {
+		opts = append(opts, gocron.WithEventListeners(
+			gocron.BeforeJobRuns(
+				func(jobID uuid.UUID, jobName string) {
+					for _, e := range jb.beforeJobRuns {
+						e(jobID, jobName)
+					}
+				}),
+		))
+	}
+	if jb.beforeJobRunsSkipIfBeforeFuncErrors != nil {
+		opts = append(opts, gocron.WithEventListeners(
+			gocron.BeforeJobRunsSkipIfBeforeFuncErrors(
+				func(jobID uuid.UUID, jobName string) error {
+					for _, e := range jb.beforeJobRunsSkipIfBeforeFuncErrors {
+						if err := e(jobID, jobName); err != nil {
+							return err
+						}
+					}
+					return nil
+				}),
+		))
+	}
+	return opts
 }
 
 func newAtTimes(atTimes []AtTime) gocron.AtTimes {

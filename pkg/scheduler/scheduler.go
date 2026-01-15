@@ -103,15 +103,31 @@ func (o *OpScheduler) buildJobParams(
 
 // NewJobByBuilder creates and shedules a new job by builder
 func (o *OpScheduler) NewJob(jb *jobBuilder) (*OpJob, error) {
-	return o._internalNewJob(
-		jb.ctx,
-		jb.jobName,
+	if jb.runner == nil {
+		return nil, errors.New("runner is nil")
+	}
+	if jb.jobName == "" {
+		return nil, errors.New("jobName is empty")
+	}
+	opts := jb._internalGetOptions()
+	var jobUUID uuid.UUID = jb._internalGetOrCreateID()
+	task, err := o.buildJobParams(jobUUID, jb.runner, jb.params)
+	if err != nil {
+		return nil, err
+	}
+	job, err := o.scheduler.NewJob(
 		jb.cron,
-		jb.disabled,
-		jb.labels,
-		jb.runner,
-		jb.params...,
+		task,
+		opts...,
 	)
+	if err != nil {
+		return nil, err
+	}
+	o.jobsMap.Set(jobUUID, job)
+	if jb.disabled {
+		o.jobDisabledMap.Set(jobUUID, true)
+	}
+	return newOpJob(job, jb.disabled), nil
 }
 
 // UpdateJob updates an existing job by its UUID using a job builder.
@@ -119,86 +135,28 @@ func (o *OpScheduler) UpdateJob(
 	jobUUID uuid.UUID,
 	jb *jobBuilder,
 ) error {
-	return o._internalUpdateJob(
-		jobUUID,
-		jb.ctx,
-		jb.jobName,
-		jb.cron,
-		jb.disabled,
-		jb.labels,
-		jb.runner,
-		jb.params...,
-	)
-}
-
-// _internalNewJob creates and schedules a new job.
-func (o *OpScheduler) _internalNewJob(
-	ctx context.Context,
-	jobName string,
-	cron gocron.JobDefinition,
-	disabled bool,
-	labels JobLabels,
-	runner JobRunner,
-	params ...any) (*OpJob, error) {
-	if runner == nil {
-		return nil, errors.New("runner is nil")
-	}
-	if jobName == "" {
-		return nil, errors.New("jobName is empty")
-	}
-	jobUUID := uuid.New()
-	tags := jobLabels2Tags(labels)
-	task, err := o.buildJobParams(jobUUID, runner, params)
-	if err != nil {
-		return nil, err
-	}
-	job, err := o.scheduler.NewJob(
-		cron,
-		task,
-		gocron.WithIdentifier(jobUUID),
-		gocron.WithContext(ctx),
-		gocron.WithName(jobName),
-		gocron.WithTags(tags...),
-	)
-	if err != nil {
-		return nil, err
-	}
-	o.jobsMap.Set(jobUUID, job)
-	if disabled {
-		o.jobDisabledMap.Set(jobUUID, true)
-	}
-	return newOpJob(job, disabled), nil
-}
-
-// _internalUpdateJob updates an existing job by its UUID.
-func (o *OpScheduler) _internalUpdateJob(
-	jobUUID uuid.UUID,
-	ctx context.Context,
-	jobName string,
-	cron gocron.JobDefinition,
-	disabled bool,
-	labels JobLabels,
-	runner JobRunner, params ...any) error {
 	// Stop and remove the existing job
 	if exists := o.Exists(jobUUID); !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	task, err := o.buildJobParams(jobUUID, runner, params)
+	task, err := o.buildJobParams(jobUUID, jb.runner, jb.params)
 	if err != nil {
 		return err
 	}
-	tags := jobLabels2Tags(labels)
+	// update the ID of jobBuilder to ensure consistency
+	jb.ID(jobUUID)
+	opts := jb._internalGetOptions()
 	job, err := o.scheduler.Update(
-		jobUUID, cron, task,
-		gocron.WithContext(ctx), gocron.WithName(jobName), gocron.WithTags(tags...),
+		jobUUID, jb.cron, task,
+		opts...,
 	)
 	if err != nil {
 		return err
 	}
 	// Save job
 	o.jobsMap.Set(jobUUID, job)
-	// Set disabled status
-	if disabled {
+	// Update disabled status
+	if jb.disabled {
 		o.jobDisabledMap.Set(jobUUID, true)
 	} else {
 		o.jobDisabledMap.Delete(jobUUID)
