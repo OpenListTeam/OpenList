@@ -2,10 +2,10 @@ package autoindex
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -88,13 +88,15 @@ func (d *Autoindex) GetRoot(ctx context.Context) (model.Obj, error) {
 }
 
 func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	res, err := http.Get(dir.GetPath())
+	res, err := base.RestyClient.R().
+		SetContext(ctx).
+		SetDoNotParseResponse(true).
+		Get(dir.GetPath())
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to get url [%s]", dir.GetPath())
 	}
-	defer res.Body.Close()
-
-	doc, err := htmlquery.Parse(res.Body)
+	defer res.RawResponse.Body.Close()
+	doc, err := htmlquery.Parse(res.RawBody())
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to parse [%s]", dir.GetPath())
 	}
@@ -130,14 +132,17 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 }
 
 func (d *Autoindex) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	res, err := http.Head(file.GetPath())
+	res, err := base.RestyClient.R().
+		SetContext(ctx).
+		SetDoNotParseResponse(true).
+		Head(file.GetPath())
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to head [%s]", file.GetPath())
 	}
-	_ = res.Body.Close()
+	_ = res.RawResponse.Body.Close()
 	return &model.Link{
 		URL:           file.GetPath(),
-		ContentLength: res.ContentLength,
+		ContentLength: res.RawResponse.ContentLength,
 	}, nil
 }
 
