@@ -69,6 +69,9 @@ func (o *OpScheduler) buildJobParams(
 	if f.IsZero() {
 		return nil, errors.New("runner is nil")
 	}
+	if f.Kind() != reflect.Func {
+		return nil, errors.New("runner must be a function")
+	}
 	if len(params)+1 != f.Type().NumIn() {
 		return nil, errors.New("number of params does not match runner function signature (expected N params plus context parameter)")
 	}
@@ -101,7 +104,7 @@ func (o *OpScheduler) buildJobParams(
 	return task, nil
 }
 
-// NewJobByBuilder creates and shedules a new job by builder
+// NewJobByBuilder creates and schedules a new job by builder
 func (o *OpScheduler) NewJob(jb *jobBuilder) (*OpJob, error) {
 	if jb.runner == nil {
 		return nil, errors.New("runner is nil")

@@ -206,13 +206,19 @@ func (jb *jobBuilder) _internalGetOrCreateID() uuid.UUID {
 
 func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
 	tags := jobLabels2Tags(jb.labels)
-	opts := []gocron.JobOption{
-		gocron.WithIdentifier(jb._internalGetOrCreateID()),
-		gocron.WithContext(jb.ctx),
-		gocron.WithName(jb.jobName),
-		gocron.WithTags(tags...),
+	opts := []gocron.JobOption{}
+	if jb.id != uuid.Nil {
+		opts = append(opts, gocron.WithIdentifier(jb.id))
 	}
-
+	if jb.ctx != nil {
+		opts = append(opts, gocron.WithContext(jb.ctx))
+	}
+	if jb.jobName != "" {
+		opts = append(opts, gocron.WithName(jb.jobName))
+	}
+	if len(tags) > 0 {
+		opts = append(opts, gocron.WithTags(tags...))
+	}
 	if jb.afterJobRuns != nil {
 		opts = append(opts, gocron.WithEventListeners(
 			gocron.AfterJobRuns(
@@ -270,6 +276,9 @@ func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
 }
 
 func newAtTimes(atTimes []AtTime) gocron.AtTimes {
+	if len(atTimes) == 0 {
+		return nil
+	}
 	if len(atTimes) == 1 {
 		at := gocron.NewAtTime(atTimes[0].hours, atTimes[0].minutes, atTimes[0].seconds)
 		return gocron.NewAtTimes(at)
@@ -284,6 +293,9 @@ func newAtTimes(atTimes []AtTime) gocron.AtTimes {
 	)
 }
 func newWeekdays(weekdays []time.Weekday) gocron.Weekdays {
+	if len(weekdays) == 0 {
+		return nil
+	}
 	if len(weekdays) == 1 {
 		return gocron.NewWeekdays(weekdays[0])
 	}
@@ -291,6 +303,9 @@ func newWeekdays(weekdays []time.Weekday) gocron.Weekdays {
 }
 
 func newDaysOfTheMonth(days []int) gocron.DaysOfTheMonth {
+	if len(days) == 0 {
+		return nil
+	}
 	if len(days) == 1 {
 		return gocron.NewDaysOfTheMonth(days[0])
 	}
