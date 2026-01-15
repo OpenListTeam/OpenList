@@ -1,3 +1,4 @@
+// Package scheduler provides a job scheduling system using gocron.
 package scheduler
 
 import (
@@ -106,6 +107,9 @@ func (o *OpScheduler) buildJobParams(
 
 // NewJobByBuilder creates and schedules a new job by builder
 func (o *OpScheduler) NewJob(jb *jobBuilder) (*OpJob, error) {
+	if jb.ctx == nil {
+		jb.Ctx(context.Background())
+	}
 	if jb.runner == nil {
 		return nil, errors.New("runner is nil")
 	}
@@ -242,9 +246,6 @@ func (o *OpScheduler) filterLabels(
 	labels JobLabels,
 	action func(gocron.Job, JobLabels),
 ) {
-	if len(o.jobsMap.data) == 0 {
-		return
-	}
 	o.jobsMap.ForEach(func(_ uuid.UUID, job gocron.Job) {
 		jobLabels := tags2JobLabels(job.Tags())
 		matches := true
@@ -301,18 +302,15 @@ func (o *OpScheduler) StopAllJobs() error {
 // RemoveAllJobs removes all jobs from the scheduler.
 func (o *OpScheduler) RemoveAllJobs() error {
 	var errs []error
+	// First, stop all running jobs.
 	if err := o.scheduler.StopJobs(); err != nil {
 		errs = append(errs, err)
 	}
-	for _, job := range o.scheduler.Jobs() {
-		if err := o.scheduler.RemoveJob(job.ID()); err != nil {
-			errs = append(errs, err)
-		}
+	// Only clear the internal maps if the scheduler successfully removed all jobs.
+	if len(errs) == 0 {
+		o.jobDisabledMap.Clear()
+		o.jobsMap.Clear()
+		return nil
 	}
-	o.jobDisabledMap.Clear()
-	o.jobsMap.Clear()
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }

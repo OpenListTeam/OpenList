@@ -23,7 +23,7 @@ import (
 // adhere to this function shape.
 type JobRunner any
 
-// JobLabels the type for job labels
+// JobLabels is the type for job labels
 type JobLabels = map[string]string
 
 // safeMap is a thread-safe map implementation
@@ -168,6 +168,15 @@ func newOpJob(job gocron.Job, disabled bool) *OpJob {
 
 type AtTime struct {
 	hours, minutes, seconds uint
+}
+
+// NewAtTime constructs a new AtTime instance.
+func NewAtTime(hours, minutes, seconds uint) AtTime {
+	return AtTime{
+		hours:   hours,
+		minutes: minutes,
+		seconds: seconds,
+	}
 }
 
 // AtTimes defines a list of AtTime

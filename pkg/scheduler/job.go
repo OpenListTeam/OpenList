@@ -220,58 +220,55 @@ func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
 	if len(tags) > 0 {
 		opts = append(opts, gocron.WithTags(tags...))
 	}
+	listens := []gocron.EventListener{}
 	if jb.afterJobRuns != nil {
-		opts = append(opts, gocron.WithEventListeners(
-			gocron.AfterJobRuns(
-				func(jobID uuid.UUID, jobName string) {
-					for _, e := range jb.afterJobRuns {
-						e(jobID, jobName)
-					}
-				}),
-		))
+		listens = append(listens, gocron.AfterJobRuns(
+			func(jobID uuid.UUID, jobName string) {
+				for _, e := range jb.afterJobRuns {
+					e(jobID, jobName)
+				}
+			}))
 	}
 	if jb.afterJobRunsWithErrors != nil {
-		opts = append(opts, gocron.WithEventListeners(
-			gocron.AfterJobRunsWithError(
-				func(jobID uuid.UUID, jobName string, runErr error) {
-					for _, e := range jb.afterJobRunsWithErrors {
-						e(jobID, jobName, runErr)
-					}
-				}),
-		))
+		listens = append(listens, gocron.AfterJobRunsWithError(
+			func(jobID uuid.UUID, jobName string, runErr error) {
+				for _, e := range jb.afterJobRunsWithErrors {
+					e(jobID, jobName, runErr)
+				}
+			}),
+		)
 	}
 	if jb.afterJobRunsWithPanics != nil {
-		opts = append(opts, gocron.WithEventListeners(
-			gocron.AfterJobRunsWithPanic(
-				func(jobID uuid.UUID, jobName string, panicData any) {
-					for _, e := range jb.afterJobRunsWithPanics {
-						e(jobID, jobName, panicData)
-					}
-				}),
-		))
+		listens = append(listens, gocron.AfterJobRunsWithPanic(
+			func(jobID uuid.UUID, jobName string, panicData any) {
+				for _, e := range jb.afterJobRunsWithPanics {
+					e(jobID, jobName, panicData)
+				}
+			}),
+		)
 	}
 	if jb.beforeJobRuns != nil {
-		opts = append(opts, gocron.WithEventListeners(
-			gocron.BeforeJobRuns(
-				func(jobID uuid.UUID, jobName string) {
-					for _, e := range jb.beforeJobRuns {
-						e(jobID, jobName)
-					}
-				}),
-		))
+		listens = append(listens, gocron.BeforeJobRuns(
+			func(jobID uuid.UUID, jobName string) {
+				for _, e := range jb.beforeJobRuns {
+					e(jobID, jobName)
+				}
+			}))
 	}
 	if jb.beforeJobRunsSkipIfBeforeFuncErrors != nil {
-		opts = append(opts, gocron.WithEventListeners(
-			gocron.BeforeJobRunsSkipIfBeforeFuncErrors(
-				func(jobID uuid.UUID, jobName string) error {
-					for _, e := range jb.beforeJobRunsSkipIfBeforeFuncErrors {
-						if err := e(jobID, jobName); err != nil {
-							return err
-						}
+		listens = append(listens, gocron.BeforeJobRunsSkipIfBeforeFuncErrors(
+			func(jobID uuid.UUID, jobName string) error {
+				for _, e := range jb.beforeJobRunsSkipIfBeforeFuncErrors {
+					if err := e(jobID, jobName); err != nil {
+						return err
 					}
-					return nil
-				}),
-		))
+				}
+				return nil
+			}),
+		)
+	}
+	if len(listens) > 0 {
+		opts = append(opts, gocron.WithEventListeners(listens...))
 	}
 	return opts
 }
@@ -293,6 +290,7 @@ func newAtTimes(atTimes []AtTime) gocron.AtTimes {
 		gocronAtTimes...,
 	)
 }
+
 func newWeekdays(weekdays []time.Weekday) gocron.Weekdays {
 	if len(weekdays) == 0 {
 		return nil

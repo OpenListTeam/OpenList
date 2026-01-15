@@ -43,6 +43,9 @@ func TestGoCron(t *testing.T) {
 		),
 		gocron.WithContext(ctx),
 	)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
 	t.Logf("job ID: %d", job.ID())
 	err = job.RunNow()
 	if err != nil {
@@ -492,7 +495,7 @@ func TestRemoveJobByLabels(t *testing.T) {
 		t.Fatalf("failed to create dev-2: %v", err)
 	}
 	prod, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("dev-2").ByDuration(time.Hour).Labels(labelsProd).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("prod-1").ByDuration(time.Hour).Labels(labelsProd).Runner(donothingRunner),
 	)
 	if err != nil {
 		t.Fatalf("failed to create prod: %v", err)
