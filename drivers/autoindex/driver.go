@@ -3,6 +3,7 @@ package autoindex
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -42,13 +43,17 @@ func (d *Autoindex) Init(ctx context.Context) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed to compile Name XPath")
 	}
-	d.modifiedXPath, err = xpath.Compile(d.ModifiedXPath)
-	if err != nil {
-		return errors.WithMessage(err, "failed to compile Modified XPath")
+	if len(d.ModifiedXPath) > 0 {
+		d.modifiedXPath, err = xpath.Compile(d.ModifiedXPath)
+		if err != nil {
+			return errors.WithMessage(err, "failed to compile Modified XPath")
+		}
 	}
-	d.sizeXPath, err = xpath.Compile(d.SizeXPath)
-	if err != nil {
-		return errors.WithMessage(err, "failed to compile Size XPath")
+	if len(d.SizeXPath) > 0 {
+		d.sizeXPath, err = xpath.Compile(d.SizeXPath)
+		if err != nil {
+			return errors.WithMessage(err, "failed to compile Size XPath")
+		}
 	}
 	ignores := strings.Split(d.IgnoreFileNames, "\n")
 	d.ignores = make(map[string]any, len(ignores))
@@ -113,13 +118,20 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 		if _, ok := d.ignores[name]; ok {
 			continue
 		}
-		size, exact, err := parseSize(d.sizeXPath.Evaluate(itemsIter.Current().Copy()))
-		if err != nil {
-			log.Errorf("failed to parse size of %s: %v", name, err)
+		var size int64 = 0
+		exact := false
+		modified := time.Now()
+		if d.sizeXPath != nil {
+			size, exact, err = parseSize(d.sizeXPath.Evaluate(itemsIter.Current().Copy()))
+			if err != nil {
+				log.Errorf("failed to parse size of %s: %v", name, err)
+			}
 		}
-		modified, err := parseTime(d.modifiedXPath.Evaluate(itemsIter.Current().Copy()), d.ModifiedTimeFormat)
-		if err != nil {
-			log.Errorf("failed to parse modified time of %s: %v", name, err)
+		if d.modifiedXPath != nil {
+			modified, err = parseTime(d.modifiedXPath.Evaluate(itemsIter.Current().Copy()), d.ModifiedTimeFormat)
+			if err != nil {
+				log.Errorf("failed to parse modified time of %s: %v", name, err)
+			}
 		}
 		var o model.Obj = &model.Object{
 			Name:     name,

@@ -9,10 +9,10 @@ type Addition struct {
 	URL                string `json:"url" required:"true"`
 	ItemXPath          string `json:"item_xpath" required:"true"`
 	NameXPath          string `json:"name_xpath" required:"true"`
-	ModifiedXPath      string `json:"modified_xpath" required:"true"`
-	SizeXPath          string `json:"size_xpath" required:"true"`
-	IgnoreFileNames    string `json:"ignore_file_names" type:"text" default:".\n..\nParent Directory"`
-	ModifiedTimeFormat string `json:"modified_time_format" default:"2006-01-02 15:04"`
+	ModifiedXPath      string `json:"modified_xpath"`
+	SizeXPath          string `json:"size_xpath"`
+	IgnoreFileNames    string `json:"ignore_file_names" type:"text" default:".\n..\nParent Directory\nUp"`
+	ModifiedTimeFormat string `json:"modified_time_format" default:"2006-01-02 15:04" help:"Must be based on the time point Mon Jan 2 15:04:05 -0700 MST 2006"`
 }
 
 var config = driver.Config{
