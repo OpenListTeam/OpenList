@@ -103,7 +103,7 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 	itemsIter := d.itemXPath.Select(htmlquery.CreateXPathNavigator(doc))
 	var objs []model.Obj
 	for itemsIter.MoveNext() {
-		nameFull, err := parseString(d.nameXPath.Evaluate(itemsIter.Current()))
+		nameFull, err := parseString(d.nameXPath.Evaluate(itemsIter.Current().Copy()))
 		if err != nil {
 			log.Warnf("skip invalid name evaluating result: %v", err)
 			continue
@@ -113,11 +113,11 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 		if _, ok := d.ignores[name]; ok {
 			continue
 		}
-		size, err := parseSize(d.sizeXPath.Evaluate(itemsIter.Current()))
+		size, err := parseSize(d.sizeXPath.Evaluate(itemsIter.Current().Copy()))
 		if err != nil {
 			log.Errorf("failed to parse size of %s: %v", name, err)
 		}
-		modified, err := parseTime(d.modifiedXPath.Evaluate(itemsIter.Current()), d.ModifiedTimeFormat)
+		modified, err := parseTime(d.modifiedXPath.Evaluate(itemsIter.Current().Copy()), d.ModifiedTimeFormat)
 		if err != nil {
 			log.Errorf("failed to parse modified time of %s: %v", name, err)
 		}
