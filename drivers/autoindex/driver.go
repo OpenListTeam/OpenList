@@ -3,7 +3,6 @@ package autoindex
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -52,7 +51,12 @@ func (d *Autoindex) Init(ctx context.Context) error {
 		return errors.WithMessage(err, "failed to compile Size XPath")
 	}
 	ignores := strings.Split(d.IgnoreFileNames, "\n")
+	d.ignores = make(map[string]any, len(ignores))
 	for _, i := range ignores {
+		i = strings.TrimSpace(i)
+		if len(i) == 0 {
+			continue
+		}
 		d.ignores[i] = struct{}{}
 	}
 	hasScheme := strings.Contains(d.URL, "://")
@@ -101,18 +105,18 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 		if nameElem == nil {
 			continue
 		}
-		nameFull := htmlquery.InnerText(nameElem)
+		nameFull := strings.TrimSpace(htmlquery.InnerText(nameElem))
 		name, isDir := strings.CutSuffix(nameFull, "/")
 		if _, ok := d.ignores[name]; ok {
 			continue
 		}
 		var size int64 = 0
 		if sizeElem := htmlquery.QuerySelector(item, d.sizeXPath); sizeElem != nil {
-			size, _ = strconv.ParseInt(htmlquery.InnerText(sizeElem), 10, 64)
+			size = ParseSize(htmlquery.InnerText(sizeElem))
 		}
 		var modified time.Time
 		if modifiedElem := htmlquery.QuerySelector(item, d.modifiedXPath); modifiedElem != nil {
-			modified, _ = time.Parse(d.ModifiedTimeFormat, htmlquery.InnerText(modifiedElem))
+			modified, _ = time.Parse(d.ModifiedTimeFormat, strings.TrimSpace(htmlquery.InnerText(modifiedElem)))
 		}
 		objs = append(objs, &model.Object{
 			Name:     name,
@@ -126,8 +130,14 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 }
 
 func (d *Autoindex) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	res, err := http.Head(file.GetPath())
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to head [%s]", file.GetPath())
+	}
+	_ = res.Body.Close()
 	return &model.Link{
-		URL: file.GetPath(),
+		URL:           file.GetPath(),
+		ContentLength: res.ContentLength,
 	}, nil
 }
 
