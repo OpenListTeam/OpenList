@@ -219,12 +219,13 @@ func (o *OpScheduler) DisableJob(jobUUID uuid.UUID) error {
 }
 
 // RemoveJobs removes jobs by their UUIDs.
-func (o *OpScheduler) RemoveJobs(jobUUIDs ...uuid.UUID) error {
-	if len(jobUUIDs) == 0 {
+func (o *OpScheduler) RemoveJobs(waitForRemoveJobUUIDs ...uuid.UUID) error {
+	if len(waitForRemoveJobUUIDs) == 0 {
 		return nil
 	}
 	var errs []error
-	for _, jobID := range jobUUIDs {
+	// try to remove jobs one by one
+	for _, jobID := range waitForRemoveJobUUIDs {
 		err := o.scheduler.RemoveJob(jobID)
 		if err != nil {
 			errs = append(errs, err)
@@ -236,6 +237,20 @@ func (o *OpScheduler) RemoveJobs(jobUUIDs ...uuid.UUID) error {
 		o.jobDisabledMap.Delete(jobID)
 	}
 	if len(errs) > 0 {
+
+		existsJobIDs := make(map[uuid.UUID]bool)
+		for _, item := range o.scheduler.Jobs() {
+			existsJobIDs[item.ID()] = true
+		}
+		// if job removal failed, check if job not exists in scheduler, but still in internal maps
+		for _, jobID := range waitForRemoveJobUUIDs {
+			if _, exists := existsJobIDs[jobID]; exists {
+				continue
+			}
+			// if job removal failed, but job not exists in scheduler, remove from internal maps
+			o.jobsMap.Delete(jobID)
+			o.jobDisabledMap.Delete(jobID)
+		}
 		return errors.Join(errs...)
 	}
 	return nil

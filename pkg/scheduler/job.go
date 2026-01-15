@@ -221,7 +221,7 @@ func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
 		opts = append(opts, gocron.WithTags(tags...))
 	}
 	listens := []gocron.EventListener{}
-	if jb.afterJobRuns != nil {
+	if len(jb.afterJobRuns) > 0 {
 		listens = append(listens, gocron.AfterJobRuns(
 			func(jobID uuid.UUID, jobName string) {
 				for _, e := range jb.afterJobRuns {
@@ -229,7 +229,7 @@ func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
 				}
 			}))
 	}
-	if jb.afterJobRunsWithErrors != nil {
+	if len(jb.afterJobRunsWithErrors) > 0 {
 		listens = append(listens, gocron.AfterJobRunsWithError(
 			func(jobID uuid.UUID, jobName string, runErr error) {
 				for _, e := range jb.afterJobRunsWithErrors {
@@ -238,7 +238,7 @@ func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
 			}),
 		)
 	}
-	if jb.afterJobRunsWithPanics != nil {
+	if len(jb.afterJobRunsWithPanics) > 0 {
 		listens = append(listens, gocron.AfterJobRunsWithPanic(
 			func(jobID uuid.UUID, jobName string, panicData any) {
 				for _, e := range jb.afterJobRunsWithPanics {
@@ -247,7 +247,7 @@ func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
 			}),
 		)
 	}
-	if jb.beforeJobRuns != nil {
+	if len(jb.beforeJobRuns) > 0 {
 		listens = append(listens, gocron.BeforeJobRuns(
 			func(jobID uuid.UUID, jobName string) {
 				for _, e := range jb.beforeJobRuns {
@@ -255,7 +255,7 @@ func (jb *jobBuilder) _internalGetOptions() []gocron.JobOption {
 				}
 			}))
 	}
-	if jb.beforeJobRunsSkipIfBeforeFuncErrors != nil {
+	if len(jb.beforeJobRunsSkipIfBeforeFuncErrors) > 0 {
 		listens = append(listens, gocron.BeforeJobRunsSkipIfBeforeFuncErrors(
 			func(jobID uuid.UUID, jobName string) error {
 				for _, e := range jb.beforeJobRunsSkipIfBeforeFuncErrors {

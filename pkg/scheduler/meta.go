@@ -137,7 +137,7 @@ func (o *OpJob) NextRun() (time.Time, error) {
 		return time.Time{}, o.nextRunErr
 	}
 	if len(o.nextTenRuns) == 0 {
-		return time.Time{}, errors.New("no next run scheduled,maybe the scheduler is not started or has been stopped")
+		return time.Time{}, errors.New("no next run scheduled, maybe the scheduler is not started or has been stopped")
 	}
 	return o.nextTenRuns[0], nil
 }

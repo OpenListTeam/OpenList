@@ -249,8 +249,6 @@ func TestEnableJob(t *testing.T) {
 // TestRemoveJob ensures removing a job deletes it and prevents execution.
 func TestRemoveJob(t *testing.T) {
 	t.Log("start test remove job")
-	// create job donothing
-	t.Log("start test for enable job")
 	s, err := NewOpScheduler("test-scheduler-disabled", gocron.WithLocation(time.Local))
 	if err != nil {
 		t.Fatalf("failed to create scheduler: %v", err)
