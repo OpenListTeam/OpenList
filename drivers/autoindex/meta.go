@@ -19,6 +19,7 @@ var config = driver.Config{
 	Name:        "Autoindex",
 	LocalSort:   true,
 	CheckStatus: true,
+	NoUpload:    true,
 }
 
 func init() {
