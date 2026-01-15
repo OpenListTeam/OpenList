@@ -2,10 +2,12 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/go-co-op/gocron/v2"
+	"github.com/google/uuid"
 )
 
 const (
@@ -593,5 +595,209 @@ func TestRemoveAllJobs(t *testing.T) {
 	}
 	if err := s.RunNow(job1.ID()); err == nil {
 		t.Fatalf("expected error running removed job: %s", job1.ID())
+	}
+}
+
+// TestBeforeJobRuns is a placeholder for future tests of pre-run hooks.
+func TestBeforeJobRuns(t *testing.T) {
+	s, err := NewOpScheduler("test-before-job-runs", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	beforeRunChan := make(chan bool, 1)
+	jb := NewJobBuilder().
+		Ctx(context.Background()).
+		Name("before-job").
+		ByDuration(fastInterval).
+		Runner(donothingRunner).
+		BeforeJobRuns(func(jobID uuid.UUID, jobName string) {
+			beforeRunChan <- true
+		})
+	_, err = s.NewJob(jb)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+	select {
+	case <-beforeRunChan:
+		t.Logf("success")
+	case <-time.After(defaultTimeout):
+		t.Fatalf("before job run hook was not called within expected time")
+	}
+}
+
+// TestBeforeJobRunsSkipIfBeforeFuncErrorsSkip
+func TestBeforeJobRunsSkipIfBeforeFuncErrorsSkip(t *testing.T) {
+	s, err := NewOpScheduler("test-before-job-runs-error", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	beforeRunChan := make(chan bool, 1)
+	executeChan := make(chan bool, 1)
+	jb := NewJobBuilder().
+		Ctx(context.Background()).
+		Name("before-job-error").
+		ByDuration(fastInterval).
+		Runner(func(ctx context.Context) error {
+			executeChan <- true
+			return nil
+		}).
+		BeforeJobRunsSkipIfBeforeFuncErrors(func(jobID uuid.UUID, jobName string) error {
+			beforeRunChan <- true
+			return errors.New("skip execution")
+		})
+	_, err = s.NewJob(jb)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+	select {
+	case <-beforeRunChan:
+		t.Logf("before run hook called")
+	case <-time.After(defaultTimeout):
+		t.Fatalf("before job run hook was not called within expected time")
+	}
+	select {
+	case <-executeChan:
+		t.Fatalf("job execution should have been skipped due to before hook error")
+	case <-time.After(shortWait):
+		t.Logf("job execution correctly skipped")
+	}
+}
+
+// TestBeforeJobRunsSkipIfBeforeFuncErrorsNotSkip
+func TestBeforeJobRunsSkipIfBeforeFuncErrorsNotSkip(t *testing.T) {
+	s, err := NewOpScheduler("test-before-job-runs-error", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	beforeRunChan := make(chan bool, 1)
+	executeChan := make(chan bool, 1)
+	jb := NewJobBuilder().
+		Ctx(context.Background()).
+		Name("before-job-error").
+		ByDuration(fastInterval).
+		Runner(func(ctx context.Context) error {
+			executeChan <- true
+			return nil
+		}).
+		BeforeJobRunsSkipIfBeforeFuncErrors(func(jobID uuid.UUID, jobName string) error {
+			beforeRunChan <- true
+			return nil
+		})
+	_, err = s.NewJob(jb)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+	select {
+	case <-beforeRunChan:
+		t.Logf("before run hook called")
+	case <-time.After(defaultTimeout):
+		t.Fatalf("before job run hook was not called within expected time")
+	}
+	select {
+	case <-executeChan:
+		t.Logf("job executed successfully")
+	case <-time.After(defaultTimeout):
+		t.Fatalf("job execution did not occur as expected")
+	}
+}
+
+// TestAfterJobRuns is a placeholder for future tests of post-run hooks.
+func TestAfterJobRuns(t *testing.T) {
+	s, err := NewOpScheduler("test-after-job-runs", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	afterRunChan := make(chan bool, 1)
+	jb := NewJobBuilder().
+		Ctx(context.Background()).
+		Name("after-job").
+		ByDuration(fastInterval).
+		Runner(donothingRunner).
+		AfterJobRuns(func(jobID uuid.UUID, jobName string) {
+			afterRunChan <- true
+		})
+	_, err = s.NewJob(jb)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+	select {
+	case <-afterRunChan:
+		t.Logf("success")
+	case <-time.After(defaultTimeout):
+		t.Fatalf("after job run hook was not called within expected time")
+	}
+}
+
+// TestAfterJobRunsWithError is a placeholder for future tests of post-run hooks with error.
+func TestAfterJobRunsWithError(t *testing.T) {
+	s, err := NewOpScheduler("test-after-job-runs-error", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	afterRunChan := make(chan bool, 1)
+	jb := NewJobBuilder().
+		Ctx(context.Background()).
+		Name("after-job-error").
+		ByDuration(fastInterval).
+		Runner(func(ctx context.Context) error {
+			return errors.New("intentional error")
+		}).
+		AfterJobRunsWithError(func(jobID uuid.UUID, jobName string, runErr error) {
+			if runErr != nil && runErr.Error() == "intentional error" {
+				afterRunChan <- true
+			}
+		})
+	_, err = s.NewJob(jb)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+	select {
+	case <-afterRunChan:
+		t.Logf("success")
+	case <-time.After(defaultTimeout):
+		t.Fatalf("after job run with error hook was not called within expected time")
+	}
+}
+
+// AfterJobRunsWithPanic is a placeholder for future tests of post-run hooks with panic.
+func TestAfterJobRunsWithPanic(t *testing.T) {
+	s, err := NewOpScheduler("test-after-job-runs-panic", gocron.WithLocation(time.Local))
+	if err != nil {
+		t.Fatalf("failed to create scheduler: %v", err)
+	}
+	s.Start()
+	defer s.Close()
+	afterRunChan := make(chan bool, 1)
+	jb := NewJobBuilder().
+		Ctx(context.Background()).
+		Name("after-job-panic").
+		ByDuration(fastInterval).
+		Runner(func(ctx context.Context) error {
+			panic("intentional panic")
+		}).
+		AfterJobRunsWithPanic(func(jobID uuid.UUID, jobName string, panicErr interface{}) {
+			if panicErr != nil && panicErr == "intentional panic" {
+				afterRunChan <- true
+			}
+		})
+	_, err = s.NewJob(jb)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+	select {
+	case <-afterRunChan:
+		t.Logf("success")
+	case <-time.After(defaultTimeout):
+		t.Fatalf("after job run with panic hook was not called within expected time")
 	}
 }
