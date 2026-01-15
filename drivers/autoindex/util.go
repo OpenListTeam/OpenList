@@ -35,46 +35,56 @@ var units = map[string]int64{
 func splitUnit(s string) (string, string) {
 	for i := len(s) - 1; i >= 0; i-- {
 		if s[i] >= '0' && s[i] <= '9' {
-			return s[:i+1], s[i+1:]
+			return strings.TrimSpace(s[:i+1]), strings.TrimSpace(s[i+1:])
 		}
 	}
 	return "", s
 }
 
-func parseSize(a any) (int64, error) {
+func parseSize(a any) (int64, bool, error) {
+	// 第二个返回值exact表示大小是否精确
 	if f, ok := a.(float64); ok {
-		return int64(f), nil
+		return int64(f), false, nil
 	}
 	s, err := parseString(a)
+	if errors.Is(err, errEmptyEvaluateResult) {
+		// 可能是错误，也可能确实大小为0
+		// 如果确实大小为0，大概率不会下载，exact返回false也不会有什么性能损失
+		// 如果是错误，exact返回true会导致本地代理出错，综合来看返回false更好
+		return 0, false, nil
+	}
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	s = strings.TrimSpace(s)
 	if s == "-" {
-		return 0, nil
+		return 0, false, nil
 	}
 	nbs, unit := splitUnit(s)
 	mul, ok := units[strings.ToLower(unit)]
+	exact := mul == 1
 	if !ok {
 		mul = 1
+		// 推测无单位，exact应为false
 	}
 	nb, err := strconv.ParseInt(nbs, 10, 64)
 	if err != nil {
 		fnb, err := strconv.ParseFloat(nbs, 64)
 		if err != nil {
-			return 0, fmt.Errorf("failed to convert %s to number", nbs)
+			return 0, false, fmt.Errorf("failed to convert %s to number", nbs)
 		}
 		nb = int64(fnb * float64(mul))
+		exact = false
 	} else {
 		nb = nb * mul
 	}
-	return nb, nil
+	return nb, exact, nil
 }
 
 func parseString(res any) (string, error) {
 	if r, ok := res.(string); ok {
 		if len(r) == 0 {
-			return "", fmt.Errorf("empty result")
+			return "", errEmptyEvaluateResult
 		}
 		return r, nil
 	}
@@ -87,7 +97,7 @@ func parseString(res any) (string, error) {
 	}
 	ns := n.Current().Value()
 	if len(ns) == 0 {
-		return "", fmt.Errorf("empty result")
+		return "", errEmptyEvaluateResult
 	}
 	return ns, nil
 }

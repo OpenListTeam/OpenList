@@ -113,7 +113,7 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 		if _, ok := d.ignores[name]; ok {
 			continue
 		}
-		size, err := parseSize(d.sizeXPath.Evaluate(itemsIter.Current().Copy()))
+		size, exact, err := parseSize(d.sizeXPath.Evaluate(itemsIter.Current().Copy()))
 		if err != nil {
 			log.Errorf("failed to parse size of %s: %v", name, err)
 		}
@@ -121,18 +121,25 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 		if err != nil {
 			log.Errorf("failed to parse modified time of %s: %v", name, err)
 		}
-		objs = append(objs, &model.Object{
+		var o model.Obj = &model.Object{
 			Name:     name,
 			IsFolder: isDir,
 			Path:     dir.GetPath() + nameFull,
 			Modified: modified,
 			Size:     size,
-		})
+		}
+		if exact {
+			o = &exactSizeObj{Obj: o}
+		}
+		objs = append(objs, o)
 	}
 	return objs, nil
 }
 
 func (d *Autoindex) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	if _, ok := file.(*exactSizeObj); ok || args.Redirect {
+		return &model.Link{URL: file.GetPath()}, nil
+	}
 	res, err := base.RestyClient.R().
 		SetContext(ctx).
 		SetDoNotParseResponse(true).
