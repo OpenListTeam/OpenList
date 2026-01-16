@@ -15,7 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type Autoindex struct {
+type AutoIndex struct {
 	model.Storage
 	Addition
 	itemXPath     *xpath.Expr
@@ -25,15 +25,15 @@ type Autoindex struct {
 	ignores       map[string]any
 }
 
-func (d *Autoindex) Config() driver.Config {
+func (d *AutoIndex) Config() driver.Config {
 	return config
 }
 
-func (d *Autoindex) GetAddition() driver.Additional {
+func (d *AutoIndex) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
-func (d *Autoindex) Init(ctx context.Context) error {
+func (d *AutoIndex) Init(ctx context.Context) error {
 	var err error
 	d.itemXPath, err = xpath.Compile(d.ItemXPath)
 	if err != nil {
@@ -78,11 +78,11 @@ func (d *Autoindex) Init(ctx context.Context) error {
 	return nil
 }
 
-func (d *Autoindex) Drop(ctx context.Context) error {
+func (d *AutoIndex) Drop(ctx context.Context) error {
 	return nil
 }
 
-func (d *Autoindex) GetRoot(ctx context.Context) (model.Obj, error) {
+func (d *AutoIndex) GetRoot(ctx context.Context) (model.Obj, error) {
 	return &model.Object{
 		Name:     op.RootName,
 		Path:     d.URL,
@@ -92,7 +92,7 @@ func (d *Autoindex) GetRoot(ctx context.Context) (model.Obj, error) {
 	}, nil
 }
 
-func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+func (d *AutoIndex) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	res, err := base.RestyClient.R().
 		SetContext(ctx).
 		SetDoNotParseResponse(true).
@@ -148,7 +148,7 @@ func (d *Autoindex) List(ctx context.Context, dir model.Obj, args model.ListArgs
 	return objs, nil
 }
 
-func (d *Autoindex) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+func (d *AutoIndex) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if _, ok := file.(*exactSizeObj); ok || args.Redirect {
 		return &model.Link{URL: file.GetPath()}, nil
 	}
@@ -166,4 +166,4 @@ func (d *Autoindex) Link(ctx context.Context, file model.Obj, args model.LinkArg
 	}, nil
 }
 
-var _ driver.Driver = (*Autoindex)(nil)
+var _ driver.Driver = (*AutoIndex)(nil)
