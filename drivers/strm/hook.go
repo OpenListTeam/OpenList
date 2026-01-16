@@ -175,27 +175,25 @@ func deleteExtraFiles(driver *Strm, localPath string, objs []model.Obj) {
 	if driver.SaveLocalMode != SaveLocalSyncMode {
 		return
 	}
-	localFiles, err := getLocalFiles(localPath)
+	localFiles, localDirs, err := getLocalDirsAndFiles(localPath)
 	if err != nil {
 		log.Errorf("Failed to read local files from %s: %v", localPath, err)
 		return
 	}
 
-	objsSet := make(map[string]struct{})
-	objsBaseNameSet := make(map[string]struct{})
+	fileSet := make(map[string]struct{})
+	dirSet := make(map[string]struct{})
 	for _, obj := range objs {
+		objPath := stdpath.Join(localPath, obj.GetName())
 		if obj.IsDir() {
-			continue
+			dirSet[objPath] = struct{}{}
+		} else {
+			fileSet[objPath] = struct{}{}
 		}
-		objName := obj.GetName()
-		objsSet[stdpath.Join(localPath, objName)] = struct{}{}
-
-		objBaseName := strings.TrimSuffix(objName, utils.SourceExt(objName))
-		objsBaseNameSet[stdpath.Join(localPath, objBaseName[:len(objBaseName)-1])] = struct{}{}
 	}
 
 	for _, localFile := range localFiles {
-		if _, exists := objsSet[localFile]; !exists {
+		if _, exists := fileSet[localFile]; !exists {
 			err := os.Remove(localFile)
 			if err != nil {
 				log.Errorf("Failed to delete file: %s, error: %v\n", localFile, err)
@@ -204,20 +202,34 @@ func deleteExtraFiles(driver *Strm, localPath string, objs []model.Obj) {
 			}
 		}
 	}
-}
 
-func getLocalFiles(localPath string) ([]string, error) {
-	var files []string
-	entries, err := os.ReadDir(localPath)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			files = append(files, stdpath.Join(localPath, entry.Name()))
+	for _, localDir := range localDirs {
+		if _, exists := dirSet[localDir]; !exists {
+			err := os.RemoveAll(localDir)
+			if err != nil {
+				log.Errorf("Failed to delete directory: %s, error: %v\n", localDir, err)
+			} else {
+				log.Infof("Deleted directory %s", localDir)
+			}
 		}
 	}
-	return files, nil
+}
+
+func getLocalDirsAndFiles(localPath string) ([]string, []string, error) {
+	var files, dirs []string
+	entries, err := os.ReadDir(localPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, entry := range entries {
+		fullPath := stdpath.Join(localPath, entry.Name())
+		if entry.IsDir() {
+			dirs = append(dirs, fullPath)
+		} else {
+			files = append(files, fullPath)
+		}
+	}
+	return files, dirs, nil
 }
 
 func init() {
