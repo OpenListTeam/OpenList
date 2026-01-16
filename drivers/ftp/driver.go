@@ -60,11 +60,13 @@ func (d *FTP) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 		if entry.Name == "." || entry.Name == ".." {
 			continue
 		}
+		name := decode(entry.Name, d.Encoding)
 		f := model.Object{
-			Name:     decode(entry.Name, d.Encoding),
+			Name:     name,
 			Size:     int64(entry.Size),
 			Modified: entry.Time,
 			IsFolder: entry.Type == ftp.EntryTypeFolder,
+			Path:     stdpath.Join(dir.GetPath(), name),
 		}
 		res = append(res, &f)
 	}

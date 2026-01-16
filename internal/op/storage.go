@@ -353,11 +353,8 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 			return obj
 		}
 		ret := &model.ObjStorageDetails{
-			Obj: obj,
-			StorageDetailsWithName: model.StorageDetailsWithName{
-				StorageDetails: nil,
-				DriverName:     d.Config().Name,
-			},
+			Obj:            obj,
+			StorageDetails: nil,
 		}
 		resultChan := make(chan *model.StorageDetails, 1)
 		go func(dri driver.Driver) {

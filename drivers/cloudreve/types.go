@@ -59,6 +59,7 @@ func objectToObj(f Object, t model.Thumbnail) *model.ObjThumb {
 			Size:     int64(f.Size),
 			Modified: f.Date,
 			IsFolder: f.Type == "dir",
+			Path:     f.Path,
 		},
 		Thumbnail: t,
 	}

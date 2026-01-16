@@ -73,6 +73,7 @@ func (d *Cloudreve) List(ctx context.Context, dir model.Obj, args model.ListArgs
 			}
 			src.Size = dprop.Size
 		}
+		src.Path = path.Join(dir.GetPath(), src.Name)
 		return objectToObj(src, thumb), nil
 	})
 }
