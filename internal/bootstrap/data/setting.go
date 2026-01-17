@@ -173,6 +173,8 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.ForwardDirectLinkParams, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL},
 		{Key: conf.IgnoreDirectLinkParams, Value: "sign,openlist_ts,raw", Type: conf.TypeString, Group: model.GLOBAL},
 		{Key: conf.WebauthnLoginEnabled, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PUBLIC},
+		{Key: conf.ShareUrlDomain, Value: "", Type: conf.TypeString, Group: model.GLOBAL, Flag: model.PUBLIC, Help: "Custom domain for share links"},
+		{Key: conf.DirectLinkUrlDomain, Value: "", Type: conf.TypeString, Group: model.GLOBAL, Flag: model.PUBLIC, Help: "Custom domain for direct links"},
 		{Key: conf.SharePreview, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PUBLIC},
 		{Key: conf.ShareArchivePreview, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PUBLIC},
 		{Key: conf.ShareForceProxy, Value: "true", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PRIVATE},
