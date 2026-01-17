@@ -204,6 +204,17 @@ func (d *Cloudreve) create(ctx context.Context, dir model.Obj, file model.Obj) e
 	}, nil)
 }
 
+func (d *Cloudreve) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	var r StorageDetails
+	d.request(http.MethodGet, "/user/storage", nil, &r)
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: r.Total,
+			UsedSpace:  r.Used,
+		},
+	}, nil
+}
+
 //func (d *Cloudreve) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 //	return nil, errs.NotSupport
 //}
