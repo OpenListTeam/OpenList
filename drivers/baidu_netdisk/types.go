@@ -226,3 +226,10 @@ type QuotaResp struct {
 	//FreeSpace      uint64 `json:"free"`
 	//Expire    bool   `json:"expire"`
 }
+
+type ShareFileListResp struct {
+	Errno   int    `json:"errno"`
+	ShareID int64  `json:"share_id"`
+	Uk      int64  `json:"uk"`
+	List    []FsID `json:"list"`
+}
