@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	stdpath "path"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -183,6 +185,61 @@ func (d *Onedrive) GetFile(path string) (*File, error) {
 	u := d.GetMetaUrl(false, path)
 	_, err := d.Request(u, http.MethodGet, nil, &file)
 	return &file, err
+}
+
+func (d *Onedrive) createLink(path string) (string, error) {
+	api := d.GetMetaUrl(false, path) + "/createLink"
+	data := base.Json{
+		"type":  "view",
+		"scope": "anonymous",
+	}
+	var resp struct {
+		Link struct {
+			WebUrl string `json:"webUrl"`
+		} `json:"link"`
+	}
+	_, err := d.Request(api, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, &resp)
+	if err != nil {
+		return "", err
+	}
+
+	p, err := url.Parse(resp.Link.WebUrl)
+	if err != nil {
+		return "", err
+	}
+	// Do some transformations
+	q := url.Values{}
+	if p.Host == "1drv.ms" {
+		// For personal
+		// https://1drv.ms/t/c/{user}/{share} ->
+		// https://my.microsoftpersonalcontent.com/personal/{user}/_layouts/15/download.aspx?share={share}
+		paths := strings.Split(p.Path, "/")
+		if len(paths) < 5 || paths[3] == "" || paths[4] == "" {
+			return "", fmt.Errorf("invalid onedrive short link")
+		}
+		user := paths[3]
+		share := paths[4]
+		p.Host = "my.microsoftpersonalcontent.com"
+		p.Path = fmt.Sprintf("/personal/%s/_layouts/15/download.aspx", user)
+		q.Set("share", share)
+	} else if strings.Contains(p.Host, ".sharepoint.com") {
+		// https://{tenant}-my.sharepoint.com/:u:/g/personal/{user_email}/{share}
+		// https://{tenant}-my.sharepoint.com/personal/{user_email}/_layouts/15/download.aspx?share={share}
+		paths := strings.Split(p.Path, "/")
+		if len(paths) < 6 || paths[5] == "" {
+			return "", fmt.Errorf("invalid onedrive sharepoint link")
+		}
+		user := paths[4]
+		share := paths[5]
+		p.Path = fmt.Sprintf("/personal/%s/_layouts/15/download.aspx", user)
+		q.Set("share", share)
+	} else {
+		return "", fmt.Errorf("unsupported onedrive link host: %s", p.Host)
+	}
+	p.RawQuery = q.Encode()
+	return p.String(), nil
 }
 
 func (d *Onedrive) upSmall(ctx context.Context, dstDir model.Obj, stream model.FileStreamer) error {
