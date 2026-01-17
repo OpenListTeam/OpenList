@@ -20,7 +20,7 @@ jobs:
         with:
           script: |
             const issueBody = context.payload.issue.body || "";
-            const unchecked = /- \[ \] /.test(issueBody);
+            const unchecked = /- \[ \] (?!我没有阅读这个清单|I have not read these checkboxes)/.test(issueBody);
             let comment = "感谢您联系OpenList。我们会尽快回复您。\n";
             comment += "Thanks for contacting OpenList. We will reply to you as soon as possible.\n\n";
             if (unchecked) {
