@@ -63,9 +63,9 @@ func (o *OpScheduler) jobIsDisabled(jobUUID uuid.UUID) bool {
 // buildJobParams builds a gocron.Task with the provided parameters.
 func (o *OpScheduler) buildJobParams(
 	jobUUID uuid.UUID,
-	runner JobRunner,
-	params []any,
+	executeDefine ExecuteDefine,
 ) (gocron.Task, error) {
+	runner, params := executeDefine()
 	f := reflect.ValueOf(runner)
 	if f.IsZero() {
 		return nil, errors.New("runner is nil")
@@ -106,35 +106,25 @@ func (o *OpScheduler) buildJobParams(
 }
 
 // NewJobByBuilder creates and schedules a new job by builder
-func (o *OpScheduler) NewJob(jb *jobBuilder) (*OpJob, error) {
-	if jb.ctx == nil {
-		jb.Ctx(context.Background())
-	}
-	if jb.runner == nil {
-		return nil, errors.New("runner is nil")
-	}
-	if jb.jobName == "" {
-		return nil, errors.New("jobName is empty")
-	}
-	opts := jb._internalGetOptions()
-	var jobUUID uuid.UUID = jb._internalGetOrCreateID()
-	task, err := o.buildJobParams(jobUUID, jb.runner, jb.params)
+func (o *OpScheduler) NewJob(jBuilder *jobBuilder) (*OpJob, error) {
+	jd := jBuilder.Build()
+	task, err := o.buildJobParams(jd.id, jd.execute)
 	if err != nil {
 		return nil, err
 	}
 	job, err := o.scheduler.NewJob(
-		jb.cron,
+		jd.cron,
 		task,
-		opts...,
+		jd.opts...,
 	)
 	if err != nil {
 		return nil, err
 	}
-	o.jobsMap.Store(jobUUID, job)
-	if jb.disabled {
-		o.jobDisabledMap.Store(jobUUID, struct{}{})
+	o.jobsMap.Store(jd.id, job)
+	if jd.disabled {
+		o.jobDisabledMap.Store(jd.id, struct{}{})
 	}
-	return newOpJob(job, jb.disabled), nil
+	return newOpJob(job, jd.disabled), nil
 }
 
 // UpdateJob updates an existing job by its UUID using a job builder.
@@ -146,16 +136,16 @@ func (o *OpScheduler) UpdateJob(
 	if exists := o.Exists(jobUUID); !exists {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	task, err := o.buildJobParams(jobUUID, jb.runner, jb.params)
+	// update the ID of jobBuilder to ensure consistency
+	jb.ID(jobUUID)
+	jd := jb.Build()
+	task, err := o.buildJobParams(jobUUID, jd.execute)
 	if err != nil {
 		return err
 	}
-	// update the ID of jobBuilder to ensure consistency
-	jb.ID(jobUUID)
-	opts := jb._internalGetOptions()
 	job, err := o.scheduler.Update(
-		jobUUID, jb.cron, task,
-		opts...,
+		jobUUID, jd.cron, task,
+		jd.opts...,
 	)
 	if err != nil {
 		return err
@@ -163,7 +153,7 @@ func (o *OpScheduler) UpdateJob(
 	// Save job
 	o.jobsMap.Store(jobUUID, job)
 	// Update disabled status
-	if jb.disabled {
+	if jd.disabled {
 		o.jobDisabledMap.Store(jobUUID, struct{}{})
 	} else {
 		o.jobDisabledMap.Delete(jobUUID)

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
+type ExecuteDefine func() (JobRunner, []any)
 type jobBuilder struct {
 	id                                  uuid.UUID
 	ctx                                 context.Context
@@ -22,6 +23,14 @@ type jobBuilder struct {
 	afterJobRunsWithPanics              []func(jobID uuid.UUID, jobName string, panicData any)
 	beforeJobRuns                       []func(jobID uuid.UUID, jobName string)
 	beforeJobRunsSkipIfBeforeFuncErrors []func(jobID uuid.UUID, jobName string) error
+}
+
+type jobDefine struct {
+	id       uuid.UUID
+	cron     gocron.JobDefinition
+	disabled bool
+	execute  ExecuteDefine
+	opts     []gocron.JobOption
 }
 
 // NewJobBuilder create a jobBuilder
@@ -196,6 +205,18 @@ func (jb *jobBuilder) BeforeJobRuns(eventListenerFunc func(jobID uuid.UUID, jobN
 func (jb *jobBuilder) BeforeJobRunsSkipIfBeforeFuncErrors(eventListenerFunc func(jobID uuid.UUID, jobName string) error) *jobBuilder {
 	jb.beforeJobRunsSkipIfBeforeFuncErrors = append(jb.beforeJobRunsSkipIfBeforeFuncErrors, eventListenerFunc)
 	return jb
+}
+
+func (jb *jobBuilder) Build() *jobDefine {
+	return &jobDefine{
+		id:   jb._internalGetOrCreateID(),
+		opts: jb._internalGetOptions(),
+		execute: func() (JobRunner, []any) {
+			return jb.runner, jb.params
+		},
+		cron:     jb.cron,
+		disabled: jb.disabled,
+	}
 }
 
 func (jb *jobBuilder) _internalGetOrCreateID() uuid.UUID {
