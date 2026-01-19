@@ -73,9 +73,6 @@ func (apt *anyParamTask) Execute(ctx context.Context) error {
 		in[k+1] = reflect.ValueOf(param)
 	}
 	returnValues := f.Call(in)
-	if len(returnValues) != 1 {
-		return nil
-	}
 	if returnValues[0].IsNil() {
 		return nil
 	}

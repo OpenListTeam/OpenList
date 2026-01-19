@@ -331,12 +331,12 @@ func newAtTimes(atTimes []AtTime) gocron.AtTimes {
 		return gocron.NewAtTimes(at)
 	}
 	var gocronAtTimes []gocron.AtTime
-	for _, at := range atTimes[1:] {
+	for _, at := range atTimes {
 		gocronAtTimes = append(gocronAtTimes, gocron.NewAtTime(at.hours, at.minutes, at.seconds))
 	}
 	return gocron.NewAtTimes(
-		gocron.NewAtTime(atTimes[0].hours, atTimes[0].minutes, atTimes[0].seconds),
-		gocronAtTimes...,
+		gocronAtTimes[0],
+		gocronAtTimes[1:]...,
 	)
 }
 
