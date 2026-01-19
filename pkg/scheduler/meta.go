@@ -3,9 +3,9 @@ package scheduler
 import (
 	"errors"
 	"maps"
-	"sync"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/pkg/generic_sync"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
 )
@@ -26,66 +26,11 @@ type JobRunner any
 // JobLabels is the type for job labels.
 type JobLabels = map[string]string
 
-// safeMap is a thread-safe map implementation
-type safeMap[K comparable, V any] struct {
-	lock sync.RWMutex
-	data map[K]V
-}
+// // safeMap is a thread-safe map implementation
+// type safeMap[K comparable, V any]
 
-func newSafeMap[K comparable, V any]() *safeMap[K, V] {
-	return &safeMap[K, V]{
-		data: make(map[K]V),
-	}
-}
-
-// Get retrieves a value by key from the safeMap.
-func (sm *safeMap[K, V]) Get(key K) (V, bool) {
-	sm.lock.RLock()
-	defer sm.lock.RUnlock()
-	value, exists := sm.data[key]
-	return value, exists
-}
-
-// Set sets a key-value pair in the safeMap.
-func (sm *safeMap[K, V]) Set(key K, value V) {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
-	sm.data[key] = value
-}
-
-// Delete removes a key-value pair from the safeMap by key.
-func (sm *safeMap[K, V]) Delete(key K) {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
-	delete(sm.data, key)
-}
-
-// GetAll retrieves all key-value pairs from the safeMap.
-func (sm *safeMap[K, V]) GetAll() map[K]V {
-	sm.lock.RLock()
-	defer sm.lock.RUnlock()
-	result := make(map[K]V)
-	maps.Copy(result, sm.data)
-	return result
-}
-
-// Clear removes all key-value pairs from the safeMap.
-func (sm *safeMap[K, V]) Clear() {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
-	// reinitialize the map to clear all entries
-	sm.data = make(map[K]V)
-}
-
-// ForEach iterates over all key-value pairs in the safeMap and applies the provided function.
-// The callback is executed while holding a read lock; it should be fast and must not call
-// methods on the same safeMap that acquire the lock (e.g., Set, Delete, Clear) to avoid deadlocks.
-func (sm *safeMap[K, V]) ForEach(fn func(K, V)) {
-	sm.lock.RLock()
-	defer sm.lock.RUnlock()
-	for k, v := range sm.data {
-		fn(k, v)
-	}
+func newSafeMap[K comparable, V any]() *generic_sync.MapOf[K, V] {
+	return new(generic_sync.MapOf[K, V])
 }
 
 // OpJob represents an operational job with its metadata.

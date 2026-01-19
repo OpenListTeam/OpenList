@@ -6,15 +6,16 @@ import (
 	"errors"
 	"reflect"
 
+	"github.com/OpenListTeam/OpenList/v4/pkg/generic_sync"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
 )
 
 // jobsMapType is a thread-safe map for storing jobs.
-type jobsMapType = *safeMap[uuid.UUID, gocron.Job]
+type jobsMapType = *generic_sync.MapOf[uuid.UUID, gocron.Job]
 
 // jobDisabledMapType is a thread-safe map for storing boolean values.
-type jobDisabledMapType = *safeMap[uuid.UUID, bool]
+type jobDisabledMapType = *generic_sync.MapOf[uuid.UUID, any]
 
 // OpScheduler is the main scheduler struct that manages jobs.
 type OpScheduler struct {
@@ -36,7 +37,7 @@ func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, 
 	return &OpScheduler{
 		scheduler:      scheduler,
 		Name:           name,
-		jobDisabledMap: newSafeMap[uuid.UUID, bool](),
+		jobDisabledMap: newSafeMap[uuid.UUID, struct{}](),
 		jobsMap:        newSafeMap[uuid.UUID, gocron.Job](),
 	}, nil
 }
@@ -56,8 +57,7 @@ func (o *OpScheduler) RunNow(jobUUID uuid.UUID) error {
 
 // jobIsDisabled checks if a job is disabled.
 func (o *OpScheduler) jobIsDisabled(jobUUID uuid.UUID) bool {
-	disabled, exists := o.jobDisabledMap.Get(jobUUID)
-	return exists && disabled
+	return o.jobDisabledMap.Has(jobUUID)
 }
 
 // buildJobParams builds a gocron.Task with the provided parameters.
@@ -130,9 +130,9 @@ func (o *OpScheduler) NewJob(jb *jobBuilder) (*OpJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	o.jobsMap.Set(jobUUID, job)
+	o.jobsMap.Store(jobUUID, job)
 	if jb.disabled {
-		o.jobDisabledMap.Set(jobUUID, true)
+		o.jobDisabledMap.Store(jobUUID, struct{}{})
 	}
 	return newOpJob(job, jb.disabled), nil
 }
@@ -161,10 +161,10 @@ func (o *OpScheduler) UpdateJob(
 		return err
 	}
 	// Save job
-	o.jobsMap.Set(jobUUID, job)
+	o.jobsMap.Store(jobUUID, job)
 	// Update disabled status
 	if jb.disabled {
-		o.jobDisabledMap.Set(jobUUID, true)
+		o.jobDisabledMap.Store(jobUUID, struct{}{})
 	} else {
 		o.jobDisabledMap.Delete(jobUUID)
 	}
@@ -179,7 +179,7 @@ func (o *OpScheduler) Exists(uuid uuid.UUID) bool {
 
 // _internalGetCronJob retrieves a gocron.Job by its UUID.
 func (o *OpScheduler) _internalGetCronJob(jobUUID uuid.UUID) (gocron.Job, bool) {
-	return o.jobsMap.Get(jobUUID)
+	return o.jobsMap.Load(jobUUID)
 }
 
 // GetJob retrieves a job by its UUID.
@@ -214,7 +214,7 @@ func (o *OpScheduler) DisableJob(jobUUID uuid.UUID) error {
 	if !o.Exists(jobUUID) {
 		return errors.New("job not found: " + jobUUID.String())
 	}
-	o.jobDisabledMap.Set(jobUUID, true)
+	o.jobDisabledMap.Store(jobUUID, struct{}{})
 	return nil
 }
 
@@ -261,7 +261,7 @@ func (o *OpScheduler) filterLabels(
 	labels JobLabels,
 	action func(gocron.Job, JobLabels),
 ) {
-	o.jobsMap.ForEach(func(_ uuid.UUID, job gocron.Job) {
+	var loopFunc = func(_ uuid.UUID, job gocron.Job) bool {
 		jobLabels := tags2JobLabels(job.Tags())
 		matches := true
 		for k, v := range labels {
@@ -273,7 +273,9 @@ func (o *OpScheduler) filterLabels(
 		if matches {
 			action(job, jobLabels)
 		}
-	})
+		return true
+	}
+	o.jobsMap.Range(loopFunc)
 }
 
 // RemoveJobByLabels removes all jobs that have all of the provided labels.
