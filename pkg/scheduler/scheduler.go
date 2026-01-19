@@ -37,7 +37,7 @@ func NewOpScheduler(name string, opts ...gocron.SchedulerOption) (*OpScheduler, 
 	return &OpScheduler{
 		scheduler:      scheduler,
 		Name:           name,
-		jobDisabledMap: newSafeMap[uuid.UUID, struct{}](),
+		jobDisabledMap: newSafeMap[uuid.UUID, any](),
 		jobsMap:        newSafeMap[uuid.UUID, gocron.Job](),
 	}, nil
 }
