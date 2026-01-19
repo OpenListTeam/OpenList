@@ -17,7 +17,7 @@ const (
 	defaultTimeout = 10 * time.Second
 )
 
-var donothingRunner = func(ctx context.Context) error { return nil }
+var doNothingRunner = func(ctx context.Context) error { return nil }
 
 type paramTask struct {
 	Runner func(ctx context.Context, params ...any) error
@@ -28,28 +28,41 @@ func (pt *paramTask) Execute(ctx context.Context) error {
 	return pt.Runner(ctx, pt.Params...)
 }
 
+// jobRunner defines the expected function signature for job runners.
+//
+// Implementations must be functions that accept a context.Context as the first
+// parameter, followed by zero or more additional parameters, and return an error.
+//
+// A canonical example is:
+//
+//	func(ctx context.Context, args ...any) error
+//
+// While jobRunner is typed as any for flexibility, callers are expected to
+// adhere to this function shape.
+type jobRunner any
+
 type anyParamTask struct {
-	Runner JobRunner
+	Runner jobRunner
 	Params []any
 }
 
 func (apt *anyParamTask) Execute(ctx context.Context) error {
 	f := reflect.ValueOf(apt.Runner)
 	if f.IsZero() {
-		return errors.New("with out runner define")
+		return errors.New("without runner define")
 	}
-	// 判断 f 是方法
+	// check if f is a function
 	if f.Kind() != reflect.Func {
 		return errors.New("runner is not a function")
 	}
 	if len(apt.Params)+1 != f.Type().NumIn() {
 		return errors.New("params count not match runner func")
 	}
-	// 判断是否 return 是否为 1个
+	// check that the function returns exactly 1 value
 	if f.Type().NumOut() != 1 {
 		return errors.New("runner func return values more than 1")
 	}
-	// 判断是否返回的类型
+	// validate the return type
 	outType := f.Type().Out(0)
 	if !outType.Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 		return errors.New("runner func return value is not error type")
@@ -420,7 +433,7 @@ func TestUpdateJobLabelsAndEnable(t *testing.T) {
 			Labels(initialLabels).
 			Disabled(true).
 			TaskExecutor(
-				NewSimpleTask(donothingRunner),
+				NewSimpleTask(doNothingRunner),
 			),
 	)
 	if err != nil {
@@ -549,19 +562,19 @@ func TestRemoveJobByLabels(t *testing.T) {
 	_, err = s.NewJob(
 		NewJobBuilder().Ctx(ctx).Name("dev-1").
 			ByDuration(time.Hour).Labels(labelsDev).
-			TaskExecutor(NewSimpleTask(donothingRunner)),
+			TaskExecutor(NewSimpleTask(doNothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create dev-1: %v", err)
 	}
 	devTwo, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("dev-2").ByDuration(time.Hour).Labels(labelsDev).TaskExecutor(NewSimpleTask(donothingRunner)),
+		NewJobBuilder().Ctx(ctx).Name("dev-2").ByDuration(time.Hour).Labels(labelsDev).TaskExecutor(NewSimpleTask(doNothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create dev-2: %v", err)
 	}
 	prod, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("prod-1").ByDuration(time.Hour).Labels(labelsProd).TaskExecutor(NewSimpleTask(donothingRunner)),
+		NewJobBuilder().Ctx(ctx).Name("prod-1").ByDuration(time.Hour).Labels(labelsProd).TaskExecutor(NewSimpleTask(doNothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create prod: %v", err)
@@ -591,19 +604,19 @@ func TestGetJobsByLabelsFilters(t *testing.T) {
 	labelsB := JobLabels{"env": "dev", "team": "b"}
 	labelsC := JobLabels{"env": "prod", "team": "a"}
 	jobA, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-a").ByDuration(time.Hour).Labels(labelsA).TaskExecutor(NewSimpleTask(donothingRunner)),
+		NewJobBuilder().Ctx(ctx).Name("job-a").ByDuration(time.Hour).Labels(labelsA).TaskExecutor(NewSimpleTask(doNothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job-a: %v", err)
 	}
 	jobB, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-b").ByDuration(time.Hour).Labels(labelsB).TaskExecutor(NewSimpleTask(donothingRunner)),
+		NewJobBuilder().Ctx(ctx).Name("job-b").ByDuration(time.Hour).Labels(labelsB).TaskExecutor(NewSimpleTask(doNothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job-b: %v", err)
 	}
 	_, err = s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-c").ByDuration(time.Hour).Labels(labelsC).TaskExecutor(NewSimpleTask(donothingRunner)),
+		NewJobBuilder().Ctx(ctx).Name("job-c").ByDuration(time.Hour).Labels(labelsC).TaskExecutor(NewSimpleTask(doNothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job-c: %v", err)
@@ -638,13 +651,13 @@ func TestRemoveAllJobs(t *testing.T) {
 	defer cancel()
 	labels := JobLabels{"env": "test"}
 	job1, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-1").ByDuration(time.Hour).Labels(labels).TaskExecutor(NewSimpleTask(donothingRunner)),
+		NewJobBuilder().Ctx(ctx).Name("job-1").ByDuration(time.Hour).Labels(labels).TaskExecutor(NewSimpleTask(doNothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job1: %v", err)
 	}
 	job2, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-2").ByDuration(time.Hour).Labels(labels).TaskExecutor(NewSimpleTask(donothingRunner)),
+		NewJobBuilder().Ctx(ctx).Name("job-2").ByDuration(time.Hour).Labels(labels).TaskExecutor(NewSimpleTask(doNothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job2: %v", err)
@@ -679,7 +692,7 @@ func TestBeforeJobRuns(t *testing.T) {
 		Ctx(context.Background()).
 		Name("before-job").
 		ByDuration(fastInterval).
-		TaskExecutor(NewSimpleTask(donothingRunner)).
+		TaskExecutor(NewSimpleTask(doNothingRunner)).
 		BeforeJobRuns(func(jobID uuid.UUID, jobName string) {
 			beforeRunChan <- true
 		})
@@ -788,7 +801,7 @@ func TestAfterJobRuns(t *testing.T) {
 		Ctx(context.Background()).
 		Name("after-job").
 		ByDuration(fastInterval).
-		TaskExecutor(NewSimpleTask(donothingRunner)).
+		TaskExecutor(NewSimpleTask(doNothingRunner)).
 		AfterJobRuns(func(jobID uuid.UUID, jobName string) {
 			afterRunChan <- true
 		})

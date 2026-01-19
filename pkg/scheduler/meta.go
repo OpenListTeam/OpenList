@@ -9,24 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// JobRunner defines the expected function signature for job runners.
-//
-// Implementations must be functions that accept a context.Context as the first
-// parameter, followed by zero or more additional parameters, and return an error.
-//
-// A canonical example is:
-//
-//	func(ctx context.Context, args ...any) error
-//
-// While JobRunner is typed as any for flexibility, callers are expected to
-// adhere to this function shape.
-type JobRunner any
-
 // JobLabels is the type for job labels.
 type JobLabels = map[string]string
-
-// // safeMap is a thread-safe map implementation
-// type safeMap[K comparable, V any]
 
 func newSafeMap[K comparable, V any]() *generic_sync.MapOf[K, V] {
 	return new(generic_sync.MapOf[K, V])

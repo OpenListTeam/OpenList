@@ -59,8 +59,8 @@ func (o *OpScheduler) jobIsDisabled(jobUUID uuid.UUID) bool {
 	return o.jobDisabledMap.Has(jobUUID)
 }
 
-// buildJobParams builds a gocron.Task with the provided parameters.
-func (o *OpScheduler) buildJobParams(
+// buildJobTask builds a gocron.Task with the provided parameters.
+func (o *OpScheduler) buildJobTask(
 	jd *jobDefine,
 ) (gocron.Task, error) {
 	// check runner as function and NumIn is match params length
@@ -81,7 +81,7 @@ func (o *OpScheduler) NewJob(jBuilder *jobBuilder) (*OpJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	task, err := o.buildJobParams(jd)
+	task, err := o.buildJobTask(jd)
 	if err != nil {
 		return nil, err
 	}
@@ -119,13 +119,13 @@ func (o *OpScheduler) UpdateJob(
 	if err != nil {
 		return err
 	}
-	task, err := o.buildJobParams(jd)
+	task, err := o.buildJobTask(jd)
 	if err != nil {
 		return err
 	}
 	// Update disabled status
-	rawDsiabled := o.jobIsDisabled(jobUUID)
-	if rawDsiabled != jd.disabled {
+	rawDisabled := o.jobIsDisabled(jobUUID)
+	if rawDisabled != jd.disabled {
 		if jd.disabled {
 			o.jobDisabledMap.Store(jobUUID, struct{}{})
 		} else {
@@ -138,8 +138,8 @@ func (o *OpScheduler) UpdateJob(
 	)
 	if err != nil {
 		// rollback disabled status if update failed
-		if jd.disabled != rawDsiabled {
-			if rawDsiabled {
+		if jd.disabled != rawDisabled {
+			if rawDisabled {
 				o.jobDisabledMap.Store(jobUUID, struct{}{})
 			} else {
 				o.jobDisabledMap.Delete(jobUUID)
@@ -218,7 +218,6 @@ func (o *OpScheduler) RemoveJobs(waitForRemoveJobUUIDs ...uuid.UUID) error {
 		o.jobDisabledMap.Delete(jobID)
 	}
 	if len(errs) > 0 {
-
 		existsJobIDs := make(map[uuid.UUID]bool)
 		for _, item := range o.scheduler.Jobs() {
 			existsJobIDs[item.ID()] = true
