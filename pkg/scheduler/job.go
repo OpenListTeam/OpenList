@@ -8,17 +8,23 @@ import (
 	"github.com/google/uuid"
 )
 
+// TaskExecutor is the interface that wraps the Execute method.
 type TaskExecutor interface {
+	// Execute performs the task's action.
 	Execute(ctx context.Context) error
 }
 
+// simpleTask is a simple implementation of TaskExecutor
 type simpleTask struct {
 	f func(ctx context.Context) error
 }
 
+// Execute performs the task's action.
 func (st *simpleTask) Execute(ctx context.Context) error {
 	return st.f(ctx)
 }
+
+// NewSimpleTask creates a new simpleTask with the provided function.
 func NewSimpleTask(f func(ctx context.Context) error) TaskExecutor {
 	return &simpleTask{
 		f: f,
@@ -27,6 +33,7 @@ func NewSimpleTask(f func(ctx context.Context) error) TaskExecutor {
 
 var _ TaskExecutor = (*simpleTask)(nil)
 
+// jobBuilder is used to build job definitions.
 type jobBuilder struct {
 	id                                  uuid.UUID
 	ctx                                 context.Context
@@ -42,6 +49,7 @@ type jobBuilder struct {
 	beforeJobRunsSkipIfBeforeFuncErrors []func(jobID uuid.UUID, jobName string) error
 }
 
+// jobDefine defines the parameters of a job.
 type jobDefine struct {
 	id           uuid.UUID
 	cron         gocron.JobDefinition
