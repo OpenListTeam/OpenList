@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -17,6 +18,54 @@ const (
 )
 
 var donothingRunner = func(ctx context.Context) error { return nil }
+
+type paramTask struct {
+	Runner func(ctx context.Context, params ...any) error
+	Params []any
+}
+
+func (pt *paramTask) Execute(ctx context.Context) error {
+	return pt.Runner(ctx, pt.Params...)
+}
+
+type anyParamTask struct {
+	Runner JobRunner
+	Params []any
+}
+
+func (apt *anyParamTask) Execute(ctx context.Context) error {
+	f := reflect.ValueOf(apt.Runner)
+	if f.IsZero() {
+		return errors.New("with out runner define")
+	}
+	if len(apt.Params) != f.Type().NumIn() {
+		return errors.New("params count not match runner func")
+	}
+	// 判断是否 return 是否为 1个
+	if f.Type().NumOut() != 1 {
+		return errors.New("runner func return values more than 1")
+	}
+	// 判断是否返回的类型
+	_, ok := f.Type().Out(0).Elem().FieldByName("error")
+	if !ok {
+		return errors.New("runner func return value is not error type")
+	}
+	in := make([]reflect.Value, len(apt.Params))
+	for k, param := range apt.Params {
+		in[k] = reflect.ValueOf(param)
+	}
+	returnValues := f.Call(in)
+	if len(returnValues) != 1 {
+		return nil
+	}
+	if returnValues[0].IsNil() {
+		return nil
+	}
+	if err, ok := returnValues[0].Interface().(error); ok {
+		return err
+	}
+	return errors.New("runner func return value is not error type")
+}
 
 // TestGoCron sanity-checks direct gocron usage with immediate execution.
 func TestGoCron(t *testing.T) {
@@ -81,7 +130,7 @@ func TestSchedulerNormal(t *testing.T) {
 	arg1 := "arg1"
 	// store task status
 	executed := make(chan bool, 1)
-	var runner JobRunner = func(ctx context.Context, _arg0 int, _arg1 string) error {
+	runner := func(ctx context.Context, _arg0 int, _arg1 string) error {
 		t.Log("task is running")
 		if _arg0 != arg0 {
 			t.Fatalf("expected _arg0 to be %d, got %v", arg0, _arg0)
@@ -102,7 +151,10 @@ func TestSchedulerNormal(t *testing.T) {
 			ByDuration(fastInterval).
 			Name("test-job").
 			Labels(labels).
-			Runner(runner, arg0, arg1),
+			TaskExecutor(&anyParamTask{
+				Runner: runner,
+				Params: []any{arg0, arg1},
+			}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -153,7 +205,7 @@ func TestDisabledJob(t *testing.T) {
 		"team": "devops",
 	}
 	chanCount := make(chan int, 1)
-	var runner JobRunner = func(ctx context.Context) error {
+	runner := func(ctx context.Context) error {
 		t.Fatalf("disabled job should not run")
 		chanCount <- 1
 		return nil
@@ -167,7 +219,7 @@ func TestDisabledJob(t *testing.T) {
 			ByDuration(fastInterval).
 			Disabled(true).
 			Labels(labels).
-			Runner(runner),
+			TaskExecutor(NewSimpleTask(runner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -207,7 +259,7 @@ func TestEnableJob(t *testing.T) {
 		"team": "devops",
 	}
 	chanCount := make(chan int, 1)
-	var runner JobRunner = func(ctx context.Context) error {
+	runner := func(ctx context.Context) error {
 		t.Log("job has run")
 		chanCount <- 1
 		return nil
@@ -221,7 +273,7 @@ func TestEnableJob(t *testing.T) {
 			ByDuration(fastInterval).
 			Disabled(true).
 			Labels(labels).
-			Runner(runner),
+			TaskExecutor(NewSimpleTask(runner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -260,7 +312,7 @@ func TestRemoveJob(t *testing.T) {
 		"team": "devops",
 	}
 	chanCount := make(chan int, 1)
-	var runner JobRunner = func(ctx context.Context) error {
+	runner := func(ctx context.Context) error {
 		chanCount <- 1
 		return nil
 	}
@@ -273,7 +325,7 @@ func TestRemoveJob(t *testing.T) {
 			Name("test-job").
 			ByDuration(time.Hour).
 			Labels(labels).
-			Runner(runner),
+			TaskExecutor(NewSimpleTask(runner)),
 	)
 	// avoid blocking if the channel already has a value
 	select {
@@ -319,10 +371,10 @@ func TestDisableJobMethod(t *testing.T) {
 			Name("test-job").
 			ByDuration(time.Hour).
 			Labels(labels).
-			Runner(func(ctx context.Context) error {
+			TaskExecutor(NewSimpleTask(func(ctx context.Context) error {
 				executed <- true
 				return nil
-			}),
+			})),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -362,7 +414,9 @@ func TestUpdateJobLabelsAndEnable(t *testing.T) {
 			ByDuration(time.Hour).
 			Labels(initialLabels).
 			Disabled(true).
-			Runner(donothingRunner),
+			TaskExecutor(
+				NewSimpleTask(donothingRunner),
+			),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -371,10 +425,17 @@ func TestUpdateJobLabelsAndEnable(t *testing.T) {
 	executed := make(chan bool, 1)
 	if err := s.UpdateJob(
 		job.ID(),
-		NewJobBuilder().Ctx(ctx).Name("update-job-new").ByDuration(fastInterval).Labels(updatedLabels).Runner(func(ctx context.Context) error {
-			executed <- true
-			return nil
-		}),
+		NewJobBuilder().
+			Ctx(ctx).
+			Name("update-job-new").
+			ByDuration(fastInterval).
+			Labels(updatedLabels).
+			TaskExecutor(NewSimpleTask(
+				func(ctx context.Context) error {
+					executed <- true
+					return nil
+				}),
+			),
 	); err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
@@ -414,24 +475,24 @@ func TestRemoveJobsLeavesOthers(t *testing.T) {
 	removeRan := make(chan bool, 1)
 	jobRemove, err := s.NewJob(
 		NewJobBuilder().Ctx(ctx).Name("remove-me").ByDuration(fastInterval).Label("env", "remove").
-			Runner(
+			TaskExecutor(NewSimpleTask(
 				func(ctx context.Context) error {
 					removeRan <- true
 					return nil
 				},
-			),
+			)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
 	jobKeep, err := s.NewJob(
 		NewJobBuilder().Ctx(ctx).Name("keep-me").ByDuration(fastInterval).Label("env", "keep").
-			Runner(
+			TaskExecutor(NewSimpleTask(
 				func(ctx context.Context) error {
 					keepRan <- true
 					return nil
 				},
-			),
+			)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create keep job: %v", err)
@@ -481,19 +542,21 @@ func TestRemoveJobByLabels(t *testing.T) {
 	labelsProd := JobLabels{"env": "prod"}
 
 	_, err = s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("dev-1").ByDuration(time.Hour).Labels(labelsDev).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("dev-1").
+			ByDuration(time.Hour).Labels(labelsDev).
+			TaskExecutor(NewSimpleTask(donothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create dev-1: %v", err)
 	}
 	devTwo, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("dev-2").ByDuration(time.Hour).Labels(labelsDev).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("dev-2").ByDuration(time.Hour).Labels(labelsDev).TaskExecutor(NewSimpleTask(donothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create dev-2: %v", err)
 	}
 	prod, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("prod-1").ByDuration(time.Hour).Labels(labelsProd).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("prod-1").ByDuration(time.Hour).Labels(labelsProd).TaskExecutor(NewSimpleTask(donothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create prod: %v", err)
@@ -523,19 +586,19 @@ func TestGetJobsByLabelsFilters(t *testing.T) {
 	labelsB := JobLabels{"env": "dev", "team": "b"}
 	labelsC := JobLabels{"env": "prod", "team": "a"}
 	jobA, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-a").ByDuration(time.Hour).Labels(labelsA).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("job-a").ByDuration(time.Hour).Labels(labelsA).TaskExecutor(NewSimpleTask(donothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job-a: %v", err)
 	}
 	jobB, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-b").ByDuration(time.Hour).Labels(labelsB).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("job-b").ByDuration(time.Hour).Labels(labelsB).TaskExecutor(NewSimpleTask(donothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job-b: %v", err)
 	}
 	_, err = s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-c").ByDuration(time.Hour).Labels(labelsC).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("job-c").ByDuration(time.Hour).Labels(labelsC).TaskExecutor(NewSimpleTask(donothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job-c: %v", err)
@@ -570,13 +633,13 @@ func TestRemoveAllJobs(t *testing.T) {
 	defer cancel()
 	labels := JobLabels{"env": "test"}
 	job1, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-1").ByDuration(time.Hour).Labels(labels).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("job-1").ByDuration(time.Hour).Labels(labels).TaskExecutor(NewSimpleTask(donothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job1: %v", err)
 	}
 	job2, err := s.NewJob(
-		NewJobBuilder().Ctx(ctx).Name("job-2").ByDuration(time.Hour).Labels(labels).Runner(donothingRunner),
+		NewJobBuilder().Ctx(ctx).Name("job-2").ByDuration(time.Hour).Labels(labels).TaskExecutor(NewSimpleTask(donothingRunner)),
 	)
 	if err != nil {
 		t.Fatalf("failed to create job2: %v", err)
@@ -611,7 +674,7 @@ func TestBeforeJobRuns(t *testing.T) {
 		Ctx(context.Background()).
 		Name("before-job").
 		ByDuration(fastInterval).
-		Runner(donothingRunner).
+		TaskExecutor(NewSimpleTask(donothingRunner)).
 		BeforeJobRuns(func(jobID uuid.UUID, jobName string) {
 			beforeRunChan <- true
 		})
@@ -641,10 +704,10 @@ func TestBeforeJobRunsSkipIfBeforeFuncErrorsSkip(t *testing.T) {
 		Ctx(context.Background()).
 		Name("before-job-error").
 		ByDuration(fastInterval).
-		Runner(func(ctx context.Context) error {
+		TaskExecutor(NewSimpleTask(func(ctx context.Context) error {
 			executeChan <- true
 			return nil
-		}).
+		})).
 		BeforeJobRunsSkipIfBeforeFuncErrors(func(jobID uuid.UUID, jobName string) error {
 			beforeRunChan <- true
 			return errors.New("skip execution")
@@ -681,10 +744,10 @@ func TestBeforeJobRunsSkipIfBeforeFuncErrorsNotSkip(t *testing.T) {
 		Ctx(context.Background()).
 		Name("before-job-error").
 		ByDuration(fastInterval).
-		Runner(func(ctx context.Context) error {
+		TaskExecutor(NewSimpleTask(func(ctx context.Context) error {
 			executeChan <- true
 			return nil
-		}).
+		})).
 		BeforeJobRunsSkipIfBeforeFuncErrors(func(jobID uuid.UUID, jobName string) error {
 			beforeRunChan <- true
 			return nil
@@ -720,7 +783,7 @@ func TestAfterJobRuns(t *testing.T) {
 		Ctx(context.Background()).
 		Name("after-job").
 		ByDuration(fastInterval).
-		Runner(donothingRunner).
+		TaskExecutor(NewSimpleTask(donothingRunner)).
 		AfterJobRuns(func(jobID uuid.UUID, jobName string) {
 			afterRunChan <- true
 		})
@@ -749,9 +812,9 @@ func TestAfterJobRunsWithError(t *testing.T) {
 		Ctx(context.Background()).
 		Name("after-job-error").
 		ByDuration(fastInterval).
-		Runner(func(ctx context.Context) error {
+		TaskExecutor(NewSimpleTask(func(ctx context.Context) error {
 			return errors.New("intentional error")
-		}).
+		})).
 		AfterJobRunsWithError(func(jobID uuid.UUID, jobName string, runErr error) {
 			if runErr != nil && runErr.Error() == "intentional error" {
 				afterRunChan <- true
@@ -782,9 +845,9 @@ func TestAfterJobRunsWithPanic(t *testing.T) {
 		Ctx(context.Background()).
 		Name("after-job-panic").
 		ByDuration(fastInterval).
-		Runner(func(ctx context.Context) error {
+		TaskExecutor(NewSimpleTask(func(ctx context.Context) error {
 			panic("intentional panic")
-		}).
+		})).
 		AfterJobRunsWithPanic(func(jobID uuid.UUID, jobName string, panicErr interface{}) {
 			if panicErr != nil && panicErr == "intentional panic" {
 				afterRunChan <- true

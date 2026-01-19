@@ -8,7 +8,25 @@ import (
 	"github.com/google/uuid"
 )
 
-type ExecuteDefine func() (JobRunner, []any)
+type TaskExecutor interface {
+	Execute(ctx context.Context) error
+}
+
+type simpleTask struct {
+	f func(ctx context.Context) error
+}
+
+func (st *simpleTask) Execute(ctx context.Context) error {
+	return st.f(ctx)
+}
+func NewSimpleTask(f func(ctx context.Context) error) TaskExecutor {
+	return &simpleTask{
+		f: f,
+	}
+}
+
+var _ TaskExecutor = (*simpleTask)(nil)
+
 type jobBuilder struct {
 	id                                  uuid.UUID
 	ctx                                 context.Context
@@ -16,8 +34,7 @@ type jobBuilder struct {
 	cron                                gocron.JobDefinition
 	disabled                            bool
 	labels                              JobLabels
-	runner                              JobRunner
-	params                              []any
+	taskExecutor                        TaskExecutor
 	afterJobRuns                        []func(jobID uuid.UUID, jobName string)
 	afterJobRunsWithErrors              []func(jobID uuid.UUID, jobName string, runErr error)
 	afterJobRunsWithPanics              []func(jobID uuid.UUID, jobName string, panicData any)
@@ -26,11 +43,11 @@ type jobBuilder struct {
 }
 
 type jobDefine struct {
-	id       uuid.UUID
-	cron     gocron.JobDefinition
-	disabled bool
-	execute  ExecuteDefine
-	opts     []gocron.JobOption
+	id           uuid.UUID
+	cron         gocron.JobDefinition
+	disabled     bool
+	taskExecutor TaskExecutor
+	opts         []gocron.JobOption
 }
 
 // NewJobBuilder create a jobBuilder
@@ -169,10 +186,9 @@ func (jb *jobBuilder) Labels(labels JobLabels) *jobBuilder {
 	return jb
 }
 
-// Runner sets the job runner function and the params.
-func (jb *jobBuilder) Runner(runner JobRunner, params ...any) *jobBuilder {
-	jb.runner = runner
-	jb.params = params
+// TaskExecutor sets the job taskExecutor.
+func (jb *jobBuilder) TaskExecutor(taskExecutor TaskExecutor) *jobBuilder {
+	jb.taskExecutor = taskExecutor
 	return jb
 }
 
@@ -207,16 +223,20 @@ func (jb *jobBuilder) BeforeJobRunsSkipIfBeforeFuncErrors(eventListenerFunc func
 	return jb
 }
 
-func (jb *jobBuilder) Build() *jobDefine {
-	return &jobDefine{
-		id:   jb._internalGetOrCreateID(),
-		opts: jb._internalGetOptions(),
-		execute: func() (JobRunner, []any) {
-			return jb.runner, jb.params
-		},
-		cron:     jb.cron,
-		disabled: jb.disabled,
+func (jb *jobBuilder) Build() (*jobDefine, error) {
+	if jb.cron == nil {
+		return nil, ErrJobCronNotDefined
 	}
+	if jb.taskExecutor == nil {
+		return nil, ErrJobTaskNotDefined
+	}
+	return &jobDefine{
+		id:           jb._internalGetOrCreateID(),
+		opts:         jb._internalGetOptions(),
+		taskExecutor: jb.taskExecutor,
+		cron:         jb.cron,
+		disabled:     jb.disabled,
+	}, nil
 }
 
 func (jb *jobBuilder) _internalGetOrCreateID() uuid.UUID {

@@ -4,7 +4,6 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"reflect"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/generic_sync"
 	"github.com/go-co-op/gocron/v2"
@@ -62,53 +61,24 @@ func (o *OpScheduler) jobIsDisabled(jobUUID uuid.UUID) bool {
 
 // buildJobParams builds a gocron.Task with the provided parameters.
 func (o *OpScheduler) buildJobParams(
-	jobUUID uuid.UUID,
-	executeDefine ExecuteDefine,
+	jd *jobDefine,
 ) (gocron.Task, error) {
-	runner, params := executeDefine()
-	f := reflect.ValueOf(runner)
-	if f.IsZero() {
-		return nil, errors.New("runner is nil")
-	}
-	if f.Kind() != reflect.Func {
-		return nil, errors.New("runner must be a function")
-	}
-	if len(params)+1 != f.Type().NumIn() {
-		return nil, errors.New("number of params does not match runner function signature (expected N params plus context parameter)")
-	}
 	// check runner as function and NumIn is match params length
-	task := gocron.NewTask(func(_ctx context.Context, params []any) error {
-		// check if job is exists and not disabled
-		j, exists := o._internalGetCronJob(jobUUID)
-		// In theory the job should always exist, but check just in case
-		if !exists {
-			return errors.New("cron job not found")
-		}
-		// check disabled status
-		if o.jobIsDisabled(j.ID()) {
-			return nil
-		}
-		in := make([]reflect.Value, len(params)+1)
-		in[0] = reflect.ValueOf(_ctx)
-		for k, param := range params {
-			in[k+1] = reflect.ValueOf(param)
-		}
-		// call runner with params appended context at first
-		returnValues := f.Call(in)
-		result := returnValues[0].Interface()
-		// if runner returns an error, return it
-		if result == nil {
-			return nil
-		}
-		return result.(error)
-	}, params)
-	return task, nil
+	_task := gocron.NewTask(
+		func(ctx context.Context) error {
+			return jd.taskExecutor.Execute(ctx)
+		},
+	)
+	return _task, nil
 }
 
 // NewJobByBuilder creates and schedules a new job by builder
 func (o *OpScheduler) NewJob(jBuilder *jobBuilder) (*OpJob, error) {
-	jd := jBuilder.Build()
-	task, err := o.buildJobParams(jd.id, jd.execute)
+	jd, err := jBuilder.Build()
+	if err != nil {
+		return nil, err
+	}
+	task, err := o.buildJobParams(jd)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +108,11 @@ func (o *OpScheduler) UpdateJob(
 	}
 	// update the ID of jobBuilder to ensure consistency
 	jb.ID(jobUUID)
-	jd := jb.Build()
-	task, err := o.buildJobParams(jobUUID, jd.execute)
+	jd, err := jb.Build()
+	if err != nil {
+		return err
+	}
+	task, err := o.buildJobParams(jd)
 	if err != nil {
 		return err
 	}
