@@ -66,6 +66,9 @@ func (o *OpScheduler) buildJobParams(
 	// check runner as function and NumIn is match params length
 	_task := gocron.NewTask(
 		func(ctx context.Context) error {
+			if o.jobIsDisabled(jd.id) {
+				return nil
+			}
 			return jd.taskExecutor.Execute(ctx)
 		},
 	)
@@ -82,18 +85,22 @@ func (o *OpScheduler) NewJob(jBuilder *jobBuilder) (*OpJob, error) {
 	if err != nil {
 		return nil, err
 	}
+	if jd.disabled {
+		o.jobDisabledMap.Store(jd.id, struct{}{})
+	}
 	job, err := o.scheduler.NewJob(
 		jd.cron,
 		task,
 		jd.opts...,
 	)
 	if err != nil {
+		// remove the disabled status if job creation failed
+		if jd.disabled {
+			o.jobDisabledMap.Delete(jd.id)
+		}
 		return nil, err
 	}
 	o.jobsMap.Store(jd.id, job)
-	if jd.disabled {
-		o.jobDisabledMap.Store(jd.id, struct{}{})
-	}
 	return newOpJob(job, jd.disabled), nil
 }
 
@@ -116,21 +123,32 @@ func (o *OpScheduler) UpdateJob(
 	if err != nil {
 		return err
 	}
+	// Update disabled status
+	rawDsiabled := o.jobIsDisabled(jobUUID)
+	if rawDsiabled != jd.disabled {
+		if jd.disabled {
+			o.jobDisabledMap.Store(jobUUID, struct{}{})
+		} else {
+			o.jobDisabledMap.Delete(jobUUID)
+		}
+	}
 	job, err := o.scheduler.Update(
 		jobUUID, jd.cron, task,
 		jd.opts...,
 	)
 	if err != nil {
+		// rollback disabled status if update failed
+		if jd.disabled != rawDsiabled {
+			if rawDsiabled {
+				o.jobDisabledMap.Store(jobUUID, struct{}{})
+			} else {
+				o.jobDisabledMap.Delete(jobUUID)
+			}
+		}
 		return err
 	}
 	// Save job
 	o.jobsMap.Store(jobUUID, job)
-	// Update disabled status
-	if jd.disabled {
-		o.jobDisabledMap.Store(jobUUID, struct{}{})
-	} else {
-		o.jobDisabledMap.Delete(jobUUID)
-	}
 	return nil
 }
 

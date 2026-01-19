@@ -38,7 +38,11 @@ func (apt *anyParamTask) Execute(ctx context.Context) error {
 	if f.IsZero() {
 		return errors.New("with out runner define")
 	}
-	if len(apt.Params) != f.Type().NumIn() {
+	// 判断 f 是方法
+	if f.Kind() != reflect.Func {
+		return errors.New("runner is not a function")
+	}
+	if len(apt.Params)+1 != f.Type().NumIn() {
 		return errors.New("params count not match runner func")
 	}
 	// 判断是否 return 是否为 1个
@@ -46,13 +50,14 @@ func (apt *anyParamTask) Execute(ctx context.Context) error {
 		return errors.New("runner func return values more than 1")
 	}
 	// 判断是否返回的类型
-	_, ok := f.Type().Out(0).Elem().FieldByName("error")
-	if !ok {
+	outType := f.Type().Out(0)
+	if !outType.Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 		return errors.New("runner func return value is not error type")
 	}
-	in := make([]reflect.Value, len(apt.Params))
+	in := make([]reflect.Value, len(apt.Params)+1)
+	in[0] = reflect.ValueOf(ctx)
 	for k, param := range apt.Params {
-		in[k] = reflect.ValueOf(param)
+		in[k+1] = reflect.ValueOf(param)
 	}
 	returnValues := f.Call(in)
 	if len(returnValues) != 1 {
