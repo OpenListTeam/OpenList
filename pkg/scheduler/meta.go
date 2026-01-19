@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"errors"
 	"maps"
 	"time"
 
@@ -35,14 +34,11 @@ func newSafeMap[K comparable, V any]() *generic_sync.MapOf[K, V] {
 
 // OpJob represents an operational job with its metadata.
 type OpJob struct {
-	id          uuid.UUID
-	name        string
-	lastRun     time.Time
-	lastRunErr  error
-	nextTenRuns []time.Time
-	nextRunErr  error
-	labels      JobLabels
-	disabled    bool
+	id       uuid.UUID
+	name     string
+	labels   JobLabels
+	disabled bool
+	_rawJob  gocron.Job
 }
 
 // ID returns the UUID of the job.
@@ -73,41 +69,30 @@ func (o *OpJob) Disabled() bool {
 
 // LastRun returns the last run time of the job.
 func (o *OpJob) LastRun() (time.Time, error) {
-	return o.lastRun, o.lastRunErr
+	return o._rawJob.LastRun()
 }
 
 // NextRun returns the next run time of the job.
 func (o *OpJob) NextRun() (time.Time, error) {
-	if o.nextRunErr != nil {
-		return time.Time{}, o.nextRunErr
-	}
-	if len(o.nextTenRuns) == 0 {
-		return time.Time{}, errors.New("no next run scheduled, maybe the scheduler is not started or has been stopped")
-	}
-	return o.nextTenRuns[0], nil
+	return o._rawJob.NextRun()
 }
 
-// GetNextTenRuns returns the next 10 run times of the job.
-func (o *OpJob) GetNextTenRuns() ([]time.Time, error) {
-	return o.nextTenRuns, o.nextRunErr
+// GetNextRuns returns the next n run times of the job.
+func (o *OpJob) GetNextRuns(n int) ([]time.Time, error) {
+	return o._rawJob.NextRuns(n)
 }
 
 // newOpJob creates a new OpJob instance from a gocron.Job and its disabled status.
 func newOpJob(job gocron.Job, disabled bool) *OpJob {
 	labels := tags2JobLabels(job.Tags())
-	lastRun, lastRunErr := job.LastRun()
-	nextRun10, nextRunErr := job.NextRuns(10)
 	labelsCopy := make(JobLabels)
 	maps.Copy(labelsCopy, labels)
 	return &OpJob{
-		id:          job.ID(),
-		name:        job.Name(),
-		lastRun:     lastRun,
-		lastRunErr:  lastRunErr,
-		nextTenRuns: nextRun10,
-		nextRunErr:  nextRunErr,
-		labels:      labelsCopy,
-		disabled:    disabled,
+		id:       job.ID(),
+		name:     job.Name(),
+		labels:   labelsCopy,
+		disabled: disabled,
+		_rawJob:  job,
 	}
 }
 
