@@ -73,6 +73,8 @@ func (d *QuarkOrUC) GetFiles(parent string) ([]model.Obj, error) {
 		"pdir_fid":     parent,
 		"_size":        strconv.Itoa(size),
 		"_fetch_total": "1",
+		"fetch_all_file": "1",
+		"fetch_risk_file_name": "1",
 	}
 	if d.OrderBy != "none" {
 		query["_sort"] = "file_type:asc," + d.OrderBy + ":" + d.OrderDirection

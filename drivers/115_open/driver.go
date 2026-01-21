@@ -331,11 +331,11 @@ func (d *Open115) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 	if err != nil {
 		return nil, err
 	}
-	total, err := userInfo.RtSpaceInfo.AllTotal.Size.Int64()
+	total, err := ParseInt64(userInfo.RtSpaceInfo.AllTotal.Size)
 	if err != nil {
 		return nil, err
 	}
-	used, err := userInfo.RtSpaceInfo.AllUse.Size.Int64()
+	used, err := ParseInt64(userInfo.RtSpaceInfo.AllUse.Size)
 	if err != nil {
 		return nil, err
 	}

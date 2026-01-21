@@ -143,6 +143,24 @@ func (d *CloudreveV4) List(ctx context.Context, dir model.Obj, args model.ListAr
 	})
 }
 
+func (d *CloudreveV4) Get(ctx context.Context, path string) (model.Obj, error) {
+	var info File
+	err := d.request(http.MethodGet, "/file/info", func(req *resty.Request) {
+		req.SetQueryParam("uri", d.RootFolderPath+path)
+	}, &info)
+	if err != nil {
+		return nil, err
+	}
+	return &model.Object{
+		ID:       info.ID,
+		Path:     info.Path,
+		Name:     info.Name,
+		Size:     info.Size,
+		Modified: info.UpdatedAt,
+		Ctime:    info.CreatedAt,
+	}, nil
+}
+
 func (d *CloudreveV4) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var url FileUrlResp
 	err := d.request(http.MethodPost, "/file/url", func(req *resty.Request) {

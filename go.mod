@@ -16,6 +16,8 @@ require (
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0
 	github.com/SheltonZhu/115driver v1.1.1
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
+	github.com/antchfx/htmlquery v1.3.5
+	github.com/antchfx/xpath v1.3.5
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/aws/aws-sdk-go v1.55.7
 	github.com/blevesearch/bleve/v2 v2.5.2
@@ -104,6 +106,7 @@ require (
 	github.com/emersion/go-message v0.18.2 // indirect
 	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
+	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect

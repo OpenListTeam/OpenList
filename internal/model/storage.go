@@ -79,29 +79,24 @@ type StorageDetails struct {
 	DiskUsage
 }
 
-type StorageDetailsWithName struct {
-	*StorageDetails
-	DriverName string `json:"driver_name"`
-}
-
 type ObjWithStorageDetails interface {
-	GetStorageDetails() *StorageDetailsWithName
+	GetStorageDetails() *StorageDetails
 }
 
 type ObjStorageDetails struct {
 	Obj
-	StorageDetailsWithName
+	*StorageDetails
 }
 
 func (o *ObjStorageDetails) Unwrap() Obj {
 	return o.Obj
 }
 
-func (o ObjStorageDetails) GetStorageDetails() *StorageDetailsWithName {
-	return &o.StorageDetailsWithName
+func (o *ObjStorageDetails) GetStorageDetails() *StorageDetails {
+	return o.StorageDetails
 }
 
-func GetStorageDetails(obj Obj) (*StorageDetailsWithName, bool) {
+func GetStorageDetails(obj Obj) (*StorageDetails, bool) {
 	if obj, ok := obj.(ObjWithStorageDetails); ok {
 		return obj.GetStorageDetails(), true
 	}
