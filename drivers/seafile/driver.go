@@ -43,20 +43,22 @@ func (d *Seafile) Drop(ctx context.Context) error {
 
 func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) (result []model.Obj, err error) {
 	path := dir.GetPath()
-	if path == "/" && d.RepoId == "" {
+	if path == d.RootFolderPath {
 		libraries, err := d.listLibraries()
 		if err != nil {
 			return nil, err
 		}
-		return utils.SliceConvert(libraries, func(f LibraryItemResp) (model.Obj, error) {
-			return &model.Object{
-				Path:     stdpath.Join(path, f.Name),
-				Name:     f.Name,
-				Modified: time.Unix(f.Modified, 0),
-				Size:     f.Size,
-				IsFolder: true,
-			}, nil
-		})
+		if path == "/" && d.RepoId == "" {
+			return utils.SliceConvert(libraries, func(f LibraryItemResp) (model.Obj, error) {
+				return &model.Object{
+					Path:     stdpath.Join(path, f.Name),
+					Name:     f.Name,
+					Modified: time.Unix(f.Modified, 0),
+					Size:     f.Size,
+					IsFolder: true,
+				}, nil
+			})
+		}
 	}
 	var repo *LibraryInfo
 	repo, path, err = d.getRepoAndPath(path)
