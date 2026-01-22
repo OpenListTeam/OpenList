@@ -1,6 +1,11 @@
 package seafile
 
-import "time"
+import (
+	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+)
 
 type AuthTokenResp struct {
 	Token string `json:"token"`
@@ -13,7 +18,37 @@ type RepoItemResp struct {
 	Size       int64  `json:"size"`
 	Modified   int64  `json:"mtime"`
 	Permission string `json:"permission"`
+
+	path string
+	model.ObjMask
 }
+
+func (l *RepoItemResp) IsDir() bool {
+	return l.Type == "dir"
+}
+func (l *RepoItemResp) GetPath() string {
+	return l.path
+}
+func (l *RepoItemResp) GetName() string {
+	return l.Name
+}
+func (l *RepoItemResp) ModTime() time.Time {
+	return time.Unix(l.Modified, 0)
+}
+func (l *RepoItemResp) CreateTime() time.Time {
+	return l.ModTime()
+}
+func (l *RepoItemResp) GetSize() int64 {
+	return l.Size
+}
+func (l *RepoItemResp) GetID() string {
+	return l.Id
+}
+func (l *RepoItemResp) GetHash() utils.HashInfo {
+	return utils.HashInfo{}
+}
+
+var _ model.Obj = (*RepoItemResp)(nil)
 
 type LibraryItemResp struct {
 	RepoItemResp
@@ -31,10 +66,6 @@ type LibraryItemResp struct {
 	Root                 string `json:"root"`
 	Salt                 string `json:"salt"`
 	SizeFormatted        string `json:"size_formatted"`
-}
-
-type RepoDirItemResp struct {
-	RepoItemResp
 }
 
 type LibraryInfo struct {
