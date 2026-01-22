@@ -32,11 +32,11 @@ func (d *Seafile) GetAddition() driver.Additional {
 
 func (d *Seafile) Init(ctx context.Context) error {
 	d.Address = strings.TrimSuffix(d.Address, "/")
-	d.RootFolderPath = utils.FixAndCleanPath(d.RootFolderPath)
 	err := d.getToken()
 	if err != nil {
 		return err
 	}
+	d.RootFolderPath = utils.FixAndCleanPath(d.RootFolderPath)
 	if d.RepoId != "" {
 		library, err := d.getLibraryInfo(d.RepoId)
 		if err != nil {
@@ -47,7 +47,9 @@ func (d *Seafile) Init(ctx context.Context) error {
 		d.root = &LibraryInfo{
 			LibraryItemResp: library,
 		}
-	} else {
+		return nil
+	}
+	if len(d.RootFolderPath) <= 1 {
 		d.root = &model.Object{
 			Name:     "root",
 			Path:     d.RootFolderPath,
@@ -55,8 +57,37 @@ func (d *Seafile) Init(ctx context.Context) error {
 			Modified: d.Modified,
 			Mask:     model.Locked,
 		}
+		return nil
 	}
-	return nil
+
+	var resp []LibraryItemResp
+	_, err = d.request(http.MethodGet, "/api2/repos/", func(req *resty.Request) {
+		req.SetResult(&resp)
+	})
+	if err != nil {
+		return err
+	}
+	for _, library := range resp {
+		p, found := strings.CutPrefix(d.RootFolderPath[1:], library.Name)
+		if !found {
+			continue
+		}
+		if p == "" {
+			p = "/"
+		} else if p[0] != '/' {
+			continue
+		}
+		// d.RepoId = library.Id
+		// d.RootFolderPath = p
+
+		library.path = p
+		library.ObjMask = model.Locked
+		d.root = &LibraryInfo{
+			LibraryItemResp: library,
+		}
+		return nil
+	}
+	return fmt.Errorf("Library for root folder path %q not found", d.RootFolderPath)
 }
 
 func (d *Seafile) Drop(ctx context.Context) error {
@@ -72,6 +103,7 @@ func (d *Seafile) GetRoot(ctx context.Context) (model.Obj, error) {
 }
 
 func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) (result []model.Obj, err error) {
+	path := dir.GetPath()
 	switch o := dir.(type) {
 	default:
 		var resp []LibraryItemResp
@@ -79,7 +111,7 @@ func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 			req.SetResult(&resp)
 		})
 		return utils.SliceConvert(resp, func(f LibraryItemResp) (model.Obj, error) {
-			f.path = d.RootFolderPath
+			f.path = path
 			return &LibraryInfo{
 				LibraryItemResp: f,
 			}, nil
@@ -95,7 +127,6 @@ func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 		// do nothing
 	}
 
-	path := dir.GetPath()
 	var resp []RepoItemResp
 	_, err = d.request(http.MethodGet, fmt.Sprintf("/api2/repos/%s/dir/", dir.GetID()), func(req *resty.Request) {
 		req.SetResult(&resp).SetQueryParams(map[string]string{
