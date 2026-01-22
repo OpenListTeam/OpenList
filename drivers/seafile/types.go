@@ -73,3 +73,7 @@ type LibraryInfo struct {
 	decryptedTime    time.Time
 	decryptedSuccess bool
 }
+
+func (l *LibraryInfo) IsDir() bool {
+	return true
+}
