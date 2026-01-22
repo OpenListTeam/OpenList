@@ -21,6 +21,7 @@ type RepoItemResp struct {
 
 	path string
 	model.ObjMask
+	repoID string
 }
 
 func (l *RepoItemResp) IsDir() bool {
@@ -42,6 +43,9 @@ func (l *RepoItemResp) GetSize() int64 {
 	return l.Size
 }
 func (l *RepoItemResp) GetID() string {
+	if l.repoID != "" {
+		return l.repoID
+	}
 	return l.Id
 }
 func (l *RepoItemResp) GetHash() utils.HashInfo {

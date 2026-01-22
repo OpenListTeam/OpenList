@@ -138,6 +138,7 @@ func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	}
 	return utils.SliceConvert(resp, func(f RepoItemResp) (model.Obj, error) {
 		f.path = stdpath.Join(path, f.Name)
+		f.repoID = dir.GetID()
 		return &f, nil
 	})
 }
