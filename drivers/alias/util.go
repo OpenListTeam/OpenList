@@ -524,7 +524,7 @@ func getAllSort(dirs []model.Obj) model.Sort {
 				noExtractFolder = true
 			}
 		}
-		if !noSort && !noExtractFolder {
+		if noSort && noExtractFolder {
 			break
 		}
 	}
