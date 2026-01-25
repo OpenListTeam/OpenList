@@ -316,6 +316,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		return nil, err
 	}
 	resultLink := *link // 复制一份，避免修改到原始link
+	resultLink.Expiration = nil
 	resultLink.SyncClosers = utils.NewSyncClosers(link)
 	if args.Redirect {
 		return &resultLink, nil
