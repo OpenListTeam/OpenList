@@ -9,7 +9,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -69,11 +68,10 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		return nil, err
 	}
 
-	allItems := make([]Object, 0, firstResp.Meta.Count)
-	allItems = append(allItems, firstResp.Items...)
+	pagesData := make([][]Object, firstResp.Meta.TotalPages)
+	pagesData[0] = firstResp.Items
 
 	if firstResp.Meta.TotalPages > 1 {
-		var mu sync.Mutex
 		g, _ := errgroup.WithContext(ctx)
 		g.SetLimit(8)
 
@@ -93,9 +91,7 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 					return err
 				}
 
-				mu.Lock()
-				allItems = append(allItems, resp.Items...)
-				mu.Unlock()
+				pagesData[page-1] = resp.Items
 				return nil
 			})
 		}
@@ -103,6 +99,11 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		if err := g.Wait(); err != nil {
 			return nil, err
 		}
+	}
+
+	var allItems []Object
+	for _, items := range pagesData {
+		allItems = append(allItems, items...)
 	}
 
 	return utils.SliceConvert(allItems, func(src Object) (model.Obj, error) {

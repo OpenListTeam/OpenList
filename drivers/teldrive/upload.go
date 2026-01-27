@@ -350,6 +350,10 @@ func (d *Teldrive) uploadSingleChunk(ctx context.Context, fileId string, task ch
 			return &existingPart, nil
 		}
 
+		if _, err := task.reader.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+
 		if d.RandomChunkName {
 			partName = getMD5Hash(uuid.New().String())
 		} else {
