@@ -490,3 +490,43 @@ func (d *Alias) extract(ctx context.Context, reqPath string, args model.ArchiveI
 	link, _, err := op.DriverExtract(ctx, storage, reqActualPath, args)
 	return link, err
 }
+
+func getAllSort(dirs []model.Obj) model.Sort {
+	ret := model.Sort{}
+	noSort := false
+	noExtractFolder := false
+	for _, dir := range dirs {
+		if dir == nil {
+			continue
+		}
+		storage, err := fs.GetStorage(dir.GetPath(), &fs.GetStoragesArgs{})
+		if err != nil {
+			continue
+		}
+		if !noSort && storage.GetStorage().OrderBy != "" {
+			if ret.OrderBy == "" {
+				ret.OrderBy = storage.GetStorage().OrderBy
+				ret.OrderDirection = storage.GetStorage().OrderDirection
+				if ret.OrderDirection == "" {
+					ret.OrderDirection = "asc"
+				}
+			} else if ret.OrderBy != storage.GetStorage().OrderBy || ret.OrderDirection != storage.GetStorage().OrderDirection {
+				ret.OrderBy = ""
+				ret.OrderDirection = ""
+				noSort = true
+			}
+		}
+		if !noExtractFolder && storage.GetStorage().ExtractFolder != "" {
+			if ret.ExtractFolder == "" {
+				ret.ExtractFolder = storage.GetStorage().ExtractFolder
+			} else if ret.ExtractFolder != storage.GetStorage().ExtractFolder {
+				ret.ExtractFolder = ""
+				noExtractFolder = true
+			}
+		}
+		if noSort && noExtractFolder {
+			break
+		}
+	}
+	return ret
+}
