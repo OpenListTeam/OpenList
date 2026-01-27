@@ -107,13 +107,24 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		return
 	}
 	total, objs := pagination(objs, &req.PageReq)
-	provider := "unknown"
+	provider := "unknown" // 为什么要给前端返回 unknown, 闪传需要这里有值！！
 	var directUploadTools []string
 	if user.CanWrite() {
 		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
 			directUploadTools = op.GetDirectUploadTools(storage)
 		}
 	}
+
+	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	if err == nil {
+		// 赋值 provider
+		provider = storage.Config().Name
+
+		if user.CanWrite() {
+			directUploadTools = op.GetDirectUploadTools(storage)
+		}
+	}
+
 	common.SuccessResp(c, FsListResp{
 		Content:           toObjsResp(objs, reqPath, isEncrypt(meta, reqPath)),
 		Total:             int64(total),
