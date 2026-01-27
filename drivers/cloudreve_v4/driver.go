@@ -158,6 +158,7 @@ func (d *CloudreveV4) Get(ctx context.Context, path string) (model.Obj, error) {
 		Size:     info.Size,
 		Modified: info.UpdatedAt,
 		Ctime:    info.CreatedAt,
+		IsFolder: info.Type == 1,
 	}, nil
 }
 
