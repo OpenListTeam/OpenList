@@ -1483,3 +1483,51 @@ func (y *Cloud189PC) getCapacityInfo(ctx context.Context) (*CapacityResp, error)
 	}
 	return &resp, nil
 }
+
+func (y *Cloud189PC) getSharedInfo(code string) (int64, string, string, error) {
+	resp := GetSharedInfoResp{}
+	sessionKey := y.getTokenInfo().SessionKey
+	if sessionKey == "" {
+		if err := y.refreshSession(); err != nil {
+			return -1, "", "", err
+		}
+	}
+	req := y.getClient().R().
+		SetHeader("Accept", "application/json;charset=UTF-8").
+		SetHeader("Referer", fmt.Sprintf("https://cloud.189.cn/web/share?code=%s", code)).
+		SetHeader("SessionKey", y.getTokenInfo().SessionKey).
+		SetQueryParams(map[string]string{
+			"noCache":   random_num(),
+			"shareCode": code,
+		})
+	req.SetResult(&resp)
+	res, err := req.Execute(http.MethodGet, "https://cloud.189.cn/api/open/share/getShareInfoByCodeV2.action")
+
+	if strings.Contains(res.String(), "userSessionBO is null") {
+		if err = y.refreshSession(); err != nil {
+			return -1, "", "", err
+		}
+		return y.getSharedInfo(code)
+	}
+
+	if strings.Contains(res.String(), "InvalidSessionKey") {
+		if err = y.refreshSession(); err != nil {
+			return -1, "", "", err
+		}
+		return y.getSharedInfo(code)
+	}
+
+	if resp.ResCode != 0 || resp.ResMessage != "成功" {
+		return -1, "", "", errors.New(resp.ResMessage)
+	}
+	return resp.ShareID, resp.FileId, resp.FileName, nil
+}
+
+func (y *Cloud189PC) extractCode(str string) string {
+	u, err := url.Parse(str)
+	if err != nil {
+		fmt.Println("invalid share url")
+		return ""
+	}
+	return u.Query().Get("code")
+}
