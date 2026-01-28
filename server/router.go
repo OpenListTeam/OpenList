@@ -105,6 +105,7 @@ func Init(e *gin.Engine) {
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
 	_task(auth.Group("/task", middlewares.AuthNotGuest))
 	_sharing(auth.Group("/share", middlewares.AuthNotGuest))
+	_flashTransfer(auth.Group("/flash", middlewares.AuthNotGuest))
 	admin(auth.Group("/admin", middlewares.AuthAdmin))
 	if flags.Debug || flags.Dev {
 		debug(g.Group("/debug"))
@@ -233,6 +234,12 @@ func _sharing(g *gin.RouterGroup) {
 	g.POST("/delete", handles.DeleteSharing)
 	g.POST("/enable", handles.SetEnableSharing(false))
 	g.POST("/disable", handles.SetEnableSharing(true))
+}
+
+func _flashTransfer(g *gin.RouterGroup) {
+	g.POST("/list", handles.FlashList)
+	g.POST("/import", handles.FlashImport)
+	g.POST("/show", handles.FlashShow)
 }
 
 func Cors(r *gin.Engine) {

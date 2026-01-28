@@ -2,7 +2,9 @@ package tool
 
 import (
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -24,6 +26,7 @@ type DownloadTask struct {
 	DstDirPath        string       `json:"dst_dir_path"`
 	TempDir           string       `json:"temp_dir"`
 	DeletePolicy      DeletePolicy `json:"delete_policy"`
+	SuggestedName     string       `json:"suggested_name"` // flash_transfer 需要使用
 	Toolname          string       `json:"toolname"`
 	Status            string       `json:"-"`
 	Signal            chan int     `json:"-"`
@@ -174,6 +177,21 @@ func (t *DownloadTask) Update() (bool, error) {
 }
 
 func (t *DownloadTask) Transfer() error {
+	if t.SuggestedName != "" && t.TempDir != "" {
+
+		entries, err := os.ReadDir(t.TempDir)
+		if err == nil && len(entries) > 0 {
+
+			oldName := entries[0].Name()
+			oldPath := filepath.Join(t.TempDir, oldName)
+			newPath := filepath.Join(t.TempDir, t.SuggestedName)
+
+			if oldName != t.SuggestedName {
+				_ = os.Rename(oldPath, newPath)
+			}
+		}
+	}
+
 	toolName := t.tool.Name()
 	if toolName == "115 Cloud" || toolName == "115 Open" || toolName == "123 Open" || toolName == "123Pan" || toolName == "PikPak" || toolName == "Thunder" || toolName == "ThunderX" || toolName == "ThunderBrowser" {
 		// 如果不是直接下载到目标路径，则进行转存
