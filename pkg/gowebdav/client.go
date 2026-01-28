@@ -117,6 +117,9 @@ type props struct {
 	ContentType string   `xml:"DAV: prop>getcontenttype,omitempty"`
 	ETag        string   `xml:"DAV: prop>getetag,omitempty"`
 	Modified    string   `xml:"DAV: prop>getlastmodified,omitempty"`
+
+	QuotaAvailableBytes int64 `xml:"DAV: prop>quota-available-bytes,omitempty"`
+	QuotaUsedBytes      int64 `xml:"DAV: prop>quota-used-bytes,omitempty"`
 }
 
 type response struct {
@@ -250,6 +253,39 @@ func (c *Client) Stat(path string) (os.FileInfo, error) {
 		}
 	}
 	return f, err
+}
+
+// Quota returns the quota information about a specified path
+func (c *Client) Quota(path string) (*Quota, error) {
+	var quota *Quota
+	parse := func(resp interface{}) error {
+		r := resp.(*response)
+		if p := getProps(r, "200"); p != nil && quota == nil {
+			quota = new(Quota)
+			quota.Available = p.QuotaAvailableBytes
+			quota.Used = p.QuotaUsedBytes
+		}
+
+		r.Props = nil
+		return nil
+	}
+
+	err := c.propfind(path, true,
+		`<d:propfind xmlns:d='DAV:'>
+			<d:prop>
+				<d:quota-available-bytes/>
+				<d:quota-used-bytes/>
+			</d:prop>
+		</d:propfind>`,
+		&response{},
+		parse)
+
+	if err != nil {
+		if _, ok := err.(*os.PathError); !ok {
+			err = newPathErrorErr("Quota", path, err)
+		}
+	}
+	return quota, err
 }
 
 // Remove removes a remote file
