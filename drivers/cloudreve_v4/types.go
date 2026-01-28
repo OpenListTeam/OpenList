@@ -122,6 +122,18 @@ type File struct {
 	PrimaryEntity string         `json:"primary_entity"`
 }
 
+func fileToObject(f *File) *model.Object {
+	return &model.Object{
+		ID:       f.ID,
+		Path:     f.Path,
+		Name:     f.Name,
+		Size:     f.Size,
+		Modified: f.UpdatedAt,
+		Ctime:    f.CreatedAt,
+		IsFolder: f.Type == 1,
+	}
+}
+
 type StoragePolicy struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
