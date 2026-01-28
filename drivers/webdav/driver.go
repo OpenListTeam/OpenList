@@ -10,6 +10,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/gowebdav"
@@ -123,6 +124,24 @@ func (d *WebDav) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer
 	})
 	err := d.client.WriteStream(path.Join(dstDir.GetPath(), s.GetName()), reader, 0644, callback)
 	return err
+}
+
+func (d *WebDav) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	quota, err := d.client.Quota("/")
+	if err != nil {
+		return nil, err
+	}
+	if quota == nil {
+		return nil, errs.NotImplement
+	}
+	total := quota.Available + quota.Used
+	used := quota.Used
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
+	}, nil
 }
 
 var _ driver.Driver = (*WebDav)(nil)
