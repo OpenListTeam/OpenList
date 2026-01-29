@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strconv"
@@ -70,10 +71,10 @@ func (d *QuarkOrUC) GetFiles(parent string) ([]model.Obj, error) {
 	page := 1
 	size := 100
 	query := map[string]string{
-		"pdir_fid":     parent,
-		"_size":        strconv.Itoa(size),
-		"_fetch_total": "1",
-		"fetch_all_file": "1",
+		"pdir_fid":             parent,
+		"_size":                strconv.Itoa(size),
+		"_fetch_total":         "1",
+		"fetch_all_file":       "1",
 		"fetch_risk_file_name": "1",
 	}
 	if d.OrderBy != "none" {
@@ -89,6 +90,7 @@ func (d *QuarkOrUC) GetFiles(parent string) ([]model.Obj, error) {
 			return nil, err
 		}
 		for _, file := range resp.Data.List {
+			file.FileName = html.UnescapeString(file.FileName)
 			if d.OnlyListVideoFile {
 				// 开启后 只列出视频文件和文件夹
 				if file.IsDir() || file.Category == 1 {
