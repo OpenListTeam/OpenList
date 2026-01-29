@@ -78,9 +78,9 @@ type DriveResp struct {
 	DriveType string `json:"driveType"`
 	Quota     struct {
 		Deleted   uint64 `json:"deleted"`
-		Remaining uint64 `json:"remaining"`
+		Remaining int64  `json:"remaining"`
 		State     string `json:"state"`
-		Total     uint64 `json:"total"`
-		Used      uint64 `json:"used"`
+		Total     int64  `json:"total"`
+		Used      int64  `json:"used"`
 	} `json:"quota"`
 }

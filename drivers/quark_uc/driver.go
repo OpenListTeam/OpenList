@@ -224,10 +224,11 @@ func (d *QuarkOrUC) GetDetails(ctx context.Context) (*model.StorageDetails, erro
 	if err != nil {
 		return nil, err
 	}
-	used := memberInfo.Data.UseCapacity
-	total := memberInfo.Data.TotalCapacity
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: memberInfo.Data.TotalCapacity,
+			UsedSpace:  memberInfo.Data.UseCapacity,
+		},
 	}, nil
 }
 

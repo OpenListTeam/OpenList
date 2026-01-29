@@ -1,9 +1,10 @@
 package baidu_netdisk
 
 import (
+	"time"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"time"
 )
 
 type Addition struct {
@@ -39,6 +40,7 @@ const (
 var config = driver.Config{
 	Name:        "BaiduNetdisk",
 	DefaultRoot: "/",
+	PreferProxy: true,
 }
 
 func init() {

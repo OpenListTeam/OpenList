@@ -50,11 +50,8 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 			continue
 		}
 		objs[idx] = &model.ObjStorageDetails{
-			Obj: objs[idx],
-			StorageDetailsWithName: model.StorageDetailsWithName{
-				StorageDetails: nil,
-				DriverName:     remoteDriver.Config().Name,
-			},
+			Obj:            objs[idx],
+			StorageDetails: nil,
 		}
 		workerCount++
 		go func(dri driver.Driver, i int) {
@@ -249,7 +246,7 @@ func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) (BalancedObjs, er
 		strict = true
 		fallthrough
 	case BalancedByQuotaP:
-		objs, ok := getRandomObjByQuotaBalanced(ctx, objs, strict, uint64(obj.GetSize()))
+		objs, ok := getRandomObjByQuotaBalanced(ctx, objs, strict, obj.GetSize())
 		if !ok {
 			return nil, ErrNoEnoughSpace
 		}
@@ -259,7 +256,7 @@ func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) (BalancedObjs, er
 	}
 }
 
-func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, strict bool, objSize uint64) (BalancedObjs, bool) {
+func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, strict bool, objSize int64) (BalancedObjs, bool) {
 	// Get all space
 	details := make([]*model.StorageDetails, len(reqPath))
 	detailsChan := make(chan detailWithIndex, len(reqPath))
@@ -295,10 +292,10 @@ func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, stri
 
 	// Try select one that has space info
 	selected, ok := selectRandom(details, func(d *model.StorageDetails) uint64 {
-		if d == nil || d.FreeSpace < objSize {
+		if d == nil || d.FreeSpace() < objSize {
 			return 0
 		}
-		return d.FreeSpace
+		return uint64(d.FreeSpace())
 	})
 	if !ok {
 		if strict {
@@ -492,4 +489,44 @@ func (d *Alias) extract(ctx context.Context, reqPath string, args model.ArchiveI
 	}
 	link, _, err := op.DriverExtract(ctx, storage, reqActualPath, args)
 	return link, err
+}
+
+func getAllSort(dirs []model.Obj) model.Sort {
+	ret := model.Sort{}
+	noSort := false
+	noExtractFolder := false
+	for _, dir := range dirs {
+		if dir == nil {
+			continue
+		}
+		storage, err := fs.GetStorage(dir.GetPath(), &fs.GetStoragesArgs{})
+		if err != nil {
+			continue
+		}
+		if !noSort && storage.GetStorage().OrderBy != "" {
+			if ret.OrderBy == "" {
+				ret.OrderBy = storage.GetStorage().OrderBy
+				ret.OrderDirection = storage.GetStorage().OrderDirection
+				if ret.OrderDirection == "" {
+					ret.OrderDirection = "asc"
+				}
+			} else if ret.OrderBy != storage.GetStorage().OrderBy || ret.OrderDirection != storage.GetStorage().OrderDirection {
+				ret.OrderBy = ""
+				ret.OrderDirection = ""
+				noSort = true
+			}
+		}
+		if !noExtractFolder && storage.GetStorage().ExtractFolder != "" {
+			if ret.ExtractFolder == "" {
+				ret.ExtractFolder = storage.GetStorage().ExtractFolder
+			} else if ret.ExtractFolder != storage.GetStorage().ExtractFolder {
+				ret.ExtractFolder = ""
+				noExtractFolder = true
+			}
+		}
+		if noSort && noExtractFolder {
+			break
+		}
+	}
+	return ret
 }

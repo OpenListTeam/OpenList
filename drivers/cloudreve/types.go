@@ -59,6 +59,7 @@ func objectToObj(f Object, t model.Thumbnail) *model.ObjThumb {
 			Size:     int64(f.Size),
 			Modified: f.Date,
 			IsFolder: f.Type == "dir",
+			Path:     f.Path,
 		},
 		Thumbnail: t,
 	}
@@ -67,4 +68,10 @@ func objectToObj(f Object, t model.Thumbnail) *model.ObjThumb {
 type Config struct {
 	LoginCaptcha bool   `json:"loginCaptcha"`
 	CaptchaType  string `json:"captcha_type"`
+}
+
+type StorageDetails struct {
+	Used  int64 `json:"used"`
+	Free  int64 `json:"free"`
+	Total int64 `json:"total"`
 }

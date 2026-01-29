@@ -22,11 +22,11 @@ func getDiskUsage(path string) (model.DiskUsage, error) {
 	if err != nil {
 		return model.DiskUsage{}, err
 	}
-	total := stat.Blocks * uint64(stat.Bsize)
-	free := stat.Bfree * uint64(stat.Bsize)
+	total := int64(stat.Blocks) * int64(stat.Bsize)
+	free := int64(stat.Bfree) * int64(stat.Bsize)
 	return model.DiskUsage{
 		TotalSpace: total,
-		FreeSpace:  free,
+		UsedSpace:  total - free,
 	}, nil
 }
 

@@ -416,21 +416,20 @@ func (d *Mediafire) GetDetails(ctx context.Context) (*model.StorageDetails, erro
 	if err != nil {
 		return nil, err
 	}
-	used, err := strconv.ParseUint(resp.Response.UserInfo.UsedStorageSize, 10, 64)
+	used, err := strconv.ParseInt(resp.Response.UserInfo.UsedStorageSize, 10, 64)
 	if err != nil {
 		return nil, err
 	}
-	total, err := strconv.ParseUint(resp.Response.UserInfo.StorageLimit, 10, 64)
+	total, err := strconv.ParseInt(resp.Response.UserInfo.StorageLimit, 10, 64)
 	if err != nil {
 		return nil, err
 	}
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
 			TotalSpace: total,
-			FreeSpace:  total - used,
+			UsedSpace:  used,
 		},
 	}, nil
 }
 
 var _ driver.Driver = (*Mediafire)(nil)
-

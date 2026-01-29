@@ -17,8 +17,8 @@ type Addition struct {
 var config = driver.Config{
 	Name:        "WebDav",
 	LocalSort:   true,
-	OnlyProxy:   true,
 	DefaultRoot: "/",
+	PreferProxy: true,
 }
 
 func init() {

@@ -1047,3 +1047,16 @@ func (d *Wps) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	up(1)
 	return nil
 }
+
+func (d *Wps) spaces(ctx context.Context) (*spacesResp, error) {
+	url := fmt.Sprintf("%s/api/v3/spaces", d.driveHost()+d.drivePrefix())
+	var resp spacesResp
+	r, err := d.request(ctx).SetResult(&resp).SetError(&resp).Get(url)
+	if err != nil {
+		return nil, err
+	}
+	if r != nil && r.IsError() {
+		return nil, fmt.Errorf("http error: %d", r.StatusCode())
+	}
+	return &resp, nil
+}

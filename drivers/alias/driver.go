@@ -218,8 +218,8 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			}
 			if details, ok := model.GetStorageDetails(obj); ok {
 				objRet = &model.ObjStorageDetails{
-					Obj:                    objRet,
-					StorageDetailsWithName: *details,
+					Obj:            objRet,
+					StorageDetails: details,
 				}
 			}
 			objMap[name] = objRet
@@ -228,6 +228,15 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	objs := make([]model.Obj, 0, len(objMap))
 	for _, obj := range objMap {
 		objs = append(objs, obj)
+	}
+	if d.OrderBy == "" {
+		sort := getAllSort(dirs)
+		if sort.OrderBy != "" {
+			model.SortFiles(objs, sort.OrderBy, sort.OrderDirection)
+		}
+		if d.ExtractFolder == "" && sort.ExtractFolder != "" {
+			model.ExtractFolder(objs, sort.ExtractFolder)
+		}
 	}
 	return objs, nil
 }
@@ -276,21 +285,38 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		}, nil
 	}
 
-	reqPath := d.getBalancedPath(ctx, file)
-	link, fi, err := d.link(ctx, reqPath, args)
+	var link *model.Link
+	var fi model.Obj
+	var err error
+	files := file.(BalancedObjs)
+	if d.ReadConflictPolicy == RandomBalancedRP || d.ReadConflictPolicy == AllRWP {
+		rand.Shuffle(len(files), func(i, j int) {
+			files[i], files[j] = files[j], files[i]
+		})
+	}
+	for _, f := range files {
+		if f == nil {
+			continue
+		}
+		link, fi, err = d.link(ctx, f.GetPath(), args)
+		if err == nil {
+			if link == nil {
+				// 重定向且需要通过代理
+				return &model.Link{
+					URL: fmt.Sprintf("%s/p%s?sign=%s",
+						common.GetApiUrl(ctx),
+						utils.EncodePath(f.GetPath(), true),
+						sign.Sign(f.GetPath())),
+				}, nil
+			}
+			break
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	if link == nil {
-		// 重定向且需要通过代理
-		return &model.Link{
-			URL: fmt.Sprintf("%s/p%s?sign=%s",
-				common.GetApiUrl(ctx),
-				utils.EncodePath(reqPath, true),
-				sign.Sign(reqPath)),
-		}, nil
-	}
 	resultLink := *link // 复制一份，避免修改到原始link
+	resultLink.Expiration = nil
 	resultLink.SyncClosers = utils.NewSyncClosers(link)
 	if args.Redirect {
 		return &resultLink, nil
@@ -490,6 +516,32 @@ func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj,
 		}
 	}
 	return err
+}
+
+func (d *Alias) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if !d.DetailsPassThrough {
+		return nil, errs.NotImplement
+	}
+	if len(d.rootOrder) != 1 {
+		return nil, errs.NotImplement
+	}
+	backends := d.pathMap[d.rootOrder[0]]
+	var storage driver.Driver
+	for _, backend := range backends {
+		s, err := fs.GetStorage(backend, &fs.GetStoragesArgs{})
+		if err != nil {
+			return nil, errs.NotImplement
+		}
+		if storage == nil {
+			storage = s
+		} else if storage.GetStorage().MountPath != s.GetStorage().MountPath {
+			return nil, errs.NotImplement
+		}
+	}
+	if storage == nil { // should never access
+		return nil, errs.NotImplement
+	}
+	return op.GetStorageDetails(ctx, storage)
 }
 
 func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {

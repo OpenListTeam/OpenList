@@ -108,3 +108,26 @@ type DegooGetBucketWriteAuth4Data struct {
 type DegooSetUploadFile3Data struct {
 	SetUploadFile3 bool `json:"setUploadFile3"`
 }
+
+type DegooGetUserInfo3Data struct {
+	GetUserInfo3 struct {
+		// ID string
+		// FirstName string
+		// LastName string
+		// Email string
+		// AvatarURL string
+		// CountryCode string = CN
+		// LanguageCode string = zh-cn
+		// Phone string
+		// AccountType int
+		UsedQuota  string `json:"UsedQuota"`
+		TotalQuota string `json:"TotalQuota"`
+		// OAuth2Provider
+		// GPMigrationStatus int
+		// FeatureNoAds bool
+		// FeatureTopSecret bool
+		// FeatureDownsampling bool
+		// FeatureAutomaticVideoUploads bool
+		// FileSizeLimit string
+	} `json:"getUserInfo3"`
+}

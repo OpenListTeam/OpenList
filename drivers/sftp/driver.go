@@ -131,12 +131,12 @@ func (d *SFTP) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 		}
 		return nil, err
 	}
-	total := stat.Blocks * stat.Bsize
-	free := stat.Bfree * stat.Bsize
+	total := int64(stat.Blocks * stat.Bsize)
+	free := int64(stat.Bfree * stat.Bsize)
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
 			TotalSpace: total,
-			FreeSpace:  free,
+			UsedSpace:  total - free,
 		},
 	}, nil
 }

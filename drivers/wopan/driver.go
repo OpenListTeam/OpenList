@@ -9,8 +9,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/go-resty/resty/v2"
 	"github.com/OpenListTeam/wopan-sdk-go"
+	"github.com/go-resty/resty/v2"
 )
 
 type Wopan struct {
@@ -164,6 +164,23 @@ func (d *Wopan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 		Ctx: ctx,
 	})
 	return err
+}
+
+func (d *Wopan) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	quota, err := d.client.QueryCloudUsageInfo()
+	if err != nil {
+		return nil, err
+	}
+	total, err := strconv.ParseInt(quota.UsageInfo.ByteTotalSize, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  quota.UsageInfo.ByteUsedSize,
+		},
+	}, nil
 }
 
 //func (d *Wopan) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {

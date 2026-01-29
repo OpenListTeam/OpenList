@@ -201,3 +201,24 @@ func (d *Degoo) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	}
 	return nil
 }
+
+func (d *Degoo) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	quota, err := d.getUserInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	used, err := strconv.ParseInt(quota.GetUserInfo3.UsedQuota, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse used quota: %v", err)
+	}
+	total, err := strconv.ParseInt(quota.GetUserInfo3.TotalQuota, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse total quota: %v", err)
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
+	}, nil
+}

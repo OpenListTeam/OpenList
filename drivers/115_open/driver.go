@@ -331,18 +331,18 @@ func (d *Open115) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 	if err != nil {
 		return nil, err
 	}
-	total, err := userInfo.RtSpaceInfo.AllTotal.Size.Int64()
+	total, err := ParseInt64(userInfo.RtSpaceInfo.AllTotal.Size)
 	if err != nil {
 		return nil, err
 	}
-	free, err := userInfo.RtSpaceInfo.AllRemain.Size.Int64()
+	used, err := ParseInt64(userInfo.RtSpaceInfo.AllUse.Size)
 	if err != nil {
 		return nil, err
 	}
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
-			TotalSpace: uint64(total),
-			FreeSpace:  uint64(free),
+			TotalSpace: total,
+			UsedSpace:  used,
 		},
 	}, nil
 }

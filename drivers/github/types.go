@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 type Links struct {
@@ -36,6 +37,7 @@ func (o *Object) toModelObj() *model.Object {
 		Size:     o.Size,
 		Modified: time.Unix(0, 0),
 		IsFolder: o.Type == "dir",
+		Path:     utils.FixAndCleanPath(o.Path),
 	}
 }
 
@@ -69,6 +71,7 @@ func (o *TreeObjResp) toModelObj() *model.Object {
 		Size:     o.Size,
 		Modified: time.Unix(0, 0),
 		IsFolder: o.Type == "tree",
+		Path:     utils.FixAndCleanPath(o.Path),
 	}
 }
 

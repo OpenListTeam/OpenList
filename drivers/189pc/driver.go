@@ -416,7 +416,7 @@ func (y *Cloud189PC) GetDetails(ctx context.Context) (*model.StorageDetails, err
 	if err != nil {
 		return nil, err
 	}
-	var total, used uint64
+	var total, used int64
 	if y.isFamily() {
 		total = capacityInfo.FamilyCapacityInfo.TotalSize
 		used = capacityInfo.FamilyCapacityInfo.UsedSize
@@ -425,6 +425,9 @@ func (y *Cloud189PC) GetDetails(ctx context.Context) (*model.StorageDetails, err
 		used = capacityInfo.CloudCapacityInfo.UsedSize
 	}
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
 	}, nil
 }

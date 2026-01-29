@@ -265,8 +265,8 @@ type MemberResp struct {
 	Data struct {
 		MemberType        string `json:"member_type"`
 		CreatedAt         uint64 `json:"created_at"`
-		SecretUseCapacity uint64 `json:"secret_use_capacity"`
-		UseCapacity       uint64 `json:"use_capacity"`
+		SecretUseCapacity int64  `json:"secret_use_capacity"`
+		UseCapacity       int64  `json:"use_capacity"`
 		IsNewUser         bool   `json:"is_new_user"`
 		MemberStatus      struct {
 			Vip      string `json:"VIP"`
@@ -274,8 +274,8 @@ type MemberResp struct {
 			MiniVip  string `json:"MINI_VIP"`
 			SuperVip string `json:"SUPER_VIP"`
 		} `json:"member_status"`
-		SecretTotalCapacity uint64 `json:"secret_total_capacity"`
-		TotalCapacity       uint64 `json:"total_capacity"`
+		SecretTotalCapacity int64 `json:"secret_total_capacity"`
+		TotalCapacity       int64 `json:"total_capacity"`
 	} `json:"data"`
 	Metadata struct {
 		RangeSize     int    `json:"range_size"`

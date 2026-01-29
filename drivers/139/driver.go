@@ -944,17 +944,17 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	if d.UserDomainID == "" {
 		return nil, errs.NotImplement
 	}
-	var total, used uint64
+	var total, used int64
 	if d.isFamily() {
 		diskInfo, err := d.getFamilyDiskInfo(ctx)
 		if err != nil {
 			return nil, err
 		}
-		totalMb, err := strconv.ParseUint(diskInfo.Data.DiskSize, 10, 64)
+		totalMb, err := strconv.ParseInt(diskInfo.Data.DiskSize, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
 		}
-		usedMb, err := strconv.ParseUint(diskInfo.Data.UsedSize, 10, 64)
+		usedMb, err := strconv.ParseInt(diskInfo.Data.UsedSize, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed convert used size into integer: %+v", err)
 		}
@@ -965,11 +965,11 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 		if err != nil {
 			return nil, err
 		}
-		totalMb, err := strconv.ParseUint(diskInfo.Data.DiskSize, 10, 64)
+		totalMb, err := strconv.ParseInt(diskInfo.Data.DiskSize, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
 		}
-		freeMb, err := strconv.ParseUint(diskInfo.Data.FreeDiskSize, 10, 64)
+		freeMb, err := strconv.ParseInt(diskInfo.Data.FreeDiskSize, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("failed convert free size into integer: %+v", err)
 		}
@@ -977,7 +977,10 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 		used = total - (freeMb * 1024 * 1024)
 	}
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
 	}, nil
 }
 

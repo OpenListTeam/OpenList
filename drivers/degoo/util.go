@@ -460,3 +460,19 @@ func (d *Degoo) getOverlay4(ctx context.Context, id string) (DegooFileItem, erro
 	}
 	return resp.GetOverlay4, nil
 }
+
+func (d *Degoo) getUserInfo(ctx context.Context) (DegooGetUserInfo3Data, error) {
+	const query = "query GetUserInfo3($Token: String!) { getUserInfo3(Token: $Token) { UsedQuota TotalQuota } }"
+	variables := map[string]interface{}{
+		"Token": d.AccessToken,
+	}
+	data, err := d.apiCall(ctx, "GetUserInfo3", query, variables)
+	var resp DegooGetUserInfo3Data
+	if err != nil {
+		return resp, err
+	}
+	if err = json.Unmarshal(data, &resp); err != nil {
+		return resp, fmt.Errorf("failed to parse user info: %w", err)
+	}
+	return resp, nil
+}

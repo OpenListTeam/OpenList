@@ -334,10 +334,13 @@ func (d *AliDrive) GetDetails(ctx context.Context) (*model.StorageDetails, error
 	if err != nil {
 		return nil, err
 	}
-	used := utils.Json.Get(res, "drive_used_size").ToUint64()
-	total := utils.Json.Get(res, "drive_total_size").ToUint64()
+	used := utils.Json.Get(res, "drive_used_size").ToInt64()
+	total := utils.Json.Get(res, "drive_total_size").ToInt64()
 	return &model.StorageDetails{
-		DiskUsage: driver.DiskUsageFromUsedAndTotal(used, total),
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
 	}, nil
 }
 
