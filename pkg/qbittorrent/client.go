@@ -43,7 +43,7 @@ func New(webuiUrl string) (Client, error) {
 		IdleConnTimeout:     30 * time.Second,
 		DisableKeepAlives:   false, // Enable connection reuse
 	}
-	
+
 	var c = &client{
 		url: u,
 		client: http.Client{
