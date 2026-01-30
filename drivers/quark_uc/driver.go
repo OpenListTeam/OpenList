@@ -51,6 +51,25 @@ func (d *QuarkOrUC) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (d *QuarkOrUC) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+	files, err := d.GetFiles(dir.GetID())
+	if err != nil {
+		return nil, err
+	}
+
+	return files, nil
+}
+
+func (d *QuarkOrUC) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	f := file.(*File)
+
+	if d.UseTransCodingAddress && d.config.Name == "Quark" && f.Category == 1 && f.Size > 0 {
+		return d.getTranscodingLink(file)
+	}
+
+	return d.getDownloadLink(file)
+}
+
 func (d *QuarkOrUC) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	data := base.Json{
 		"dir_init_lock": false,
@@ -65,7 +84,13 @@ func (d *QuarkOrUC) MakeDir(ctx context.Context, parentDir model.Obj, dirName st
 		return nil, err
 	}
 	var files []model.Obj
-	for i := range 5 {
+	maxRetries := 5
+	for i := range maxRetries {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		files, err = d.GetFiles(parentDir.GetID())
 		if err == nil {
 			for _, file := range files {
@@ -74,7 +99,10 @@ func (d *QuarkOrUC) MakeDir(ctx context.Context, parentDir model.Obj, dirName st
 				}
 			}
 		}
-		time.Sleep((10 << i) * time.Millisecond)
+		if i == maxRetries-1 {
+
+		}
+		time.Sleep((50 << i) * time.Millisecond)
 	}
 	return nil, err
 }
