@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	stdpath "path"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -183,6 +185,82 @@ func (d *Onedrive) GetFile(path string) (*File, error) {
 	u := d.GetMetaUrl(false, path)
 	_, err := d.Request(u, http.MethodGet, nil, &file)
 	return &file, err
+}
+
+func (d *Onedrive) createLink(path string) (string, error) {
+	api := d.GetMetaUrl(false, path) + "/createLink"
+	data := base.Json{
+		"type":  "view",
+		"scope": "anonymous",
+	}
+	var resp struct {
+		Link struct {
+			WebUrl string `json:"webUrl"`
+		} `json:"link"`
+	}
+	_, err := d.Request(api, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, &resp)
+	if err != nil {
+		return "", err
+	}
+	if resp.Link.WebUrl == "" {
+		return "", fmt.Errorf("createLink returned empty webUrl")
+	}
+
+	p, err := url.Parse(resp.Link.WebUrl)
+	if err != nil {
+		return "", err
+	}
+	// Do some transformations
+	q := url.Values{}
+	parts := splitSegs(p.Path)
+	if p.Host == "1drv.ms" {
+		// For personal
+		// https://1drv.ms/t/c/{user}/{share} ->
+		// https://my.microsoftpersonalcontent.com/personal/{user}/_layouts/15/download.aspx?share={share}
+		if len(parts) < 2 {
+			return "", fmt.Errorf("invalid onedrive short link: %s", resp.Link.WebUrl)
+		}
+		// take last two segments as user and share when available
+		user := parts[len(parts)-2]
+		share := parts[len(parts)-1]
+		p.Host = "my.microsoftpersonalcontent.com"
+		p.Path = fmt.Sprintf("/personal/%s/_layouts/15/download.aspx", user)
+		q.Set("share", share)
+	} else {
+		// https://{tenant}-my.sharepoint.com/:u:/g/personal/{user_email}/{share}
+		// https://{tenant}-my.sharepoint.com/personal/{user_email}/_layouts/15/download.aspx?share={share}
+		// Find the "personal" segment and extract user and share after it.
+		idx := -1
+		for i, s := range parts {
+			if s == "personal" {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 || idx+2 >= len(parts) {
+			return "", fmt.Errorf("invalid onedrive sharepoint link: %s", resp.Link.WebUrl)
+		}
+		user := parts[idx+1]
+		share := parts[idx+2]
+		p.Path = fmt.Sprintf("/personal/%s/_layouts/15/download.aspx", user)
+		q.Set("share", share)
+	}
+	p.RawQuery = q.Encode()
+	return p.String(), nil
+}
+
+// splitSegs splits path into non-empty segments.
+func splitSegs(path string) []string {
+	raw := strings.Split(path, "/")
+	segs := make([]string, 0, len(raw))
+	for _, s := range raw {
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	return segs
 }
 
 func (d *Onedrive) upSmall(ctx context.Context, dstDir model.Obj, stream model.FileStreamer) error {
