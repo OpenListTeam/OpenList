@@ -100,10 +100,11 @@ func (d *QuarkOrUC) MakeDir(ctx context.Context, parentDir model.Obj, dirName st
 			}
 		}
 		if i == maxRetries-1 {
-
+			return nil, err
 		}
 		time.Sleep((50 << i) * time.Millisecond)
 	}
+	// never been happened
 	return nil, err
 }
 
