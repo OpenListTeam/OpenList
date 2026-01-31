@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -42,19 +43,39 @@ func (d *Yun139) GetAddition() driver.Additional {
 
 func (d *Yun139) Init(ctx context.Context) error {
 	if d.ref == nil {
-		if len(d.Authorization) == 0 {
-			if d.Username != "" && d.Password != "" {
-				log.Infof("139yun: authorization is empty, trying to login with password.")
-				newAuth, err := d.loginWithPassword()
-				log.Debugf("newAuth: Ok: %s", newAuth)
-				if err != nil {
-					return fmt.Errorf("login with password failed: %w", err)
-				}
-			} else {
-				return fmt.Errorf("authorization is empty and username/password is not provided")
+		// More robust validation for MailCookies
+		trimmedCookies := strings.TrimSpace(d.MailCookies)
+		if trimmedCookies != "" {
+			d.MailCookies = trimmedCookies // Update with trimmed value
+			if !strings.Contains(d.MailCookies, "=") || len(strings.Split(d.MailCookies, "=")[0]) == 0 {
+				return fmt.Errorf("MailCookies format is invalid, please check your configuration")
 			}
 		}
-		err := d.refreshToken()
+
+		// Validate all-or-nothing: if any credential is provided, all three must be provided
+		hasAny := d.MailCookies != "" || d.Username != "" || d.Password != ""
+		hasAll := d.MailCookies != "" && d.Username != "" && d.Password != ""
+		if hasAny && !hasAll {
+			return fmt.Errorf("if any of mail_cookies, username, or password is provided, all three must be provided")
+		}
+
+		// When all three elements (MailCookies, Username, Password) are present,
+		// always validate credentials with password login to ensure settings are correct.
+		// This prevents automatic renewal from failing with wrong passwords.
+		var err error
+		if hasAll {
+			log.Infof("139yun: all credentials present, performing password login to validate.")
+			// Password login validates credentials, updates d.Authorization, and saves via op.MustSaveDriverStorage()
+			_, err = d.loginWithPassword()
+			if err != nil {
+				return fmt.Errorf("login with password failed: %w", err)
+			}
+		} else if len(d.Authorization) == 0 {
+			return fmt.Errorf("authorization is empty and credentials are not provided")
+		}
+		
+		// Always refresh token for renewal (uses original fallback behavior)
+		err = d.refreshToken()
 		if err != nil {
 			return err
 		}
