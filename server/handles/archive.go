@@ -231,7 +231,7 @@ func FsArchiveList(c *gin.Context, req *ArchiveListReq, user *model.User) {
 type ArchiveDecompressReq struct {
 	SrcDir        string   `json:"src_dir" form:"src_dir"`
 	DstDir        string   `json:"dst_dir" form:"dst_dir"`
-	Name          []string `json:"name" form:"name"`
+	Names         []string `json:"name" form:"name"`
 	ArchivePass   string   `json:"archive_pass" form:"archive_pass"`
 	InnerPath     string   `json:"inner_path" form:"inner_path"`
 	CacheFull     bool     `json:"cache_full" form:"cache_full"`
@@ -250,8 +250,8 @@ func FsArchiveDecompress(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	srcPaths := make([]string, 0, len(req.Name))
-	for _, name := range req.Name {
+	srcPaths := make([]string, 0, len(req.Names))
+	for _, name := range req.Names {
 		srcPath, err := user.JoinPath(stdpath.Join(req.SrcDir, name))
 		if err != nil {
 			common.ErrorResp(c, err, 403)

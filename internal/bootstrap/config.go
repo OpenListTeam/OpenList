@@ -54,6 +54,7 @@ func InitConfig() {
 		}
 	}
 	configPath = filepath.Clean(configPath)
+	conf.ConfigPath = configPath
 	log.Infof("reading config file: %s", configPath)
 	if !utils.Exists(configPath) {
 		log.Infof("config file not exists, creating default config file")
