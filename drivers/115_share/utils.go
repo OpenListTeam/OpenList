@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	driver115 "github.com/SheltonZhu/115driver/pkg/driver"
@@ -77,12 +78,10 @@ func transFunc(sf driver115.ShareFile) (model.Obj, error) {
 	}, nil
 }
 
-var UserAgent = driver115.UA115Browser
-
 func (d *Pan115Share) login() error {
 	var err error
 	opts := []driver115.Option{
-		driver115.UA(UserAgent),
+		driver115.UA(base.UserAgentNT),
 	}
 	d.client = driver115.New(opts...)
 	if _, err := d.client.GetShareSnap(d.ShareCode, d.ReceiveCode, ""); err != nil {
