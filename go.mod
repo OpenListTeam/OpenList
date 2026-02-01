@@ -14,7 +14,7 @@ require (
 	github.com/OpenListTeam/wopan-sdk-go v0.1.5
 	github.com/ProtonMail/go-crypto v1.3.0
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0
-	github.com/SheltonZhu/115driver v1.2.2
+	github.com/SheltonZhu/115driver v1.2.3
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/antchfx/htmlquery v1.3.5
 	github.com/antchfx/xpath v1.3.5

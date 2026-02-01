@@ -21,6 +21,7 @@ type FileObj struct {
 	FileName string
 	isDir    bool
 	FileID   string
+	ThumbURL string
 }
 
 func (f *FileObj) CreateTime() time.Time {
@@ -55,6 +56,10 @@ func (f *FileObj) GetPath() string {
 	return ""
 }
 
+func (f *FileObj) Thumb() string {
+	return f.ThumbURL
+}
+
 func transFunc(sf driver115.ShareFile) (model.Obj, error) {
 	timeInt, err := strconv.ParseInt(sf.UpdateTime, 10, 64)
 	if err != nil {
@@ -75,6 +80,7 @@ func transFunc(sf driver115.ShareFile) (model.Obj, error) {
 		FileName: string(sf.FileName),
 		isDir:    isDir,
 		FileID:   fileID,
+		ThumbURL: sf.ThumbURL,
 	}, nil
 }
 
