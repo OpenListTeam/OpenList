@@ -160,8 +160,8 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_transmission", handles.SetTransmission)
 	setting.POST("/set_115", handles.Set115)
 	setting.POST("/set_115_open", handles.Set115Open)
-	setting.POST("/set_123_pan", handles.Set123Pan)
 	setting.POST("/set_123_open", handles.Set123Open)
+	setting.POST("/set_123_pan", handles.Set123Pan)
 	setting.POST("/set_pikpak", handles.SetPikPak)
 	setting.POST("/set_thunder", handles.SetThunder)
 	setting.POST("/set_thunderx", handles.SetThunderX)
@@ -211,6 +211,8 @@ func _fs(g *gin.RouterGroup) {
 	uploadLimiter := middlewares.UploadRateLimiter(stream.ClientUploadLimit)
 	g.PUT("/put", middlewares.FsUp, uploadLimiter, handles.FsStream)
 	g.PUT("/form", middlewares.FsUp, uploadLimiter, handles.FsForm)
+	g.PUT("/put/chunk", handles.FsChunkUpload)
+	g.POST("/put/chunk/merge", handles.FsChunkMerge)
 	g.POST("/link", middlewares.AuthAdmin, handles.Link)
 	// g.POST("/add_aria2", handles.AddOfflineDownload)
 	// g.POST("/add_qbit", handles.AddQbittorrent)
@@ -248,3 +250,4 @@ func InitS3(e *gin.Engine) {
 	Cors(e)
 	S3Server(e.Group("/"))
 }
+ 
