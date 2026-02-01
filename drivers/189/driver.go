@@ -2,6 +2,7 @@ package _189
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -205,6 +206,20 @@ func (d *Cloud189) GetDetails(ctx context.Context) (*model.StorageDetails, error
 			UsedSpace:  capacityInfo.CloudCapacityInfo.UsedSize,
 		},
 	}, nil
+}
+
+func (d *Cloud189) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	sharecode := d.extractCode(shareURL)
+	if sharecode == "" {
+		return fmt.Errorf("need share code")
+	}
+
+	shareid, err := d.getSharedID(sharecode)
+	if err != nil {
+		return err
+	}
+
+	return d.transfer(dst, shareid)
 }
 
 var _ driver.Driver = (*Cloud189)(nil)

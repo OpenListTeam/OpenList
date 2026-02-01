@@ -18,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cookie"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -359,4 +360,87 @@ func (d *QuarkOrUC) memberInfo(ctx context.Context) (*MemberResp, error) {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (d *QuarkOrUC) getPwdID(shareURL string) string {
+	// 从分享链接中提取分享码，如https://pan.quark.cn/s/75079b0bc0ee#/list/share
+	parts := strings.Split(shareURL, "/s/")
+	if len(parts) < 2 {
+		return ""
+	}
+	codeParts := strings.SplitN(parts[1], "/", 2)
+	if len(codeParts) == 0 {
+		return ""
+	}
+	pwd_id := strings.Split(codeParts[0], "#")[0]
+	return pwd_id
+}
+
+func (d *QuarkOrUC) getShareToken(pwd_id, passcode string) (string, error) {
+	//
+	resp := ShareTokenResp{}
+	_, err := d.request("/share/sharepage/token", http.MethodPost, func(req *resty.Request) {
+		req.SetQueryParam("__t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+		req.SetQueryParam("__dt", strconv.FormatInt(random.RangeInt64(100, 500), 10))
+		req.SetBody(base.Json{
+			"pwd_id":                            pwd_id,
+			"passcode":                          passcode,
+			"share_from":                        "",
+			"support_visit_limit_private_share": true,
+		})
+	}, &resp)
+	if err != nil {
+		return "", err
+	}
+	if resp.Status == 200 && resp.Code == 0 {
+		return resp.Data.ShareToken, nil
+	}
+	return "", errors.New("unknown error")
+}
+
+func (d *QuarkOrUC) transfer(dstDir model.Obj, shareToken, pwdId string) error {
+	resp := SaveShareResp{}
+	data := base.Json{
+		"stoken":        shareToken,
+		"pdir_fid":      "0",
+		"to_pdir_fid":   dstDir.GetID(),
+		"pwd_id":        pwdId,
+		"scene":         "link",
+		"pdir_save_all": true,
+	}
+	_, err := d.request("/share/sharepage/save", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+		req.SetQueryParam("__t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+		req.SetQueryParam("__dt", strconv.FormatInt(random.RangeInt64(100, 500), 10))
+	}, &resp)
+	if err != nil {
+		return err
+	}
+	if resp.Status == 200 && resp.Code == 0 && resp.Data.TaskID != "" {
+		retry_index := 0
+		for {
+			check_resp := TaskCheckResp{}
+			_, err := d.request("/task", http.MethodGet, func(req *resty.Request) {
+				req.SetQueryParam("task_id", resp.Data.TaskID)
+				req.SetQueryParam("__t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+				req.SetQueryParam("__dt", strconv.FormatInt(random.RangeInt64(100, 500), 10))
+				req.SetQueryParam("retry_index", strconv.Itoa(retry_index))
+				req.SetQueryParam("uc_param_str", "")
+			}, &check_resp)
+			if err != nil {
+				return err
+			}
+			if check_resp.Status == 200 && check_resp.Code == 0 {
+				if check_resp.Data.Status == 2 {
+					return nil
+				}
+			}
+			retry_index++
+			time.Sleep(time.Second * time.Duration(retry_index))
+			if retry_index >= 10 {
+				return errors.New("transfer timeout")
+			}
+		}
+	}
+	return err
 }
