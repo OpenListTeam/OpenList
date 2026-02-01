@@ -45,19 +45,11 @@ func (d *Yun139) GetAddition() driver.Additional {
 
 func (d *Yun139) Init(ctx context.Context) error {
 	if d.ref == nil {
-		if len(d.Authorization) == 0 && !d.isShare() {
-			if d.Username != "" && d.Password != "" {
-				log.Infof("139yun: authorization is empty, trying to login with password.")
-				newAuth, err := d.loginWithPassword()
-				log.Debugf("newAuth: Ok: %s", newAuth)
-				if err != nil {
-					return fmt.Errorf("login with password failed: %w", err)
-				}
-			} else {
-				return fmt.Errorf("authorization is empty and username/password is not provided")
-			}
-		}
-		if d.Authorization != "" {
+	`tif err := d.validateAndInitCredentials(); err != nil {
+	`t`treturn err
+	`t}
+
+	`tif d.Authorization != "" {
 			err := d.refreshToken()
 			if err != nil {
 				return err
