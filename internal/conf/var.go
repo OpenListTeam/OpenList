@@ -15,8 +15,9 @@ var (
 )
 
 var (
-	Conf *Config
-	URL  *url.URL
+	Conf       *Config
+	URL        *url.URL
+	ConfigPath string
 )
 
 var SlicesMap = make(map[string][]string)

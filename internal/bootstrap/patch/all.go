@@ -44,6 +44,7 @@ var UpgradePatches = []VersionPatches{
 		Version: "v4.1.9",
 		Patches: []func(){
 			v4_1_9.EnableWebDavProxy,
+			v4_1_9.ResetSkipTlsVerify,
 		},
 	},
 }
