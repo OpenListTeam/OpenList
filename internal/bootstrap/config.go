@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -181,6 +182,31 @@ func CleanTempDir() {
 	for _, file := range files {
 		if err := os.RemoveAll(filepath.Join(conf.Conf.TempDir, file.Name())); err != nil {
 			log.Errorln("failed delete temp file: ", err)
+		}
+	}
+}
+
+func CleanStaleChunks() {
+	chunkDir := filepath.Join(conf.Conf.TempDir, "chunks")
+	if !utils.Exists(chunkDir) {
+		return
+	}
+	files, err := os.ReadDir(chunkDir)
+	if err != nil {
+		log.Errorln("failed list chunks: ", err)
+		return
+	}
+	now := time.Now()
+	for _, file := range files {
+		info, err := file.Info()
+		if err != nil {
+			continue
+		}
+		// Clean up chunks older than 24 hours
+		if now.Sub(info.ModTime()) > 24*time.Hour {
+			if err := os.RemoveAll(filepath.Join(chunkDir, file.Name())); err != nil {
+				log.Errorln("failed delete stale chunk: ", err)
+			}
 		}
 	}
 }
