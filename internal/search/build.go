@@ -17,7 +17,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/search/searcher"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/mq"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	mapset "github.com/deckarep/golang-set/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -28,6 +27,26 @@ var (
 
 func Running() bool {
 	return Quit.Load() != nil
+}
+
+func batchIndexMessages(ctx context.Context, messages []mq.Message[ObjWithParent]) error {
+	if instance == nil {
+		return errs.SearchNotAvailable
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+	searchNodes := make([]model.SearchNode, len(messages))
+	for i := range messages {
+		obj := messages[i].Content
+		searchNodes[i] = model.SearchNode{
+			Parent: obj.Parent,
+			Name:   obj.GetName(),
+			IsDir:  obj.IsDir(),
+			Size:   obj.GetSize(),
+		}
+	}
+	return instance.BatchIndex(ctx, searchNodes)
 }
 
 func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth int, count bool) error {
@@ -74,10 +93,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 					if len(messages) != 0 {
 						log.Debugf("current index: %s", messages[len(messages)-1].Content.Parent)
 					}
-					if err = BatchIndex(ctx, utils.MustSliceConvert(messages,
-						func(src mq.Message[ObjWithParent]) ObjWithParent {
-							return src.Content
-						})); err != nil {
+					if err = batchIndexMessages(ctx, messages); err != nil {
 						log.Errorf("build index in batch error: %+v", err)
 					} else {
 						objCount = objCount + uint64(len(messages))
@@ -97,10 +113,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 				now := time.Now()
 				originErr := err
 				indexMQ.ConsumeAll(func(messages []mq.Message[ObjWithParent]) {
-					if err = BatchIndex(ctx, utils.MustSliceConvert(messages,
-						func(src mq.Message[ObjWithParent]) ObjWithParent {
-							return src.Content
-						})); err != nil {
+					if err = batchIndexMessages(ctx, messages); err != nil {
 						log.Errorf("build index in batch error: %+v", err)
 					} else {
 						objCount = objCount + uint64(len(messages))
@@ -252,7 +265,7 @@ func Update(ctx context.Context, parent string, objs []model.Obj) {
 		}
 	}
 	// collect files and folders to add in batch
-	var toAddObjs []ObjWithParent
+	toAddObjs := make([]ObjWithParent, 0, toAdd.Cardinality())
 	for i := range objs {
 		if toAdd.Contains(objs[i].GetName()) {
 			log.Debugf("add index: %s", path.Join(parent, objs[i].GetName()))

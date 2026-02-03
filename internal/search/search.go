@@ -75,14 +75,14 @@ func BatchIndex(ctx context.Context, objs []ObjWithParent) error {
 	if len(objs) == 0 {
 		return nil
 	}
-	var searchNodes []model.SearchNode
+	searchNodes := make([]model.SearchNode, len(objs))
 	for i := range objs {
-		searchNodes = append(searchNodes, model.SearchNode{
+		searchNodes[i] = model.SearchNode{
 			Parent: objs[i].Parent,
 			Name:   objs[i].GetName(),
 			IsDir:  objs[i].IsDir(),
 			Size:   objs[i].GetSize(),
-		})
+		}
 	}
 	return instance.BatchIndex(ctx, searchNodes)
 }
