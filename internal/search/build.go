@@ -38,13 +38,7 @@ func batchIndexMessages(ctx context.Context, messages []mq.Message[ObjWithParent
 	}
 	searchNodes := make([]model.SearchNode, len(messages))
 	for i := range messages {
-		obj := messages[i].Content
-		searchNodes[i] = model.SearchNode{
-			Parent: obj.Parent,
-			Name:   obj.GetName(),
-			IsDir:  obj.IsDir(),
-			Size:   obj.GetSize(),
-		}
+		searchNodes[i] = messages[i].Content.ToSearchNode()
 	}
 	return instance.BatchIndex(ctx, searchNodes)
 }

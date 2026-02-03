@@ -68,6 +68,16 @@ type ObjWithParent struct {
 	model.Obj
 }
 
+// ToSearchNode converts ObjWithParent to model.SearchNode
+func (o ObjWithParent) ToSearchNode() model.SearchNode {
+	return model.SearchNode{
+		Parent: o.Parent,
+		Name:   o.GetName(),
+		IsDir:  o.IsDir(),
+		Size:   o.GetSize(),
+	}
+}
+
 func BatchIndex(ctx context.Context, objs []ObjWithParent) error {
 	if instance == nil {
 		return errs.SearchNotAvailable
@@ -77,12 +87,7 @@ func BatchIndex(ctx context.Context, objs []ObjWithParent) error {
 	}
 	searchNodes := make([]model.SearchNode, len(objs))
 	for i := range objs {
-		searchNodes[i] = model.SearchNode{
-			Parent: objs[i].Parent,
-			Name:   objs[i].GetName(),
-			IsDir:  objs[i].IsDir(),
-			Size:   objs[i].GetSize(),
-		}
+		searchNodes[i] = objs[i].ToSearchNode()
 	}
 	return instance.BatchIndex(ctx, searchNodes)
 }
