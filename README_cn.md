@@ -89,7 +89,6 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
   - [x] [超星](https://www.chaoxing.com)
   - [x] [CNB](https://cnb.cool/)
   - [x] [Degoo](https://degoo.com)
-  - [x] [豆包](https://www.doubao.com)
   - [x] [Febbox](https://www.febbox.com)
   - [x] [GitHub](https://github.com)
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)

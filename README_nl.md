@@ -89,7 +89,6 @@ Dank u voor uw ondersteuning en begrip
   - [x] [Chaoxing](https://www.chaoxing.com)
   - [x] [CNB](https://cnb.cool/)
   - [x] [Degoo](https://degoo.com)
-  - [x] [Doubao](https://www.doubao.com)
   - [x] [Febbox](https://www.febbox.com)
   - [x] [GitHub](https://github.com)
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
