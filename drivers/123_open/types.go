@@ -62,7 +62,7 @@ type File struct {
 }
 
 func (f File) GetHash() utils.HashInfo {
-	if len(f.SHA1) == utils.SHA1.Width && len(f.etag) != utils.MD5.Width {
+	if len(f.SHA1) == utils.SHA1.Width && len(f.Etag) != utils.MD5.Width {
 		return utils.NewHashInfo(utils.SHA1, f.SHA1)
 	}
 	return utils.NewHashInfo(utils.MD5, f.Etag)
