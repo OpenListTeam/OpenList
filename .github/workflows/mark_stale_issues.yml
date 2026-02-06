@@ -1,0 +1,27 @@
+name: Mark stale issues
+
+on:
+  schedule:
+    - cron: "0 0/2 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  mark-stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark issues stale using actions/stale
+        uses: actions/stale@v10
+        with:
+          days-before-stale: 90
+          days-before-close: 90
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-message: "This issue has been automatically marked as stale because it hasn't had recent activity for 90 days. If you'd like to keep it open, please reply and the label will be removed."
+          stale-issue-label: "stale"
+          close-issue-message: "This issue has been automatically closed due to inactivity for 90 days after being marked as stale. If you believe this was done in error, please feel free to reopen the issue or contact the maintainers."
+          any-of-labels: "bug"
+          exempt-labels: "WIP,has-parent,collection,Announcement"
+          operations-per-run: 30
