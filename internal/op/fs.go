@@ -349,6 +349,7 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 		if storage.Config().NoCache {
 			return nil, nil
 		}
+		Cache.InvalidateStorageDetails(storage)
 		if dirCache, exist := Cache.dirCache.Get(Key(storage, parentPath)); exist {
 			if newObj == nil {
 				t := time.Now()
@@ -416,6 +417,7 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
 	}
 	if !storage.Config().NoCache {
+		Cache.InvalidateStorageDetails(storage)
 		if cache, exist := Cache.dirCache.Get(srcKey); exist {
 			if srcRawObj.IsDir() {
 				Cache.deleteDirectoryTree(stdpath.Join(srcKey, srcRawObj.GetName()))
@@ -479,6 +481,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstName))
 	}
 	if !storage.Config().NoCache {
+		Cache.InvalidateStorageDetails(storage)
 		if cache, exist := Cache.dirCache.Get(dirKey); exist {
 			if srcRawObj.IsDir() {
 				Cache.deleteDirectoryTree(stdpath.Join(dirKey, srcRawObj.GetName()))
@@ -547,6 +550,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
 	}
 	if !storage.Config().NoCache {
+		Cache.InvalidateStorageDetails(storage)
 		if cache, exist := Cache.dirCache.Get(dstKey); exist {
 			if newObj == nil {
 				newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
@@ -595,6 +599,7 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 		err = s.Remove(ctx, model.UnwrapObjName(rawObj))
 		if err == nil {
 			Cache.removeDirectoryObject(storage, dirPath, rawObj)
+			Cache.InvalidateStorageDetails(storage)
 		}
 	default:
 		return errs.NotImplement
@@ -674,6 +679,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
 		if !storage.Config().NoCache {
+			Cache.InvalidateStorageDetails(storage)
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
 				if newObj == nil {
 					newObj = &model.Object{
@@ -742,6 +748,7 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
 		if !storage.Config().NoCache {
+			Cache.InvalidateStorageDetails(storage)
 			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
 				if newObj == nil {
 					t := time.Now()
