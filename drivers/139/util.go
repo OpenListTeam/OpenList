@@ -171,29 +171,23 @@ func (d *Yun139) request(url string, method string, callback base.ReqCallback, r
 	}
 	log.Debugf("[139] response body: %s", res.String())
 	if !e.Success {
-		// Always try to unmarshal to the specific response type first if 'resp' is provided.
-		if resp != nil {
-			err = utils.Json.Unmarshal(res.Body(), resp)
-			if err != nil {
-				log.Debugf("[139] failed to unmarshal response to specific type: %v", err)
-				return nil, err // Return unmarshal error
-			}
-			if createBatchOprTaskResp, ok := resp.(*CreateBatchOprTaskResp); ok {
-				log.Debugf("[139] CreateBatchOprTaskResp.Result.ResultCode: %s", createBatchOprTaskResp.Result.ResultCode)
-				if createBatchOprTaskResp.Result.ResultCode == "0" {
-					goto SUCCESS_PROCESS
-				}
+		if resp == nil {
+			return nil, errors.New(e.Message)
+		}
+		// Attempt to unmarshal to see if it contains the special success code.
+		if err := utils.Json.Unmarshal(res.Body(), resp); err == nil {
+			if taskResp, ok := resp.(*CreateBatchOprTaskResp); ok && taskResp.Result.ResultCode == "0" {
+				return res.Body(), nil
 			}
 		}
-		return nil, errors.New(e.Message) // Fallback to original error if not handled
+		return nil, errors.New(e.Message)
 	}
+
 	if resp != nil {
-		err = utils.Json.Unmarshal(res.Body(), resp)
-		if err != nil {
+		if err := utils.Json.Unmarshal(res.Body(), resp); err != nil {
 			return nil, err
 		}
 	}
-SUCCESS_PROCESS:
 	return res.Body(), nil
 }
 
@@ -761,9 +755,83 @@ func getMd5(dataStr string) string {
 	return fmt.Sprintf("%x", hash)
 }
 
+// sanitizeLoginCookies enforces a strict allowlist and order for cookies to prevent login failures.
+func sanitizeLoginCookies(existingCookies string, newJSessionID string) string {
+	orderedCookieNames := []string{
+		"behaviorid",
+		"Os_SSo_Sid",
+		"_139_index_isLoginType",
+		"_139_login_version",
+		"Login_UserNumber",
+		"cookiepartid8011",
+		"_139_login_agreement",
+		"UserData",
+		"rmUin8011",
+		"cookiepartid",
+		"UUIDToken",
+		"SkinPath28011",
+		"cbauto",
+		"areaCode8011",
+		"cookieLen",
+		"DEVICE_INFO_DIGEST",
+		"JSESSIONID",
+		"loginProcessFlag",
+		"provCode8011",
+		"S_DEVICE_TOKEN",
+		"taskIdCloud",
+		"UserNowState",
+		"UserNowState8011",
+		"ut8011",
+	}
+
+	// Store existing cookies in a map for easy lookup
+	existingCookiesMap := make(map[string]string)
+	cookies := strings.Split(existingCookies, ";")
+	for _, cookie := range cookies {
+		cookie = strings.TrimSpace(cookie)
+		parts := strings.SplitN(cookie, "=", 2)
+		if len(parts) == 2 {
+			existingCookiesMap[parts[0]] = parts[1]
+		}
+	}
+
+	var finalCookieParts []string
+	// Iterate through the ordered names and build the final cookie string
+	for _, name := range orderedCookieNames {
+		if name == "JSESSIONID" {
+			if newJSessionID != "" {
+				finalCookieParts = append(finalCookieParts, name+"="+newJSessionID)
+			}
+			continue
+		}
+
+		if value, ok := existingCookiesMap[name]; ok {
+			finalCookieParts = append(finalCookieParts, name+"="+value)
+		}
+	}
+
+	return strings.Join(finalCookieParts, "; ")
+}
+
 func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("--- 执行步骤 1: 登录 API ---")
 	loginURL := "https://mail.10086.cn/Login/Login.ashx"
+
+	log.Debugf("--- 执行步骤 1.1: 获取 JSESSIONID ---")
+	getResp, err := base.RestyClient.R().Get(loginURL)
+	if err != nil {
+		return "", fmt.Errorf("step1 get jsessionid failed: %w", err)
+	}
+	var jsessionid string
+	for _, cookie := range getResp.Cookies() {
+		if cookie.Name == "JSESSIONID" {
+			jsessionid = cookie.Value
+			break
+		}
+	}
+	if jsessionid == "" {
+		log.Warnf("139yun: failed to get JSESSIONID from GET request.")
+	}
 
 	// 密码 SHA1 哈希
 	hashedPassword := sha1Hash(fmt.Sprintf("fetion.com.cn:%s", d.Password))
@@ -772,6 +840,8 @@ func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("DEBUG: 生成的 Password 哈希: %s", hashedPassword)
 
 	cguid := strconv.FormatInt(time.Now().UnixMilli(), 10) // 随机生成 cguid
+
+	sanitizedCookie := sanitizeLoginCookies(d.MailCookies, jsessionid)
 
 	loginHeaders := map[string]string{
 		"accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -791,7 +861,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 		"sec-fetch-user":            "?1",
 		"upgrade-insecure-requests": "1",
 		"user-agent":                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0",
-		"Cookie":                    d.MailCookies,
+		"Cookie":                    sanitizedCookie,
 	}
 
 	loginData := url.Values{}
@@ -809,37 +879,42 @@ func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("DEBUG: 登录请求 Body: %s", loginData.Encode())
 
 	// 设置客户端不跟随重定向
-	client := base.RestyClient.SetRedirectPolicy(resty.NoRedirectPolicy())
+	// Create a new client to avoid race conditions on the global client's redirect policy.
+	client := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy())
 	res, err := client.R().
 		SetHeaders(loginHeaders).
 		SetFormDataFromValues(loginData).
 		Post(loginURL)
 
-	if err != nil {
-		// 如果是重定向错误，则不作为失败处理，因为我们禁止了自动重定向
-		if res != nil && res.StatusCode() >= 300 && res.StatusCode() < 400 {
-			log.Debugf("DEBUG: 登录响应 Status Code: %d (Redirect)", res.StatusCode())
-		} else {
-			return "", fmt.Errorf("step1 login request failed: %w", err)
-		}
-	} else {
-		log.Debugf("DEBUG: 登录响应 Status Code: %d", res.StatusCode())
+	// When NoRedirectPolicy is used, resty returns an error on redirect, but the response should still be available.
+	if err != nil && !strings.Contains(err.Error(), "auto redirect is disabled") {
+		return "", fmt.Errorf("step1 login request failed: %w", err)
 	}
-	// 恢复客户端的默认重定向策略，以免影响后续请求
-	base.RestyClient.SetRedirectPolicy(resty.FlexibleRedirectPolicy(10))
+	if res == nil {
+		return "", fmt.Errorf("step1 login request failed: response is nil (error: %v)", err)
+	}
+	log.Debugf("DEBUG: 登录响应 Status Code: %d", res.StatusCode())
 	log.Debugf("DEBUG: 登录响应 Headers: %+v", res.Header())
 
 	var sid, extractedCguid string
 
-	// 从 Location 头部提取 sid 和 cguid
+	// 从 Location 头部提取 sid 和 cguid, 并处理风控
 	locationHeader := res.Header().Get("Location")
 	if locationHeader != "" {
+		if ecMatch := regexp.MustCompile(`ec=([^&]+)`).FindStringSubmatch(locationHeader); len(ecMatch) > 1 {
+			return "", fmt.Errorf("risk control triggered: %s", ecMatch[0])
+		}
+
 		sidMatch := regexp.MustCompile(`sid=([^&]+)`).FindStringSubmatch(locationHeader)
 		cguidMatch := regexp.MustCompile(`cguid=([^&]+)`).FindStringSubmatch(locationHeader)
+
 		if len(sidMatch) > 1 {
 			sid = sidMatch[1]
 			log.Debugf("DEBUG: 从 Location 提取到 sid: %s", sid)
+		} else if strings.Contains(locationHeader, "default.html") {
+			return "", errors.New("authentication failed: sid is missing in default.html redirect")
 		}
+
 		if len(cguidMatch) > 1 {
 			extractedCguid = cguidMatch[1]
 			log.Debugf("DEBUG: 从 Location 提取到 cguid: %s", extractedCguid)
@@ -867,16 +942,28 @@ func (d *Yun139) step1_password_login() (string, error) {
 		return "", errors.New("failed to extract sid or cguid from login response")
 	}
 
-	// 提取并记录 cookies
-	loginUrlObj, _ := url.Parse(loginURL)
-	cookies := base.RestyClient.GetClient().Jar.Cookies(loginUrlObj)
-	var cookieStrings []string
+	// Update cookies from response, merging new ones with existing ones.
+	existingCookiesMap := make(map[string]string)
+	// 1. Populate map with existing cookies from the driver.
+	cookies := strings.Split(d.MailCookies, ";")
 	for _, cookie := range cookies {
-		cookieStrings = append(cookieStrings, cookie.Name+"="+cookie.Value)
+		cookie = strings.TrimSpace(cookie)
+		parts := strings.SplitN(cookie, "=", 2)
+		if len(parts) == 2 {
+			existingCookiesMap[parts[0]] = parts[1]
+		}
 	}
-	cookieStr := strings.Join(cookieStrings, "; ")
-	log.Debugf("DEBUG: 提取到的 Cookies: %s", cookieStr)
-	d.MailCookies = cookieStr
+	// 2. Update map with new cookies from the Set-Cookie headers in the response.
+	for _, cookie := range res.Cookies() {
+		existingCookiesMap[cookie.Name] = cookie.Value
+	}
+	// 3. Rebuild the cookie string. The order doesn't matter here, as sanitizeLoginCookies will reorder it later if needed.
+	var finalCookieParts []string
+	for name, value := range existingCookiesMap {
+		finalCookieParts = append(finalCookieParts, name+"="+value)
+	}
+	d.MailCookies = strings.Join(finalCookieParts, "; ")
+	log.Debugf("DEBUG: 更新后的 Cookies: %s", d.MailCookies)
 
 	return sid, nil
 }
@@ -1228,6 +1315,101 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 	d.UserDomainID = userDomainId
 	newAuthorization := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("pc:%s:%s", account, authToken)))
 	return newAuthorization, nil
+}
+
+func (d *Yun139) validateAndInitCredentials() error {
+	// More robust validation for MailCookies
+	trimmedCookies := strings.TrimSpace(d.MailCookies)
+	if trimmedCookies != "" {
+		d.MailCookies = trimmedCookies // Update with trimmed value
+		if !strings.Contains(d.MailCookies, "=") || len(strings.Split(d.MailCookies, "=")[0]) == 0 {
+			return fmt.Errorf("MailCookies format is invalid, please check your configuration")
+		}
+	}
+
+	// Priority 1: If Authorization exists, skip login process completely.
+	// We assume it's valid for now; validity will be checked by refreshToken() later in Init().
+	if d.Authorization != "" {
+		log.Debugf("139yun: Authorization exists, skipping initialization login.")
+		return nil
+	}
+
+	// Validate all-or-nothing check for username and password
+	// "Cookies can exist alone, but if username or password is provided, all three must be provided"
+	hasUserOrPass := d.Username != "" || d.Password != ""
+	hasAll := d.MailCookies != "" && d.Username != "" && d.Password != ""
+
+	if hasUserOrPass && !hasAll {
+		return fmt.Errorf("if username or password is provided, all three (mail_cookies, username, password) must be provided")
+	}
+
+	// If no Authorization, attempt to generate it.
+	// We can try if we have ALL credentials OR if we just have MailCookies (try fast path only)
+	if hasAll || d.MailCookies != "" {
+		log.Infof("139yun: Authorization missing, attempting login...")
+
+		success := false
+		var sid string
+
+		// Priority 2: Try fast login using existing cookies (Step 2 -> Step 3)
+		// Extract SID from current MailCookies
+		cookies := strings.Split(d.MailCookies, ";")
+		for _, cookie := range cookies {
+			cookie = strings.TrimSpace(cookie)
+			// Check for Os_SSo_Sid
+			if strings.HasPrefix(cookie, "Os_SSo_Sid=") {
+				sid = strings.TrimPrefix(cookie, "Os_SSo_Sid=")
+				break
+			}
+		}
+
+		// Try Step 2 directly with existing SID and Cookies (using full cookies as implicit context)
+		if sid != "" {
+			log.Infof("139yun: attempting fast login using existing SID/Cookies (Step 2).")
+			token, err := d.step2_get_single_token(sid)
+			if err == nil && token != "" {
+				log.Infof("139yun: Step 2 success. Proceeding to Step 3.")
+				// If Step 2 succeeds, proceed to Step 3
+				auth, err := d.step3_third_party_login(token)
+				if err == nil {
+					d.Authorization = auth
+					op.MustSaveDriverStorage(d)
+					success = true
+					log.Infof("139yun: fast login success (Step 2 -> Step 3).")
+				} else {
+					log.Warnf("139yun: fast login Step 3 failed: %v", err)
+				}
+			} else {
+				log.Warnf("139yun: fast login Step 2 failed: %v", err)
+			}
+		} else {
+			if d.MailCookies != "" {
+				log.Warnf("139yun: Os_SSo_Sid not found in existing cookies. Skipping fast login.")
+			}
+		}
+
+		// Priority 3: Fallback to full password login (Step 1 -> Step 2 -> Step 3)
+		// Only possible if we have ALL credentials (hasAll == true)
+		if !success {
+			if hasAll {
+				log.Infof("139yun: fast login failed or not possible, performing full password login (Step 1).")
+				// loginWithPassword() calls step1_password_login(), which internally strictly uses
+				// sanitizeLoginCookies() to ensure only necessary cookies are sent for password login.
+				_, err := d.loginWithPassword()
+				if err != nil {
+					return fmt.Errorf("login with password failed: %w", err)
+				}
+			} else {
+				// If we don't have password, we can't fallback. report error.
+				return fmt.Errorf("fast login with cookies failed, and cannot fallback to password login (missing username/password)")
+			}
+		}
+	} else {
+		// No Authorization and missing credentials (and even no cookies)
+		return fmt.Errorf("authorization is empty and credentials are not provided")
+	}
+
+	return nil
 }
 
 func (d *Yun139) loginWithPassword() (string, error) {
