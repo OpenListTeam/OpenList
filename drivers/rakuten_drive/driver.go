@@ -156,12 +156,7 @@ func (d *RakutenDrive) Move(ctx context.Context, srcObj, dstDir model.Obj) (mode
 	if srcRemote == "" {
 		srcRemote = d.toRemotePath(srcObj.GetPath(), srcObj.IsDir())
 	}
-	prefix := path.Dir(srcRemote)
-	if prefix == "." || prefix == "/" {
-		prefix = ""
-	} else if !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
+	prefix := d.normalizePrefix(srcRemote)
 	dstRemote := d.toRemotePath(dstDir.GetPath(), true)
 	body := base.Json{
 		"host_id":   d.HostID,
@@ -189,12 +184,7 @@ func (d *RakutenDrive) Rename(ctx context.Context, srcObj model.Obj, newName str
 	if srcRemote == "" {
 		srcRemote = d.toRemotePath(srcObj.GetPath(), srcObj.IsDir())
 	}
-	prefix := path.Dir(srcRemote)
-	if prefix == "." || prefix == "/" {
-		prefix = ""
-	} else if !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
+	prefix := d.normalizePrefix(srcRemote)
 	body := base.Json{
 		"host_id": d.HostID,
 		"name":    newName,
@@ -221,12 +211,7 @@ func (d *RakutenDrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) (mode
 	if srcRemote == "" {
 		srcRemote = d.toRemotePath(srcObj.GetPath(), srcObj.IsDir())
 	}
-	prefix := path.Dir(srcRemote)
-	if prefix == "." || prefix == "/" {
-		prefix = ""
-	} else if !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
+	prefix := d.normalizePrefix(srcRemote)
 	dstRemote := d.toRemotePath(dstDir.GetPath(), true)
 	body := base.Json{
 		"host_id":   d.HostID,
@@ -280,12 +265,7 @@ func (d *RakutenDrive) Remove(ctx context.Context, obj model.Obj) error {
 	if remotePath == "" {
 		remotePath = d.toRemotePath(obj.GetPath(), obj.IsDir())
 	}
-	prefix := path.Dir(remotePath)
-	if prefix == "." || prefix == "/" {
-		prefix = ""
-	} else if !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
+	prefix := d.normalizePrefix(remotePath)
 	body := base.Json{
 		"host_id": d.HostID,
 		"file":    []base.Json{{"path": remotePath, "size": f.GetSize(), "version_id": f.VersionID, "last_modified": f.LastModified}},
@@ -527,19 +507,7 @@ func (d *RakutenDrive) parseList(body []byte, remoteDir, localDir string) ([]mod
 		if remotePath == "" {
 			continue
 		}
-		isFolder := item.Get("is_folder").ToBool() || item.Get("isFolder").ToBool() || item.Get("dir").ToBool() || item.Get("folder").ToBool() || item.Get("IsFolder").ToBool()
-		if !isFolder {
-			switch strings.ToLower(item.Get("type").ToString()) {
-			case "folder", "dir", "directory":
-				isFolder = true
-			}
-			if item.Get("type").ToInt64() == 1 {
-				isFolder = true
-			}
-		}
-		if strings.HasSuffix(itemPath, "/") {
-			isFolder = true
-		}
+		isFolder := d.detectIsFolder(item, itemPath)
 		modified := parseTimeAny(item.Get("last_modified").ToString())
 		if modified.IsZero() {
 			modified = parseTimeAny(item.Get("LastModified").ToString())
@@ -646,6 +614,48 @@ func (d *RakutenDrive) uploadMultipart(ctx context.Context, client *s3.S3, bucke
 		}
 	}
 	return parts, nil
+}
+
+// normalizePrefix extracts the directory prefix from a remote path and normalizes it
+// by ensuring it ends with "/" (except for root or empty paths)
+func (d *RakutenDrive) normalizePrefix(remotePath string) string {
+	prefix := path.Dir(remotePath)
+	if prefix == "." || prefix == "/" {
+		prefix = ""
+	} else if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	return prefix
+}
+
+// detectIsFolder determines if an item represents a folder based on various attributes
+// from the API response, including explicit folder flags, type fields, and path suffixes
+func (d *RakutenDrive) detectIsFolder(item jsoniter.Any, itemPath string) bool {
+	// Check various boolean folder indicators
+	isFolder := item.Get("is_folder").ToBool() ||
+		item.Get("isFolder").ToBool() ||
+		item.Get("dir").ToBool() ||
+		item.Get("folder").ToBool() ||
+		item.Get("IsFolder").ToBool()
+
+	if !isFolder {
+		// Check type field as string
+		switch strings.ToLower(item.Get("type").ToString()) {
+		case "folder", "dir", "directory":
+			isFolder = true
+		}
+		// Check type field as integer (1 = folder)
+		if item.Get("type").ToInt64() == 1 {
+			isFolder = true
+		}
+	}
+
+	// Check if path ends with "/" (common folder indicator)
+	if strings.HasSuffix(itemPath, "/") {
+		isFolder = true
+	}
+
+	return isFolder
 }
 
 var _ driver.Driver = (*RakutenDrive)(nil)
