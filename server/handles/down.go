@@ -30,18 +30,6 @@ func Down(c *gin.Context) {
 		common.ErrorPage(c, err, 500)
 		return
 	}
-	if c.Query("type") == "preview" && storage.GetStorage().Driver == "doubao_new" {
-		link, file, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
-			Header: c.Request.Header,
-			Type:   c.Query("type"),
-		})
-		if err != nil {
-			common.ErrorPage(c, err, 500)
-			return
-		}
-		proxy(c, link, file, storage.GetStorage().ProxyRange)
-		return
-	}
 	if common.ShouldProxy(storage, filename) {
 		Proxy(c)
 		return
