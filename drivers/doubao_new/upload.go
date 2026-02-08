@@ -161,7 +161,7 @@ func (d *DoubaoNew) mergeUploadBlocks(ctx context.Context, uploadID string, seqL
 			string(body),
 			err,
 		)
-		return UploadMergeData{}, fmt.Errorf(msg)
+		return UploadMergeData{}, fmt.Errorf("%s", msg)
 	}
 	if resp.Code != 0 {
 		if res != nil && res.StatusCode() == http.StatusBadRequest && resp.Code == 2 {
