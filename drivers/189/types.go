@@ -84,3 +84,11 @@ type CapacityResp struct {
 	} `json:"familyCapacityInfo"`
 	TotalSize uint64 `json:"totalSize"`
 }
+
+type GetSharedInfoResp struct {
+	ResCode    int    `json:"res_code"`
+	ResMessage string `json:"res_message"`
+	AccessCode string `json:"accessCode"`
+	ShareID    int64  `json:"shareId"`
+	ExpireTime int64  `json:"expireTime"`
+}
