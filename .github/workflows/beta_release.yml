@@ -96,7 +96,7 @@ jobs:
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Build
-        uses: OpenListTeam/cgo-actions@v1.2.2
+        uses: OpenListTeam/cgo-actions@v1.2.3
         with:
           targets: ${{ matrix.target }}
           musl-target-format: $os-$musl-$arch
