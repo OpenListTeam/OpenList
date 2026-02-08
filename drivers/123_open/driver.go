@@ -181,6 +181,22 @@ func (d *Open123) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 	if err != nil {
 		return nil, fmt.Errorf("parse parentFileID error: %v", err)
 	}
+
+	// 尝试 SHA1 秒传
+	sha1Hash := file.GetHash().GetHash(utils.SHA1)
+	if len(sha1Hash) == utils.SHA1.Width {
+		resp, err := d.sha1Reuse(parentFileId, file.GetName(), sha1Hash, file.GetSize(), 2)
+		if err == nil && resp.Data.Reuse {
+			return File{
+				FileName: file.GetName(),
+				Size:     file.GetSize(),
+				FileId:   resp.Data.FileID,
+				Type:     2,
+				SHA1:     sha1Hash,
+			}, nil
+		}
+	}
+
 	// etag 文件md5
 	etag := file.GetHash().GetHash(utils.MD5)
 	if len(etag) < utils.MD5.Width {
