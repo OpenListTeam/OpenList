@@ -16,9 +16,12 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -243,4 +246,40 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 	}, nil
 }
 
+// implements driver.Getter interface
+func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
+	if utils.PathEqual(path, "/") {
+		return &model.Object{
+			Name:     "Root",
+			IsFolder: true,
+			Path:     "/",
+		}, nil
+	}
+
+	// try to get object as a file using HeadObject
+	key := getKey(path, false)
+	headInput := &s3.HeadObjectInput{
+		Bucket: &d.Bucket,
+		Key:    &key,
+	}
+	headOutput, err := d.client.HeadObjectWithContext(ctx, headInput)
+	if err == nil {
+		// Object exists as a file
+		fileName := stdpath.Base(path)
+		return &model.Object{
+			Name:     fileName,
+			Size:     *headOutput.ContentLength,
+			Modified: *headOutput.LastModified,
+			Path:     path,
+		}, nil
+	}
+	var awsErr awserr.Error
+	if errors.As(err, &awsErr) && awsErr.Code() != "NotFound" {
+		return nil, errors.WithMessage(err, "failed to head object")
+	}
+
+	return nil, errs.NotSupport
+}
+
 var _ driver.Driver = (*S3)(nil)
+var _ driver.Getter = (*S3)(nil)
