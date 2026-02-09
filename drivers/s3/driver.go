@@ -257,7 +257,7 @@ func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 	}
 
 	// try to get object as a file using HeadObject
-	key := getKey(path, false)
+	key := getKey(stdpath.Join(d.GetRootPath(), path), false)
 	headInput := &s3.HeadObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &key,
