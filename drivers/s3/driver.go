@@ -248,14 +248,6 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 
 // implements driver.Getter interface
 func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
-	if utils.PathEqual(path, "/") {
-		return &model.Object{
-			Name:     "Root",
-			IsFolder: true,
-			Path:     "/",
-		}, nil
-	}
-
 	// try to get object as a file using HeadObject
 	key := getKey(stdpath.Join(d.GetRootPath(), path), false)
 	headInput := &s3.HeadObjectInput{
