@@ -58,9 +58,13 @@ type File struct {
 	Category     int    `json:"category"`
 	Status       int    `json:"status"`
 	Trashed      int    `json:"trashed"`
+	SHA1         string
 }
 
 func (f File) GetHash() utils.HashInfo {
+	if len(f.SHA1) == utils.SHA1.Width && len(f.Etag) != utils.MD5.Width {
+		return utils.NewHashInfo(utils.SHA1, f.SHA1)
+	}
 	return utils.NewHashInfo(utils.MD5, f.Etag)
 }
 
@@ -187,6 +191,14 @@ type UploadCompleteResp struct {
 	Data struct {
 		Completed bool  `json:"completed"`
 		FileID    int64 `json:"fileID"`
+	} `json:"data"`
+}
+
+type SHA1ReuseResp struct {
+	BaseResp
+	Data struct {
+		FileID int64 `json:"fileID"`
+		Reuse  bool  `json:"reuse"`
 	} `json:"data"`
 }
 
