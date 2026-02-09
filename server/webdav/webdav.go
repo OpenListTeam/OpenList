@@ -81,10 +81,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, err = h.handleUnlock(brw, r)
 		case "PROPFIND":
 			status, err = h.handlePropfind(brw, r)
-			// if there is a error for PROPFIND, we should be as an empty folder to the client
-			if err != nil {
-				status = http.StatusNotFound
-			}
 		case "PROPPATCH":
 			status, err = h.handleProppatch(brw, r)
 		}
@@ -662,7 +658,10 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 		if errs.IsNotFoundError(err) {
 			return http.StatusNotFound, err
 		}
-		return http.StatusMethodNotAllowed, err
+		// It's safer to return 500 Internal Server Error to
+		// prevent clients from deleting files when we fail to read the FS
+		// (timeout, IO error, backend storage disconnected, etc)
+		return http.StatusInternalServerError, err
 	}
 	depth := infiniteDepth
 	if hdr := r.Header.Get("Depth"); hdr != "" {
