@@ -33,6 +33,7 @@ const (
 	CodeLoginRequired     = http.StatusUnauthorized
 	CodePathNotExist      = 40016 // Path not exist
 	CodeCredentialInvalid = 40020 // Failed to issue token
+	CodeObjectExisted     = 40004 // Object existed
 )
 
 var (
@@ -105,6 +106,9 @@ func (d *CloudreveV4) _request(method string, path string, callback base.ReqCall
 		}
 		if r.Code == CodePathNotExist {
 			return errs.ObjectNotFound
+		}
+		if r.Code == CodeObjectExisted {
+			return errs.ObjectAlreadyExists
 		}
 		return fmt.Errorf("%d: %s", r.Code, r.Msg)
 	}
