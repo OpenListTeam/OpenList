@@ -2,6 +2,7 @@ package common
 
 import (
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -15,6 +16,26 @@ import (
 func IsStorageSignEnabled(rawPath string) bool {
 	storage := op.GetBalancedStorage(rawPath)
 	return storage != nil && storage.GetStorage().EnableSign
+}
+
+func CanRead(user *model.User, meta *model.Meta, path string) bool {
+	if user == nil {
+		return false
+	}
+	if meta != nil && len(meta.ReadUsers) > 0 && !slices.Contains(meta.ReadUsers, user.ID) && (meta.ReadUsersSub || meta.Path == path) {
+		return false
+	}
+	return true
+}
+
+func CanWrite(user *model.User, meta *model.Meta, path string) bool {
+	if user == nil {
+		return false
+	}
+	if meta != nil && len(meta.WriteUsers) > 0 && !slices.Contains(meta.WriteUsers, user.ID) && (meta.WriteUsersSub || meta.Path == path) {
+		return false
+	}
+	return true
 }
 
 func CanWriteContentBypassUserPerms(meta *model.Meta, path string) bool {
@@ -34,6 +55,9 @@ func CanAccess(user *model.User, meta *model.Meta, reqPath string, password stri
 				return false
 			}
 		}
+	}
+	if !CanRead(user, meta, reqPath) {
+		return false
 	}
 	// if is not guest and can access without password
 	if user.CanAccessWithoutPassword() {
