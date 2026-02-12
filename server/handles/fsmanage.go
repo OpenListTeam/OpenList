@@ -36,18 +36,19 @@ func FsMkdir(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-	if !user.CanWriteContent() {
-		meta, err := op.GetNearestMeta(stdpath.Dir(reqPath))
-		if err != nil {
-			if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-				common.ErrorResp(c, err, 500, true)
-				return
-			}
-		}
-		if !common.CanWriteContentBypassUserPerms(meta, reqPath) {
-			common.ErrorResp(c, errs.PermissionDenied, 403)
-			return
-		}
+	parentPath := stdpath.Dir(reqPath)
+	parentMeta, err := op.GetNearestMeta(parentPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
+	if !common.CanWrite(user, parentMeta, parentPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
 	}
 	if err := fs.MakeDir(c.Request.Context(), reqPath); err != nil {
 		common.ErrorResp(c, err, 500)
@@ -65,6 +66,7 @@ type MoveCopyReq struct {
 	Merge        bool     `json:"merge"`
 }
 
+// FsMove performs batch move (individual item permission checks skipped for performance).
 func FsMove(c *gin.Context) {
 	var req MoveCopyReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -80,9 +82,32 @@ func FsMove(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
+	srcDir, err := user.JoinPath(req.SrcDir)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
+	srcMeta, err := op.GetNearestMeta(srcDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, srcMeta, srcDir) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
 	dstDir, err := user.JoinPath(req.DstDir)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
+		return
+	}
+	dstMeta, err := op.GetNearestMeta(dstDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, dstMeta, dstDir) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
 
@@ -140,6 +165,7 @@ func FsMove(c *gin.Context) {
 	}
 }
 
+// FsCopy performs batch copy (individual item permission checks skipped for performance).
 func FsCopy(c *gin.Context) {
 	var req MoveCopyReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -155,9 +181,32 @@ func FsCopy(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
+	srcDir, err := user.JoinPath(req.SrcDir)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
+	srcMeta, err := op.GetNearestMeta(srcDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanRead(user, srcMeta, srcDir) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
 	dstDir, err := user.JoinPath(req.DstDir)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
+		return
+	}
+	dstMeta, err := op.GetNearestMeta(dstDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, dstMeta, dstDir) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
 
@@ -245,6 +294,16 @@ func FsRename(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
+	parentPath := stdpath.Dir(reqPath)
+	parentMeta, err := op.GetNearestMeta(parentPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, parentMeta, parentPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
 	if !req.Overwrite {
 		dstPath := stdpath.Join(stdpath.Dir(reqPath), req.Name)
 		if dstPath != reqPath {
@@ -273,6 +332,7 @@ type RemoveReq struct {
 	Names []string `json:"names"`
 }
 
+// FsRemove performs batch remove (individual item permission checks skipped for performance).
 func FsRemove(c *gin.Context) {
 	var req RemoveReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -288,6 +348,20 @@ func FsRemove(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
+	reqPath, err := user.JoinPath(req.Dir)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
+	meta, err := op.GetNearestMeta(reqPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, meta, reqPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
 	for i, name := range req.Names {
 		if strings.TrimSpace(utils.FixAndCleanPath(name)) == "/" {
 			log.Warnf("FsRemove: invalid item skipped: %s (parent directory: %s)\n", name, req.Dir)
@@ -295,12 +369,7 @@ func FsRemove(c *gin.Context) {
 			continue
 		}
 		// ensure req.Names is not a relative path
-		var err error
-		req.Names[i], err = user.JoinPath(stdpath.Join(req.Dir, name))
-		if err != nil {
-			common.ErrorResp(c, err, 403)
-			return
-		}
+		req.Names[i] = stdpath.Join(reqPath, name)
 	}
 	for _, path := range req.Names {
 		if path == "" {
@@ -320,6 +389,7 @@ type RemoveEmptyDirectoryReq struct {
 	SrcDir string `json:"src_dir"`
 }
 
+// FsRemoveEmptyDirectory recursively removes empty directories (individual item permission checks skipped for performance).
 func FsRemoveEmptyDirectory(c *gin.Context) {
 	var req RemoveEmptyDirectoryReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -339,11 +409,13 @@ func FsRemoveEmptyDirectory(c *gin.Context) {
 	}
 
 	meta, err := op.GetNearestMeta(srcDir)
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			common.ErrorResp(c, err, 500, true)
-			return
-		}
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, meta, srcDir) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
 	}
 	common.GinWithValue(c, conf.MetaKey, meta)
 
