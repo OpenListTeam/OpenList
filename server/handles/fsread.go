@@ -94,7 +94,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
-	if !user.CanWrite() && !common.CanWrite(meta, reqPath) && req.Refresh {
+	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, reqPath) && req.Refresh {
 		common.ErrorStrResp(c, "Refresh without permission", 403)
 		return
 	}
@@ -109,7 +109,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
 	var directUploadTools []string
-	if user.CanWrite() {
+	if user.CanWriteContent() {
 		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
 			directUploadTools = op.GetDirectUploadTools(storage)
 		}
@@ -119,7 +119,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		Total:             int64(total),
 		Readme:            getReadme(meta, reqPath),
 		Header:            getHeader(meta, reqPath),
-		Write:             user.CanWrite() || common.CanWrite(meta, reqPath),
+		Write:             user.CanWriteContent() || common.CanWriteContentBypassUserPerms(meta, reqPath),
 		Provider:          provider,
 		DirectUploadTools: directUploadTools,
 	})
@@ -186,14 +186,14 @@ func filterDirs(objs []model.Obj) []DirResp {
 }
 
 func getReadme(meta *model.Meta, path string) string {
-	if meta != nil && (utils.PathEqual(meta.Path, path) || meta.RSub) {
+	if meta != nil && common.MetaCoversPath(meta.Path, path, meta.RSub) {
 		return meta.Readme
 	}
 	return ""
 }
 
 func getHeader(meta *model.Meta, path string) string {
-	if meta != nil && (utils.PathEqual(meta.Path, path) || meta.HeaderSub) {
+	if meta != nil && common.MetaCoversPath(meta.Path, path, meta.HeaderSub) {
 		return meta.Header
 	}
 	return ""
@@ -206,7 +206,7 @@ func isEncrypt(meta *model.Meta, path string) bool {
 	if meta == nil || meta.Password == "" {
 		return false
 	}
-	if !utils.PathEqual(meta.Path, path) && !meta.PSub {
+	if !common.MetaCoversPath(meta.Path, path, meta.PSub) {
 		return false
 	}
 	return true

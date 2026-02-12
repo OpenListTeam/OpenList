@@ -19,14 +19,14 @@ func Mkdir(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	if !user.CanWrite() || !user.CanFTPManage() {
+	if !user.CanWriteContent() || !user.CanFTPManage() {
 		meta, err := op.GetNearestMeta(stdpath.Dir(reqPath))
 		if err != nil {
 			if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 				return err
 			}
 		}
-		if !common.CanWrite(meta, reqPath) {
+		if !common.CanWriteContentBypassUserPerms(meta, reqPath) {
 			return errs.PermissionDenied
 		}
 	}

@@ -117,7 +117,7 @@ func WebDAVAuth(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if (c.Request.Method == "PUT" || c.Request.Method == "MKCOL") && (!user.CanWebdavManage() || !user.CanWrite()) {
+	if (c.Request.Method == "PUT" || c.Request.Method == "MKCOL") && (!user.CanWebdavManage() || !user.CanWriteContent()) {
 		c.Status(http.StatusForbidden)
 		c.Abort()
 		return
