@@ -17,24 +17,17 @@ func IsStorageSignEnabled(rawPath string) bool {
 	return storage != nil && storage.GetStorage().EnableSign
 }
 
-func CanWrite(meta *model.Meta, path string) bool {
+func CanWriteContentBypassUserPerms(meta *model.Meta, path string) bool {
 	if meta == nil || !meta.Write {
 		return false
 	}
-	return meta.WSub || meta.Path == path
-}
-
-func IsApply(metaPath, reqPath string, applySub bool) bool {
-	if utils.PathEqual(metaPath, reqPath) {
-		return true
-	}
-	return utils.IsSubPath(metaPath, reqPath) && applySub
+	return MetaCoversPath(meta.Path, path, meta.WSub)
 }
 
 func CanAccess(user *model.User, meta *model.Meta, reqPath string, password string) bool {
 	// if the reqPath is in hide (only can check the nearest meta) and user can't see hides, can't access
 	if meta != nil && !user.CanSeeHides() && meta.Hide != "" &&
-		IsApply(meta.Path, path.Dir(reqPath), meta.HSub) { // the meta should apply to the parent of current path
+		MetaCoversPath(meta.Path, path.Dir(reqPath), meta.HSub) { // the meta should apply to the parent of current path
 		for _, hide := range strings.Split(meta.Hide, "\n") {
 			re := regexp2.MustCompile(hide, regexp2.None)
 			if isMatch, _ := re.MatchString(path.Base(reqPath)); isMatch {
@@ -51,11 +44,18 @@ func CanAccess(user *model.User, meta *model.Meta, reqPath string, password stri
 		return true
 	}
 	// if meta doesn't apply to sub_folder, can access
-	if !utils.PathEqual(meta.Path, reqPath) && !meta.PSub {
+	if !MetaCoversPath(meta.Path, reqPath, meta.PSub) {
 		return true
 	}
 	// validate password
 	return meta.Password == password
+}
+
+func MetaCoversPath(metaPath, reqPath string, applyToSubFolder bool) bool {
+	if utils.PathEqual(metaPath, reqPath) {
+		return true
+	}
+	return utils.IsSubPath(metaPath, reqPath) && applyToSubFolder
 }
 
 // ShouldProxy TODO need optimize

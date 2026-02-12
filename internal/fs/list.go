@@ -6,7 +6,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -60,7 +60,7 @@ func whetherHide(user *model.User, meta *model.Meta, path string) bool {
 		return false
 	}
 	// if meta doesn't apply to sub_folder, don't hide
-	if !utils.PathEqual(meta.Path, path) && !meta.HSub {
+	if !common.MetaCoversPath(meta.Path, path, meta.HSub) {
 		return false
 	}
 	// if is guest, hide
