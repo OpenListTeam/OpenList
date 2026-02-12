@@ -36,7 +36,7 @@ func FsMkdir(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-	if !user.CanWrite() {
+	if !user.CanWriteContent() {
 		meta, err := op.GetNearestMeta(stdpath.Dir(reqPath))
 		if err != nil {
 			if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
@@ -44,7 +44,7 @@ func FsMkdir(c *gin.Context) {
 				return
 			}
 		}
-		if !common.CanWrite(meta, reqPath) {
+		if !common.CanWriteContentBypassUserPerms(meta, reqPath) {
 			common.ErrorResp(c, errs.PermissionDenied, 403)
 			return
 		}
