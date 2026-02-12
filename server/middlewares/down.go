@@ -25,11 +25,9 @@ func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		rawPath := c.Request.Context().Value(conf.PathKey).(string)
 		meta, err := op.GetNearestMeta(rawPath)
-		if err != nil {
-			if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-				common.ErrorPage(c, err, 500, true)
-				return
-			}
+		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+			common.ErrorPage(c, err, 500, true)
+			return
 		}
 		common.GinWithValue(c, conf.MetaKey, meta)
 		// verify sign
