@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	stdpath "path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,8 +25,9 @@ import (
 type Open115 struct {
 	model.Storage
 	Addition
-	client  *sdk.Client
-	limiter *rate.Limiter
+	client     *sdk.Client
+	limiter    *rate.Limiter
+	parentPath string
 }
 
 func (d *Open115) Config() driver.Config {
@@ -59,6 +62,28 @@ func (d *Open115) Init(ctx context.Context) error {
 		d.PageSize = 1150
 	}
 
+	// add parent path
+	d.parentPath = "/"
+	if d.GetRootId() != d.Config().DefaultRoot {
+		folderInfo, err := d.client.GetFolderInfo(ctx, d.GetRootId())
+		if err != nil {
+			return err
+		}
+
+		if folderInfo.FileID != d.Config().DefaultRoot {
+			d.parentPath = stdpath.Join(d.parentPath, folderInfo.FileName)
+		}
+
+		parentPaths := folderInfo.Paths
+		slices.Reverse(parentPaths)
+		for _, parentPathInfo := range parentPaths {
+			if parentPathInfo.FileID == d.Config().DefaultRoot {
+				d.parentPath = stdpath.Join("/", d.parentPath)
+			} else {
+				d.parentPath = stdpath.Join("/", parentPathInfo.FileName, d.parentPath)
+			}
+		}
+	}
 	return nil
 }
 
@@ -134,6 +159,24 @@ func (d *Open115) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 		Header: http.Header{
 			"User-Agent": []string{ua},
 		},
+	}, nil
+}
+
+func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
+	if err := d.WaitLimit(ctx); err != nil {
+		return nil, err
+	}
+	path = stdpath.Join(d.parentPath, path)
+	resp, err := d.client.GetFolderInfoByPath(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return &Obj{
+		Fid:  resp.FileID,
+		Fn:   resp.FileName,
+		Fc:   resp.FileCategory,
+		Sha1: resp.Sha1,
+		Pc:   resp.PickCode,
 	}, nil
 }
 
