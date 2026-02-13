@@ -183,3 +183,21 @@ func (d *Open123) complete(preuploadID string) (*UploadCompleteResp, error) {
 	}
 	return &resp, nil
 }
+
+// SHA1 秒传
+func (d *Open123) sha1Reuse(parentFileID int64, filename string, sha1Hash string, size int64, duplicate int) (*SHA1ReuseResp, error) {
+	var resp SHA1ReuseResp
+	_, err := d.Request(UploadSHA1Reuse, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"parentFileID": parentFileID,
+			"filename":     filename,
+			"sha1":         strings.ToLower(sha1Hash),
+			"size":         size,
+			"duplicate":    duplicate,
+		})
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

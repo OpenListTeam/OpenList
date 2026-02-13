@@ -155,6 +155,9 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 		}
 		t.Base.SetCtx(ctx)
 		err = t.RunWithNextTaskCallback(callback)
+		if err == nil {
+			hasSuccess = true
+		}
 		if taskType == move {
 			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
 		}
@@ -192,7 +195,9 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		existedObjs := make(map[string]bool)
 		if t.TaskType == merge {
 			dstObjs, err := op.List(t.Ctx(), t.DstStorage, dstActualPath, model.ListArgs{})
-			if err != nil {
+			if err != nil && !errors.Is(err, errs.ObjectNotFound) {
+				// 目标文件夹不存在的情况不是错误，会在之后新建文件夹
+				// 这种情况显然不需要统计existedObjs，dstObjs保持为nil，下面这个for将不会执行
 				return errors.WithMessagef(err, "failed list dst [%s] objs", dstActualPath)
 			}
 			for _, obj := range dstObjs {
