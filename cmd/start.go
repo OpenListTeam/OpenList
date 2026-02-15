@@ -31,14 +31,23 @@ func start() {
 			return
 		}
 	}
-	args := os.Args
-	args[1] = "server"
-	args = append(args, "--force-bin-dir")
-	cmd := &exec.Cmd{
-		Path: args[0],
-		Args: args,
-		Env:  os.Environ(),
+	exe, err := os.Executable()
+	if err != nil {
+		log.Fatal("failed to resolve executable path: ", err)
 	}
+	childArgs := append([]string{"server"}, os.Args[2:]...)
+	hasForceBinDir := false
+	for _, arg := range childArgs {
+		if arg == "--force-bin-dir" {
+			hasForceBinDir = true
+			break
+		}
+	}
+	if !hasForceBinDir {
+		childArgs = append(childArgs, "--force-bin-dir")
+	}
+	cmd := exec.Command(exe, childArgs...)
+	cmd.Env = os.Environ()
 	stdout, err := os.OpenFile(filepath.Join(filepath.Dir(pidFile), "start.log"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0666)
 	if err != nil {
 		log.Fatal(os.Getpid(), ": failed to open start log file:", err)
