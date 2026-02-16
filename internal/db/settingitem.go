@@ -65,5 +65,5 @@ func SaveSettingItem(item *model.SettingItem) error {
 }
 
 func DeleteSettingItemByKey(key string) error {
-	return errors.WithStack(db.Delete(&model.SettingItem{Key: key}).Error)
+	return errors.WithStack(db.Where(fmt.Sprintf("%s = ?", columnName("key")), key).Delete(model.SettingItem{}).Error)
 }
