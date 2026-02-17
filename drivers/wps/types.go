@@ -41,7 +41,8 @@ type FileInfo struct {
 }
 
 type filesResp struct {
-	Files []FileInfo `json:"files"`
+	Files      []FileInfo `json:"files"`
+	NextOffset int        `json:"next_offset"`
 }
 
 type downloadResp struct {
