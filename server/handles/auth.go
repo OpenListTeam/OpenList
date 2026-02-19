@@ -65,7 +65,8 @@ func loginHash(c *gin.Context, req *LoginReq) {
 	// check 2FA
 	if user.OtpSecret != "" {
 		if !totp.Validate(req.OtpCode, user.OtpSecret) {
-			common.ErrorStrResp(c, model.Invalid2FACode, 401)
+			// 402 - need opt
+			common.ErrorStrResp(c, model.Invalid2FACode, 402)
 			model.LoginCache.Set(ip, count+1)
 			return
 		}
