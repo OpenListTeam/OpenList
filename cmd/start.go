@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -38,7 +39,7 @@ func start() {
 	childArgs := append([]string{"server"}, os.Args[2:]...)
 	hasForceBinDir := false
 	for _, arg := range childArgs {
-		if arg == "--force-bin-dir" {
+		if arg == "--force-bin-dir" || strings.HasPrefix(arg, "--force-bin-dir=") {
 			hasForceBinDir = true
 			break
 		}
