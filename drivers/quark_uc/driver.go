@@ -70,7 +70,7 @@ func (d *QuarkOrUC) Link(ctx context.Context, file model.Obj, args model.LinkArg
 	return d.getDownloadLink(file)
 }
 
-func (d *QuarkOrUC) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+func (d *QuarkOrUC) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	data := base.Json{
 		"dir_init_lock": false,
 		"dir_path":      "",
@@ -80,10 +80,32 @@ func (d *QuarkOrUC) MakeDir(ctx context.Context, parentDir model.Obj, dirName st
 	_, err := d.request("/file", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
 	}, nil)
-	if err == nil {
-		time.Sleep(time.Second)
+	if err != nil && err.Error() != "file is doloading[同名冲突]" {
+		return nil, err
 	}
-	return err
+	var files []model.Obj
+	maxRetries := 5
+	for i := range maxRetries {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		files, err = d.GetFiles(parentDir.GetID())
+		if err == nil {
+			for _, file := range files {
+				if file.GetName() == dirName {
+					return file, nil
+				}
+			}
+		}
+		if i == maxRetries-1 {
+			return nil, err
+		}
+		time.Sleep((50 << i) * time.Millisecond)
+	}
+	// never been happened
+	return nil, err
 }
 
 func (d *QuarkOrUC) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
