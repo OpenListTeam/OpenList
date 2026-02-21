@@ -27,10 +27,8 @@ type FileDownloadProxy struct {
 func OpenDownload(ctx context.Context, reqPath string, offset int64) (*FileDownloadProxy, error) {
 	user := ctx.Value(conf.UserKey).(*model.User)
 	meta, err := op.GetNearestMeta(reqPath)
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			return nil, err
-		}
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
 	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
@@ -121,10 +119,8 @@ func Stat(ctx context.Context, path string) (os.FileInfo, error) {
 		return nil, err
 	}
 	meta, err := op.GetNearestMeta(reqPath)
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			return nil, err
-		}
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
 	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
@@ -147,10 +143,8 @@ func List(ctx context.Context, path string) ([]os.FileInfo, error) {
 		return nil, err
 	}
 	meta, err := op.GetNearestMeta(reqPath)
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			return nil, err
-		}
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
 	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {

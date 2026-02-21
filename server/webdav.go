@@ -117,22 +117,22 @@ func WebDAVAuth(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if (c.Request.Method == "PUT" || c.Request.Method == "MKCOL") && (!user.CanWebdavManage() || !user.CanWrite()) {
+	if (c.Request.Method == "PUT" || c.Request.Method == "MKCOL") && !user.CanWebdavManage() {
 		c.Status(http.StatusForbidden)
 		c.Abort()
 		return
 	}
-	if c.Request.Method == "MOVE" && (!user.CanWebdavManage() || (!user.CanMove() && !user.CanRename())) {
+	if c.Request.Method == "MOVE" && !user.CanWebdavManage() {
 		c.Status(http.StatusForbidden)
 		c.Abort()
 		return
 	}
-	if c.Request.Method == "COPY" && (!user.CanWebdavManage() || !user.CanCopy()) {
+	if c.Request.Method == "COPY" && !user.CanWebdavManage() {
 		c.Status(http.StatusForbidden)
 		c.Abort()
 		return
 	}
-	if c.Request.Method == "DELETE" && (!user.CanWebdavManage() || !user.CanRemove()) {
+	if c.Request.Method == "DELETE" && !user.CanWebdavManage() {
 		c.Status(http.StatusForbidden)
 		c.Abort()
 		return
@@ -143,6 +143,7 @@ func WebDAVAuth(c *gin.Context) {
 		return
 	}
 	common.GinWithValue(c, conf.UserKey, user)
+	common.GinWithValue(c, conf.MetaPassKey, password)
 	c.Next()
 }
 

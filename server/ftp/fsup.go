@@ -33,14 +33,18 @@ type FileUploadProxy struct {
 
 func uploadAuth(ctx context.Context, path string) error {
 	user := ctx.Value(conf.UserKey).(*model.User)
-	meta, err := op.GetNearestMeta(stdpath.Dir(path))
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			return err
-		}
+	if !user.CanFTPManage() {
+		return errs.PermissionDenied
 	}
-	if !(common.CanAccess(user, meta, path, ctx.Value(conf.MetaPassKey).(string)) &&
-		((user.CanFTPManage() && user.CanWrite()) || common.CanWrite(meta, stdpath.Dir(path)))) {
+	parentPath := stdpath.Dir(path)
+	parentMeta, err := op.GetNearestMeta(parentPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return err
+	}
+	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+		return errs.PermissionDenied
+	}
+	if !common.CanWrite(user, parentMeta, parentPath) {
 		return errs.PermissionDenied
 	}
 	return nil
