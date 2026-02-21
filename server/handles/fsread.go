@@ -1,6 +1,7 @@
 package handles
 
 import (
+	"context"
 	"fmt"
 	stdpath "path"
 	"strings"
@@ -13,10 +14,12 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
+	"github.com/OpenListTeam/OpenList/v4/pkg/generic"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 type ListReq struct {
@@ -400,6 +403,12 @@ type FsOtherReq struct {
 	Password string `json:"password" form:"password"`
 }
 
+type RecurseListReq struct {
+	Path        string `json:"path" form:"path"`
+	Refresh     bool   `json:"refresh" form:"refresh"`
+	IntervalSec int    `json:"interval_sec" form:"interval_sec"`
+}
+
 func FsOther(c *gin.Context) {
 	var req FsOtherReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -431,4 +440,80 @@ func FsOther(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c, res)
+}
+
+func FsRecurseList(c *gin.Context) {
+	var req RecurseListReq
+	if err := c.ShouldBind(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	reqPath, err := user.JoinPath(req.Path)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
+	meta, err := op.GetNearestMeta(reqPath)
+	if err != nil {
+		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+			common.ErrorResp(c, err, 500, true)
+			return
+		}
+	}
+	if !common.CanAccess(user, meta, reqPath, "") {
+		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
+		return
+	}
+	if !user.CanWrite() && !common.CanWrite(meta, reqPath) && req.Refresh {
+		common.ErrorStrResp(c, "Refresh without permission", 403)
+		return
+	}
+
+	go func() {
+		ctx := context.Background()
+		ctx = context.WithValue(ctx, conf.UserKey, user)
+		ctx = context.WithValue(ctx, conf.MetaKey, meta)
+
+		queue := generic.NewQueue[string]()
+		queue.Push(reqPath)
+
+		visited := make(map[string]bool)
+
+		for queue.Len() > 0 {
+			currentPath := queue.Pop()
+
+			if visited[currentPath] {
+				continue
+			}
+			visited[currentPath] = true
+
+			objs, err := fs.List(ctx, currentPath, &fs.ListArgs{
+				Refresh:            req.Refresh,
+				WithStorageDetails: false,
+				NoLog:              true,
+			})
+			if err != nil {
+				log.Warnf("FsRecurseList: failed to list %s: %+v", currentPath, err)
+				continue
+			}
+
+			for _, obj := range objs {
+				if obj.IsDir() {
+					subPath := stdpath.Join(currentPath, obj.GetName())
+					if !visited[subPath] {
+						queue.Push(subPath)
+					}
+				}
+			}
+
+			if req.IntervalSec > 0 && queue.Len() > 0 {
+				time.Sleep(time.Duration(req.IntervalSec) * time.Second)
+			}
+		}
+
+		log.Infof("FsRecurseList: completed recursion for path %s", reqPath)
+	}()
+
+	common.SuccessResp(c)
 }
