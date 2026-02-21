@@ -212,6 +212,21 @@ func props(ctx context.Context, ls LockSystem, fi model.Obj, pnames []xml.Name) 
 				XMLName:  pn,
 				InnerXML: []byte(innerXML),
 			})
+		} else if prop := additionalLiveProps[pn]; prop.findFn != nil {
+			innerXML, show, err := prop.findFn(ctx, ls, fi.GetName(), fi)
+			if err != nil {
+				return nil, err
+			}
+			if !show {
+				pstatNotFound.Props = append(pstatNotFound.Props, Property{
+					XMLName: pn,
+				})
+			} else {
+				pstatOK.Props = append(pstatOK.Props, Property{
+					XMLName:  pn,
+					InnerXML: []byte(innerXML),
+				})
+			}
 		} else {
 			pstatNotFound.Props = append(pstatNotFound.Props, Property{
 				XMLName: pn,
@@ -222,7 +237,7 @@ func props(ctx context.Context, ls LockSystem, fi model.Obj, pnames []xml.Name) 
 }
 
 // Propnames returns the property names defined for resource name.
-func propnames(ctx context.Context, ls LockSystem, fi model.Obj) ([]xml.Name, error) {
+func propnames(ctx context.Context, ls LockSystem, fi model.Obj, fromAllprop bool) ([]xml.Name, error) {
 	//f, err := fs.OpenFile(ctx, name, os.O_RDONLY, 0)
 	//if err != nil {
 	//	return nil, err
@@ -249,6 +264,13 @@ func propnames(ctx context.Context, ls LockSystem, fi model.Obj) ([]xml.Name, er
 			pnames = append(pnames, pn)
 		}
 	}
+	if !fromAllprop {
+		for pn, prop := range additionalLiveProps {
+			if prop.findFn != nil && prop.showFn != nil && prop.showFn(fi) {
+				pnames = append(pnames, pn)
+			}
+		}
+	}
 	for pn := range deadProps {
 		pnames = append(pnames, pn)
 	}
@@ -264,7 +286,7 @@ func propnames(ctx context.Context, ls LockSystem, fi model.Obj) ([]xml.Name, er
 //
 // See http://www.webdav.org/specs/rfc4918.html#METHOD_PROPFIND
 func allprop(ctx context.Context, ls LockSystem, fi model.Obj, include []xml.Name) ([]Propstat, error) {
-	pnames, err := propnames(ctx, ls, fi)
+	pnames, err := propnames(ctx, ls, fi, true)
 	if err != nil {
 		return nil, err
 	}

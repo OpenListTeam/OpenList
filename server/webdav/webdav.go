@@ -684,7 +684,7 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 		}
 		var pstats []Propstat
 		if pf.Propname != nil {
-			pnames, err := propnames(ctx, h.LockSystem, info)
+			pnames, err := propnames(ctx, h.LockSystem, info, false)
 			if err != nil {
 				return err
 			}
