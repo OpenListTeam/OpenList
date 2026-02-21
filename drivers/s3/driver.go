@@ -16,9 +16,12 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -243,4 +246,73 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 	}, nil
 }
 
+// implements driver.Getter interface
+func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
+	// try to get object as a file using HeadObject
+	key := getKey(stdpath.Join(d.GetRootPath(), path), false)
+	headInput := &s3.HeadObjectInput{
+		Bucket: &d.Bucket,
+		Key:    &key,
+	}
+	headOutput, err := d.client.HeadObjectWithContext(ctx, headInput)
+	if err == nil {
+		// Object exists as a file
+		fileName := stdpath.Base(path)
+		return &model.Object{
+			Name:     fileName,
+			Size:     *headOutput.ContentLength,
+			Modified: *headOutput.LastModified,
+			Path:     path,
+		}, nil
+	}
+	var awsErr awserr.Error
+	if errors.As(err, &awsErr) && awsErr.Code() != "NotFound" {
+		return nil, errors.WithMessage(err, "failed to head object")
+	}
+
+	// If HeadObject fails with 404, check if it's a directory
+	prefix := getKey(path, true)
+	var contents []*s3.Object
+	var commonPrefixes []*s3.CommonPrefix
+	switch d.ListObjectVersion {
+	case "v1":
+		listInput := &s3.ListObjectsInput{
+			Bucket:  &d.Bucket,
+			Prefix:  &prefix,
+			MaxKeys: aws.Int64(1), // Only need to check if at least one object exists
+		}
+		listResult, err := d.client.ListObjectsWithContext(ctx, listInput)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to list objects with prefix")
+		}
+		contents = listResult.Contents
+		commonPrefixes = listResult.CommonPrefixes
+	case "v2":
+		listInput := &s3.ListObjectsV2Input{
+			Bucket:  &d.Bucket,
+			Prefix:  &prefix,
+			MaxKeys: aws.Int64(1),
+		}
+		listResult, err := d.client.ListObjectsV2WithContext(ctx, listInput)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to list objects v2 with prefix")
+		}
+		contents = listResult.Contents
+		commonPrefixes = listResult.CommonPrefixes
+	default:
+		return nil, fmt.Errorf("unsupported ListObjectVersion: %s", d.ListObjectVersion)
+	}
+	if len(contents) > 0 || len(commonPrefixes) > 0 {
+		dirName := stdpath.Base(path + "/")
+		return &model.Object{
+			Name:     dirName,
+			Modified: d.Modified,
+			IsFolder: true,
+			Path:     path,
+		}, nil
+	}
+	return nil, errs.ObjectNotFound
+}
+
 var _ driver.Driver = (*S3)(nil)
+var _ driver.Getter = (*S3)(nil)
