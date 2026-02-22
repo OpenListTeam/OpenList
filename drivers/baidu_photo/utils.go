@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -411,12 +412,14 @@ func (d *BaiduPhoto) linkFile(ctx context.Context, file *File, args model.LinkAr
 	// }
 
 	// location := resp.Header().Get("Location")
+	exp := time.Hour
 	link := &model.Link{
 		URL: downloadUrl.Dlink,
 		Header: http.Header{
 			"User-Agent": []string{headers["User-Agent"]},
 			"Referer":    []string{"https://photo.baidu.com/"},
 		},
+		Expiration: &exp,
 	}
 	return link, nil
 }

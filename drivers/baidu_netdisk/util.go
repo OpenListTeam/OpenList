@@ -215,11 +215,13 @@ func (d *BaiduNetdisk) linkOfficial(file model.Obj, _ model.LinkArgs) (*model.Li
 	u = res.Header().Get("location")
 	//}
 
+	exp := time.Hour
 	return &model.Link{
 		URL: u,
 		Header: http.Header{
 			"User-Agent": []string{"pan.baidu.com"},
 		},
+		Expiration: &exp,
 	}, nil
 }
 
