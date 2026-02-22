@@ -431,3 +431,54 @@ func (y *Cloud189PC) GetDetails(ctx context.Context) (*model.StorageDetails, err
 		},
 	}, nil
 }
+
+func (y *Cloud189PC) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	sharecode := y.extractCode(shareURL)
+	if sharecode == "" {
+		return fmt.Errorf("need share code")
+	}
+	shareid, fileid, filename, err := y.getSharedInfo(sharecode)
+	if err != nil {
+		return err
+	}
+	if shareid == -1 {
+		return fmt.Errorf("failed get share id")
+	}
+
+	taskInfos := []base.Json{
+		{
+			"fileId":   fileid,
+			"fileName": filename,
+			"isFolder": 1,
+		},
+	}
+
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	if err != nil {
+		return err
+	}
+
+	form := map[string]string{
+		"targetFolderId": dst.GetID(),
+		"taskInfos":      string(taskInfosBytes),
+		"shareId":        fmt.Sprintf("%d", shareid),
+	}
+
+	resp, err := y.CreateBatchTask("SHARE_SAVE", y.FamilyID, dst.GetID(), form)
+
+	for {
+		state, err := y.CheckBatchTask("SHARE_SAVE", resp.TaskID)
+		if err != nil {
+			return err
+		}
+		switch state.TaskStatus {
+		case 4:
+			if state.FailedCount == 0 {
+				return nil
+			} else {
+				return fmt.Errorf("transfer failed")
+			}
+		}
+		time.Sleep(time.Millisecond * 400)
+	}
+}

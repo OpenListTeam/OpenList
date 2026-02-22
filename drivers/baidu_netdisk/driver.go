@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -495,6 +496,30 @@ func (d *BaiduNetdisk) GetDetails(ctx context.Context) (*model.StorageDetails, e
 		return nil, err
 	}
 	return &model.StorageDetails{DiskUsage: du}, nil
+}
+
+func (d *BaiduNetdisk) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	surl := ""
+	if surl = d.getSurl(shareURL); surl == "" {
+		return fmt.Errorf("failed to get surl,check shareURL")
+	}
+
+	var sekey string
+	var err error
+	if sekey, err = d.getSekey(surl, validCode); err != nil || sekey == "" {
+		return fmt.Errorf("failed to get sekey: %v", err)
+	}
+
+	var shareid, uk int64
+	var fsIDs *[]FsID
+	if shareid, uk, fsIDs, err = d.getFileInfo(surl, sekey); err != nil || fsIDs == nil || shareid == -1 || uk == -1 {
+		return fmt.Errorf("failed to get getFileInfo: %v", err)
+	}
+
+	if err := d.transfer(shareid, uk, fsIDs, sekey); err != nil {
+		return err
+	}
+	return nil
 }
 
 var _ driver.Driver = (*BaiduNetdisk)(nil)

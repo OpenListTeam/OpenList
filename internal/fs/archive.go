@@ -363,7 +363,7 @@ func archiveList(ctx context.Context, path string, args model.ArchiveListArgs) (
 	return op.ListArchive(ctx, storage, actualPath, args)
 }
 
-func archiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args model.ArchiveDecompressArgs, lazyCache ...bool) (task.TaskExtensionInfo, error) {
+func archiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args model.ArchiveDecompressArgs) (task.TaskExtensionInfo, error) {
 	srcStorage, srcObjActualPath, err := op.GetStorageAndActualPath(srcObjPath)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed get src storage")
@@ -373,7 +373,7 @@ func archiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args 
 		return nil, errors.WithMessage(err, "failed get dst storage")
 	}
 	if srcStorage.GetStorage() == dstStorage.GetStorage() {
-		err = op.ArchiveDecompress(ctx, srcStorage, srcObjActualPath, dstDirActualPath, args, lazyCache...)
+		err = op.ArchiveDecompress(ctx, srcStorage, srcObjActualPath, dstDirActualPath, args)
 		if !errors.Is(err, errs.NotImplement) {
 			return nil, err
 		}

@@ -371,4 +371,46 @@ func (d *AliDrive) Other(ctx context.Context, args model.OtherArgs) (interface{}
 	return resp, nil
 }
 
+func (d *AliDrive) Transfer(ctx context.Context, dst model.Obj, shareURL, validCode string) error {
+	shareid := d.extractShareId(shareURL)
+	if shareid == "" {
+		return fmt.Errorf("invalid share url")
+	}
+	shareToken, err := d.getShareToken(shareid, validCode)
+	if err != nil {
+		return err
+	}
+	fileid, parent_fileid := d.getFileId(shareid, shareToken)
+	res, err, _ := d.request("https://api.aliyundrive.com/adrive/v4/batch", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"requests": []base.Json{
+				{
+					"headers": base.Json{
+						"Content-Type": "application/json",
+					},
+					"method": "POST",
+					"id":     "0",
+					"body": base.Json{
+						"share_id":          shareid,
+						"file_id":           fileid,
+						"to_drive_id":       dst.GetID(),
+						"to_parent_file_id": parent_fileid,
+					},
+					"url": "/file/copy",
+				},
+			},
+			"resource": "file",
+		})
+		req.SetHeader("X-Share-Token", shareToken)
+	}, nil)
+	if err != nil {
+		return err
+	}
+	status := utils.Json.Get(res, "responses", 0, "status").ToInt()
+	if status < 300 && status >= 100 {
+		return nil
+	}
+	return fmt.Errorf("transfer failed: %s", string(res))
+}
+
 var _ driver.Driver = (*AliDrive)(nil)

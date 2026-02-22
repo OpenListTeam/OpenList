@@ -22,6 +22,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 )
 
+func random_num() string {
+	return fmt.Sprintf("0.%017d", random.Rand.Int63n(1e17))
+}
+
 func clientSuffix() map[string]string {
 	rand := random.Rand
 	return map[string]string{

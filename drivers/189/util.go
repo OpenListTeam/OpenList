@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -405,4 +406,51 @@ func (d *Cloud189) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (d *Cloud189) getSharedID(code string) (int64, error) {
+	resp := GetSharedInfoResp{}
+	_, err := d.request("https://cloud.189.cn/api/open/share/getShareInfoByCodeV2.action", http.MethodGet, func(req *resty.Request) {
+		req.SetHeader("Accept", "application/json;charset=UTF-8")
+		req.SetQueryParams(map[string]string{
+			"code": code,
+		})
+	}, &resp)
+	if err != nil {
+		return 0, err
+	}
+	if resp.ResCode != 0 || resp.ResMessage != "成功" {
+		return 0, errors.New(resp.ResMessage)
+	}
+	return resp.ShareID, nil
+}
+
+func (d *Cloud189) extractCode(str string) string {
+	u, err := url.Parse(str)
+	if err != nil {
+		fmt.Println("invalid share url")
+		return ""
+	}
+	return u.Query().Get("code")
+}
+
+func (d *Cloud189) transfer(dstDir model.Obj, shareID int64) error {
+	taskInfos := []base.Json{
+		{
+			"fileId":   dstDir.GetID(),
+			"fileName": dstDir.GetName(),
+			"isFolder": 1,
+		},
+	}
+	taskInfosBytes, err := utils.Json.Marshal(taskInfos)
+	form := map[string]string{
+		"type":           "SHARE_SAVE",
+		"targetFolderId": dstDir.GetID(),
+		"taskInfos":      string(taskInfosBytes),
+		"shareId":        fmt.Sprintf("%d", shareID),
+	}
+	_, err = d.request("https://cloud.189.cn/api/open/batch/createBatchTask.action", http.MethodPost, func(req *resty.Request) {
+		req.SetFormData(form)
+	}, nil)
+	return err
 }

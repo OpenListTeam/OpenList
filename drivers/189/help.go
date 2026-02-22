@@ -23,7 +23,7 @@ import (
 )
 
 func random() string {
-	return fmt.Sprintf("0.%17v", myrand.Rand.Int63n(100000000000000000))
+	return fmt.Sprintf("0.%017d", myrand.Rand.Int63n(1e17))
 }
 
 func RsaEncode(origData []byte, j_rsakey string, hex bool) string {

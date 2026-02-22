@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -483,4 +484,116 @@ func EncryptMd5(originalMd5 string) string {
 		}
 	}
 	return out.String()
+}
+
+func (d *BaiduNetdisk) getSurl(URL string) string {
+	u, err := url.Parse(URL)
+	if err != nil {
+		return ""
+	}
+
+	path := u.Path
+
+	if !strings.HasPrefix(path, "/s/") {
+		return ""
+	}
+
+	codeWithPrefix := strings.TrimPrefix(path, "/s/")
+
+	if len(codeWithPrefix) == 0 || codeWithPrefix[0] != '1' {
+		return ""
+	}
+	code := codeWithPrefix[1:]
+
+	return code
+}
+
+func (d *BaiduNetdisk) getSekey(surl, pwd string) (string, error) {
+	if surl == "" {
+		return "", fmt.Errorf("empty surl")
+	}
+
+	params := map[string]string{
+		"method": "verify",
+		"surl":   surl,
+	}
+	form := map[string]string{
+		"pwd": pwd,
+	}
+
+	var resp struct {
+		Errno  int    `json:"errno"`
+		Randsk string `json:"randsk"`
+	}
+
+	_, err := d.postForm("/xpan/share", params, form, &resp)
+	if err != nil {
+		return "", err
+	}
+	if resp.Errno != 0 {
+		return "", fmt.Errorf("invalid params，errno=%d", resp.Errno)
+	}
+
+	sekey, err := url.QueryUnescape(resp.Randsk)
+	if err != nil {
+		sekey = resp.Randsk
+	}
+	return sekey, nil
+}
+
+func (d *BaiduNetdisk) getFileInfo(surl, sekey string) (int64, int64, *[]FsID, error) {
+	params := map[string]string{
+		"method":   "list",
+		"shorturl": surl,
+		"page":     "1",
+		"num":      "100",
+		"root":     "1",
+		"fid":      "0",
+		"sekey":    sekey,
+	}
+
+	resp := &ShareFileListResp{}
+
+	_, err := d.get("/xpan/share", params, &resp)
+	if err != nil {
+		return -1, -1, nil, err
+	}
+	if resp.Errno != 0 {
+		return -1, -1, nil, fmt.Errorf("get share list failed, errno=%d", resp.Errno)
+	}
+
+	fsidList := make([]FsID, 0, len(resp.List))
+	for _, it := range resp.List {
+		fsidList = append(fsidList, FsID{FsID: it.FsID})
+	}
+	return resp.ShareID, resp.Uk, &fsidList, nil
+}
+
+type FsID struct {
+	FsID string `json:"fs_id"`
+}
+
+func (d *BaiduNetdisk) transfer(shareID, uk int64, fsidList *[]FsID, sekey string) error {
+	params := map[string]string{
+		"method":  "transfer",
+		"shareid": strconv.FormatInt(shareID, 10),
+		"from":    strconv.FormatInt(uk, 10),
+	}
+
+	ids := make([]string, 0, len(*fsidList))
+	for _, fs := range *fsidList {
+		ids = append(ids, fs.FsID)
+	}
+	fsidListStr := "[" + strings.Join(ids, ",") + "]"
+
+	form := map[string]string{
+		"sekey":    sekey,
+		"fsidlist": fsidListStr,
+		"path":     "",
+	}
+	var resp any
+	if _, err := d.postForm("/xpan/share", params, form, resp); err != nil {
+		return err
+	}
+	return nil
 }

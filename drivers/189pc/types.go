@@ -360,7 +360,9 @@ func (f *OldCommitUploadFileResp) toFile() *Cloud189File {
 }
 
 type CreateBatchTaskResp struct {
-	TaskID string `json:"taskId"`
+	ResCode    int    `json:"res_code"`
+	TaskID     string `json:"taskId"`
+	ResMessage string `json:"res_message"`
 }
 
 type BatchTaskStateResp struct {
@@ -371,6 +373,7 @@ type BatchTaskStateResp struct {
 	SuccessedCount      int     `json:"successedCount"`
 	SuccessedFileIDList []int64 `json:"successedFileIdList"`
 	TaskID              string  `json:"taskId"`
+	ResMessage          string  `json:"res_message"`
 	TaskStatus          int     `json:"taskStatus"` //1 初始化 2 存在冲突 3 执行中，4 完成
 }
 
@@ -426,4 +429,14 @@ type CapacityResp struct {
 		UsedSize  int64 `json:"usedSize"`
 	} `json:"familyCapacityInfo"`
 	TotalSize uint64 `json:"totalSize"`
+}
+
+type GetSharedInfoResp struct {
+	ResCode    int    `json:"res_code"`
+	ResMessage string `json:"res_message"`
+	AccessCode string `json:"accessCode"`
+	ShareID    int64  `json:"shareId"`
+	ExpireTime int64  `json:"expireTime"`
+	FileName   string `json:"fileName"`
+	FileId     string `json:"fileId"`
 }

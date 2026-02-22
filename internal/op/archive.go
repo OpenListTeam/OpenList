@@ -21,7 +21,6 @@ import (
 	gocache "github.com/OpenListTeam/go-cache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/time/rate"
 )
 
 var (
@@ -490,7 +489,7 @@ func InternalExtract(ctx context.Context, storage driver.Driver, path string, ar
 	return &streamWithParent{rc: rc, parents: ss}, size, nil
 }
 
-func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string, args model.ArchiveDecompressArgs, lazyCache ...bool) error {
+func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string, args model.ArchiveDecompressArgs) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
@@ -500,9 +499,16 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 	if err != nil {
 		return errors.WithMessage(err, "failed to get src object")
 	}
+	err = MakeDir(ctx, storage, dstDirPath)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to make dir [%s]", dstDirPath)
+	}
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed to get dst dir")
+	}
+	if model.ObjHasMask(dstDir, model.NoWrite) {
+		return errors.WithStack(errs.PermissionDenied)
 	}
 
 	var newObjs []model.Obj
@@ -518,24 +524,26 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 						}
 					}
 				}
-			} else if !utils.IsBool(lazyCache...) {
+			} else {
 				Cache.DeleteDirectory(storage, dstDirPath)
 			}
 		}
 	case driver.ArchiveDecompress:
 		err = s.ArchiveDecompress(ctx, srcObj, dstDir, args)
-		if err == nil && !utils.IsBool(lazyCache...) {
+		if err == nil {
 			Cache.DeleteDirectory(storage, dstDirPath)
 		}
 	default:
-		return errs.NotImplement
+		return errors.WithStack(errs.NotImplement)
 	}
-	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+	if err == nil && ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
 		onlyList := false
 		targetPath := dstDirPath
-		if len(newObjs) == 1 && newObjs[0].IsDir() {
+		if newObjs != nil && len(newObjs) == 1 && newObjs[0].IsDir() {
 			targetPath = stdpath.Join(dstDirPath, newObjs[0].GetName())
-		} else if len(newObjs) == 1 && !newObjs[0].IsDir() {
+		} else if newObjs != nil && !utils.SliceMeet(newObjs, nil, func(item model.Obj, _ any) bool {
+			return item.IsDir()
+		}) {
 			onlyList = true
 		} else if args.PutIntoNewDir {
 			targetPath = stdpath.Join(dstDirPath, strings.TrimSuffix(srcObj.GetName(), stdpath.Ext(srcObj.GetName())))
@@ -543,18 +551,11 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 			targetPath = stdpath.Join(dstDirPath, innerBase)
 			dstObj, e := Get(ctx, storage, targetPath)
 			onlyList = e != nil || !dstObj.IsDir()
-		}
-		if onlyList {
-			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
-		} else {
-			var limiter *rate.Limiter
-			if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
-				if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
-					limiter = rate.NewLimiter(rate.Limit(f), 1)
-				}
+			if onlyList {
+				targetPath = dstDirPath
 			}
-			go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
 		}
+		go objsUpdateHook(ctx, storage, targetPath, !onlyList)
 	}
 	return errors.WithStack(err)
 }
