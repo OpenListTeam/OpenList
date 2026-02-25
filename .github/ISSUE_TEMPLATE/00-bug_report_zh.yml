@@ -35,7 +35,7 @@ body:
         - label: |
             我已确认这个问题在最新版本中没有被修复。
         - label: |
-            我没有阅读这个清单，只是闭眼选中了所有的复选框，请关闭这个 Issue
+            我没有阅读这个清单，只是闭眼选中了所有的复选框，请关闭这个 Issue 。
   - type: input
     id: version
     attributes:

@@ -43,8 +43,8 @@ jobs:
             const confirmHasRead = /- \[ \] (?!我没有阅读这个清单|I have not read these checkboxes)/.test(issueBody);
             const confirmNotRead = /- \[[xX]\] (?:我没有阅读这个清单|I have not read these checkboxes)/.test(issueBody);
             if (confirmNotRead) {
-              comment = "你的 Issue 不符合提交规则。请先阅读相关规范后再重新提交。当前 Issue 将被自动关闭。如需继续提交，请确认已了解规则后重新打开或创建新的 Issue。\n";
-              comment += "Your issue does not comply with the submission rules. Please read the guidelines before submitting again. This issue will be automatically closed. If you wish to proceed, please confirm that you have reviewed the rules before reopening or creating a new issue.\n";
+              comment = "⚠️ 你的 Issue 不符合提交规则。请先阅读相关规范后再重新提交。当前 Issue 将被自动关闭。如需继续提交，请确认已了解规则后重新打开或创建新的 Issue。\n";
+              comment += "⚠️ Your issue does not comply with the submission rules. Please read the guidelines before submitting again. This issue will be automatically closed. If you wish to proceed, please confirm that you have reviewed the rules before reopening or creating a new issue.\n";
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: context.issue.number,
