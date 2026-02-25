@@ -57,6 +57,7 @@ jobs:
                 state_reason: 'not_planned',
                 labels: ['invalid']
               });
+              return;
             }
             if (confirmHasRead) {
               comment = "感谢您联系OpenList。我们会尽快回复您。\n";
