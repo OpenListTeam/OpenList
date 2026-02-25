@@ -21,8 +21,8 @@ jobs:
           script: |
             let comment = "";
             const issueTitle = context.payload.issue.title || "";
-            const didNotEdited = /(请修改标题|Please modify the title)/i.test(issueTitle);
-            if (didNotEdited) {
+            const titleNotEdited = /(请修改标题|Please modify the title)/i.test(issueTitle);
+            if (titleNotEdited) {
               comment = "⚠️ 请修改标题以更好地描述您的问题或需求，并删除示例提示。当前 Issue 将被自动关闭。如需继续提交，请创建新的 Issue。\n";
               comment += "⚠️ Please modify the title to better describe your issue or request, and remove the example prompt. This issue will be automatically closed. If you wish to proceed, please create a new issue.\n";
               await github.rest.issues.createComment({
