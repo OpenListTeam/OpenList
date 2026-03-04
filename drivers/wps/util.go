@@ -274,19 +274,29 @@ func (d *Wps) getGroups(ctx context.Context) ([]Group, error) {
 
 func (d *Wps) getFiles(ctx context.Context, groupID, parentID int64) ([]FileInfo, error) {
 	var resp filesResp
-	url := fmt.Sprintf("%s/api/v5/groups/%d/files", d.driveHost()+d.drivePrefix(), groupID)
-	r, err := d.request(ctx).
-		SetQueryParam("parentid", strconv.FormatInt(parentID, 10)).
-		SetResult(&resp).
-		SetError(&resp).
-		Get(url)
-	if err != nil {
-		return nil, err
+	var files []FileInfo
+	next_offset := 0
+	for range 50 {
+		url := fmt.Sprintf("%s/api/v5/groups/%d/files", d.driveHost()+d.drivePrefix(), groupID)
+		r, err := d.request(ctx).
+			SetQueryParam("parentid", strconv.FormatInt(parentID, 10)).
+			SetQueryParam("offset", fmt.Sprint(next_offset)).
+			SetResult(&resp).
+			SetError(&resp).
+			Get(url)
+		if err != nil {
+			return nil, err
+		}
+		if r != nil && r.IsError() {
+			return nil, fmt.Errorf("http error: %d", r.StatusCode())
+		}
+		files = append(files, resp.Files...)
+		if resp.NextOffset == -1 {
+			break
+		}
+		next_offset = resp.NextOffset
 	}
-	if r != nil && r.IsError() {
-		return nil, fmt.Errorf("http error: %d", r.StatusCode())
-	}
-	return resp.Files, nil
+	return files, nil
 }
 
 func parseTime(v int64) time.Time {

@@ -13,7 +13,7 @@ body:
     attributes:
       label: Please confirm the following
       description: |
-        You must read and check all the following, otherwise your issue will definitely be closed directly.
+        You must read, check, confirm, and agree to all the following, otherwise your issue will definitely be closed directly.
         Or you can go to the [discussions](https://github.com/OpenListTeam/OpenList/discussions).
       options:
         - label: |
@@ -35,8 +35,7 @@ body:
         - label: |
             I confirm this issue is not fixed in the latest version.
         - label: |
-            I have not read these checkboxes and therefore I just ticked them all, Please close this issue
-
+            I have not read these checkboxes and therefore I just ticked them all, Please close this issue.
   - type: input
     id: version
     attributes:

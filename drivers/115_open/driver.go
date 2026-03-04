@@ -176,7 +176,7 @@ func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 	}
 	_, err := d.client.UpdateFile(ctx, &sdk.UpdateFileReq{
 		FileID:  srcObj.GetID(),
-		FileNma: newName,
+		FileName: newName,
 	})
 	if err != nil {
 		return nil, err
