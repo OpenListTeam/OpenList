@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/OpenListTeam/go-cache"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/pkg/errors"
 )
@@ -36,6 +37,13 @@ var (
 	DefaultLockDuration   = time.Minute * 5
 	DefaultMaxAuthRetries = 5
 )
+
+type WebAuthnCredentialRecord struct {
+	Credential  webauthn.Credential `json:"credential"`
+	ResidentKey string              `json:"residentKey,omitempty"`
+	CreatorIP   string              `json:"creatorIP,omitempty"`
+	CreatorUA   string              `json:"creatorUA,omitempty"`
+}
 
 type User struct {
 	ID       uint   `json:"id" gorm:"primaryKey"`                      // unique key
@@ -250,12 +258,57 @@ func (u *User) WebAuthnDisplayName() string {
 }
 
 func (u *User) WebAuthnCredentials() []webauthn.Credential {
-	var res []webauthn.Credential
-	err := json.Unmarshal([]byte(u.Authn), &res)
-	if err != nil {
-		fmt.Println(err)
+	records := u.WebAuthnCredentialRecords()
+	res := make([]webauthn.Credential, 0, len(records))
+	for i := range records {
+		res = append(res, records[i].Credential)
 	}
 	return res
+}
+
+func (u *User) WebAuthnCredentialRecords() []WebAuthnCredentialRecord {
+	var records []WebAuthnCredentialRecord
+	err := json.Unmarshal([]byte(u.Authn), &records)
+	if err == nil {
+		recordParsed := false
+		for i := range records {
+			if len(records[i].Credential.ID) > 0 {
+				recordParsed = true
+				if records[i].ResidentKey == "" {
+					records[i].ResidentKey = string(protocol.ResidentKeyRequirementDiscouraged)
+				}
+			}
+		}
+		if recordParsed || u.Authn == "[]" || u.Authn == "" {
+			return records
+		}
+	}
+
+	var credentials []webauthn.Credential
+	err = json.Unmarshal([]byte(u.Authn), &credentials)
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
+
+	records = make([]WebAuthnCredentialRecord, 0, len(credentials))
+	for i := range credentials {
+		records = append(records, WebAuthnCredentialRecord{
+			Credential:  credentials[i],
+			ResidentKey: string(protocol.ResidentKeyRequirementDiscouraged),
+		})
+	}
+	return records
+}
+
+func (u *User) HasLegacyWebAuthnCredential() bool {
+	records := u.WebAuthnCredentialRecords()
+	for i := range records {
+		if records[i].ResidentKey == string(protocol.ResidentKeyRequirementDiscouraged) {
+			return true
+		}
+	}
+	return false
 }
 
 func (u *User) WebAuthnIcon() string {

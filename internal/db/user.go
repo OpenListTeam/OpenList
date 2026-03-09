@@ -68,13 +68,18 @@ func UpdateAuthn(userID uint, authn string) error {
 	return db.Model(&model.User{ID: userID}).Update("authn", authn).Error
 }
 
-func RegisterAuthn(u *model.User, credential *webauthn.Credential) error {
+func RegisterAuthn(u *model.User, credential *webauthn.Credential, residentKey, creatorIP, creatorUA string) error {
 	if u == nil {
 		return errors.New("user is nil")
 	}
-	exists := u.WebAuthnCredentials()
+	exists := u.WebAuthnCredentialRecords()
 	if credential != nil {
-		exists = append(exists, *credential)
+		exists = append(exists, model.WebAuthnCredentialRecord{
+			Credential:  *credential,
+			ResidentKey: residentKey,
+			CreatorIP:   creatorIP,
+			CreatorUA:   creatorUA,
+		})
 	}
 	res, err := utils.Json.Marshal(exists)
 	if err != nil {
@@ -84,9 +89,9 @@ func RegisterAuthn(u *model.User, credential *webauthn.Credential) error {
 }
 
 func RemoveAuthn(u *model.User, id string) error {
-	exists := u.WebAuthnCredentials()
+	exists := u.WebAuthnCredentialRecords()
 	for i := 0; i < len(exists); i++ {
-		idEncoded := base64.StdEncoding.EncodeToString(exists[i].ID)
+		idEncoded := base64.StdEncoding.EncodeToString(exists[i].Credential.ID)
 		if idEncoded == id {
 			exists[len(exists)-1], exists[i] = exists[i], exists[len(exists)-1]
 			exists = exists[:len(exists)-1]
@@ -99,4 +104,18 @@ func RemoveAuthn(u *model.User, id string) error {
 		return err
 	}
 	return UpdateAuthn(u.ID, string(res))
+}
+
+func HasLegacyAuthnCredentials() (bool, error) {
+	var users []model.User
+	err := db.Select("id", "authn").Where("authn <> '' AND authn <> '[]'").Find(&users).Error
+	if err != nil {
+		return false, err
+	}
+	for i := range users {
+		if users[i].HasLegacyWebAuthnCredential() {
+			return true, nil
+		}
+	}
+	return false, nil
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
@@ -19,32 +18,50 @@ import (
 )
 
 func BeginAuthnLogin(c *gin.Context) {
-	enabled := setting.GetBool(conf.WebauthnLoginEnabled)
-	if !enabled {
-		common.ErrorStrResp(c, "WebAuthn is not enabled", 403)
-		return
-	}
 	authnInstance, err := authn.NewAuthnInstance(c)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-
+	allowCredentials := c.DefaultQuery("allowCredentials", "")
+	username := c.Query("username")
 	var (
-		options     *protocol.CredentialAssertion
-		sessionData *webauthn.SessionData
+		options         *protocol.CredentialAssertion
+		sessionData     *webauthn.SessionData
+		requireUsername bool
 	)
-	if username := c.Query("username"); username != "" {
-		var user *model.User
-		user, err = db.GetUserByName(username)
-		if err == nil {
-			options, sessionData, err = authnInstance.BeginLogin(user)
+	switch allowCredentials {
+	case "yes":
+		requireUsername = true
+		if username != "" {
+			var user *model.User
+			user, err = db.GetUserByName(username)
+			if err == nil {
+				options, sessionData, err = authnInstance.BeginLogin(user)
+			}
 		}
-	} else { // client-side discoverable login
+	case "no":
 		options, sessionData, err = authnInstance.BeginDiscoverableLogin()
+	default:
+		if username != "" {
+			var user *model.User
+			user, err = db.GetUserByName(username)
+			if err == nil {
+				options, sessionData, err = authnInstance.BeginLogin(user)
+			}
+		} else { // client-side discoverable login
+			requireUsername, err = db.HasLegacyAuthnCredentials()
+			if err == nil && !requireUsername {
+				options, sessionData, err = authnInstance.BeginDiscoverableLogin()
+			}
+		}
 	}
 	if err != nil {
 		common.ErrorResp(c, err, 400)
+		return
+	}
+	if requireUsername && username == "" {
+		common.SuccessResp(c, gin.H{"require_username": true})
 		return
 	}
 
@@ -54,17 +71,22 @@ func BeginAuthnLogin(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c, gin.H{
-		"options": options,
-		"session": val,
+		"options":          options,
+		"session":          val,
+		"require_username": requireUsername,
 	})
 }
 
-func FinishAuthnLogin(c *gin.Context) {
-	enabled := setting.GetBool(conf.WebauthnLoginEnabled)
-	if !enabled {
-		common.ErrorStrResp(c, "WebAuthn is not enabled", 403)
+func LegacyAuthnStatus(c *gin.Context) {
+	hasLegacy, err := db.HasLegacyAuthnCredentials()
+	if err != nil {
+		common.ErrorResp(c, err, 400)
 		return
 	}
+	common.SuccessResp(c, gin.H{"has_legacy": hasLegacy})
+}
+
+func FinishAuthnLogin(c *gin.Context) {
 	authnInstance, err := authn.NewAuthnInstance(c)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
@@ -120,19 +142,21 @@ func FinishAuthnLogin(c *gin.Context) {
 }
 
 func BeginAuthnRegistration(c *gin.Context) {
-	enabled := setting.GetBool(conf.WebauthnLoginEnabled)
-	if !enabled {
-		common.ErrorStrResp(c, "WebAuthn is not enabled", 403)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	if user.HasLegacyWebAuthnCredential() && c.Query("upgrade") != "yes" {
+		common.ErrorStrResp(c, "legacy security key detected, please upgrade or delete it first", 400)
 		return
 	}
-	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 
 	authnInstance, err := authn.NewAuthnInstance(c)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 	}
 
-	options, sessionData, err := authnInstance.BeginRegistration(user)
+	options, sessionData, err := authnInstance.BeginRegistration(
+		user,
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
+	)
 
 	if err != nil {
 		common.ErrorResp(c, err, 400)
@@ -150,11 +174,6 @@ func BeginAuthnRegistration(c *gin.Context) {
 }
 
 func FinishAuthnRegistration(c *gin.Context) {
-	enabled := setting.GetBool(conf.WebauthnLoginEnabled)
-	if !enabled {
-		common.ErrorStrResp(c, "WebAuthn is not enabled", 403)
-		return
-	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	sessionDataString := c.GetHeader("Session")
 
@@ -182,7 +201,13 @@ func FinishAuthnRegistration(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	err = db.RegisterAuthn(user, credential)
+	err = db.RegisterAuthn(
+		user,
+		credential,
+		string(protocol.ResidentKeyRequirementRequired),
+		c.ClientIP(),
+		c.Request.UserAgent(),
+	)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -220,17 +245,35 @@ func DeleteAuthnLogin(c *gin.Context) {
 }
 
 func GetAuthnCredentials(c *gin.Context) {
-	type WebAuthnCredentials struct {
+	type PasskeyCredentials struct {
 		ID          []byte `json:"id"`
 		FingerPrint string `json:"fingerprint"`
+		CreatorIP   string `json:"creator_ip"`
+		CreatorUA   string `json:"creator_ua"`
+		IsLegacy    bool   `json:"is_legacy"`
 	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	credentials := user.WebAuthnCredentials()
-	res := make([]WebAuthnCredentials, 0, len(credentials))
+	records := user.WebAuthnCredentialRecords()
+	res := make([]PasskeyCredentials, 0, len(credentials))
 	for _, v := range credentials {
-		credential := WebAuthnCredentials{
+		var creatorIP string
+		var creatorUA string
+		var isLegacy bool
+		for i := range records {
+			if string(records[i].Credential.ID) == string(v.ID) {
+				creatorIP = records[i].CreatorIP
+				creatorUA = records[i].CreatorUA
+				isLegacy = records[i].ResidentKey == string(protocol.ResidentKeyRequirementDiscouraged)
+				break
+			}
+		}
+		credential := PasskeyCredentials{
 			ID:          v.ID,
 			FingerPrint: fmt.Sprintf("% X", v.Authenticator.AAGUID),
+			CreatorIP:   creatorIP,
+			CreatorUA:   creatorUA,
+			IsLegacy:    isLegacy,
 		}
 		res = append(res, credential)
 	}
