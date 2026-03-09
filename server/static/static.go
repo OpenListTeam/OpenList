@@ -15,7 +15,9 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	internalfs "github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/public"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -214,12 +216,46 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	}
 
 	utils.Log.Debug("Setting up catch-all route...")
-	noRoute(func(c *gin.Context) {
-		// 检查是否是虚拟主机的 Web 托管请求
-		if vhostVal := c.Request.Context().Value(conf.VirtualHostKey); vhostVal != nil {
-			vhost := vhostVal.(*model.VirtualHost)
-			if vhost.WebHosting {
-				if handleWebHosting(c, vhost) {
+
+	// virtualHostHandler 处理虚拟主机 Web 托管，以及默认的前端 SPA 路由
+	virtualHostHandler := func(c *gin.Context) {
+		// 直接从 Host 头解析域名，检查是否匹配虚拟主机的 Web 托管请求
+		rawHost := c.Request.Host
+		domain := stripHostPort(rawHost)
+		fmt.Printf("[VirtualHost] handler triggered: method=%s path=%s host=%q domain=%q\n",
+			c.Request.Method, c.Request.URL.Path, rawHost, domain)
+		utils.Log.Infof("[VirtualHost] handler triggered: method=%s path=%s host=%q domain=%q",
+			c.Request.Method, c.Request.URL.Path, rawHost, domain)
+		if domain != "" {
+			vhost, err := op.GetVirtualHostByDomain(domain)
+			if err != nil {
+				utils.Log.Infof("[VirtualHost] domain=%q not found in db: %v", domain, err)
+			} else {
+			utils.Log.Infof("[VirtualHost] domain=%q matched vhost: id=%d enabled=%v web_hosting=%v path=%q",
+					domain, vhost.ID, vhost.Enabled, vhost.WebHosting, vhost.Path)
+			if vhost.Enabled && vhost.WebHosting {
+					// Web 托管模式：直接返回文件内容
+					// 注入 guest 用户到 context，供 internalfs.Get/Link 权限检查使用
+					guest, guestErr := op.GetGuest()
+					if guestErr != nil {
+						utils.Log.Errorf("[VirtualHost] failed to get guest user: %v", guestErr)
+						c.Status(http.StatusInternalServerError)
+						return
+					}
+					common.GinWithValue(c, conf.UserKey, guest)
+					if handleWebHosting(c, vhost) {
+						return
+					}
+			} else if vhost.Enabled && !vhost.WebHosting {
+					// 路径重映射模式（伪静态）：直接返回正常的 SPA 页面
+					// 地址栏保持不变，面包屑显示用户访问的路径
+					// 实际的路径映射由后端 API（fs/list、fs/get）在处理请求时完成
+					utils.Log.Infof("[VirtualHost] path remapping mode: serving SPA for domain=%q path=%q", domain, c.Request.URL.Path)
+					c.Header("Content-Type", "text/html")
+					c.Status(200)
+					_, _ = c.Writer.WriteString(conf.IndexHtml)
+					c.Writer.Flush()
+					c.Writer.WriteHeaderNow()
 					return
 				}
 			}
@@ -238,7 +274,14 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		}
 		c.Writer.Flush()
 		c.Writer.WriteHeaderNow()
-	})
+	}
+
+	// 显式注册根路径路由，确保 GET / 能被正确处理
+	// gin 的 NoRoute 不会触发已注册路由前缀下的 GET /
+	r.GET("/", virtualHostHandler)
+	r.POST("/", virtualHostHandler)
+	// NoRoute 处理其他所有未匹配路径（如 /@manage、/d/... 等 SPA 路由）
+	noRoute(virtualHostHandler)
 }
 
 // handleWebHosting 处理虚拟主机的 Web 托管请求
@@ -246,39 +289,48 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 // 返回 true 表示已处理，false 表示未处理（继续走默认逻辑）
 func handleWebHosting(c *gin.Context, vhost *model.VirtualHost) bool {
 	if c.Request.Method != "GET" && c.Request.Method != "HEAD" {
+		utils.Log.Debugf("[VirtualHost] skip: method=%s not allowed for web hosting", c.Request.Method)
 		return false
 	}
 
 	reqPath := c.Request.URL.Path
 	// 将请求路径映射到虚拟主机的根目录
 	filePath := stdpath.Join(vhost.Path, reqPath)
+	utils.Log.Infof("[VirtualHost] handleWebHosting: reqPath=%q -> filePath=%q", reqPath, filePath)
 
 	// 尝试获取文件
 	obj, err := internalfs.Get(c.Request.Context(), filePath, &internalfs.GetArgs{NoLog: true})
 	if err == nil && !obj.IsDir() {
 		// 找到文件，直接代理返回
+		utils.Log.Infof("[VirtualHost] serving file: %q", filePath)
 		serveWebHostingFile(c, filePath, obj.GetName())
 		return true
 	}
+	utils.Log.Infof("[VirtualHost] file not found or is dir at %q: %v", filePath, err)
 
 	// 如果是目录或未找到，尝试 index.html
 	indexPath := stdpath.Join(filePath, "index.html")
 	obj, err = internalfs.Get(c.Request.Context(), indexPath, &internalfs.GetArgs{NoLog: true})
 	if err == nil && !obj.IsDir() {
+		utils.Log.Infof("[VirtualHost] serving index.html: %q", indexPath)
 		serveWebHostingFile(c, indexPath, "index.html")
 		return true
 	}
+	utils.Log.Infof("[VirtualHost] index.html not found at %q: %v", indexPath, err)
 
 	// 尝试 <path>.html（SPA 友好路由）
 	if stdpath.Ext(reqPath) == "" && reqPath != "/" {
 		htmlPath := stdpath.Join(vhost.Path, reqPath+".html")
 		obj, err = internalfs.Get(c.Request.Context(), htmlPath, &internalfs.GetArgs{NoLog: true})
 		if err == nil && !obj.IsDir() {
+			utils.Log.Infof("[VirtualHost] serving .html fallback: %q", htmlPath)
 			serveWebHostingFile(c, htmlPath, stdpath.Base(htmlPath))
 			return true
 		}
+		utils.Log.Infof("[VirtualHost] .html fallback not found at %q: %v", htmlPath, err)
 	}
 
+	utils.Log.Infof("[VirtualHost] no file matched for reqPath=%q, falling through", reqPath)
 	return false
 }
 
@@ -295,20 +347,48 @@ func serveWebHostingFile(c *gin.Context, filePath, filename string) {
 	}
 	defer link.Close()
 
-	// 根据文件扩展名覆盖 Content-Type（确保 HTML 等文件以正确类型返回）
-	// 注意：必须在 Proxy 调用之前设置，Proxy 内部的 attachHeader 会再次设置，
-	// 但对于 URL 透明代理模式，响应头来自上游，我们通过 link.Header 注入覆盖
+	// 根据文件扩展名确定正确的 Content-Type
 	ext := strings.ToLower(stdpath.Ext(filename))
 	contentType := mimeTypeByExt(ext)
+
+	// 使用包装的 ResponseWriter，在 WriteHeader 时强制覆盖 Content-Type 和 Content-Disposition
+	// 这样即使 Proxy 内部的 maps.Copy 将上游响应头复制进来，我们也能在最终发送前覆盖
+	wrapped := &forceContentTypeWriter{
+		ResponseWriter:  c.Writer,
+		contentType:     contentType,
+		contentDisp:     "inline",
+	}
+
+	// 同时注入到 link.Header，供 attachHeader 路径（RangeReader/Concurrency 模式）使用
 	if link.Header == nil {
 		link.Header = make(http.Header)
 	}
 	link.Header.Set("Content-Type", contentType)
+	link.Header.Set("Content-Disposition", "inline")
 
 	// 使用通用代理函数处理文件传输
-	if err := common.Proxy(c.Writer, c.Request, link, file); err != nil {
+	if err := common.Proxy(wrapped, c.Request, link, file); err != nil {
 		utils.Log.Errorf("web hosting: proxy error for %s: %v", filePath, err)
 	}
+}
+
+// forceContentTypeWriter 包装 http.ResponseWriter，
+// 在 WriteHeader 时强制覆盖 Content-Type 和 Content-Disposition，
+// 确保 HTML 等文件以正确类型返回而不是被浏览器下载
+type forceContentTypeWriter struct {
+	http.ResponseWriter
+	contentType string
+	contentDisp string
+}
+
+func (w *forceContentTypeWriter) WriteHeader(statusCode int) {
+	w.ResponseWriter.Header().Set("Content-Type", w.contentType)
+	w.ResponseWriter.Header().Set("Content-Disposition", w.contentDisp)
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *forceContentTypeWriter) Write(b []byte) (int, error) {
+	return w.ResponseWriter.Write(b)
 }
 
 // mimeTypeByExt 根据文件扩展名返回 MIME 类型
@@ -347,4 +427,15 @@ func mimeTypeByExt(ext string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+// stripHostPort 去掉 host 中的端口号，返回纯域名
+func stripHostPort(host string) string {
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		// 确保不是 IPv6 地址（IPv6 地址用 [] 包裹）
+		if !strings.Contains(host, "[") {
+			return host[:idx]
+		}
+	}
+	return host
 }

@@ -192,4 +192,5 @@ const (
 	SharingIDKey
 	SkipHookKey
 	VirtualHostKey
+	VhostPrefixKey
 )
