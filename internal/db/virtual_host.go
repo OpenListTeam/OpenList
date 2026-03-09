@@ -8,7 +8,7 @@ import (
 func GetVirtualHostByDomain(domain string) (*model.VirtualHost, error) {
 	var v model.VirtualHost
 	if err := db.Where("domain = ?", domain).First(&v).Error; err != nil {
-		return nil, errors.Wrapf(err, "failed select virtual host")
+		return nil, errors.Wrapf(err, "failed to select virtual host")
 	}
 	return &v, nil
 }
