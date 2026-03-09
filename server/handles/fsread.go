@@ -2,6 +2,7 @@ package handles
 
 import (
 	"fmt"
+	"net"
 	stdpath "path"
 	"strings"
 	"time"
@@ -490,11 +491,10 @@ func stripVhostPrefix(c *gin.Context, path string) string {
 }
 
 // stripHostPortForVhost 去掉 host 中的端口号，返回纯域名
+// 使用 net.SplitHostPort 以正确处理 IPv6 地址（如 [::1]:5244）
 func stripHostPortForVhost(host string) string {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		if !strings.Contains(host, "[") {
-			return host[:idx]
-		}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
 	}
 	return host
 }
