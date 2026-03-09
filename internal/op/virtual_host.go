@@ -17,24 +17,24 @@ var vhostCache = cache.NewMemCache(cache.WithShards[*model.VirtualHost](2))
 func GetVirtualHostByDomain(domain string) (*model.VirtualHost, error) {
 	if v, ok := vhostCache.Get(domain); ok {
 		if v == nil {
-			utils.Log.Infof("[VirtualHost] cache hit (nil) for domain=%q", domain)
+			utils.Log.Debugf("[VirtualHost] cache hit (nil) for domain=%q", domain)
 			return nil, errors.New("virtual host not found")
 		}
-		utils.Log.Infof("[VirtualHost] cache hit for domain=%q id=%d", domain, v.ID)
+		utils.Log.Debugf("[VirtualHost] cache hit for domain=%q id=%d", domain, v.ID)
 		return v, nil
 	}
-	utils.Log.Infof("[VirtualHost] cache miss for domain=%q, querying db...", domain)
+	utils.Log.Debugf("[VirtualHost] cache miss for domain=%q, querying db...", domain)
 	v, err := db.GetVirtualHostByDomain(domain)
 	if err != nil {
 		if errors.Is(errors.Cause(err), gorm.ErrRecordNotFound) {
-			utils.Log.Infof("[VirtualHost] domain=%q not found in db, caching nil", domain)
+			utils.Log.Debugf("[VirtualHost] domain=%q not found in db, caching nil", domain)
 			vhostCache.Set(domain, nil, cache.WithEx[*model.VirtualHost](time.Minute*5))
 			return nil, errors.New("virtual host not found")
 		}
 		utils.Log.Errorf("[VirtualHost] db error for domain=%q: %v", domain, err)
 		return nil, err
 	}
-	utils.Log.Infof("[VirtualHost] db found domain=%q id=%d enabled=%v web_hosting=%v", domain, v.ID, v.Enabled, v.WebHosting)
+	utils.Log.Debugf("[VirtualHost] db found domain=%q id=%d enabled=%v web_hosting=%v", domain, v.ID, v.Enabled, v.WebHosting)
 	vhostCache.Set(domain, v, cache.WithEx[*model.VirtualHost](time.Hour))
 	return v, nil
 }
