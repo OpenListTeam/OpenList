@@ -1,6 +1,7 @@
 package middlewares
 
 import (
+	"net"
 	stdpath "path"
 	"strings"
 
@@ -48,14 +49,14 @@ func applyDownVhostPathMapping(c *gin.Context, reqPath string) string {
 	return mapped
 }
 
-// stripDownHostPort 去掉 host 中的端口号，返回纯域名
+// stripDownHostPort removes the port from a host string (supports IPv4, IPv6, and bracketed IPv6).
 func stripDownHostPort(host string) string {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		if !strings.Contains(host, "[") {
-			return host[:idx]
-		}
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		// No port present; return host as-is
+		return host
 	}
-	return host
+	return h
 }
 
 func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
