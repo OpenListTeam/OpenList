@@ -161,6 +161,13 @@ const (
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
+
+	// media
+	MediaTMDBKey          = "media_tmdb_key"
+	MediaDiscogsToken     = "media_discogs_token"
+	MediaThumbnailMode    = "media_thumbnail_mode"
+	MediaThumbnailPath    = "media_thumbnail_path"
+	MediaStoreThumbnail   = "media_store_thumbnail"
 )
 
 const (
