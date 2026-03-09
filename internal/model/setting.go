@@ -13,6 +13,7 @@ const (
 	S3
 	FTP
 	TRAFFIC
+	MEDIA
 )
 
 const (

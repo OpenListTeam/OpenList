@@ -64,6 +64,7 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/quic-go/quic-go v0.54.1
 	github.com/rclone/rclone v1.70.3
+	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	github.com/shirou/gopsutil/v4 v4.25.5
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/afero v1.14.0

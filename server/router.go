@@ -185,6 +185,18 @@ func admin(g *gin.RouterGroup) {
 	scan.POST("/start", handles.StartManualScan)
 	scan.POST("/stop", handles.StopManualScan)
 	scan.GET("/progress", handles.GetManualScanProgress)
+
+	// 媒体库管理
+	mediaAdmin := g.Group("/media")
+	mediaAdmin.GET("/config/list", handles.ListMediaConfigs)
+	mediaAdmin.POST("/config/save", handles.SaveMediaConfig)
+	mediaAdmin.GET("/items", handles.ListMediaItemsAdmin)
+	mediaAdmin.POST("/items/update", handles.UpdateMediaItemAdmin)
+	mediaAdmin.POST("/items/delete", handles.DeleteMediaItemAdmin)
+	mediaAdmin.POST("/scan/start", handles.StartMediaScan)
+	mediaAdmin.GET("/scan/progress", handles.GetMediaScanProgress)
+	mediaAdmin.POST("/scrape/start", handles.StartMediaScrape)
+	mediaAdmin.POST("/clear", handles.ClearMediaDB)
 }
 
 func fsAndShare(g *gin.RouterGroup) {
@@ -193,6 +205,14 @@ func fsAndShare(g *gin.RouterGroup) {
 	a := g.Group("/archive")
 	a.Any("/meta", handles.FsArchiveMetaSplit)
 	a.Any("/list", handles.FsArchiveListSplit)
+
+	// 媒体库公开API
+	mediaPublic := g.Group("/media")
+	mediaPublic.GET("/list", handles.PublicListMedia)
+	mediaPublic.GET("/item/:id", handles.PublicGetMedia)
+	mediaPublic.GET("/albums", handles.PublicListAlbums)
+	mediaPublic.GET("/album", handles.PublicGetAlbum)
+	mediaPublic.GET("/folders", handles.PublicListFolders)
 }
 
 func _fs(g *gin.RouterGroup) {
