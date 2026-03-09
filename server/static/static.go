@@ -294,8 +294,22 @@ func handleWebHosting(c *gin.Context, vhost *model.VirtualHost) bool {
 	}
 
 	reqPath := c.Request.URL.Path
+	// Sanitize reqPath to prevent path traversal: strip the leading slash to make
+	// it a relative path, clean it, then reject if the result starts with ".."
+	// (which would escape vhost.Path when joined).
+	relPath := strings.TrimPrefix(reqPath, "/")
+	cleanedRel := stdpath.Clean(relPath)
+	if cleanedRel == "." {
+		cleanedRel = ""
+	}
+	// Reject any path that tries to escape the virtual host root.
+	if cleanedRel == ".." || strings.HasPrefix(cleanedRel, "../") || strings.HasPrefix(cleanedRel, "/") {
+		utils.Log.Warnf("[VirtualHost] path traversal attempt rejected: %q", reqPath)
+		c.Status(http.StatusBadRequest)
+		return true
+	}
 	// 将请求路径映射到虚拟主机的根目录
-	filePath := stdpath.Join(vhost.Path, reqPath)
+	filePath := stdpath.Join(vhost.Path, cleanedRel)
 	utils.Log.Infof("[VirtualHost] handleWebHosting: reqPath=%q -> filePath=%q", reqPath, filePath)
 
 	// 尝试获取文件
@@ -319,8 +333,8 @@ func handleWebHosting(c *gin.Context, vhost *model.VirtualHost) bool {
 	utils.Log.Infof("[VirtualHost] index.html not found at %q: %v", indexPath, err)
 
 	// 尝试 <path>.html（SPA 友好路由）
-	if stdpath.Ext(reqPath) == "" && reqPath != "/" {
-		htmlPath := stdpath.Join(vhost.Path, reqPath+".html")
+	if stdpath.Ext(cleanedRel) == "" && cleanedRel != "" {
+		htmlPath := stdpath.Join(vhost.Path, cleanedRel+".html")
 		obj, err = internalfs.Get(c.Request.Context(), htmlPath, &internalfs.GetArgs{NoLog: true})
 		if err == nil && !obj.IsDir() {
 			utils.Log.Infof("[VirtualHost] serving .html fallback: %q", htmlPath)
