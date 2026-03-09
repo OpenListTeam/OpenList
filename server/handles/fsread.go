@@ -2,6 +2,7 @@ package handles
 
 import (
 	"fmt"
+	"net"
 	stdpath "path"
 	"strings"
 	"time"
@@ -467,8 +468,14 @@ func applyVhostPathMappingWithPrefix(c *gin.Context, reqPath string) (string, st
 		// 未启用，或者是 Web 托管模式（Web 托管不做路径重映射）
 		return reqPath, ""
 	}
-	// 路径重映射：将 reqPath 拼接到 vhost.Path 后面
+	// Map request path into the vhost root and verify it does not escape via traversal.
+	// stdpath.Join calls Clean internally, which collapses ".." segments, so we only need
+	// to confirm the result still lives under vhost.Path.
 	mapped := stdpath.Join(vhost.Path, reqPath)
+	if !strings.HasPrefix(mapped, strings.TrimRight(vhost.Path, "/")+"/") && mapped != vhost.Path {
+		utils.Log.Warnf("[VirtualHost] path traversal rejected for API remapping: domain=%q reqPath=%q", domain, reqPath)
+		return reqPath, ""
+	}
 	utils.Log.Debugf("[VirtualHost] API path remapping: domain=%q reqPath=%q -> mappedPath=%q", domain, reqPath, mapped)
 	return mapped, vhost.Path
 }
@@ -489,12 +496,12 @@ func stripVhostPrefix(c *gin.Context, path string) string {
 	return path
 }
 
-// stripHostPortForVhost 去掉 host 中的端口号，返回纯域名
+// stripHostPortForVhost removes the port from a host string (supports IPv4, IPv6, and bracketed IPv6).
 func stripHostPortForVhost(host string) string {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		if !strings.Contains(host, "[") {
-			return host[:idx]
-		}
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		// No port present; return host as-is
+		return host
 	}
-	return host
+	return h
 }
