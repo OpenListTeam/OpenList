@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	iofs "io/fs"
+	"net"
 	"net/http"
 	stdpath "path"
 	"os"
@@ -429,13 +430,13 @@ func mimeTypeByExt(ext string) string {
 	}
 }
 
-// stripHostPort 去掉 host 中的端口号，返回纯域名
+// stripHostPort removes the port from a host header value and returns the bare hostname.
+// It correctly handles IPv4 hosts, IPv6 bracketed addresses (e.g. [::1]:5244), and bare hosts with no port.
 func stripHostPort(host string) string {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		// 确保不是 IPv6 地址（IPv6 地址用 [] 包裹）
-		if !strings.Contains(host, "[") {
-			return host[:idx]
-		}
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		// No port present (or malformed); return the host as-is.
+		return host
 	}
-	return host
+	return h
 }
