@@ -6,6 +6,7 @@ import (
 	"fmt"
 	stdpath "path"
 	"strconv"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -71,12 +72,18 @@ func Proxy(c *gin.Context) {
 			common.ErrorPage(c, err, 500)
 			return
 		}
-		proxy(c, link, file, storage.GetStorage().ProxyRange)
-	} else {
-		common.ErrorPage(c, errors.New("proxy not allowed"), 403)
-		return
+			// Disable browser caching for local storage downloads.
+			if isLocalDriver(storage) {
+				c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+				c.Header("Pragma", "no-cache")
+				c.Header("Expires", "0")
+			}
+			proxy(c, link, file, storage.GetStorage().ProxyRange)
+		} else {
+			common.ErrorPage(c, errors.New("proxy not allowed"), 403)
+			return
+		}
 	}
-}
 
 func redirect(c *gin.Context, link *model.Link) {
 	defer link.Close()
@@ -174,4 +181,14 @@ func canProxy(storage driver.Driver, filename string) bool {
 		return true
 	}
 	return false
+}
+
+func isLocalDriver(storage driver.Driver) bool {
+	if storage == nil || storage.GetStorage() == nil {
+		return false
+	}
+	if strings.EqualFold(storage.Config().Name, "Local") {
+		return true
+	}
+	return strings.EqualFold(storage.GetStorage().Driver, "Local")
 }
