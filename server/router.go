@@ -36,6 +36,7 @@ func Init(e *gin.Engine) {
 	g.GET("/i/:link_name", handles.Plist)
 	common.SecretKey = []byte(conf.Conf.JwtSecret)
 	g.Use(middlewares.StoragesLoaded)
+	g.Use(middlewares.VirtualHost)
 	if conf.Conf.MaxConnections > 0 {
 		g.Use(middlewares.MaxAllowed(conf.Conf.MaxConnections))
 	}
@@ -121,6 +122,13 @@ func admin(g *gin.RouterGroup) {
 	meta.POST("/create", handles.CreateMeta)
 	meta.POST("/update", handles.UpdateMeta)
 	meta.POST("/delete", handles.DeleteMeta)
+
+	vhost := g.Group("/vhost")
+	vhost.GET("/list", handles.ListVirtualHosts)
+	vhost.GET("/get", handles.GetVirtualHost)
+	vhost.POST("/create", handles.CreateVirtualHost)
+	vhost.POST("/update", handles.UpdateVirtualHost)
+	vhost.POST("/delete", handles.DeleteVirtualHost)
 
 	user := g.Group("/user")
 	user.GET("/list", handles.ListUsers)

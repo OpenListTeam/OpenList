@@ -5,16 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
+	iofs "io/fs"
 	"net/http"
+	stdpath "path"
 	"os"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	internalfs "github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/public"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,12 +36,12 @@ type Manifest struct {
 	Icons    []ManifestIcon `json:"icons"`
 }
 
-var static fs.FS
+var static iofs.FS
 
 func initStatic() {
 	utils.Log.Debug("Initializing static file system...")
 	if conf.Conf.DistDir == "" {
-		dist, err := fs.Sub(public.Public, "dist")
+		dist, err := iofs.Sub(public.Public, "dist")
 		if err != nil {
 			utils.Log.Fatalf("failed to read dist dir: %v", err)
 		}
@@ -76,7 +80,7 @@ func initIndex(siteConfig SiteConfig) {
 		utils.Log.Debug("Reading index.html from static files system...")
 		indexFile, err := static.Open("index.html")
 		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
+			if errors.Is(err, iofs.ErrNotExist) {
 				utils.Log.Fatalf("index.html not exist, you may forget to put dist of frontend to public/dist")
 			}
 			utils.Log.Fatalf("failed to read index.html: %v", err)
@@ -192,7 +196,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			}
 		})
 		for _, folder := range folders {
-			sub, err := fs.Sub(static, folder)
+			sub, err := iofs.Sub(static, folder)
 			if err != nil {
 				utils.Log.Fatalf("can't find folder: %s", folder)
 			}
@@ -211,6 +215,16 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 	utils.Log.Debug("Setting up catch-all route...")
 	noRoute(func(c *gin.Context) {
+		// 检查是否是虚拟主机的 Web 托管请求
+		if vhostVal := c.Request.Context().Value(conf.VirtualHostKey); vhostVal != nil {
+			vhost := vhostVal.(*model.VirtualHost)
+			if vhost.WebHosting {
+				if handleWebHosting(c, vhost) {
+					return
+				}
+			}
+		}
+
 		if c.Request.Method != "GET" && c.Request.Method != "POST" {
 			c.Status(405)
 			return
@@ -225,4 +239,112 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		c.Writer.Flush()
 		c.Writer.WriteHeaderNow()
 	})
+}
+
+// handleWebHosting 处理虚拟主机的 Web 托管请求
+// 直接将 HTML 文件内容返回给客户端，而不是走前端 SPA 路由
+// 返回 true 表示已处理，false 表示未处理（继续走默认逻辑）
+func handleWebHosting(c *gin.Context, vhost *model.VirtualHost) bool {
+	if c.Request.Method != "GET" && c.Request.Method != "HEAD" {
+		return false
+	}
+
+	reqPath := c.Request.URL.Path
+	// 将请求路径映射到虚拟主机的根目录
+	filePath := stdpath.Join(vhost.Path, reqPath)
+
+	// 尝试获取文件
+	obj, err := internalfs.Get(c.Request.Context(), filePath, &internalfs.GetArgs{NoLog: true})
+	if err == nil && !obj.IsDir() {
+		// 找到文件，直接代理返回
+		serveWebHostingFile(c, filePath, obj.GetName())
+		return true
+	}
+
+	// 如果是目录或未找到，尝试 index.html
+	indexPath := stdpath.Join(filePath, "index.html")
+	obj, err = internalfs.Get(c.Request.Context(), indexPath, &internalfs.GetArgs{NoLog: true})
+	if err == nil && !obj.IsDir() {
+		serveWebHostingFile(c, indexPath, "index.html")
+		return true
+	}
+
+	// 尝试 <path>.html（SPA 友好路由）
+	if stdpath.Ext(reqPath) == "" && reqPath != "/" {
+		htmlPath := stdpath.Join(vhost.Path, reqPath+".html")
+		obj, err = internalfs.Get(c.Request.Context(), htmlPath, &internalfs.GetArgs{NoLog: true})
+		if err == nil && !obj.IsDir() {
+			serveWebHostingFile(c, htmlPath, stdpath.Base(htmlPath))
+			return true
+		}
+	}
+
+	return false
+}
+
+// serveWebHostingFile 通过代理方式直接返回文件内容
+func serveWebHostingFile(c *gin.Context, filePath, filename string) {
+	link, file, err := internalfs.Link(c.Request.Context(), filePath, model.LinkArgs{
+		IP:     c.ClientIP(),
+		Header: c.Request.Header,
+	})
+	if err != nil {
+		utils.Log.Errorf("web hosting: failed to get link for %s: %v", filePath, err)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer link.Close()
+
+	// 根据文件扩展名覆盖 Content-Type（确保 HTML 等文件以正确类型返回）
+	// 注意：必须在 Proxy 调用之前设置，Proxy 内部的 attachHeader 会再次设置，
+	// 但对于 URL 透明代理模式，响应头来自上游，我们通过 link.Header 注入覆盖
+	ext := strings.ToLower(stdpath.Ext(filename))
+	contentType := mimeTypeByExt(ext)
+	if link.Header == nil {
+		link.Header = make(http.Header)
+	}
+	link.Header.Set("Content-Type", contentType)
+
+	// 使用通用代理函数处理文件传输
+	if err := common.Proxy(c.Writer, c.Request, link, file); err != nil {
+		utils.Log.Errorf("web hosting: proxy error for %s: %v", filePath, err)
+	}
+}
+
+// mimeTypeByExt 根据文件扩展名返回 MIME 类型
+func mimeTypeByExt(ext string) string {
+	switch ext {
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".js", ".mjs":
+		return "application/javascript; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".xml":
+		return "application/xml; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".ico":
+		return "image/x-icon"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".ttf":
+		return "font/ttf"
+	case ".txt":
+		return "text/plain; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
 }
