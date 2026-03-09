@@ -5,16 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
+	iofs "io/fs"
+	stdnet "net"
 	"net/http"
 	"os"
+	stdpath "path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	internalfs "github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/public"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,12 +39,12 @@ type Manifest struct {
 	Icons    []ManifestIcon `json:"icons"`
 }
 
-var static fs.FS
+var static iofs.FS
 
 func initStatic() {
 	utils.Log.Debug("Initializing static file system...")
 	if conf.Conf.DistDir == "" {
-		dist, err := fs.Sub(public.Public, "dist")
+		dist, err := iofs.Sub(public.Public, "dist")
 		if err != nil {
 			utils.Log.Fatalf("failed to read dist dir: %v", err)
 		}
@@ -76,7 +83,7 @@ func initIndex(siteConfig SiteConfig) {
 		utils.Log.Debug("Reading index.html from static files system...")
 		indexFile, err := static.Open("index.html")
 		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
+			if errors.Is(err, iofs.ErrNotExist) {
 				utils.Log.Fatalf("index.html not exist, you may forget to put dist of frontend to public/dist")
 			}
 			utils.Log.Fatalf("failed to read index.html: %v", err)
@@ -98,9 +105,9 @@ func initIndex(siteConfig SiteConfig) {
 		manifestPath = siteConfig.BasePath + "/manifest.json"
 	}
 	replaceMap := map[string]string{
-		"cdn: undefined":                    fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
-		"base_path: undefined":              fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
-		`href="/manifest.json"`:             fmt.Sprintf(`href="%s"`, manifestPath),
+		"cdn: undefined":        fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
+		"base_path: undefined":  fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
+		`href="/manifest.json"`: fmt.Sprintf(`href="%s"`, manifestPath),
 	}
 	conf.RawIndexHtml = replaceStrings(conf.RawIndexHtml, replaceMap)
 	UpdateIndex()
@@ -134,10 +141,10 @@ func UpdateIndex() {
 func ManifestJSON(c *gin.Context) {
 	// Get site configuration to ensure consistent base path handling
 	siteConfig := getSiteConfig()
-	
+
 	// Get site title from settings
 	siteTitle := setting.GetStr(conf.SiteTitle)
-	
+
 	// Get logo from settings, use the first line (light theme logo)
 	logoSetting := setting.GetStr(conf.Logo)
 	logoUrl := strings.Split(logoSetting, "\n")[0]
@@ -167,7 +174,7 @@ func ManifestJSON(c *gin.Context) {
 
 	c.Header("Content-Type", "application/json")
 	c.Header("Cache-Control", "public, max-age=3600") // cache for 1 hour
-	
+
 	if err := json.NewEncoder(c.Writer).Encode(manifest); err != nil {
 		utils.Log.Errorf("Failed to encode manifest.json: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate manifest"})
@@ -181,7 +188,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	initStatic()
 	initIndex(siteConfig)
 	folders := []string{"assets", "images", "streamer", "static"}
-	
+
 	if conf.Conf.Cdn == "" {
 		utils.Log.Debug("Setting up static file serving...")
 		r.Use(func(c *gin.Context) {
@@ -192,7 +199,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			}
 		})
 		for _, folder := range folders {
-			sub, err := fs.Sub(static, folder)
+			sub, err := iofs.Sub(static, folder)
 			if err != nil {
 				utils.Log.Fatalf("can't find folder: %s", folder)
 			}
@@ -210,7 +217,49 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	}
 
 	utils.Log.Debug("Setting up catch-all route...")
-	noRoute(func(c *gin.Context) {
+
+	// virtualHostHandler 处理虚拟主机 Web 托管，以及默认的前端 SPA 路由
+	virtualHostHandler := func(c *gin.Context) {
+		// 直接从 Host 头解析域名，检查是否匹配虚拟主机的 Web 托管请求
+		rawHost := c.Request.Host
+		domain := stripHostPort(rawHost)
+		utils.Log.Debugf("[VirtualHost] handler triggered: method=%s path=%s host=%q domain=%q",
+			c.Request.Method, c.Request.URL.Path, rawHost, domain)
+		if domain != "" {
+			vhost, err := op.GetVirtualHostByDomain(domain)
+			if err != nil {
+				utils.Log.Debugf("[VirtualHost] domain=%q not found in db: %v", domain, err)
+			} else {
+				utils.Log.Debugf("[VirtualHost] domain=%q matched vhost: id=%d enabled=%v web_hosting=%v path=%q",
+					domain, vhost.ID, vhost.Enabled, vhost.WebHosting, vhost.Path)
+				if vhost.Enabled && vhost.WebHosting {
+					// Web 托管模式：直接返回文件内容
+					// 注入 guest 用户到 context，供 internalfs.Get/Link 权限检查使用
+					guest, guestErr := op.GetGuest()
+					if guestErr != nil {
+						utils.Log.Errorf("[VirtualHost] failed to get guest user: %v", guestErr)
+						c.Status(http.StatusInternalServerError)
+						return
+					}
+					common.GinWithValue(c, conf.UserKey, guest)
+					if handleWebHosting(c, vhost) {
+						return
+					}
+				} else if vhost.Enabled && !vhost.WebHosting {
+					// 路径重映射模式（伪静态）：直接返回正常的 SPA 页面
+					// 地址栏保持不变，面包屑显示用户访问的路径
+					// 实际的路径映射由后端 API（fs/list、fs/get）在处理请求时完成
+					utils.Log.Debugf("[VirtualHost] path remapping mode: serving SPA for domain=%q path=%q", domain, c.Request.URL.Path)
+					c.Header("Content-Type", "text/html")
+					c.Status(200)
+					_, _ = c.Writer.WriteString(conf.IndexHtml)
+					c.Writer.Flush()
+					c.Writer.WriteHeaderNow()
+					return
+				}
+			}
+		}
+
 		if c.Request.Method != "GET" && c.Request.Method != "POST" {
 			c.Status(405)
 			return
@@ -224,5 +273,174 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		}
 		c.Writer.Flush()
 		c.Writer.WriteHeaderNow()
+	}
+
+	// 显式注册根路径路由，确保 GET / 能被正确处理
+	// gin 的 NoRoute 不会触发已注册路由前缀下的 GET /
+	r.GET("/", virtualHostHandler)
+	r.POST("/", virtualHostHandler)
+	// NoRoute 处理其他所有未匹配路径（如 /@manage、/d/... 等 SPA 路由）
+	noRoute(virtualHostHandler)
+}
+
+// handleWebHosting 处理虚拟主机的 Web 托管请求
+// 直接将 HTML 文件内容返回给客户端，而不是走前端 SPA 路由
+// 返回 true 表示已处理，false 表示未处理（继续走默认逻辑）
+func handleWebHosting(c *gin.Context, vhost *model.VirtualHost) bool {
+	if c.Request.Method != "GET" && c.Request.Method != "HEAD" {
+		utils.Log.Debugf("[VirtualHost] skip: method=%s not allowed for web hosting", c.Request.Method)
+		return false
+	}
+
+	reqPath := c.Request.URL.Path
+	// Map request path into the vhost root and verify it does not escape via traversal.
+	// stdpath.Join calls Clean internally, which collapses ".." segments, so we only need
+	// to confirm the result still lives under vhost.Path.
+	filePath := stdpath.Join(vhost.Path, reqPath)
+	if !strings.HasPrefix(filePath, strings.TrimRight(vhost.Path, "/")+"/") && filePath != vhost.Path {
+		utils.Log.Warnf("[VirtualHost] path traversal rejected: vhost=%q reqPath=%q", vhost.Path, reqPath)
+		c.Status(http.StatusBadRequest)
+		return false
+	}
+	utils.Log.Debugf("[VirtualHost] handleWebHosting: reqPath=%q -> filePath=%q", reqPath, filePath)
+
+	// 尝试获取文件
+	obj, err := internalfs.Get(c.Request.Context(), filePath, &internalfs.GetArgs{NoLog: true})
+	if err == nil && !obj.IsDir() {
+		// 找到文件，直接代理返回
+		utils.Log.Debugf("[VirtualHost] serving file: %q", filePath)
+		serveWebHostingFile(c, filePath, obj.GetName())
+		return true
+	}
+	utils.Log.Debugf("[VirtualHost] file not found or is dir at %q: %v", filePath, err)
+
+	// 如果是目录或未找到，尝试 index.html
+	indexPath := stdpath.Join(filePath, "index.html")
+	obj, err = internalfs.Get(c.Request.Context(), indexPath, &internalfs.GetArgs{NoLog: true})
+	if err == nil && !obj.IsDir() {
+		utils.Log.Debugf("[VirtualHost] serving index.html: %q", indexPath)
+		serveWebHostingFile(c, indexPath, "index.html")
+		return true
+	}
+	utils.Log.Debugf("[VirtualHost] index.html not found at %q: %v", indexPath, err)
+
+	// 尝试 <path>.html（SPA 友好路由）
+	if stdpath.Ext(reqPath) == "" && reqPath != "/" {
+		htmlPath := stdpath.Join(vhost.Path, reqPath+".html")
+		obj, err = internalfs.Get(c.Request.Context(), htmlPath, &internalfs.GetArgs{NoLog: true})
+		if err == nil && !obj.IsDir() {
+			utils.Log.Debugf("[VirtualHost] serving .html fallback: %q", htmlPath)
+			serveWebHostingFile(c, htmlPath, stdpath.Base(htmlPath))
+			return true
+		}
+		utils.Log.Debugf("[VirtualHost] .html fallback not found at %q: %v", htmlPath, err)
+	}
+
+	utils.Log.Debugf("[VirtualHost] no file matched for reqPath=%q, falling through", reqPath)
+	return false
+}
+
+// serveWebHostingFile 通过代理方式直接返回文件内容
+func serveWebHostingFile(c *gin.Context, filePath, filename string) {
+	link, file, err := internalfs.Link(c.Request.Context(), filePath, model.LinkArgs{
+		IP:     c.ClientIP(),
+		Header: c.Request.Header,
 	})
+	if err != nil {
+		utils.Log.Errorf("web hosting: failed to get link for %s: %v", filePath, err)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer link.Close()
+
+	// 根据文件扩展名确定正确的 Content-Type
+	ext := strings.ToLower(stdpath.Ext(filename))
+	contentType := mimeTypeByExt(ext)
+
+	// 使用包装的 ResponseWriter，在 WriteHeader 时强制覆盖 Content-Type 和 Content-Disposition
+	// 这样即使 Proxy 内部的 maps.Copy 将上游响应头复制进来，我们也能在最终发送前覆盖
+	wrapped := &forceContentTypeWriter{
+		ResponseWriter: c.Writer,
+		contentType:    contentType,
+		contentDisp:    "inline",
+	}
+
+	// 同时注入到 link.Header，供 attachHeader 路径（RangeReader/Concurrency 模式）使用
+	if link.Header == nil {
+		link.Header = make(http.Header)
+	}
+	link.Header.Set("Content-Type", contentType)
+	link.Header.Set("Content-Disposition", "inline")
+
+	// 使用通用代理函数处理文件传输
+	if err := common.Proxy(wrapped, c.Request, link, file); err != nil {
+		utils.Log.Errorf("web hosting: proxy error for %s: %v", filePath, err)
+	}
+}
+
+// forceContentTypeWriter 包装 http.ResponseWriter，
+// 在 WriteHeader 时强制覆盖 Content-Type 和 Content-Disposition，
+// 确保 HTML 等文件以正确类型返回而不是被浏览器下载
+type forceContentTypeWriter struct {
+	http.ResponseWriter
+	contentType string
+	contentDisp string
+}
+
+func (w *forceContentTypeWriter) WriteHeader(statusCode int) {
+	w.ResponseWriter.Header().Set("Content-Type", w.contentType)
+	w.ResponseWriter.Header().Set("Content-Disposition", w.contentDisp)
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *forceContentTypeWriter) Write(b []byte) (int, error) {
+	return w.ResponseWriter.Write(b)
+}
+
+// mimeTypeByExt 根据文件扩展名返回 MIME 类型
+func mimeTypeByExt(ext string) string {
+	switch ext {
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".js", ".mjs":
+		return "application/javascript; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".xml":
+		return "application/xml; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".ico":
+		return "image/x-icon"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".ttf":
+		return "font/ttf"
+	case ".txt":
+		return "text/plain; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// stripHostPort removes the port from a host string (supports IPv4, IPv6, and bracketed IPv6).
+func stripHostPort(host string) string {
+	h, _, err := stdnet.SplitHostPort(host)
+	if err != nil {
+		// No port present; return host as-is
+		return host
+	}
+	return h
 }

@@ -122,6 +122,13 @@ func admin(g *gin.RouterGroup) {
 	meta.POST("/update", handles.UpdateMeta)
 	meta.POST("/delete", handles.DeleteMeta)
 
+	vhost := g.Group("/vhost")
+	vhost.GET("/list", handles.ListVirtualHosts)
+	vhost.GET("/get", handles.GetVirtualHost)
+	vhost.POST("/create", handles.CreateVirtualHost)
+	vhost.POST("/update", handles.UpdateVirtualHost)
+	vhost.POST("/delete", handles.DeleteVirtualHost)
+
 	user := g.Group("/user")
 	user.GET("/list", handles.ListUsers)
 	user.GET("/get", handles.GetUser)

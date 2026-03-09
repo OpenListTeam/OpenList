@@ -2,6 +2,7 @@ package handles
 
 import (
 	"fmt"
+	"net"
 	stdpath "path"
 	"strings"
 	"time"
@@ -68,6 +69,8 @@ func FsListSplit(c *gin.Context) {
 		SharingList(c, &req)
 		return
 	}
+	// 虚拟主机路径重映射：根据 Host 头匹配虚拟主机规则，将请求路径映射到实际路径
+	req.Path = applyVhostPathMapping(c, req.Path)
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if user.IsGuest() && user.Disabled {
 		common.ErrorStrResp(c, "Guest user is disabled, login please", 401)
@@ -273,6 +276,11 @@ func FsGetSplit(c *gin.Context) {
 		SharingGet(c, &req)
 		return
 	}
+	// 虚拟主机路径重映射：根据 Host 头匹配虚拟主机规则，将请求路径映射到实际路径
+	// 同时将 vhost.Path 前缀存入 context，供 FsGet 生成 /p/ 链接时去掉前缀
+	var vhostPrefix string
+	req.Path, vhostPrefix = applyVhostPathMappingWithPrefix(c, req.Path)
+	common.GinWithValue(c, conf.VhostPrefixKey, vhostPrefix)
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if user.IsGuest() && user.Disabled {
 		common.ErrorStrResp(c, "Guest user is disabled, login please", 401)
@@ -322,12 +330,14 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			rawURL = common.GenerateDownProxyURL(storage.GetStorage(), reqPath)
 			if rawURL == "" {
 				query := ""
+				// 生成 /p/ 链接时，去掉 vhost 路径前缀，保持前端看到的路径一致
+				downPath := stripVhostPrefix(c, reqPath)
 				if isEncrypt(meta, reqPath) || setting.GetBool(conf.SignAll) {
 					query = "?sign=" + sign.Sign(reqPath)
 				}
 				rawURL = fmt.Sprintf("%s/p%s%s",
 					common.GetApiUrl(c),
-					utils.EncodePath(reqPath, true),
+					utils.EncodePath(downPath, true),
 					query)
 			}
 		} else {
@@ -431,4 +441,67 @@ func FsOther(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c, res)
+}
+
+// applyVhostPathMapping 根据请求的 Host 头匹配虚拟主机规则，将请求路径映射到实际路径。
+func applyVhostPathMapping(c *gin.Context, reqPath string) string {
+	mapped, _ := applyVhostPathMappingWithPrefix(c, reqPath)
+	return mapped
+}
+
+// applyVhostPathMappingWithPrefix 根据请求的 Host 头匹配虚拟主机规则，
+// 将请求路径映射到虚拟主机配置的实际路径，同时返回 vhost.Path 前缀（用于生成下载链接时去掉前缀）。
+// 例如：vhost.Path="/123pan/Downloads"，reqPath="/"，则返回 ("/123pan/Downloads", "/123pan/Downloads")
+// 例如：vhost.Path="/123pan/Downloads"，reqPath="/subdir"，则返回 ("/123pan/Downloads/subdir", "/123pan/Downloads")
+// 如果没有匹配的虚拟主机规则，则返回 (原始路径, "")
+func applyVhostPathMappingWithPrefix(c *gin.Context, reqPath string) (string, string) {
+	rawHost := c.Request.Host
+	domain := stripHostPortForVhost(rawHost)
+	if domain == "" {
+		return reqPath, ""
+	}
+	vhost, err := op.GetVirtualHostByDomain(domain)
+	if err != nil || vhost == nil {
+		return reqPath, ""
+	}
+	if !vhost.Enabled || vhost.WebHosting {
+		// 未启用，或者是 Web 托管模式（Web 托管不做路径重映射）
+		return reqPath, ""
+	}
+	// Map request path into the vhost root and verify it does not escape via traversal.
+	// stdpath.Join calls Clean internally, which collapses ".." segments, so we only need
+	// to confirm the result still lives under vhost.Path.
+	mapped := stdpath.Join(vhost.Path, reqPath)
+	if !strings.HasPrefix(mapped, strings.TrimRight(vhost.Path, "/")+"/") && mapped != vhost.Path {
+		utils.Log.Warnf("[VirtualHost] path traversal rejected for API remapping: domain=%q reqPath=%q", domain, reqPath)
+		return reqPath, ""
+	}
+	utils.Log.Debugf("[VirtualHost] API path remapping: domain=%q reqPath=%q -> mappedPath=%q", domain, reqPath, mapped)
+	return mapped, vhost.Path
+}
+
+// stripVhostPrefix 从 gin context 中取出 vhost 路径前缀，并从 path 中去掉该前缀。
+// 用于生成 /p/ 下载链接时，将真实路径还原为前端看到的路径。
+func stripVhostPrefix(c *gin.Context, path string) string {
+	prefix, ok := c.Request.Context().Value(conf.VhostPrefixKey).(string)
+	if !ok || prefix == "" {
+		return path
+	}
+	if strings.HasPrefix(path, prefix+"/") {
+		return path[len(prefix):]
+	}
+	if path == prefix {
+		return "/"
+	}
+	return path
+}
+
+// stripHostPortForVhost removes the port from a host string (supports IPv4, IPv6, and bracketed IPv6).
+func stripHostPortForVhost(host string) string {
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		// No port present; return host as-is
+		return host
+	}
+	return h
 }
