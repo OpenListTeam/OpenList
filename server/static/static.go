@@ -7,8 +7,8 @@ import (
 	"io"
 	iofs "io/fs"
 	"net/http"
-	stdpath "path"
 	"os"
+	stdpath "path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -104,9 +104,9 @@ func initIndex(siteConfig SiteConfig) {
 		manifestPath = siteConfig.BasePath + "/manifest.json"
 	}
 	replaceMap := map[string]string{
-		"cdn: undefined":                    fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
-		"base_path: undefined":              fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
-		`href="/manifest.json"`:             fmt.Sprintf(`href="%s"`, manifestPath),
+		"cdn: undefined":        fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
+		"base_path: undefined":  fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
+		`href="/manifest.json"`: fmt.Sprintf(`href="%s"`, manifestPath),
 	}
 	conf.RawIndexHtml = replaceStrings(conf.RawIndexHtml, replaceMap)
 	UpdateIndex()
@@ -140,10 +140,10 @@ func UpdateIndex() {
 func ManifestJSON(c *gin.Context) {
 	// Get site configuration to ensure consistent base path handling
 	siteConfig := getSiteConfig()
-	
+
 	// Get site title from settings
 	siteTitle := setting.GetStr(conf.SiteTitle)
-	
+
 	// Get logo from settings, use the first line (light theme logo)
 	logoSetting := setting.GetStr(conf.Logo)
 	logoUrl := strings.Split(logoSetting, "\n")[0]
@@ -173,7 +173,7 @@ func ManifestJSON(c *gin.Context) {
 
 	c.Header("Content-Type", "application/json")
 	c.Header("Cache-Control", "public, max-age=3600") // cache for 1 hour
-	
+
 	if err := json.NewEncoder(c.Writer).Encode(manifest); err != nil {
 		utils.Log.Errorf("Failed to encode manifest.json: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate manifest"})
@@ -187,7 +187,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	initStatic()
 	initIndex(siteConfig)
 	folders := []string{"assets", "images", "streamer", "static"}
-	
+
 	if conf.Conf.Cdn == "" {
 		utils.Log.Debug("Setting up static file serving...")
 		r.Use(func(c *gin.Context) {
@@ -231,9 +231,9 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			if err != nil {
 				utils.Log.Infof("[VirtualHost] domain=%q not found in db: %v", domain, err)
 			} else {
-			utils.Log.Infof("[VirtualHost] domain=%q matched vhost: id=%d enabled=%v web_hosting=%v path=%q",
+				utils.Log.Infof("[VirtualHost] domain=%q matched vhost: id=%d enabled=%v web_hosting=%v path=%q",
 					domain, vhost.ID, vhost.Enabled, vhost.WebHosting, vhost.Path)
-			if vhost.Enabled && vhost.WebHosting {
+				if vhost.Enabled && vhost.WebHosting {
 					// Web 托管模式：直接返回文件内容
 					// 注入 guest 用户到 context，供 internalfs.Get/Link 权限检查使用
 					guest, guestErr := op.GetGuest()
@@ -246,7 +246,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 					if handleWebHosting(c, vhost) {
 						return
 					}
-			} else if vhost.Enabled && !vhost.WebHosting {
+				} else if vhost.Enabled && !vhost.WebHosting {
 					// 路径重映射模式（伪静态）：直接返回正常的 SPA 页面
 					// 地址栏保持不变，面包屑显示用户访问的路径
 					// 实际的路径映射由后端 API（fs/list、fs/get）在处理请求时完成
@@ -354,9 +354,9 @@ func serveWebHostingFile(c *gin.Context, filePath, filename string) {
 	// 使用包装的 ResponseWriter，在 WriteHeader 时强制覆盖 Content-Type 和 Content-Disposition
 	// 这样即使 Proxy 内部的 maps.Copy 将上游响应头复制进来，我们也能在最终发送前覆盖
 	wrapped := &forceContentTypeWriter{
-		ResponseWriter:  c.Writer,
-		contentType:     contentType,
-		contentDisp:     "inline",
+		ResponseWriter: c.Writer,
+		contentType:    contentType,
+		contentDisp:    "inline",
 	}
 
 	// 同时注入到 link.Header，供 attachHeader 路径（RangeReader/Concurrency 模式）使用
