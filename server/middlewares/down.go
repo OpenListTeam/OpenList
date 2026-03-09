@@ -30,7 +30,7 @@ func PathParse(c *gin.Context) {
 // 仅在虚拟主机启用且非 Web 托管模式时生效。
 func applyDownVhostPathMapping(c *gin.Context, reqPath string) string {
 	rawHost := c.Request.Host
-	domain := stripDownHostPort(rawHost)
+	domain := stripHostPort(rawHost)
 	if domain == "" {
 		return reqPath
 	}
@@ -46,16 +46,6 @@ func applyDownVhostPathMapping(c *gin.Context, reqPath string) string {
 	mapped := stdpath.Join(vhost.Path, reqPath)
 	utils.Log.Debugf("[VirtualHost] down path remapping: domain=%q reqPath=%q -> mappedPath=%q", domain, reqPath, mapped)
 	return mapped
-}
-
-// stripDownHostPort 去掉 host 中的端口号，返回纯域名
-func stripDownHostPort(host string) string {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		if !strings.Contains(host, "[") {
-			return host[:idx]
-		}
-	}
-	return host
 }
 
 func Down(verifyFunc func(string, string) error) func(c *gin.Context) {

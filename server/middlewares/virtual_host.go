@@ -1,8 +1,6 @@
 package middlewares
 
 import (
-	"strings"
-
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -13,7 +11,7 @@ import (
 func VirtualHost(c *gin.Context) {
 	host := c.Request.Host
 	// 去掉端口号
-	domain := stripPort(host)
+	domain := stripHostPort(host)
 	if domain == "" {
 		c.Next()
 		return
@@ -29,15 +27,4 @@ func VirtualHost(c *gin.Context) {
 	// 将虚拟主机信息存入请求上下文
 	common.GinWithValue(c, conf.VirtualHostKey, vhost)
 	c.Next()
-}
-
-// stripPort 去掉 host 中的端口号
-func stripPort(host string) string {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		// 确保不是 IPv6 地址（IPv6 地址用 [] 包裹）
-		if !strings.Contains(host, "[") {
-			return host[:idx]
-		}
-	}
-	return host
 }
