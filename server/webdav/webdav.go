@@ -7,7 +7,6 @@ package webdav // import "golang.org/x/net/webdav"
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,8 +19,10 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/pkg/errors"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -200,7 +201,7 @@ func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) (status 
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
 	}
 	allow := "OPTIONS, LOCK, PUT, MKCOL"
 	if fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err == nil {
@@ -226,9 +227,17 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	// TODO: check locks for read-only access??
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
+	password := ctx.Value(conf.MetaPassKey).(string)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
+	}
+	meta, err := op.GetNearestMeta(reqPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !common.CanAccess(user, meta, reqPath, password) {
+		return http.StatusForbidden, errs.PermissionDenied
 	}
 	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
@@ -294,9 +303,12 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
+	if !user.CanRemove() {
+		return http.StatusForbidden, nil
+	}
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
 	}
 	// TODO: return MultiStatus where appropriate.
 
@@ -308,6 +320,14 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 			return http.StatusNotFound, err
 		}
 		return http.StatusMethodNotAllowed, err
+	}
+	parentPath := path.Dir(reqPath)
+	parentMeta, err := op.GetNearestMeta(parentPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !common.CanWrite(user, parentMeta, parentPath) {
+		return http.StatusForbidden, errs.PermissionDenied
 	}
 	if err := fs.Remove(ctx, reqPath); err != nil {
 		return http.StatusMethodNotAllowed, err
@@ -363,6 +383,17 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
 		return http.StatusForbidden, errs.IgnoredSystemFile
 	}
+	parentPath := path.Dir(reqPath)
+	parentMeta, err := op.GetNearestMeta(parentPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
+	if !common.CanWrite(user, parentMeta, parentPath) {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	fsStream := &stream.FileStream{
 		Obj:      &obj,
 		Reader:   r.Body,
@@ -407,7 +438,7 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
 	}
 
 	if r.ContentLength > 0 {
@@ -421,12 +452,22 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	}
 	// RFC 4918 9.3.1
 	// 409 (Conflict) The server MUST NOT create those intermediate collections automatically.
-	reqDir := path.Dir(reqPath)
-	if _, err := fs.Get(ctx, reqDir, &fs.GetArgs{}); err != nil {
+	parentPath := path.Dir(reqPath)
+	if _, err := fs.Get(ctx, parentPath, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusConflict, err
 		}
 		return http.StatusMethodNotAllowed, err
+	}
+	parentMeta, err := op.GetNearestMeta(parentPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
+	if !common.CanWrite(user, parentMeta, parentPath) {
+		return http.StatusForbidden, errs.PermissionDenied
 	}
 	if err := fs.MakeDir(ctx, reqPath); err != nil {
 		if os.IsNotExist(err) {
@@ -471,11 +512,11 @@ func (h *Handler) handleCopyMove(w http.ResponseWriter, r *http.Request) (status
 	user := ctx.Value(conf.UserKey).(*model.User)
 	src, err = user.JoinPath(src)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
 	}
 	dst, err = user.JoinPath(dst)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
 	}
 
 	if r.Method == "COPY" {
@@ -572,7 +613,14 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 		}
 		reqPath, err = user.JoinPath(reqPath)
 		if err != nil {
-			return 403, err
+			return http.StatusForbidden, err
+		}
+		meta, err := op.GetNearestMeta(reqPath)
+		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+			return http.StatusInternalServerError, err
+		}
+		if !common.CanWrite(user, meta, reqPath) {
+			return http.StatusForbidden, errs.PermissionDenied
 		}
 		ld = LockDetails{
 			Root:      reqPath,
@@ -630,6 +678,24 @@ func (h *Handler) handleUnlock(w http.ResponseWriter, r *http.Request) (status i
 	}
 	t = t[1 : len(t)-1]
 
+	reqPath, status, err := h.stripPrefix(r.URL.Path)
+	if err != nil {
+		return status, err
+	}
+	ctx := r.Context()
+	user := ctx.Value(conf.UserKey).(*model.User)
+	reqPath, err = user.JoinPath(reqPath)
+	if err != nil {
+		return http.StatusForbidden, err
+	}
+	meta, err := op.GetNearestMeta(reqPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !common.CanWrite(user, meta, reqPath) {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
+
 	switch err = h.LockSystem.Unlock(time.Now(), t); err {
 	case nil:
 		return http.StatusNoContent, err
@@ -653,9 +719,17 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 	userAgent := r.Header.Get("User-Agent")
 	ctx = context.WithValue(ctx, conf.UserAgentKey, userAgent)
 	user := ctx.Value(conf.UserKey).(*model.User)
+	password := ctx.Value(conf.MetaPassKey).(string)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
+	}
+	meta, err := op.GetNearestMeta(reqPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !common.CanAccess(user, meta, reqPath, password) {
+		return http.StatusForbidden, errs.PermissionDenied
 	}
 	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
@@ -734,7 +808,14 @@ func (h *Handler) handleProppatch(w http.ResponseWriter, r *http.Request) (statu
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
+	}
+	meta, err := op.GetNearestMeta(reqPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !common.CanWrite(user, meta, reqPath) {
+		return http.StatusForbidden, errs.PermissionDenied
 	}
 	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {

@@ -2,6 +2,7 @@ package common
 
 import (
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -17,30 +18,46 @@ func IsStorageSignEnabled(rawPath string) bool {
 	return storage != nil && storage.GetStorage().EnableSign
 }
 
-func CanWrite(meta *model.Meta, path string) bool {
+func CanRead(user *model.User, meta *model.Meta, path string) bool {
+	if user == nil {
+		return false
+	}
+	if meta != nil && len(meta.ReadUsers) > 0 && !slices.Contains(meta.ReadUsers, user.ID) && (meta.ReadUsersSub || meta.Path == path) {
+		return false
+	}
+	return true
+}
+
+func CanWrite(user *model.User, meta *model.Meta, path string) bool {
+	if user == nil {
+		return false
+	}
+	if meta != nil && len(meta.WriteUsers) > 0 && !slices.Contains(meta.WriteUsers, user.ID) && (meta.WriteUsersSub || meta.Path == path) {
+		return false
+	}
+	return true
+}
+
+func CanWriteContentBypassUserPerms(meta *model.Meta, path string) bool {
 	if meta == nil || !meta.Write {
 		return false
 	}
-	return meta.WSub || meta.Path == path
-}
-
-func IsApply(metaPath, reqPath string, applySub bool) bool {
-	if utils.PathEqual(metaPath, reqPath) {
-		return true
-	}
-	return utils.IsSubPath(metaPath, reqPath) && applySub
+	return MetaCoversPath(meta.Path, path, meta.WSub)
 }
 
 func CanAccess(user *model.User, meta *model.Meta, reqPath string, password string) bool {
 	// if the reqPath is in hide (only can check the nearest meta) and user can't see hides, can't access
 	if meta != nil && !user.CanSeeHides() && meta.Hide != "" &&
-		IsApply(meta.Path, path.Dir(reqPath), meta.HSub) { // the meta should apply to the parent of current path
+		MetaCoversPath(meta.Path, path.Dir(reqPath), meta.HSub) { // the meta should apply to the parent of current path
 		for _, hide := range strings.Split(meta.Hide, "\n") {
 			re := regexp2.MustCompile(hide, regexp2.None)
 			if isMatch, _ := re.MatchString(path.Base(reqPath)); isMatch {
 				return false
 			}
 		}
+	}
+	if !CanRead(user, meta, reqPath) {
+		return false
 	}
 	// if is not guest and can access without password
 	if user.CanAccessWithoutPassword() {
@@ -51,11 +68,18 @@ func CanAccess(user *model.User, meta *model.Meta, reqPath string, password stri
 		return true
 	}
 	// if meta doesn't apply to sub_folder, can access
-	if !utils.PathEqual(meta.Path, reqPath) && !meta.PSub {
+	if !MetaCoversPath(meta.Path, reqPath, meta.PSub) {
 		return true
 	}
 	// validate password
 	return meta.Password == password
+}
+
+func MetaCoversPath(metaPath, reqPath string, applyToSubFolder bool) bool {
+	if utils.PathEqual(metaPath, reqPath) {
+		return true
+	}
+	return utils.IsSubPath(metaPath, reqPath) && applyToSubFolder
 }
 
 // ShouldProxy TODO need optimize
