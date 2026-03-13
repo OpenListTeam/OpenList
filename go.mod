@@ -80,7 +80,8 @@ require (
 	golang.org/x/net v0.48.0
 	golang.org/x/oauth2 v0.34.0
 	golang.org/x/time v0.14.0
-	google.golang.org/appengine v1.6.8
+	google.golang.org/appengine v1.6.7
+	google.golang.org/appengine/v2 v2.0.6
 	gopkg.in/ldap.v3 v3.1.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/driver/postgres v1.5.9
