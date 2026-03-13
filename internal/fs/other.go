@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -37,6 +38,14 @@ func remove(ctx context.Context, path string) error {
 		return errors.WithMessage(err, "failed get storage")
 	}
 	return op.Remove(ctx, storage, actualPath)
+}
+
+func transferShare(ctx context.Context, dstPath, shareURL, validCode string) error {
+	storage, actualPath, err := op.GetStorageAndActualPath(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to load driver")
+	}
+	return op.TransferShare(ctx, storage, actualPath, shareURL, validCode)
 }
 
 func other(ctx context.Context, args model.FsOtherArgs) (interface{}, error) {
