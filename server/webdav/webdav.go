@@ -227,7 +227,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	// TODO: check locks for read-only access??
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
-	password := ctx.Value(conf.MetaPassKey).(string)
+	password, _ := ctx.Value(conf.MetaPassKey).(string)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
@@ -719,7 +719,7 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 	userAgent := r.Header.Get("User-Agent")
 	ctx = context.WithValue(ctx, conf.UserAgentKey, userAgent)
 	user := ctx.Value(conf.UserKey).(*model.User)
-	password := ctx.Value(conf.MetaPassKey).(string)
+	password, _ := ctx.Value(conf.MetaPassKey).(string)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
