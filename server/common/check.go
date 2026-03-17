@@ -19,8 +19,9 @@ func IsStorageSignEnabled(rawPath string) bool {
 }
 
 func CanRead(user *model.User, meta *model.Meta, path string) bool {
+	// nil user is treated as internal/system context and bypasses per-user read restrictions
 	if user == nil {
-		return false
+		return true
 	}
 	if meta != nil && len(meta.ReadUsers) > 0 && !slices.Contains(meta.ReadUsers, user.ID) && (meta.ReadUsersSub || meta.Path == path) {
 		return false
@@ -29,8 +30,9 @@ func CanRead(user *model.User, meta *model.Meta, path string) bool {
 }
 
 func CanWrite(user *model.User, meta *model.Meta, path string) bool {
+	// nil user is treated as internal/system context and bypasses per-user read restrictions
 	if user == nil {
-		return false
+		return true
 	}
 	if meta != nil && len(meta.WriteUsers) > 0 && !slices.Contains(meta.WriteUsers, user.ID) && (meta.WriteUsersSub || meta.Path == path) {
 		return false

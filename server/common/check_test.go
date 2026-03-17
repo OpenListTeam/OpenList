@@ -189,12 +189,12 @@ func TestCanRead(t *testing.T) {
 		reason string
 	}{
 		{
-			name:   "nil user should deny access",
+			name:   "nil user should allow access",
 			user:   nil,
 			meta:   nil,
 			path:   "/any",
-			want:   false,
-			reason: "nil user should not have read access",
+			want:   true,
+			reason: "nil user represents internal/system context and bypasses per-user read restrictions",
 		},
 		{
 			name: "nil meta should allow access",
@@ -340,12 +340,12 @@ func TestCanWrite(t *testing.T) {
 		reason string
 	}{
 		{
-			name:   "nil user should deny access",
+			name:   "nil user should allow access",
 			user:   nil,
 			meta:   nil,
 			path:   "/any",
-			want:   false,
-			reason: "nil user should not have write access",
+			want:   true,
+			reason: "nil user represents internal/system context and bypasses per-user write restrictions",
 		},
 		{
 			name: "nil meta should allow access",
