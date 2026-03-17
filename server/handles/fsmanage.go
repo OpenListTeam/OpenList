@@ -363,13 +363,13 @@ func FsRemove(c *gin.Context) {
 		return
 	}
 	for i, name := range req.Names {
-		if strings.TrimSpace(utils.FixAndCleanPath(name)) == "/" {
-			log.Warnf("FsRemove: invalid item skipped: %s (parent directory: %s)\n", name, req.Dir)
+		fullPath := stdpath.Join(reqPath, name)
+		if !strings.HasPrefix(fullPath+"/", reqPath+"/") {
+			log.Warnf("FsRemove: path traversal attempt skipped: %s (dir: %s)\n", name, req.Dir)
 			req.Names[i] = ""
 			continue
 		}
-		// ensure req.Names is not a relative path
-		req.Names[i] = stdpath.Join(reqPath, name)
+		req.Names[i] = fullPath
 	}
 	for _, path := range req.Names {
 		if path == "" {
