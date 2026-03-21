@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 
@@ -18,6 +19,8 @@ type PikPakShare struct {
 	Addition
 	*Common
 	PassCodeToken string
+	passCodeMu    sync.RWMutex
+	persistMu     sync.Mutex
 }
 
 func (d *PikPakShare) Config() driver.Config {
@@ -28,20 +31,38 @@ func (d *PikPakShare) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
+func (d *PikPakShare) saveStorage(update func()) {
+	d.persistMu.Lock()
+	defer d.persistMu.Unlock()
+	if update != nil {
+		update()
+	}
+	op.MustSaveDriverStorage(d)
+}
+
+func (d *PikPakShare) SetPassCodeToken(token string) {
+	d.passCodeMu.Lock()
+	defer d.passCodeMu.Unlock()
+	d.PassCodeToken = token
+}
+
+func (d *PikPakShare) GetPassCodeToken() string {
+	d.passCodeMu.RLock()
+	defer d.passCodeMu.RUnlock()
+	return d.PassCodeToken
+}
+
 func (d *PikPakShare) Init(ctx context.Context) error {
 	if d.Common == nil {
 		d.Common = &Common{
 			DeviceID:  genDeviceID(),
 			UserAgent: "",
-			RefreshCTokenCk: func(token string) {
-				d.Common.CaptchaToken = token
-				op.MustSaveDriverStorage(d)
-			},
 		}
 	}
 	if d.Platform == "web" {
-		d.Platform = ""
-		op.MustSaveDriverStorage(d)
+		d.saveStorage(func() {
+			d.Platform = ""
+		})
 	} else if d.Platform != "" {
 		return fmt.Errorf("legacy pikpak_share %q profile was removed; recreate this storage with the current PikPakShare driver settings", d.Platform)
 	}
@@ -52,8 +73,9 @@ func (d *PikPakShare) Init(ctx context.Context) error {
 		if d.GetDeviceID() == "" || len(d.GetDeviceID()) != 32 {
 			d.SetDeviceID(genDeviceID())
 		}
-		d.Addition.DeviceID = d.Common.DeviceID
-		op.MustSaveDriverStorage(d)
+		d.saveStorage(func() {
+			d.Addition.DeviceID = d.GetDeviceID()
+		})
 	}
 
 	d.ClientID = WebClientID
@@ -95,7 +117,7 @@ func (d *PikPakShare) Link(ctx context.Context, file model.Obj, args model.LinkA
 	query := map[string]string{
 		"share_id":        d.ShareId,
 		"file_id":         file.GetID(),
-		"pass_code_token": d.PassCodeToken,
+		"pass_code_token": d.GetPassCodeToken(),
 	}
 	_, err := d.request("https://api-drive.mypikpak.net/drive/v1/share/file_info", http.MethodGet, func(req *resty.Request) {
 		req.SetQueryParams(query)

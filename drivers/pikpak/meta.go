@@ -11,7 +11,6 @@ type Addition struct {
 	Password         string `json:"password" required:"true"`
 	Platform         string `json:"platform" ignore:"true" default:""`
 	RefreshToken     string `json:"refresh_token" ignore:"true" default:""`
-	CaptchaToken     string `json:"captcha_token" ignore:"true" default:""`
 	DeviceID         string `json:"device_id" ignore:"true" default:""`
 	DisableMediaLink bool   `json:"disable_media_link" default:"true"`
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -25,6 +26,8 @@ type PikPak struct {
 	*Common
 	RefreshToken string
 	AccessToken  string
+	authMu       sync.RWMutex
+	persistMu    sync.Mutex
 }
 
 func (d *PikPak) Config() driver.Config {
@@ -35,6 +38,15 @@ func (d *PikPak) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
+func (d *PikPak) saveStorage(update func()) {
+	d.persistMu.Lock()
+	defer d.persistMu.Unlock()
+	if update != nil {
+		update()
+	}
+	op.MustSaveDriverStorage(d)
+}
+
 func (d *PikPak) Init(ctx context.Context) (err error) {
 	if d.Common == nil {
 		d.Common = &Common{
@@ -43,10 +55,6 @@ func (d *PikPak) Init(ctx context.Context) (err error) {
 			UserID:       "",
 			DeviceID:     genDeviceID(),
 			UserAgent:    "",
-			RefreshCTokenCk: func(token string) {
-				d.Common.CaptchaToken = token
-				op.MustSaveDriverStorage(d)
-			},
 		}
 	}
 
@@ -57,17 +65,15 @@ func (d *PikPak) Init(ctx context.Context) (err error) {
 	d.Algorithms = WebAlgorithms
 	d.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0"
 	if d.Platform == "web" {
-		d.Platform = ""
-		op.MustSaveDriverStorage(d)
+		d.saveStorage(func() {
+			d.Platform = ""
+		})
 	} else if d.Platform != "" {
 		return fmt.Errorf("legacy pikpak %q profile was removed; recreate this storage with the current PikPak driver settings", d.Platform)
 	}
 
-	if d.Addition.CaptchaToken != "" {
-		d.SetCaptchaToken(d.Addition.CaptchaToken)
-	}
 	if d.Addition.RefreshToken != "" {
-		d.RefreshToken = d.Addition.RefreshToken
+		d.setRefreshTokenState(d.Addition.RefreshToken)
 	}
 
 	if d.Addition.DeviceID != "" {
@@ -76,8 +82,9 @@ func (d *PikPak) Init(ctx context.Context) (err error) {
 		if d.GetDeviceID() == "" || len(d.GetDeviceID()) != 32 {
 			d.SetDeviceID(genDeviceID())
 		}
-		d.Addition.DeviceID = d.Common.DeviceID
-		op.MustSaveDriverStorage(d)
+		d.saveStorage(func() {
+			d.Addition.DeviceID = d.GetDeviceID()
+		})
 	}
 
 	if err = d.ensureAuthorized(); err != nil {

@@ -114,7 +114,7 @@ func (d *PikPakShare) getSharePassToken() error {
 	if err != nil {
 		return err
 	}
-	d.PassCodeToken = resp.PassCodeToken
+	d.SetPassCodeToken(resp.PassCodeToken)
 	return nil
 }
 
@@ -133,7 +133,7 @@ func (d *PikPakShare) getFiles(id string) ([]File, error) {
 			"limit":           "100",
 			"filters":         `{"phase":{"eq":"PHASE_TYPE_COMPLETE"},"trashed":{"eq":false}}`,
 			"page_token":      pageToken,
-			"pass_code_token": d.PassCodeToken,
+			"pass_code_token": d.GetPassCodeToken(),
 		}
 		var resp ShareResp
 		_, err := d.request("https://api-drive.mypikpak.net/drive/v1/share/detail", http.MethodGet, func(req *resty.Request) {
@@ -175,7 +175,8 @@ type Common struct {
 	Algorithms    []string
 	DeviceID      string
 	UserAgent     string
-	captchaMu     sync.Mutex
+	stateMu       sync.RWMutex
+	refreshMu     sync.Mutex
 	// 验证码token刷新成功回调
 	RefreshCTokenCk func(token string)
 }
@@ -185,29 +186,32 @@ func (c *Common) SetUserAgent(userAgent string) {
 }
 
 func (c *Common) SetCaptchaToken(captchaToken string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.CaptchaToken = captchaToken
 }
 
 func (c *Common) SetCaptchaExpiry(expiry time.Time) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.CaptchaExpiry = expiry
 }
 
 func (c *Common) SetDeviceID(deviceID string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.DeviceID = deviceID
 }
 
 func (c *Common) GetCaptchaToken() string {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
 	return c.CaptchaToken
 }
 
 func (c *Common) HasValidCaptchaToken() bool {
-	if c.CaptchaToken == "" {
-		return false
-	}
-	if c.CaptchaExpiry.IsZero() {
-		return true
-	}
-	return time.Now().Before(c.CaptchaExpiry.Add(-10 * time.Second))
+	token, expiry, _ := c.captchaSnapshot()
+	return hasValidCaptchaToken(token, expiry)
 }
 
 func (c *Common) GetClientID() string {
@@ -219,7 +223,32 @@ func (c *Common) GetUserAgent() string {
 }
 
 func (c *Common) GetDeviceID() string {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
 	return c.DeviceID
+}
+
+func (c *Common) captchaSnapshot() (token string, expiry time.Time, deviceID string) {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.CaptchaToken, c.CaptchaExpiry, c.DeviceID
+}
+
+func (c *Common) setCaptchaState(token string, expiry time.Time) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.CaptchaToken = token
+	c.CaptchaExpiry = expiry
+}
+
+func hasValidCaptchaToken(token string, expiry time.Time) bool {
+	if token == "" {
+		return false
+	}
+	if expiry.IsZero() {
+		return true
+	}
+	return time.Now().Before(expiry.Add(-10 * time.Second))
 }
 
 // RefreshCaptchaToken 刷新验证码token
@@ -236,7 +265,7 @@ func (d *PikPakShare) RefreshCaptchaToken(action, userID string) error {
 // GetCaptchaSign 获取验证码签名
 func (c *Common) GetCaptchaSign() (timestamp, sign string) {
 	timestamp = fmt.Sprint(time.Now().UnixMilli())
-	str := fmt.Sprint(c.ClientID, c.ClientVersion, c.PackageName, c.DeviceID, timestamp)
+	str := fmt.Sprint(c.ClientID, c.ClientVersion, c.PackageName, c.GetDeviceID(), timestamp)
 	for _, algorithm := range c.Algorithms {
 		str = utils.GetMD5EncodeStr(str + algorithm)
 	}
@@ -246,17 +275,19 @@ func (c *Common) GetCaptchaSign() (timestamp, sign string) {
 
 // refreshCaptchaToken 刷新CaptchaToken
 func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string) error {
-	d.Common.captchaMu.Lock()
-	defer d.Common.captchaMu.Unlock()
-	if d.Common.HasValidCaptchaToken() {
+	d.Common.refreshMu.Lock()
+	defer d.Common.refreshMu.Unlock()
+
+	oldToken, expiry, deviceID := d.Common.captchaSnapshot()
+	if hasValidCaptchaToken(oldToken, expiry) {
 		return nil
 	}
 
 	param := CaptchaTokenRequest{
 		Action:       action,
-		CaptchaToken: d.GetCaptchaToken(),
+		CaptchaToken: oldToken,
 		ClientID:     d.ClientID,
-		DeviceID:     d.GetDeviceID(),
+		DeviceID:     deviceID,
 		Meta:         metas,
 	}
 	var e ErrResp
@@ -265,7 +296,7 @@ func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string
 		SetHeaders(map[string]string{
 			"User-Agent":  d.GetUserAgent(),
 			"X-Client-ID": d.GetClientID(),
-			"X-Device-ID": d.GetDeviceID(),
+			"X-Device-ID": deviceID,
 		}).
 		SetError(&e).
 		SetResult(&resp).
@@ -284,10 +315,10 @@ func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string
 	//	return fmt.Errorf(`need verify: <a target="_blank" href="%s">Click Here</a>`, resp.Url)
 	//}
 
-	d.Common.SetCaptchaToken(resp.CaptchaToken)
-	d.Common.SetCaptchaExpiry(resp.Expiry())
-	if d.Common.RefreshCTokenCk != nil {
-		d.Common.RefreshCTokenCk(resp.CaptchaToken)
+	d.Common.setCaptchaState(resp.CaptchaToken, resp.Expiry())
+	refreshCTokenCk := d.Common.RefreshCTokenCk
+	if refreshCTokenCk != nil {
+		refreshCTokenCk(resp.CaptchaToken)
 	}
 	return nil
 }
