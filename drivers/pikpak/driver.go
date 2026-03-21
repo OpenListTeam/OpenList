@@ -52,11 +52,10 @@ func (d *PikPak) saveStorage(update func()) {
 func (d *PikPak) Init(ctx context.Context) (err error) {
 	if d.Common == nil {
 		d.Common = &Common{
-			client:       base.NewRestyClient(),
-			CaptchaToken: "",
-			UserID:       "",
-			DeviceID:     genDeviceID(),
-			UserAgent:    "",
+			client:    base.NewRestyClient(),
+			UserID:    "",
+			DeviceID:  genDeviceID(),
+			UserAgent: "",
 		}
 	}
 

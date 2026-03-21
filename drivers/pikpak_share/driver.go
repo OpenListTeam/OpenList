@@ -55,8 +55,9 @@ func (d *PikPakShare) GetPassCodeToken() string {
 func (d *PikPakShare) Init(ctx context.Context) error {
 	if d.Common == nil {
 		d.Common = &Common{
-			DeviceID:  genDeviceID(),
-			UserAgent: "",
+			captchaStates: make(map[string]captchaState),
+			DeviceID:      genDeviceID(),
+			UserAgent:     "",
 		}
 	}
 	if d.Platform == "web" {
@@ -84,12 +85,6 @@ func (d *PikPakShare) Init(ctx context.Context) error {
 	d.PackageName = WebPackageName
 	d.Algorithms = WebAlgorithms
 	d.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0"
-
-	// 获取CaptchaToken
-	err := d.RefreshCaptchaToken(GetAction(http.MethodGet, "https://api-drive.mypikpak.net/drive/v1/share:batch_file_info"), "")
-	if err != nil {
-		return err
-	}
 
 	if d.SharePwd != "" {
 		return d.getSharePassToken()
