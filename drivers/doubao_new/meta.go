@@ -15,16 +15,14 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:              "DoubaoNew",
-	LocalSort:         true,
-	OnlyProxy:         false,
-	NoCache:           false,
-	NoUpload:          false,
-	NeedMs:            false,
-	DefaultRoot:       "",
-	CheckStatus:       false,
-	Alert:             "",
+	Name:        "DoubaoNew",
+	LocalSort:   true,
+	DefaultRoot: "",
+	Alert: `danger|Do not use 302 if the storage is public accessible.
+Otherwise, the download link may leak sensitive information such as access token or signature.
+Others may use the leaked link to access all your files.`,
 	NoOverwriteUpload: false,
+	PreferProxy:       true,
 }
 
 func init() {
