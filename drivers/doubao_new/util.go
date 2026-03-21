@@ -31,11 +31,8 @@ func (d *DoubaoNew) request(ctx context.Context, path string, method string, cal
 	req.SetHeader("accept", "*/*")
 	req.SetHeader("origin", "https://www.doubao.com")
 	req.SetHeader("referer", "https://www.doubao.com/")
-	if auth := d.resolveAuthorization(); auth != "" {
-		req.SetHeader("authorization", auth)
-	}
-	if dpop := d.resolveDpop(); dpop != "" {
-		req.SetHeader("dpop", dpop)
+	if err := d.applyAuthHeaders(req, method, BaseURL+path); err != nil {
+		return nil, err
 	}
 
 	if callback != nil {
@@ -125,30 +122,6 @@ func parseSize(size string) int64 {
 	return val
 }
 
-func (d *DoubaoNew) resolveAuthorization() string {
-	auth := strings.TrimSpace(d.Authorization)
-	if auth == "" && d.Cookie != "" {
-		if token := cookie.GetStr(d.Cookie, "LARK_SUITE_ACCESS_TOKEN"); token != "" {
-			auth = token
-		}
-	}
-	if auth == "" {
-		return ""
-	}
-	if !strings.HasPrefix(auth, "DPoP ") && !strings.HasPrefix(auth, "dpop ") {
-		auth = "DPoP " + auth
-	}
-	return auth
-}
-
-func (d *DoubaoNew) resolveDpop() string {
-	dpop := strings.TrimSpace(d.Dpop)
-	if dpop == "" && d.Cookie != "" {
-		dpop = cookie.GetStr(d.Cookie, "LARK_SUITE_DPOP")
-	}
-	return dpop
-}
-
 func (d *DoubaoNew) listChildren(ctx context.Context, parentToken string, lastLabel string) (ListData, error) {
 	var resp ListResp
 	_, err := d.request(ctx, "/space/api/explorer/doubao/children/list/", http.MethodGet, func(req *resty.Request) {
@@ -233,7 +206,7 @@ func (d *DoubaoNew) getFileInfo(ctx context.Context, fileToken string) (FileInfo
 
 func (d *DoubaoNew) previewLink(ctx context.Context, obj *Object, args model.LinkArgs) (*model.Link, error) {
 	auth := d.resolveAuthorization()
-	dpop := d.resolveDpop()
+	dpop, err := d.resolveDpopForRequest(http.MethodGet, fmt.Sprintf("%s/space/api/box/stream/download/preview_sub/%s", BaseURL, obj.ObjToken))
 	if auth == "" || dpop == "" {
 		return nil, errors.New("missing authorization or dpop")
 	}
@@ -306,11 +279,8 @@ func (d *DoubaoNew) createFolder(ctx context.Context, parentToken, name string) 
 		req.SetHeader("accept", "*/*")
 		req.SetHeader("origin", "https://www.doubao.com")
 		req.SetHeader("referer", "https://www.doubao.com/")
-		if auth := d.resolveAuthorization(); auth != "" {
-			req.SetHeader("authorization", auth)
-		}
-		if dpop := d.resolveDpop(); dpop != "" {
-			req.SetHeader("dpop", dpop)
+		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/explorer/v2/create/folder/"); err != nil {
+			return nil, nil, err
 		}
 		if csrfToken != "" {
 			req.SetHeader("x-csrftoken", csrfToken)
@@ -385,11 +355,8 @@ func (d *DoubaoNew) renameFolder(ctx context.Context, token, name string) error 
 		req.SetHeader("accept", "*/*")
 		req.SetHeader("origin", "https://www.doubao.com")
 		req.SetHeader("referer", "https://www.doubao.com/")
-		if auth := d.resolveAuthorization(); auth != "" {
-			req.SetHeader("authorization", auth)
-		}
-		if dpop := d.resolveDpop(); dpop != "" {
-			req.SetHeader("dpop", dpop)
+		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/explorer/v2/rename/"); err != nil {
+			return nil, nil, err
 		}
 		if csrfToken != "" {
 			req.SetHeader("x-csrftoken", csrfToken)
@@ -507,11 +474,8 @@ func (d *DoubaoNew) moveObj(ctx context.Context, srcToken, destToken string) err
 		req.SetHeader("accept", "*/*")
 		req.SetHeader("origin", "https://www.doubao.com")
 		req.SetHeader("referer", "https://www.doubao.com/")
-		if auth := d.resolveAuthorization(); auth != "" {
-			req.SetHeader("authorization", auth)
-		}
-		if dpop := d.resolveDpop(); dpop != "" {
-			req.SetHeader("dpop", dpop)
+		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/explorer/v2/move/"); err != nil {
+			return nil, nil, err
 		}
 		if csrfToken != "" {
 			req.SetHeader("x-csrftoken", csrfToken)
@@ -542,11 +506,8 @@ func (d *DoubaoNew) removeObj(ctx context.Context, tokens []string) error {
 		req.SetHeader("accept", "application/json, text/plain, */*")
 		req.SetHeader("origin", "https://www.doubao.com")
 		req.SetHeader("referer", "https://www.doubao.com/")
-		if auth := d.resolveAuthorization(); auth != "" {
-			req.SetHeader("authorization", auth)
-		}
-		if dpop := d.resolveDpop(); dpop != "" {
-			req.SetHeader("dpop", dpop)
+		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/explorer/v3/remove/"); err != nil {
+			return nil, nil, err
 		}
 		if csrfToken != "" {
 			req.SetHeader("x-csrftoken", csrfToken)
@@ -598,11 +559,8 @@ func (d *DoubaoNew) getUserStorage(ctx context.Context) (UserStorageData, error)
 	req.SetHeader("referer", "https://www.doubao.com/")
 	req.SetHeader("agw-js-conv", "str")
 	req.SetHeader("content-type", "application/json")
-	if auth := d.resolveAuthorization(); auth != "" {
-		req.SetHeader("authorization", auth)
-	}
-	if dpop := d.resolveDpop(); dpop != "" {
-		req.SetHeader("dpop", dpop)
+	if err := d.applyAuthHeaders(req, http.MethodPost, "https://www.doubao.com/alice/aispace/facade/get_user_storage"); err != nil {
+		return UserStorageData{}, err
 	}
 	if d.Cookie != "" {
 		req.SetHeader("cookie", d.Cookie)
@@ -675,11 +633,8 @@ func (d *DoubaoNew) getTaskStatus(ctx context.Context, taskID string) (TaskStatu
 	req.SetHeader("accept", "application/json, text/plain, */*")
 	req.SetHeader("origin", "https://www.doubao.com")
 	req.SetHeader("referer", "https://www.doubao.com/")
-	if auth := d.resolveAuthorization(); auth != "" {
-		req.SetHeader("authorization", auth)
-	}
-	if dpop := d.resolveDpop(); dpop != "" {
-		req.SetHeader("dpop", dpop)
+	if err := d.applyAuthHeaders(req, http.MethodGet, BaseURL+"/space/api/explorer/v2/task/"); err != nil {
+		return TaskStatusData{}, err
 	}
 	req.SetQueryParam("task_id", taskID)
 	res, err := req.Execute(http.MethodGet, BaseURL+"/space/api/explorer/v2/task/")

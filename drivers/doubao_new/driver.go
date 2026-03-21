@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -25,6 +26,8 @@ type DoubaoNew struct {
 	model.Storage
 	Addition
 	TtLogid string
+
+	dpopKeyPairCache sync.Map
 }
 
 func (d *DoubaoNew) Config() driver.Config {
@@ -90,7 +93,10 @@ func (d *DoubaoNew) Link(ctx context.Context, file model.Obj, args model.LinkArg
 		}
 	}
 	auth := d.resolveAuthorization()
-	dpop := d.resolveDpop()
+	dpop, err := d.resolveDpopForRequest(http.MethodGet, DownloadBaseURL+"/space/api/box/stream/download/all/"+obj.ObjToken+"/")
+	if err != nil {
+		return nil, err
+	}
 	if auth == "" || dpop == "" {
 		return nil, errors.New("missing authorization or dpop")
 	}

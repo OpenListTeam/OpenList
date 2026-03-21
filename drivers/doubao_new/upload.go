@@ -123,18 +123,6 @@ func (d *DoubaoNew) mergeUploadBlocks(ctx context.Context, uploadID string, seqL
 	if reqID != "" {
 		req.SetHeader("x-request-id", reqID)
 	}
-	if auth := d.resolveAuthorization(); auth != "" {
-		req.SetHeader("authorization", auth)
-	}
-	if dpop := d.resolveDpop(); dpop != "" {
-		req.SetHeader("dpop", dpop)
-	}
-	req.Header.Del("cookie")
-	if req.Header.Get("x-command") == "" {
-		return UploadMergeData{}, fmt.Errorf("[doubao_new] merge blocks missing x-command header")
-	}
-	req.SetBody(data)
-
 	values := url.Values{}
 	values.Set("shouldBypassScsDialog", "true")
 	values.Set("upload_id", uploadID)
@@ -142,6 +130,14 @@ func (d *DoubaoNew) mergeUploadBlocks(ctx context.Context, uploadID string, seqL
 	values.Set("doubao_storage", "imagex_other")
 	values.Set("doubao_app_id", "497858")
 	urlStr := "https://internal-api-drive-stream.feishu.cn/space/api/box/stream/upload/merge_block/?" + values.Encode()
+	if err := d.applyAuthHeaders(req, http.MethodPost, urlStr); err != nil {
+		return UploadMergeData{}, err
+	}
+	req.Header.Del("cookie")
+	if req.Header.Get("x-command") == "" {
+		return UploadMergeData{}, fmt.Errorf("[doubao_new] merge blocks missing x-command header")
+	}
+	req.SetBody(data)
 
 	res, err := req.Execute(http.MethodPost, urlStr)
 	if err != nil {
@@ -218,13 +214,6 @@ func (d *DoubaoNew) uploadBlockV3(ctx context.Context, uploadID string, block Up
 	req.SetHeader("rpc-persist-doubao-pan", "true")
 	req.SetHeader("x-block-seq", strconv.Itoa(block.Seq))
 	req.SetHeader("x-block-checksum", block.Checksum)
-	if auth := d.resolveAuthorization(); auth != "" {
-		req.SetHeader("authorization", auth)
-	}
-	if dpop := d.resolveDpop(); dpop != "" {
-		req.SetHeader("dpop", dpop)
-	}
-
 	req.SetMultipartFormData(map[string]string{
 		"upload_id": uploadID,
 		"size":      strconv.FormatInt(int64(len(data)), 10),
@@ -241,6 +230,9 @@ func (d *DoubaoNew) uploadBlockV3(ctx context.Context, uploadID string, block Up
 	values.Set("doubao_storage", "imagex_other")
 	values.Set("doubao_app_id", "497858")
 	urlStr := "https://internal-api-drive-stream.feishu.cn/space/api/box/stream/upload/v3/block/?" + values.Encode()
+	if err := d.applyAuthHeaders(req, http.MethodPost, urlStr); err != nil {
+		return err
+	}
 
 	res, err := req.Execute(http.MethodPost, urlStr)
 	if err != nil {

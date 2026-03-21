@@ -11,6 +11,7 @@ type Addition struct {
 	// define other
 	Authorization string `json:"authorization" help:"DPoP access token (Authorization header value); optional if present in cookie"`
 	Dpop          string `json:"dpop" help:"DPoP header value; optional if present in cookie"`
+	DpopKeyPair   string `json:"dpop_key_pair" help:"DPoP key pair for refreshing Dpop; optional if present in cookie"`
 	Cookie        string `json:"cookie" help:"Optional cookie; only used to extract authorization/dpop tokens"`
 }
 
