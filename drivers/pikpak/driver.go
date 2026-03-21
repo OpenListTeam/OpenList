@@ -41,7 +41,7 @@ func (d *PikPak) Init(ctx context.Context) (err error) {
 			client:       base.NewRestyClient(),
 			CaptchaToken: "",
 			UserID:       "",
-			DeviceID:     utils.GetMD5EncodeStr(d.Username + d.Password),
+			DeviceID:     genDeviceID(),
 			UserAgent:    "",
 			RefreshCTokenCk: func(token string) {
 				d.Common.CaptchaToken = token
@@ -50,65 +50,39 @@ func (d *PikPak) Init(ctx context.Context) (err error) {
 		}
 	}
 
-	if d.Platform == "android" {
-		d.ClientID = AndroidClientID
-		d.ClientSecret = AndroidClientSecret
-		d.ClientVersion = AndroidClientVersion
-		d.PackageName = AndroidPackageName
-		d.Algorithms = AndroidAlgorithms
-		d.UserAgent = BuildCustomUserAgent(utils.GetMD5EncodeStr(d.Username+d.Password), AndroidClientID, AndroidPackageName, AndroidSdkVersion, AndroidClientVersion, AndroidPackageName, "")
-	} else if d.Platform == "web" {
-		d.ClientID = WebClientID
-		d.ClientSecret = WebClientSecret
-		d.ClientVersion = WebClientVersion
-		d.PackageName = WebPackageName
-		d.Algorithms = WebAlgorithms
-		d.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-	} else if d.Platform == "pc" {
-		d.ClientID = PCClientID
-		d.ClientSecret = PCClientSecret
-		d.ClientVersion = PCClientVersion
-		d.PackageName = PCPackageName
-		d.Algorithms = PCAlgorithms
-		d.UserAgent = "MainWindow Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) PikPak/2.6.11.4955 Chrome/100.0.4896.160 Electron/18.3.15 Safari/537.36"
+	d.ClientID = WebClientID
+	d.ClientSecret = WebClientSecret
+	d.ClientVersion = WebClientVersion
+	d.PackageName = WebPackageName
+	d.Algorithms = WebAlgorithms
+	d.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0"
+	if d.Platform == "web" {
+		d.Platform = ""
+		op.MustSaveDriverStorage(d)
+	} else if d.Platform != "" {
+		return fmt.Errorf("legacy pikpak %q profile was removed; recreate this storage with the current PikPak driver settings", d.Platform)
 	}
 
-	if d.Addition.CaptchaToken != "" && d.Addition.RefreshToken == "" {
+	if d.Addition.CaptchaToken != "" {
 		d.SetCaptchaToken(d.Addition.CaptchaToken)
+	}
+	if d.Addition.RefreshToken != "" {
+		d.RefreshToken = d.Addition.RefreshToken
 	}
 
 	if d.Addition.DeviceID != "" {
 		d.SetDeviceID(d.Addition.DeviceID)
 	} else {
+		if d.GetDeviceID() == "" || len(d.GetDeviceID()) != 32 {
+			d.SetDeviceID(genDeviceID())
+		}
 		d.Addition.DeviceID = d.Common.DeviceID
 		op.MustSaveDriverStorage(d)
 	}
-	// 如果已经有RefreshToken，直接获取AccessToken
-	if d.Addition.RefreshToken != "" {
-		if err = d.refreshToken(d.Addition.RefreshToken); err != nil {
-			return err
-		}
-	} else {
-		// 如果没有填写RefreshToken，尝试登录 获取 refreshToken
-		if err = d.login(); err != nil {
-			return err
-		}
-	}
 
-	// 获取CaptchaToken
-	err = d.RefreshCaptchaTokenAtLogin(GetAction(http.MethodGet, "https://api-drive.mypikpak.net/drive/v1/files"), d.Common.GetUserID())
-	if err != nil {
+	if err = d.ensureAuthorized(); err != nil {
 		return err
 	}
-
-	// 更新UserAgent
-	if d.Platform == "android" {
-		d.Common.UserAgent = BuildCustomUserAgent(utils.GetMD5EncodeStr(d.Username+d.Password), AndroidClientID, AndroidPackageName, AndroidSdkVersion, AndroidClientVersion, AndroidPackageName, d.Common.UserID)
-	}
-
-	// 保存 有效的 RefreshToken
-	d.Addition.RefreshToken = d.RefreshToken
-	op.MustSaveDriverStorage(d)
 
 	return nil
 }
@@ -246,11 +220,6 @@ func (d *PikPak) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	}
 
 	params := resp.Resumable.Params
-	// endpoint := strings.Join(strings.Split(params.Endpoint, ".")[1:], ".")
-	// web 端上传 返回的endpoint 为 `mypikpak.net` | android 端上传 返回的endpoint 为 `vip-lixian-07.mypikpak.net`·
-	if d.Addition.Platform == "android" {
-		params.Endpoint = "mypikpak.net"
-	}
 
 	if stream.GetSize() <= 10*utils.MB { // 文件大小 小于10MB，改用普通模式上传
 		return d.UploadByOSS(ctx, &params, stream, up)

@@ -2,8 +2,8 @@ package pikpak_share
 
 import (
 	"context"
+	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 
@@ -31,7 +31,7 @@ func (d *PikPakShare) GetAddition() driver.Additional {
 func (d *PikPakShare) Init(ctx context.Context) error {
 	if d.Common == nil {
 		d.Common = &Common{
-			DeviceID:  utils.GetMD5EncodeStr(d.Addition.ShareId + d.Addition.SharePwd + time.Now().String()),
+			DeviceID:  genDeviceID(),
 			UserAgent: "",
 			RefreshCTokenCk: func(token string) {
 				d.Common.CaptchaToken = token
@@ -39,36 +39,29 @@ func (d *PikPakShare) Init(ctx context.Context) error {
 			},
 		}
 	}
+	if d.Platform == "web" {
+		d.Platform = ""
+		op.MustSaveDriverStorage(d)
+	} else if d.Platform != "" {
+		return fmt.Errorf("legacy pikpak_share %q profile was removed; recreate this storage with the current PikPakShare driver settings", d.Platform)
+	}
 
 	if d.Addition.DeviceID != "" {
 		d.SetDeviceID(d.Addition.DeviceID)
 	} else {
+		if d.GetDeviceID() == "" || len(d.GetDeviceID()) != 32 {
+			d.SetDeviceID(genDeviceID())
+		}
 		d.Addition.DeviceID = d.Common.DeviceID
 		op.MustSaveDriverStorage(d)
 	}
 
-	if d.Platform == "android" {
-		d.ClientID = AndroidClientID
-		d.ClientSecret = AndroidClientSecret
-		d.ClientVersion = AndroidClientVersion
-		d.PackageName = AndroidPackageName
-		d.Algorithms = AndroidAlgorithms
-		d.UserAgent = BuildCustomUserAgent(d.GetDeviceID(), AndroidClientID, AndroidPackageName, AndroidSdkVersion, AndroidClientVersion, AndroidPackageName, "")
-	} else if d.Platform == "web" {
-		d.ClientID = WebClientID
-		d.ClientSecret = WebClientSecret
-		d.ClientVersion = WebClientVersion
-		d.PackageName = WebPackageName
-		d.Algorithms = WebAlgorithms
-		d.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-	} else if d.Platform == "pc" {
-		d.ClientID = PCClientID
-		d.ClientSecret = PCClientSecret
-		d.ClientVersion = PCClientVersion
-		d.PackageName = PCPackageName
-		d.Algorithms = PCAlgorithms
-		d.UserAgent = "MainWindow Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) PikPak/2.6.11.4955 Chrome/100.0.4896.160 Electron/18.3.15 Safari/537.36"
-	}
+	d.ClientID = WebClientID
+	d.ClientSecret = WebClientSecret
+	d.ClientVersion = WebClientVersion
+	d.PackageName = WebPackageName
+	d.Algorithms = WebAlgorithms
+	d.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0"
 
 	// 获取CaptchaToken
 	err := d.RefreshCaptchaToken(GetAction(http.MethodGet, "https://api-drive.mypikpak.net/drive/v1/share:batch_file_info"), "")

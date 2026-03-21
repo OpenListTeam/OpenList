@@ -1,14 +1,12 @@
 package pikpak_share
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
-	"encoding/hex"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -16,17 +14,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/go-resty/resty/v2"
 )
-
-var AndroidAlgorithms = []string{
-	"SOP04dGzk0TNO7t7t9ekDbAmx+eq0OI1ovEx",
-	"nVBjhYiND4hZ2NCGyV5beamIr7k6ifAsAbl",
-	"Ddjpt5B/Cit6EDq2a6cXgxY9lkEIOw4yC1GDF28KrA",
-	"VVCogcmSNIVvgV6U+AochorydiSymi68YVNGiz",
-	"u5ujk5sM62gpJOsB/1Gu/zsfgfZO",
-	"dXYIiBOAHZgzSruaQ2Nhrqc2im",
-	"z5jUTBSIpBN9g4qSJGlidNAutX6",
-	"KJE2oveZ34du/g1tiimm",
-}
 
 var WebAlgorithms = []string{
 	"C9qPpZLN8ucRTaTiUMWYS9cQvWOE",
@@ -46,38 +33,36 @@ var WebAlgorithms = []string{
 	"NhXXU9rg4XXdzo7u5o",
 }
 
-var PCAlgorithms = []string{
-	"KHBJ07an7ROXDoK7Db",
-	"G6n399rSWkl7WcQmw5rpQInurc1DkLmLJqE",
-	"JZD1A3M4x+jBFN62hkr7VDhkkZxb9g3rWqRZqFAAb",
-	"fQnw/AmSlbbI91Ik15gpddGgyU7U",
-	"/Dv9JdPYSj3sHiWjouR95NTQff",
-	"yGx2zuTjbWENZqecNI+edrQgqmZKP",
-	"ljrbSzdHLwbqcRn",
-	"lSHAsqCkGDGxQqqwrVu",
-	"TsWXI81fD1",
-	"vk7hBjawK/rOSrSWajtbMk95nfgf3",
-}
-
 const (
-	AndroidClientID      = "YNxT9w7GMdWvEOKa"
-	AndroidClientSecret  = "dbw2OtmVEeuUvIptb1Coyg"
-	AndroidClientVersion = "1.53.2"
-	AndroidPackageName   = "com.pikcloud.pikpak"
-	AndroidSdkVersion    = "2.0.6.206003"
-	WebClientID          = "YUMx5nI8ZU8Ap8pm"
-	WebClientSecret      = "dbw2OtmVEeuUvIptb1Coyg"
-	WebClientVersion     = "2.0.0"
-	WebPackageName       = "mypikpak.com"
-	WebSdkVersion        = "8.0.3"
-	PCClientID           = "YvtoWO6GNHiuCl7x"
-	PCClientSecret       = "1NIH5R1IEe2pAxZE3hv3uA"
-	PCClientVersion      = "undefined" // 2.6.11.4955
-	PCPackageName        = "mypikpak.com"
-	PCSdkVersion         = "8.0.3"
+	WebClientID      = "YUMx5nI8ZU8Ap8pm"
+	WebClientSecret  = "dbw2OtmVEeuUvIptb1Coyg"
+	WebClientVersion = "2.0.0"
+	WebPackageName   = "mypikpak.com"
 )
 
+func genDeviceID() string {
+	base := []byte("xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx")
+	random := make([]byte, len(base))
+	if _, err := rand.Read(random); err != nil {
+		return utils.GetMD5EncodeStr(fmt.Sprintf("%d", time.Now().UnixNano()))
+	}
+	for i, char := range base {
+		switch char {
+		case 'x':
+			base[i] = "0123456789abcdef"[random[i]&0x0f]
+		case 'y':
+			base[i] = "0123456789abcdef"[random[i]&0x03|0x08]
+		}
+	}
+	return string(base)
+}
+
 func (d *PikPakShare) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	if !d.HasValidCaptchaToken() {
+		if err := d.RefreshCaptchaToken(GetAction(method, url), ""); err != nil {
+			return nil, err
+		}
+	}
 	req := base.RestyClient.R()
 	req.SetHeaders(map[string]string{
 		"User-Agent":      d.GetUserAgent(),
@@ -102,6 +87,8 @@ func (d *PikPakShare) request(url string, method string, callback base.ReqCallba
 	case 0:
 		return res.Body(), nil
 	case 9: // 验证码token过期
+		d.Common.SetCaptchaExpiry(time.Time{})
+		d.Common.SetCaptchaToken("")
 		if err = d.RefreshCaptchaToken(GetAction(method, url), ""); err != nil {
 			return nil, err
 		}
@@ -177,8 +164,9 @@ func GetAction(method string, url string) string {
 }
 
 type Common struct {
-	client       *resty.Client
-	CaptchaToken string
+	client        *resty.Client
+	CaptchaToken  string
+	CaptchaExpiry time.Time
 	// 必要值,签名相关
 	ClientID      string
 	ClientSecret  string
@@ -187,6 +175,7 @@ type Common struct {
 	Algorithms    []string
 	DeviceID      string
 	UserAgent     string
+	captchaMu     sync.Mutex
 	// 验证码token刷新成功回调
 	RefreshCTokenCk func(token string)
 }
@@ -199,12 +188,26 @@ func (c *Common) SetCaptchaToken(captchaToken string) {
 	c.CaptchaToken = captchaToken
 }
 
+func (c *Common) SetCaptchaExpiry(expiry time.Time) {
+	c.CaptchaExpiry = expiry
+}
+
 func (c *Common) SetDeviceID(deviceID string) {
 	c.DeviceID = deviceID
 }
 
 func (c *Common) GetCaptchaToken() string {
 	return c.CaptchaToken
+}
+
+func (c *Common) HasValidCaptchaToken() bool {
+	if c.CaptchaToken == "" {
+		return false
+	}
+	if c.CaptchaExpiry.IsZero() {
+		return true
+	}
+	return time.Now().Before(c.CaptchaExpiry.Add(-10 * time.Second))
 }
 
 func (c *Common) GetClientID() string {
@@ -217,60 +220,6 @@ func (c *Common) GetUserAgent() string {
 
 func (c *Common) GetDeviceID() string {
 	return c.DeviceID
-}
-
-func generateDeviceSign(deviceID, packageName string) string {
-
-	signatureBase := fmt.Sprintf("%s%s%s%s", deviceID, packageName, "1", "appkey")
-
-	sha1Hash := sha1.New()
-	sha1Hash.Write([]byte(signatureBase))
-	sha1Result := sha1Hash.Sum(nil)
-
-	sha1String := hex.EncodeToString(sha1Result)
-
-	md5Hash := md5.New()
-	md5Hash.Write([]byte(sha1String))
-	md5Result := md5Hash.Sum(nil)
-
-	md5String := hex.EncodeToString(md5Result)
-
-	deviceSign := fmt.Sprintf("div101.%s%s", deviceID, md5String)
-
-	return deviceSign
-}
-
-func BuildCustomUserAgent(deviceID, clientID, appName, sdkVersion, clientVersion, packageName, userID string) string {
-	deviceSign := generateDeviceSign(deviceID, packageName)
-	var sb strings.Builder
-
-	sb.WriteString(fmt.Sprintf("ANDROID-%s/%s ", appName, clientVersion))
-	sb.WriteString("protocolVersion/200 ")
-	sb.WriteString("accesstype/ ")
-	sb.WriteString(fmt.Sprintf("clientid/%s ", clientID))
-	sb.WriteString(fmt.Sprintf("clientversion/%s ", clientVersion))
-	sb.WriteString("action_type/ ")
-	sb.WriteString("networktype/WIFI ")
-	sb.WriteString("sessionid/ ")
-	sb.WriteString(fmt.Sprintf("deviceid/%s ", deviceID))
-	sb.WriteString("providername/NONE ")
-	sb.WriteString(fmt.Sprintf("devicesign/%s ", deviceSign))
-	sb.WriteString("refresh_token/ ")
-	sb.WriteString(fmt.Sprintf("sdkversion/%s ", sdkVersion))
-	sb.WriteString(fmt.Sprintf("datetime/%d ", time.Now().UnixMilli()))
-	sb.WriteString(fmt.Sprintf("usrno/%s ", userID))
-	sb.WriteString(fmt.Sprintf("appname/android-%s ", appName))
-	sb.WriteString(fmt.Sprintf("session_origin/ "))
-	sb.WriteString(fmt.Sprintf("grant_type/ "))
-	sb.WriteString(fmt.Sprintf("appid/ "))
-	sb.WriteString(fmt.Sprintf("clientip/ "))
-	sb.WriteString(fmt.Sprintf("devicename/Xiaomi_M2004j7ac "))
-	sb.WriteString(fmt.Sprintf("osversion/13 "))
-	sb.WriteString(fmt.Sprintf("platformversion/10 "))
-	sb.WriteString(fmt.Sprintf("accessmode/ "))
-	sb.WriteString(fmt.Sprintf("devicemodel/M2004J7AC "))
-
-	return sb.String()
 }
 
 // RefreshCaptchaToken 刷新验证码token
@@ -297,6 +246,12 @@ func (c *Common) GetCaptchaSign() (timestamp, sign string) {
 
 // refreshCaptchaToken 刷新CaptchaToken
 func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string) error {
+	d.Common.captchaMu.Lock()
+	defer d.Common.captchaMu.Unlock()
+	if d.Common.HasValidCaptchaToken() {
+		return nil
+	}
+
 	param := CaptchaTokenRequest{
 		Action:       action,
 		CaptchaToken: d.GetCaptchaToken(),
@@ -306,9 +261,16 @@ func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string
 	}
 	var e ErrResp
 	var resp CaptchaTokenResponse
-	_, err := d.request("https://user.mypikpak.net/v1/shield/captcha/init", http.MethodPost, func(req *resty.Request) {
-		req.SetError(&e).SetBody(param)
-	}, &resp)
+	req := base.RestyClient.R().
+		SetHeaders(map[string]string{
+			"User-Agent":  d.GetUserAgent(),
+			"X-Client-ID": d.GetClientID(),
+			"X-Device-ID": d.GetDeviceID(),
+		}).
+		SetError(&e).
+		SetResult(&resp).
+		SetBody(param)
+	_, err := req.Execute(http.MethodPost, "https://user.mypikpak.net/v1/shield/captcha/init")
 
 	if err != nil {
 		return err
@@ -322,9 +284,10 @@ func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string
 	//	return fmt.Errorf(`need verify: <a target="_blank" href="%s">Click Here</a>`, resp.Url)
 	//}
 
+	d.Common.SetCaptchaToken(resp.CaptchaToken)
+	d.Common.SetCaptchaExpiry(resp.Expiry())
 	if d.Common.RefreshCTokenCk != nil {
 		d.Common.RefreshCTokenCk(resp.CaptchaToken)
 	}
-	d.Common.SetCaptchaToken(resp.CaptchaToken)
 	return nil
 }
