@@ -14,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	hash_extend "github.com/OpenListTeam/OpenList/v4/pkg/utils/hash"
 	"github.com/go-resty/resty/v2"
@@ -27,6 +28,7 @@ type PikPak struct {
 	RefreshToken string
 	AccessToken  string
 	authMu       sync.RWMutex
+	authG        singleflight.Group[struct{}]
 	persistMu    sync.Mutex
 }
 
@@ -87,7 +89,7 @@ func (d *PikPak) Init(ctx context.Context) (err error) {
 		})
 	}
 
-	if err = d.ensureAuthorized(); err != nil {
+	if err = d.ensureAuthorized(false, ""); err != nil {
 		return err
 	}
 
