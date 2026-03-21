@@ -115,8 +115,7 @@ func (d *PikPak) loginRaw() error {
 
 	err := doLogin()
 	if apiErr, ok := err.(*ErrResp); ok && apiErr.ErrorCode == 9 {
-		d.Common.SetCaptchaExpiry(time.Time{})
-		d.Common.SetCaptchaToken("")
+		d.Common.invalidateCaptchaToken()
 		if err = d.RefreshCaptchaTokenInLogin(action, d.Username); err != nil {
 			return err
 		}
@@ -244,8 +243,7 @@ func (d *PikPak) request(url string, method string, callback base.ReqCallback, r
 		}
 		return d.request(url, method, callback, resp)
 	case 9: // 验证码token过期
-		d.Common.SetCaptchaExpiry(time.Time{})
-		d.Common.SetCaptchaToken("")
+		d.Common.invalidateCaptchaToken()
 		if err = d.RefreshCaptchaTokenAtLogin(GetAction(method, url), d.GetUserID()); err != nil {
 			return nil, err
 		}
@@ -325,18 +323,6 @@ func (c *Common) SetUserAgent(userAgent string) {
 	c.UserAgent = userAgent
 }
 
-func (c *Common) SetCaptchaToken(captchaToken string) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	c.CaptchaToken = captchaToken
-}
-
-func (c *Common) SetCaptchaExpiry(expiry time.Time) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	c.CaptchaExpiry = expiry
-}
-
 func (c *Common) GetCaptchaToken() string {
 	c.stateMu.RLock()
 	defer c.stateMu.RUnlock()
@@ -377,6 +363,10 @@ func (c *Common) setCaptchaState(token string, expiry time.Time) {
 	c.CaptchaExpiry = expiry
 }
 
+func (c *Common) invalidateCaptchaToken() {
+	c.setCaptchaState("", time.Time{})
+}
+
 func hasValidCaptchaToken(token string, expiry time.Time) bool {
 	if token == "" {
 		return false
@@ -399,12 +389,6 @@ func (d *PikPak) getRefreshToken() string {
 	return d.RefreshToken
 }
 
-func (d *PikPak) authSnapshot() (accessToken, refreshToken string) {
-	d.authMu.RLock()
-	defer d.authMu.RUnlock()
-	return d.AccessToken, d.RefreshToken
-}
-
 func (d *PikPak) setRefreshTokenState(refreshToken string) {
 	d.authMu.Lock()
 	defer d.authMu.Unlock()
@@ -418,19 +402,17 @@ func (d *PikPak) setAuthTokens(accessToken, refreshToken string) {
 	d.RefreshToken = refreshToken
 }
 
-// RefreshCaptchaTokenAtLogin 刷新验证码token(登录后)
-func (d *PikPak) RefreshCaptchaTokenAtLogin(action, userID string) error {
+func (d *PikPak) authorizedCaptchaMetas(userID string) map[string]string {
 	metas := map[string]string{
 		"client_version": d.ClientVersion,
 		"package_name":   d.PackageName,
 		"user_id":        userID,
 	}
 	metas["timestamp"], metas["captcha_sign"] = d.Common.GetCaptchaSign()
-	return d.refreshCaptchaToken(action, metas, true)
+	return metas
 }
 
-// RefreshCaptchaTokenInLogin 刷新验证码token(登录时)
-func (d *PikPak) RefreshCaptchaTokenInLogin(action, username string) error {
+func (d *PikPak) loginCaptchaMetas(username string) map[string]string {
 	metas := make(map[string]string)
 	if ok, _ := regexp.MatchString(`\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*`, username); ok {
 		metas["email"] = username
@@ -439,7 +421,27 @@ func (d *PikPak) RefreshCaptchaTokenInLogin(action, username string) error {
 	} else {
 		metas["username"] = username
 	}
-	return d.refreshCaptchaToken(action, metas, false)
+	return metas
+}
+
+// RefreshCaptchaTokenAtLogin 刷新验证码token(登录后)
+func (d *PikPak) RefreshCaptchaTokenAtLogin(action, userID string) error {
+	metas := d.authorizedCaptchaMetas(userID)
+	previousCaptchaToken := d.GetCaptchaToken()
+	accessToken := d.getAccessToken()
+	err := d.refreshCaptchaToken(action, metas, accessToken)
+	if apiErr, ok := err.(*ErrResp); ok && isAuthExpiredErrorCode(apiErr.ErrorCode) {
+		if err = d.ensureAuthorized(true, accessToken); err != nil {
+			return err
+		}
+		return d.refreshCaptchaTokenAfterReauth(action, metas, previousCaptchaToken)
+	}
+	return err
+}
+
+// RefreshCaptchaTokenInLogin 刷新验证码token(登录时)
+func (d *PikPak) RefreshCaptchaTokenInLogin(action, username string) error {
+	return d.refreshCaptchaToken(action, d.loginCaptchaMetas(username), "")
 }
 
 // GetCaptchaSign 获取验证码签名
@@ -484,51 +486,10 @@ func (d *PikPak) initCaptchaToken(action string, metas map[string]string, oldTok
 	return e, resp, err
 }
 
-func (d *PikPak) repairAuthorizationForCaptcha(accessToken string) error {
-	d.Common.refreshMu.Unlock()
-	defer d.Common.refreshMu.Lock()
-	return d.ensureAuthorized(true, accessToken)
-}
-
-// refreshCaptchaToken 刷新CaptchaToken
-func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string, allowAuthRepair bool) error {
-	d.Common.refreshMu.Lock()
-	defer d.Common.refreshMu.Unlock()
-
-	oldToken, expiry, deviceID, _ := d.Common.captchaSnapshot()
-	if hasValidCaptchaToken(oldToken, expiry) {
-		return nil
+func (d *PikPak) finishCaptchaTokenRefresh(errResp *ErrResp, resp *CaptchaTokenResponse) error {
+	if errResp.IsError() {
+		return errResp
 	}
-
-	accessToken := ""
-	if allowAuthRepair {
-		accessToken = d.getAccessToken()
-	}
-	e, resp, err := d.initCaptchaToken(action, metas, oldToken, deviceID, accessToken)
-	if err != nil {
-		return err
-	}
-	if allowAuthRepair && isAuthExpiredErrorCode(e.ErrorCode) {
-		if err = d.repairAuthorizationForCaptcha(accessToken); err != nil {
-			return err
-		}
-
-		oldToken, expiry, deviceID, _ = d.Common.captchaSnapshot()
-		if hasValidCaptchaToken(oldToken, expiry) {
-			return nil
-		}
-
-		accessToken = d.getAccessToken()
-		e, resp, err = d.initCaptchaToken(action, metas, "", deviceID, accessToken)
-		if err != nil {
-			return err
-		}
-	}
-
-	if e.IsError() {
-		return errors.New(e.Error())
-	}
-
 	if resp.Url != "" {
 		return fmt.Errorf(`need verify: <a target="_blank" href="%s">Click Here</a>`, resp.Url)
 	}
@@ -539,6 +500,39 @@ func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string, all
 		refreshCTokenCk(resp.CaptchaToken)
 	}
 	return nil
+}
+
+func (d *PikPak) refreshCaptchaTokenAfterReauth(action string, metas map[string]string, previousCaptchaToken string) error {
+	d.Common.refreshMu.Lock()
+	defer d.Common.refreshMu.Unlock()
+
+	currentToken, expiry, deviceID, _ := d.Common.captchaSnapshot()
+	if currentToken != previousCaptchaToken && hasValidCaptchaToken(currentToken, expiry) {
+		return nil
+	}
+
+	e, resp, err := d.initCaptchaToken(action, metas, "", deviceID, d.getAccessToken())
+	if err != nil {
+		return err
+	}
+	return d.finishCaptchaTokenRefresh(&e, &resp)
+}
+
+// refreshCaptchaToken 刷新CaptchaToken
+func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string, accessToken string) error {
+	d.Common.refreshMu.Lock()
+	defer d.Common.refreshMu.Unlock()
+
+	oldToken, expiry, deviceID, _ := d.Common.captchaSnapshot()
+	if hasValidCaptchaToken(oldToken, expiry) {
+		return nil
+	}
+
+	e, resp, err := d.initCaptchaToken(action, metas, oldToken, deviceID, accessToken)
+	if err != nil {
+		return err
+	}
+	return d.finishCaptchaTokenRefresh(&e, &resp)
 }
 
 func (d *PikPak) UploadByOSS(ctx context.Context, params *S3Params, s model.FileStreamer, up driver.UpdateProgress) error {
