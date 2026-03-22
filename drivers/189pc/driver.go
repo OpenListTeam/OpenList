@@ -87,7 +87,12 @@ func (y *Cloud189PC) Init(ctx context.Context) (err error) {
 		}
 
 		// 先尝试用Token刷新，之后尝试登陆
-		if y.Addition.RefreshToken != "" {
+		if y.Addition.AccessToken != "" {
+			y.tokenInfo = &AppSessionResp{AccessToken: y.Addition.AccessToken, RefreshToken: y.Addition.RefreshToken}
+			if err = y.refreshSession(); err != nil {
+				return err
+			}
+		} else if y.Addition.RefreshToken != "" {
 			y.tokenInfo = &AppSessionResp{RefreshToken: y.Addition.RefreshToken}
 			if err = y.refreshToken(); err != nil {
 				return err
