@@ -376,3 +376,10 @@ type ReviewData struct {
 	Deviceid   string `json:"deviceid"`
 	Devicesign string `json:"devicesign"`
 }
+
+type AboutResponse struct {
+	Quota struct {
+		Limit string `json:"limit"`
+		Usage string `json:"usage"`
+	} `json:"quota"`
+}
