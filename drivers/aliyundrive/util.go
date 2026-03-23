@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -201,4 +202,49 @@ func (d *AliDrive) batch(srcId, dstId string, url string) error {
 		return nil
 	}
 	return errors.New(string(res))
+}
+
+func (d *AliDrive) getShareToken(shareid, share_pwd string) (string, error) {
+	resp := SharedTokenResp{}
+	_, err, _ := d.request("https://api.aliyundrive.com/v2/share_link/get_share_token", http.MethodPost, func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"share_id":  shareid,
+			"share_pwd": share_pwd,
+		})
+	}, resp)
+	if err != nil {
+		return "", err
+	}
+	return resp.ShareToken, nil
+}
+
+func (d *AliDrive) getFileId(shareid, token string) (string, string) {
+	resp := ShareInfoResp{}
+	_, err, _ := d.request("https://api.aliyundrive.com/adrive/v2/file/list_by_share", http.MethodPost, func(req *resty.Request) {
+		req.SetHeader("x-share-token", token)
+		req.SetBody(base.Json{
+			"share_id":                shareid,
+			"order_by":                "name",
+			"order_direction":         "DESC",
+			"limit":                   20,
+			"parent_file_id":          "root",
+			"image_thumbnail_process": "image/resize,w_256/format,jpeg",
+			"image_url_process":       "image/resize,w_1920/format,jpeg/interlace,1",
+			"video_thumbnail_process": "video/snapshot,t_1000,f_jpg,ar_auto,w_256",
+		})
+	}, &resp)
+	if err != nil {
+		return "", ""
+	}
+	return resp.FileId, resp.ParentFileId
+}
+
+func (d *AliDrive) extractShareId(shareUrl string) string {
+	// https://www.alipan.com/s/XVDFP7mpuZK
+	re := regexp.MustCompile(`https?://(?:[a-zA-Z0-9-]+\.)*alipan\.com(?:\:\d+)?/s/([a-zA-Z0-9_-]+)`)
+	matches := re.FindStringSubmatch(shareUrl)
+	if len(matches) >= 2 {
+		return matches[1]
+	}
+	return ""
 }

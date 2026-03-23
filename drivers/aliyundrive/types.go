@@ -54,3 +54,12 @@ type UploadResp struct {
 
 	RapidUpload bool `json:"rapid_upload"`
 }
+
+type SharedTokenResp struct {
+	ShareToken string `json:"share_token"`
+}
+
+type ShareInfoResp struct {
+	FileId       string `json:"file_id"`
+	ParentFileId string `json:"parent_file_id"`
+}
