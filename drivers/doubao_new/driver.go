@@ -3,6 +3,7 @@ package doubao_new
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/cookie"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
@@ -27,7 +31,15 @@ type DoubaoNew struct {
 	Addition
 	TtLogid string
 
-	dpopKeyPairCache sync.Map
+	// DPoP access token (Authorization header value)
+	Authorization string
+	// DPoP header value
+	Dpop string
+	// DPoP key pair for generating DPoP
+	DpopKeyPairStr string
+	DpopKeyPair    *ecdsa.PrivateKey
+
+	authRefreshMu sync.Mutex
 }
 
 func (d *DoubaoNew) Config() driver.Config {
@@ -39,12 +51,36 @@ func (d *DoubaoNew) GetAddition() driver.Additional {
 }
 
 func (d *DoubaoNew) Init(ctx context.Context) error {
-	// TODO login / refresh token
-	//op.MustSaveDriverStorage(d)
+	if cookieStr := strings.TrimSpace(d.Cookie); cookieStr != "" {
+		d.Cookie = cookieStr
+		auth := trimTokenScheme(cookie.GetStr(d.Cookie, "LARK_SUITE_ACCESS_TOKEN"))
+		if auth != "" {
+			d.Authorization = auth
+		}
+		dpop := strings.TrimSpace(cookie.GetStr(d.Cookie, "LARK_SUITE_DPOP"))
+		if dpop != "" {
+			d.Dpop = dpop
+		}
+		keypair := strings.TrimSpace(cookie.GetStr(d.Cookie, "feishu_dpop_keypair"))
+		if keypair != "" {
+			d.DpopKeyPairStr = keypair
+			d.DpopKeyPair, _ = parseEncryptedDPoPKeyPair(keypair)
+		}
+	}
 	return nil
 }
 
 func (d *DoubaoNew) Drop(ctx context.Context) error {
+	if d.Authorization != "" {
+		d.Cookie = cookie.SetStr(d.Cookie, "LARK_SUITE_ACCESS_TOKEN", d.Authorization)
+	}
+	if d.Dpop != "" {
+		d.Cookie = cookie.SetStr(d.Cookie, "LARK_SUITE_DPOP", d.Dpop)
+	}
+	if d.DpopKeyPairStr != "" {
+		d.Cookie = cookie.SetStr(d.Cookie, "feishu_dpop_keypair", d.DpopKeyPairStr)
+	}
+	op.MustSaveDriverStorage(d)
 	return nil
 }
 
@@ -56,8 +92,16 @@ func (d *DoubaoNew) List(ctx context.Context, dir model.Obj, args model.ListArgs
 
 	objs := make([]model.Obj, 0, len(nodes))
 	for _, node := range nodes {
+		if node.NodeToken == "" || node.ObjToken == "" {
+			continue
+		}
+
 		size := parseSize(node.Extra.Size)
 		isFolder := node.Type == 0
+		if isFolder && node.NodeToken == dir.GetID() {
+			continue
+		}
+
 		obj := &Object{
 			Object: model.Object{
 				ID:       node.NodeToken,
@@ -111,7 +155,7 @@ func (d *DoubaoNew) Link(ctx context.Context, file model.Obj, args model.LinkArg
 	downloadURL := DownloadBaseURL + "/space/api/box/stream/download/all/" + obj.ObjToken + "/?" + query.Encode()
 
 	headers := http.Header{
-		"Referer":    []string{"https://www.doubao.com/"},
+		"Referer":    []string{DoubaoURL + "/"},
 		"User-Agent": []string{base.UserAgent},
 	}
 
@@ -301,16 +345,6 @@ func (d *DoubaoNew) Put(ctx context.Context, dstDir model.Obj, file model.FileSt
 			}
 			data := groupBuf.Bytes()
 			expectLen := groupExpectSum
-			if len(data) > 0 {
-				headLen := 32
-				if len(data) < headLen {
-					headLen = len(data)
-				}
-				tailLen := 32
-				if len(data) < tailLen {
-					tailLen = len(data)
-				}
-			}
 			if int64(len(data)) != expectLen {
 				return fmt.Errorf("[doubao_new] merge blocks invalid body len: got=%d expect=%d seqs=%v", len(data), expectLen, groupSeqs)
 			}

@@ -21,7 +21,7 @@ func (d *DoubaoNew) prepareUpload(ctx context.Context, name string, size int64, 
 		values := url.Values{}
 		values.Set("shouldBypassScsDialog", "true")
 		values.Set("doubao_storage", "imagex_other")
-		values.Set("doubao_app_id", "497858")
+		values.Set("doubao_app_id", d.AppID)
 		req.SetQueryParamsFromValues(values)
 		req.SetHeader("Content-Type", "application/json")
 		req.SetHeader("x-command", "space.api.box.upload.prepare")
@@ -58,7 +58,7 @@ func (d *DoubaoNew) uploadBlocks(ctx context.Context, uploadID string, blocks []
 		values := url.Values{}
 		values.Set("shouldBypassScsDialog", "true")
 		values.Set("doubao_storage", "imagex_other")
-		values.Set("doubao_app_id", "497858")
+		values.Set("doubao_app_id", d.AppID)
 		req.SetQueryParamsFromValues(values)
 		req.SetHeader("Content-Type", "application/json")
 		req.SetHeader("x-command", "space.api.box.upload.blocks")
@@ -105,8 +105,8 @@ func (d *DoubaoNew) mergeUploadBlocks(ctx context.Context, uploadID string, seqL
 	req := client.R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "application/json, text/plain, */*")
-	req.SetHeader("origin", "https://www.doubao.com")
-	req.SetHeader("referer", "https://www.doubao.com/")
+	req.SetHeader("origin", DoubaoURL)
+	req.SetHeader("referer", DoubaoURL+"/")
 	req.SetHeader("rpc-persist-doubao-pan", "true")
 	req.SetHeader("content-type", "application/octet-stream")
 	req.SetHeader("x-block-list-checksum", checksumHeader)
@@ -128,8 +128,8 @@ func (d *DoubaoNew) mergeUploadBlocks(ctx context.Context, uploadID string, seqL
 	values.Set("upload_id", uploadID)
 	values.Set("mount_point", "explorer")
 	values.Set("doubao_storage", "imagex_other")
-	values.Set("doubao_app_id", "497858")
-	urlStr := "https://internal-api-drive-stream.feishu.cn/space/api/box/stream/upload/merge_block/?" + values.Encode()
+	values.Set("doubao_app_id", d.AppID)
+	urlStr := DownloadBaseURL + "/space/api/box/stream/upload/merge_block/?" + values.Encode()
 	if err := d.applyAuthHeaders(req, http.MethodPost, urlStr); err != nil {
 		return UploadMergeData{}, err
 	}
@@ -209,8 +209,8 @@ func (d *DoubaoNew) uploadBlockV3(ctx context.Context, uploadID string, block Up
 	req := base.RestyClient.R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "*/*")
-	req.SetHeader("origin", "https://www.doubao.com")
-	req.SetHeader("referer", "https://www.doubao.com/")
+	req.SetHeader("origin", DoubaoURL)
+	req.SetHeader("referer", DoubaoURL+"/")
 	req.SetHeader("rpc-persist-doubao-pan", "true")
 	req.SetHeader("x-block-seq", strconv.Itoa(block.Seq))
 	req.SetHeader("x-block-checksum", block.Checksum)
@@ -228,8 +228,8 @@ func (d *DoubaoNew) uploadBlockV3(ctx context.Context, uploadID string, block Up
 	values.Set("checksum", block.Checksum)
 	values.Set("mount_point", "explorer")
 	values.Set("doubao_storage", "imagex_other")
-	values.Set("doubao_app_id", "497858")
-	urlStr := "https://internal-api-drive-stream.feishu.cn/space/api/box/stream/upload/v3/block/?" + values.Encode()
+	values.Set("doubao_app_id", d.AppID)
+	urlStr := DownloadBaseURL + "/space/api/box/stream/upload/v3/block/?" + values.Encode()
 	if err := d.applyAuthHeaders(req, http.MethodPost, urlStr); err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func (d *DoubaoNew) finishUpload(ctx context.Context, uploadID string, numBlocks
 		values := url.Values{}
 		values.Set("shouldBypassScsDialog", "true")
 		values.Set("doubao_storage", "imagex_other")
-		values.Set("doubao_app_id", "497858")
+		values.Set("doubao_app_id", d.AppID)
 		req.SetQueryParamsFromValues(values)
 		req.SetHeader("Content-Type", "application/json")
 		req.SetHeader("x-command", "space.api.box.upload.finish")

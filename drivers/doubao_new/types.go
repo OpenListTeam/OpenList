@@ -180,3 +180,13 @@ type TaskStatusData struct {
 	IsFinish bool `json:"is_finish"`
 	IsFail   bool `json:"is_fail"`
 }
+
+type bizAuthResp struct {
+	Data struct {
+		AccessToken string `json:"access_token"`
+		AuthScheme  string `json:"auth_scheme"`
+		ExpiresIn   int64  `json:"expires_in"`
+		Description string `json:"description,omitempty"`
+	} `json:"data"`
+	Message string `json:"message"`
+}

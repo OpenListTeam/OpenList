@@ -9,10 +9,13 @@ type Addition struct {
 	// Usually one of two
 	driver.RootID
 	// define other
-	Authorization string `json:"authorization" help:"DPoP access token (Authorization header value); optional if present in cookie"`
-	Dpop          string `json:"dpop" help:"DPoP header value; optional if present in cookie"`
-	DpopKeyPair   string `json:"dpop_key_pair" help:"DPoP key pair for refreshing Dpop; optional if present in cookie"`
-	Cookie        string `json:"cookie" help:"Optional cookie; only used to extract authorization/dpop tokens"`
+	Cookie         string `json:"cookie" required:"true" help:"Web Cookie"`
+	AppID          string `json:"app_id" required:"true" default:"497858" help:"Doubao App ID"`
+	AuthClientID   string `json:"auth_client_id" help:"Doubao Biz Auth Client ID"`
+	AuthClientType string `json:"auth_client_type" help:"Doubao Biz Auth Client Type"`
+	AuthScope      string `json:"auth_scope" help:"Doubao Biz Auth Scope"`
+	AuthSDKSource  string `json:"auth_sdk_source" help:"Doubao Biz Auth SDK Source"`
+	AuthSDKVersion string `json:"auth_sdk_version" help:"Doubao Biz Auth SDK Version"`
 }
 
 var config = driver.Config{

@@ -21,6 +21,7 @@ import (
 const (
 	BaseURL         = "https://my.feishu.cn"
 	DownloadBaseURL = "https://internal-api-drive-stream.feishu.cn"
+	DoubaoURL       = "https://www.doubao.com"
 )
 
 var defaultObjTypes = []string{"124", "0", "12", "30", "123", "22"}
@@ -29,8 +30,8 @@ func (d *DoubaoNew) request(ctx context.Context, path string, method string, cal
 	req := base.RestyClient.R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "*/*")
-	req.SetHeader("origin", "https://www.doubao.com")
-	req.SetHeader("referer", "https://www.doubao.com/")
+	req.SetHeader("origin", DoubaoURL)
+	req.SetHeader("referer", DoubaoURL+"/")
 	if err := d.applyAuthHeaders(req, method, BaseURL+path); err != nil {
 		return nil, err
 	}
@@ -122,14 +123,14 @@ func parseSize(size string) int64 {
 	return val
 }
 
-func (d *DoubaoNew) listChildren(ctx context.Context, parentToken string, lastLabel string) (ListData, error) {
+func (d *DoubaoNew) listChildren(ctx context.Context, parentToken string, lastLabel string, length int) (ListData, error) {
 	var resp ListResp
 	_, err := d.request(ctx, "/space/api/explorer/doubao/children/list/", http.MethodGet, func(req *resty.Request) {
 		values := url.Values{}
 		for _, t := range defaultObjTypes {
 			values.Add("obj_type", t)
 		}
-		values.Set("length", "50")
+		values.Set("length", strconv.Itoa(length))
 		values.Set("rank", "0")
 		values.Set("asc", "0")
 		values.Set("min_length", "40")
@@ -152,10 +153,11 @@ func (d *DoubaoNew) listChildren(ctx context.Context, parentToken string, lastLa
 }
 
 func (d *DoubaoNew) listAllChildren(ctx context.Context, parentToken string) ([]Node, error) {
-	nodes := make([]Node, 0, 50)
+	length := 50
+	nodes := make([]Node, 0, length)
 	lastLabel := ""
-	for page := 0; page < 100; page++ {
-		data, err := d.listChildren(ctx, parentToken, lastLabel)
+	for range 100 {
+		data, err := d.listChildren(ctx, parentToken, lastLabel, length)
 		if err != nil {
 			return nil, err
 		}
@@ -253,7 +255,7 @@ func (d *DoubaoNew) previewLink(ctx context.Context, obj *Object, args model.Lin
 	previewURL := fmt.Sprintf("%s/space/api/box/stream/download/preview_sub/%s?%s", BaseURL, obj.ObjToken, query.Encode())
 
 	headers := http.Header{
-		"Referer":       []string{"https://www.doubao.com/"},
+		"Referer":       []string{DoubaoURL + "/"},
 		"User-Agent":    []string{base.UserAgent},
 		"Authorization": []string{auth},
 		"Dpop":          []string{dpop},
@@ -277,8 +279,8 @@ func (d *DoubaoNew) createFolder(ctx context.Context, parentToken, name string) 
 		req := base.RestyClient.R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "*/*")
-		req.SetHeader("origin", "https://www.doubao.com")
-		req.SetHeader("referer", "https://www.doubao.com/")
+		req.SetHeader("origin", DoubaoURL)
+		req.SetHeader("referer", DoubaoURL+"/")
 		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/explorer/v2/create/folder/"); err != nil {
 			return nil, nil, err
 		}
@@ -353,8 +355,8 @@ func (d *DoubaoNew) renameFolder(ctx context.Context, token, name string) error 
 		req := base.RestyClient.R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "*/*")
-		req.SetHeader("origin", "https://www.doubao.com")
-		req.SetHeader("referer", "https://www.doubao.com/")
+		req.SetHeader("origin", DoubaoURL)
+		req.SetHeader("referer", DoubaoURL+"/")
 		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/explorer/v2/rename/"); err != nil {
 			return nil, nil, err
 		}
@@ -472,8 +474,8 @@ func (d *DoubaoNew) moveObj(ctx context.Context, srcToken, destToken string) err
 		req := base.RestyClient.R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "*/*")
-		req.SetHeader("origin", "https://www.doubao.com")
-		req.SetHeader("referer", "https://www.doubao.com/")
+		req.SetHeader("origin", DoubaoURL)
+		req.SetHeader("referer", DoubaoURL+"/")
 		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/explorer/v2/move/"); err != nil {
 			return nil, nil, err
 		}
@@ -504,8 +506,8 @@ func (d *DoubaoNew) removeObj(ctx context.Context, tokens []string) error {
 		req := base.RestyClient.R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "application/json, text/plain, */*")
-		req.SetHeader("origin", "https://www.doubao.com")
-		req.SetHeader("referer", "https://www.doubao.com/")
+		req.SetHeader("origin", DoubaoURL)
+		req.SetHeader("referer", DoubaoURL+"/")
 		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/explorer/v3/remove/"); err != nil {
 			return nil, nil, err
 		}
@@ -555,11 +557,11 @@ func (d *DoubaoNew) getUserStorage(ctx context.Context) (UserStorageData, error)
 	req := base.RestyClient.R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "*/*")
-	req.SetHeader("origin", "https://www.doubao.com")
-	req.SetHeader("referer", "https://www.doubao.com/")
+	req.SetHeader("origin", DoubaoURL)
+	req.SetHeader("referer", DoubaoURL+"/")
 	req.SetHeader("agw-js-conv", "str")
 	req.SetHeader("content-type", "application/json")
-	if err := d.applyAuthHeaders(req, http.MethodPost, "https://www.doubao.com/alice/aispace/facade/get_user_storage"); err != nil {
+	if err := d.applyAuthHeaders(req, http.MethodPost, DoubaoURL+"/alice/aispace/facade/get_user_storage"); err != nil {
 		return UserStorageData{}, err
 	}
 	if d.Cookie != "" {
@@ -567,7 +569,7 @@ func (d *DoubaoNew) getUserStorage(ctx context.Context) (UserStorageData, error)
 	}
 	req.SetBody(base.Json{})
 
-	res, err := req.Execute(http.MethodPost, "https://www.doubao.com/alice/aispace/facade/get_user_storage")
+	res, err := req.Execute(http.MethodPost, DoubaoURL+"/alice/aispace/facade/get_user_storage")
 	if err != nil {
 		return UserStorageData{}, err
 	}
@@ -631,8 +633,8 @@ func (d *DoubaoNew) getTaskStatus(ctx context.Context, taskID string) (TaskStatu
 	req := base.RestyClient.R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "application/json, text/plain, */*")
-	req.SetHeader("origin", "https://www.doubao.com")
-	req.SetHeader("referer", "https://www.doubao.com/")
+	req.SetHeader("origin", DoubaoURL)
+	req.SetHeader("referer", DoubaoURL+"/")
 	if err := d.applyAuthHeaders(req, http.MethodGet, BaseURL+"/space/api/explorer/v2/task/"); err != nil {
 		return TaskStatusData{}, err
 	}
