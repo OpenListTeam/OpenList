@@ -267,6 +267,43 @@ func (d *DoubaoNew) previewLink(ctx context.Context, obj *Object, args model.Lin
 	}, nil
 }
 
+func (d *DoubaoNew) createShare(ctx context.Context, obj *Object) error {
+	doRequest := func(csrfToken string) (*resty.Response, []byte, error) {
+		req := base.RestyClient.R()
+		req.SetContext(ctx)
+		req.SetHeader("accept", "application/json, text/plain, */*")
+		req.SetHeader("origin", DoubaoURL)
+		req.SetHeader("referer", DoubaoURL+"/")
+		if err := d.applyAuthHeaders(req, http.MethodPost, BaseURL+"/space/api/suite/permission/public/update.v5/"); err != nil {
+			return nil, nil, err
+		}
+		if csrfToken != "" {
+			req.SetHeader("x-csrftoken", csrfToken)
+		}
+		req.SetHeader("Content-Type", "application/json")
+		req.SetBody(base.Json{
+			"external_access_entity": 1,
+			"link_share_entity":      4,
+			"token":                  obj.ObjToken,
+			"type":                   obj.ObjType,
+		})
+		res, err := req.Execute(http.MethodPost, BaseURL+"/space/api/suite/permission/public/update.v5/")
+		if err != nil {
+			return nil, nil, err
+		}
+		return res, res.Body(), nil
+	}
+
+	res, body, err := doRequestWithCsrf(doRequest)
+	if err != nil {
+		return err
+	}
+	if err := decodeBaseResp(body, res); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (d *DoubaoNew) createFolder(ctx context.Context, parentToken, name string) (Node, error) {
 	data := url.Values{}
 	data.Set("name", name)

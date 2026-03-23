@@ -79,8 +79,6 @@ type dpopKeyPairEnvelope struct {
 	JWK        *jwkECPrivateKey `json:"jwk"`
 }
 
-const defaultDPoPKeySecret = "passport-dpop-token-generator"
-
 type encryptedDpopKeyPair struct {
 	Data       string `json:"data"`
 	Ciphertext string `json:"ciphertext"`
@@ -162,6 +160,14 @@ func GenerateDPoPToken(in DPoPTokenInput) (*DPoPTokenOutput, error) {
 	}, nil
 }
 
+func GenerateDPoPKeyPair() (*ecdsa.PrivateKey, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	return validateP256Key(key)
+}
+
 func ParseJWTPayload(token string, out any) error {
 	token = strings.TrimSpace(trimTokenScheme(token))
 	parts := strings.Split(token, ".")
@@ -234,7 +240,7 @@ func parseECPrivateKeyJWK(raw string) (*ecdsa.PrivateKey, error) {
 	return validateP256Key(key)
 }
 
-func parseEncryptedDPoPKeyPair(raw string) (*ecdsa.PrivateKey, error) {
+func parseEncryptedDPoPKeyPair(raw, secret string) (*ecdsa.PrivateKey, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, errors.New("empty encrypted key pair")
@@ -266,9 +272,9 @@ func parseEncryptedDPoPKeyPair(raw string) (*ecdsa.PrivateKey, error) {
 		return nil, errors.New("encrypted dpop payload too short")
 	}
 
-	plain, err := decryptDoubaoKeyPair(decoded, defaultDPoPKeySecret)
+	plain, err := decryptDoubaoKeyPair(decoded, secret)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt with default secret: %w", err)
+		return nil, fmt.Errorf("failed to decrypt with secret: %w", err)
 	}
 	return parseECPrivateKeyJWK(string(plain))
 }
@@ -381,7 +387,7 @@ func (d *DoubaoNew) resolveAuthorization() string {
 	return "DPoP " + auth
 }
 
-func shouldRefreshJWT(token string, aheadSeconds int64) bool {
+func shouldRefreshJWT(token string) bool {
 	if token == "" {
 		return true
 	}
@@ -392,24 +398,30 @@ func shouldRefreshJWT(token string, aheadSeconds int64) bool {
 	if payload.Exp <= 0 {
 		return false
 	}
-	return payload.Exp <= time.Now().Unix()+aheadSeconds
+	return payload.Exp <= time.Now().Unix()+defaultAuthRefreshAheadSeconds
 }
 
-func (d *DoubaoNew) fetchBizAuth(dpop string) (string, error) {
+func (d *DoubaoNew) fetchBizAuth(dpop string, public bool) (string, error) {
+	var reqUrl string
 	client := base.RestyClient.Clone()
 	req := client.R()
 	req.SetHeader("accept", "application/json, text/javascript")
 	req.SetHeader("origin", DoubaoURL)
 	req.SetHeader("referer", DoubaoURL+"/")
 	req.SetHeader("content-type", "application/x-www-form-urlencoded")
-	if d.Cookie != "" {
-		req.SetHeader("cookie", d.Cookie)
-		if csrf := strings.TrimSpace(cookie.GetStr(d.Cookie, "passport_csrf_token")); csrf != "" {
-			req.SetHeader("x-tt-passport-csrf-token", csrf)
+	if public {
+		reqUrl = DoubaoURL + "/passport/anonymity_user/biz_auth/"
+	} else {
+		reqUrl = DoubaoURL + "/passport/user/biz_auth/"
+		if d.Cookie != "" {
+			req.SetHeader("cookie", d.Cookie)
+			if csrf := strings.TrimSpace(cookie.GetStr(d.Cookie, "passport_csrf_token")); csrf != "" {
+				req.SetHeader("x-tt-passport-csrf-token", csrf)
+			}
 		}
-	}
-	if oldAuth := d.resolveAuthorization(); oldAuth != "" {
-		req.SetHeader("authorization", oldAuth)
+		if oldAuth := d.resolveAuthorization(); oldAuth != "" {
+			req.SetHeader("authorization", oldAuth)
+		}
 	}
 	if dpop != "" {
 		req.SetHeader("dpop", dpop)
@@ -424,7 +436,7 @@ func (d *DoubaoNew) fetchBizAuth(dpop string) (string, error) {
 	req.SetQueryParam("account_sdk_source", d.AuthSDKSource)
 	req.SetQueryParam("sdk_version", d.AuthSDKVersion)
 
-	res, err := req.Post(DoubaoURL + "/passport/user/biz_auth/")
+	res, err := req.Post(reqUrl)
 	if err != nil {
 		return "", err
 	}
@@ -432,15 +444,14 @@ func (d *DoubaoNew) fetchBizAuth(dpop string) (string, error) {
 	if err = json.Unmarshal(res.Body(), &resp); err != nil {
 		return "", err
 	}
-	ok := resp.Message != "success" && strings.TrimSpace(resp.Data.AccessToken) != ""
-	if !ok {
+	if resp.Message != "success" || resp.Data.AccessToken == "" {
 		return "", fmt.Errorf("[doubao_new] %s: %s", resp.Message, resp.Data.Description)
 	}
-	return strings.TrimSpace(resp.Data.AccessToken), nil
+	return resp.Data.AccessToken, nil
 }
 
 func (d *DoubaoNew) refreshAuthorizationWithDPoP(dpop string) (string, error) {
-	token, err := d.fetchBizAuth(dpop)
+	token, err := d.fetchBizAuth(dpop, false)
 	if err == nil && token != "" {
 		return token, nil
 	}
@@ -451,9 +462,9 @@ func (d *DoubaoNew) refreshAuthorizationWithDPoP(dpop string) (string, error) {
 }
 
 func (d *DoubaoNew) resolveDpopForRequest(method, rawURL string) (string, error) {
-	if d.DpopKeyPair != nil {
+	if d.DPoPKeyPair != nil {
 		proof, err := GenerateDPoPToken(DPoPTokenInput{
-			KeyPair: d.DpopKeyPair,
+			KeyPair: d.DPoPKeyPair,
 			HTM:     strings.ToUpper(strings.TrimSpace(method)),
 			HTU:     normalizeDPoPURL(rawURL),
 		})
@@ -463,37 +474,39 @@ func (d *DoubaoNew) resolveDpopForRequest(method, rawURL string) (string, error)
 		return proof.DPoPToken, nil
 	}
 
-	static := d.Dpop
+	static := d.DPoP
 	if static == "" {
 		return "", nil
 	}
-	if payload, err := parseDPoPPayload(static); err == nil && payload.Exp > 0 {
-		now := time.Now().Unix()
-		if payload.Exp <= now+defaultDpopRefreshAheadSeconds {
-			return "", errors.New("static dpop token expired or near expiry; configure dpop_key_pair for automatic refresh")
+	if !d.IgnoreJWTCheck {
+		if payload, err := parseDPoPPayload(static); err == nil && payload.Exp > 0 {
+			now := time.Now().Unix()
+			if payload.Exp <= now+defaultDpopRefreshAheadSeconds {
+				return "", errors.New("static dpop token expired or near expiry; configure dpop_key_pair for automatic refresh")
+			}
 		}
 	}
 	return static, nil
 }
 
+func (d *DoubaoNew) ensureAuthAdditons() bool {
+	return d.DPoPKeySecret != "" && d.AuthClientID != "" && d.AuthClientType != "" &&
+		d.AuthScope != "" && d.AuthSDKSource != "" && d.AuthSDKVersion != ""
+}
+
 func (d *DoubaoNew) resolveAuthorizationForRequest(method, rawURL string) (string, error) {
-	if !shouldRefreshJWT(d.Authorization, defaultAuthRefreshAheadSeconds) {
+	if !shouldRefreshJWT(d.Authorization) {
 		return d.resolveAuthorization(), nil
 	}
-	// 刷新 Authorization Token 的前置条件：
-	// 1. DPoP 密钥对
-	// 2. Cookie
-	// 3. AuthClientID、AuthClientType、AuthScope、AuthSDKSource、AuthSDKVersion
-	if d.DpopKeyPair == nil || strings.TrimSpace(d.Cookie) == "" ||
-		d.AuthClientID == "" || d.AuthClientType == "" || d.AuthScope == "" ||
-		d.AuthSDKSource == "" || d.AuthSDKVersion == "" {
+
+	if d.DPoPKeyPair == nil || strings.TrimSpace(d.Cookie) == "" || !d.ensureAuthAdditons() {
 		return d.resolveAuthorization(), nil
 	}
 
 	d.authRefreshMu.Lock()
 	defer d.authRefreshMu.Unlock()
 
-	if !shouldRefreshJWT(d.Authorization, defaultAuthRefreshAheadSeconds) {
+	if !shouldRefreshJWT(d.Authorization) {
 		return d.resolveAuthorization(), nil
 	}
 
@@ -511,6 +524,41 @@ func (d *DoubaoNew) resolveAuthorizationForRequest(method, rawURL string) (strin
 	}
 	d.Authorization = trimTokenScheme(newToken)
 	return d.resolveAuthorization(), nil
+}
+
+func (d *DoubaoNew) resolveAuthorizationForPublic() (dpop string, auth string, err error) {
+	if d.DPoPPublic != "" && !shouldRefreshJWT(d.AuthorizationPublic) {
+		return d.DPoPPublic, "DPoP " + d.AuthorizationPublic, nil
+	}
+
+	if !d.ensureAuthAdditons() {
+		return "", "", fmt.Errorf("[doubao_new] missing auth additions, please fill them all")
+	}
+
+	d.authRefreshPublicMu.Lock()
+	defer d.authRefreshPublicMu.Unlock()
+
+	if d.DPoPPublic != "" && !shouldRefreshJWT(d.AuthorizationPublic) {
+		return d.DPoPPublic, "DPoP " + d.AuthorizationPublic, nil
+	}
+
+	// generate new public dpop
+	keypair, err := GenerateDPoPKeyPair()
+	if err != nil {
+		return "", "", err
+	}
+	proof, err := GenerateDPoPToken(DPoPTokenInput{
+		KeyPair: keypair,
+	})
+	d.DPoPPublic = proof.DPoPToken
+
+	// get authorization token
+	d.AuthorizationPublic, err = d.fetchBizAuth(proof.DPoPToken, true)
+	if err != nil {
+		return "", "", err
+	}
+
+	return d.DPoPPublic, "DPoP " + d.AuthorizationPublic, nil
 }
 
 func (d *DoubaoNew) applyAuthHeaders(req *resty.Request, method, rawURL string) error {

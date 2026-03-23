@@ -31,15 +31,18 @@ type DoubaoNew struct {
 	Addition
 	TtLogid string
 
-	// DPoP access token (Authorization header value)
-	Authorization string
+	// DPoP access token (Authorization header value, without DPoP prefix)
+	Authorization       string
+	AuthorizationPublic string
 	// DPoP header value
-	Dpop string
+	DPoP       string
+	DPoPPublic string
 	// DPoP key pair for generating DPoP
-	DpopKeyPairStr string
-	DpopKeyPair    *ecdsa.PrivateKey
+	DPoPKeyPairStr string
+	DPoPKeyPair    *ecdsa.PrivateKey
 
-	authRefreshMu sync.Mutex
+	authRefreshMu       sync.Mutex
+	authRefreshPublicMu sync.Mutex
 }
 
 func (d *DoubaoNew) Config() driver.Config {
@@ -59,12 +62,12 @@ func (d *DoubaoNew) Init(ctx context.Context) error {
 		}
 		dpop := strings.TrimSpace(cookie.GetStr(d.Cookie, "LARK_SUITE_DPOP"))
 		if dpop != "" {
-			d.Dpop = dpop
+			d.DPoP = dpop
 		}
 		keypair := strings.TrimSpace(cookie.GetStr(d.Cookie, "feishu_dpop_keypair"))
-		if keypair != "" {
-			d.DpopKeyPairStr = keypair
-			d.DpopKeyPair, _ = parseEncryptedDPoPKeyPair(keypair)
+		if keypair != "" && d.DPoPKeySecret != "" {
+			d.DPoPKeyPairStr = keypair
+			d.DPoPKeyPair, _ = parseEncryptedDPoPKeyPair(keypair, d.DPoPKeySecret)
 		}
 	}
 	return nil
@@ -74,11 +77,11 @@ func (d *DoubaoNew) Drop(ctx context.Context) error {
 	if d.Authorization != "" {
 		d.Cookie = cookie.SetStr(d.Cookie, "LARK_SUITE_ACCESS_TOKEN", d.Authorization)
 	}
-	if d.Dpop != "" {
-		d.Cookie = cookie.SetStr(d.Cookie, "LARK_SUITE_DPOP", d.Dpop)
+	if d.DPoP != "" {
+		d.Cookie = cookie.SetStr(d.Cookie, "LARK_SUITE_DPOP", d.DPoP)
 	}
-	if d.DpopKeyPairStr != "" {
-		d.Cookie = cookie.SetStr(d.Cookie, "feishu_dpop_keypair", d.DpopKeyPairStr)
+	if d.DPoPKeyPairStr != "" {
+		d.Cookie = cookie.SetStr(d.Cookie, "feishu_dpop_keypair", d.DPoPKeyPairStr)
 	}
 	op.MustSaveDriverStorage(d)
 	return nil
@@ -131,13 +134,26 @@ func (d *DoubaoNew) Link(ctx context.Context, file model.Obj, args model.LinkArg
 	if obj.IsFolder {
 		return nil, fmt.Errorf("link is directory")
 	}
-	if args.Type == "preview" || args.Type == "thumb" {
-		if link, err := d.previewLink(ctx, obj, args); err == nil {
-			return link, nil
+	var (
+		err        error
+		auth, dpop string
+	)
+	if d.ShareLink {
+		err := d.createShare(ctx, obj)
+		if err != nil {
+			return nil, err
 		}
+		dpop, auth, err = d.resolveAuthorizationForPublic()
+	} else {
+		// TODO: append previewLink() with auth args to support ShareLink
+		if args.Type == "preview" || args.Type == "thumb" {
+			if link, err := d.previewLink(ctx, obj, args); err == nil {
+				return link, nil
+			}
+		}
+		auth = d.resolveAuthorization()
+		dpop, err = d.resolveDpopForRequest(http.MethodGet, DownloadBaseURL+"/space/api/box/stream/download/all/"+obj.ObjToken+"/")
 	}
-	auth := d.resolveAuthorization()
-	dpop, err := d.resolveDpopForRequest(http.MethodGet, DownloadBaseURL+"/space/api/box/stream/download/all/"+obj.ObjToken+"/")
 	if err != nil {
 		return nil, err
 	}
