@@ -43,7 +43,7 @@ func New(webuiUrl string) (Client, error) {
 		IdleConnTimeout:     30 * time.Second,
 		DisableKeepAlives:   false, // Enable connection reuse
 	}
-	
+
 	var c = &client{
 		url: u,
 		client: http.Client{
@@ -97,6 +97,13 @@ func (c *client) login() error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	// avoid long waiting time if being upgraded to websocket connections (e.g. 101 responses)
+	// as per API documentation, qBittorrent returns only 200 on successful login
+	// so we safely treat any non-200 response as a failure
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("failed to login into qBittorrent webui with status code: " + resp.Status)
+	}
 
 	// check result
 	body := make([]byte, 2)
