@@ -93,6 +93,11 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
+	canWriteContentAtPath := common.CanWrite(user, meta, reqPath) && (user.CanWriteContent() || common.CanWriteContentBypassUserPerms(meta, reqPath))
+	if req.Refresh && !canWriteContentAtPath {
+		common.ErrorStrResp(c, "Refresh without permission", 403)
+		return
+	}
 	objs, err := fs.List(c.Request.Context(), reqPath, &fs.ListArgs{
 		Refresh:            req.Refresh,
 		WithStorageDetails: !user.IsGuest() && !setting.GetBool(conf.HideStorageDetails),
@@ -104,7 +109,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
 	var directUploadTools []string
-	if common.CanWrite(user, meta, reqPath) && (user.CanWriteContent() || common.CanWriteContentBypassUserPerms(meta, reqPath)) {
+	if canWriteContentAtPath {
 		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
 			directUploadTools = op.GetDirectUploadTools(storage)
 		}

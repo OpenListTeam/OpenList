@@ -15,10 +15,10 @@ func TestGetReadme(t *testing.T) {
 		reason string
 	}{
 		{
-			name: "nil meta",
-			meta: nil,
-			path: "/any",
-			want: "",
+			name:   "nil meta",
+			meta:   nil,
+			path:   "/any",
+			want:   "",
 			reason: "nil meta should return empty",
 		},
 		{
@@ -28,8 +28,8 @@ func TestGetReadme(t *testing.T) {
 				Readme: "Welcome",
 				RSub:   false,
 			},
-			path: "/folder",
-			want: "Welcome",
+			path:   "/folder",
+			want:   "Welcome",
 			reason: "exact path should show readme",
 		},
 		{
@@ -39,8 +39,8 @@ func TestGetReadme(t *testing.T) {
 				Readme: "Welcome",
 				RSub:   true,
 			},
-			path: "/folder/subfolder",
-			want: "Welcome",
+			path:   "/folder/subfolder",
+			want:   "Welcome",
 			reason: "sub path with RSub=true should show readme",
 		},
 		{
@@ -50,8 +50,8 @@ func TestGetReadme(t *testing.T) {
 				Readme: "Welcome",
 				RSub:   false,
 			},
-			path: "/folder/subfolder",
-			want: "",
+			path:   "/folder/subfolder",
+			want:   "",
 			reason: "sub path with RSub=false should not show readme",
 		},
 		{
@@ -61,8 +61,8 @@ func TestGetReadme(t *testing.T) {
 				Readme: "Welcome",
 				RSub:   true,
 			},
-			path: "/other",
-			want: "",
+			path:   "/other",
+			want:   "",
 			reason: "non-sub path should not show readme even with RSub=true (fixed bug)",
 		},
 		{
@@ -72,8 +72,8 @@ func TestGetReadme(t *testing.T) {
 				Readme: "Global Info",
 				RSub:   true,
 			},
-			path: "/any/path",
-			want: "Global Info",
+			path:   "/any/path",
+			want:   "Global Info",
 			reason: "root readme with RSub=true should apply to all paths",
 		},
 		{
@@ -83,8 +83,8 @@ func TestGetReadme(t *testing.T) {
 				Readme: "",
 				RSub:   true,
 			},
-			path: "/folder",
-			want: "",
+			path:   "/folder",
+			want:   "",
 			reason: "empty readme should return empty",
 		},
 	}
@@ -109,10 +109,10 @@ func TestGetHeader(t *testing.T) {
 		reason string
 	}{
 		{
-			name: "nil meta",
-			meta: nil,
-			path: "/any",
-			want: "",
+			name:   "nil meta",
+			meta:   nil,
+			path:   "/any",
+			want:   "",
 			reason: "nil meta should return empty",
 		},
 		{
@@ -122,8 +122,8 @@ func TestGetHeader(t *testing.T) {
 				Header:    "Custom Header",
 				HeaderSub: false,
 			},
-			path: "/folder",
-			want: "Custom Header",
+			path:   "/folder",
+			want:   "Custom Header",
 			reason: "exact path should show header",
 		},
 		{
@@ -133,8 +133,8 @@ func TestGetHeader(t *testing.T) {
 				Header:    "Custom Header",
 				HeaderSub: true,
 			},
-			path: "/folder/subfolder",
-			want: "Custom Header",
+			path:   "/folder/subfolder",
+			want:   "Custom Header",
 			reason: "sub path with HeaderSub=true should show header",
 		},
 		{
@@ -144,8 +144,8 @@ func TestGetHeader(t *testing.T) {
 				Header:    "Custom Header",
 				HeaderSub: false,
 			},
-			path: "/folder/subfolder",
-			want: "",
+			path:   "/folder/subfolder",
+			want:   "",
 			reason: "sub path with HeaderSub=false should not show header",
 		},
 		{
@@ -155,8 +155,8 @@ func TestGetHeader(t *testing.T) {
 				Header:    "Custom Header",
 				HeaderSub: true,
 			},
-			path: "/other",
-			want: "",
+			path:   "/other",
+			want:   "",
 			reason: "non-sub path should not show header even with HeaderSub=true (fixed bug)",
 		},
 	}
@@ -181,10 +181,10 @@ func TestIsEncrypt(t *testing.T) {
 		reason string
 	}{
 		{
-			name: "nil meta",
-			meta: nil,
-			path: "/any",
-			want: false,
+			name:   "nil meta",
+			meta:   nil,
+			path:   "/any",
+			want:   false,
 			reason: "nil meta should not be encrypted",
 		},
 		{
@@ -193,8 +193,8 @@ func TestIsEncrypt(t *testing.T) {
 				Path:     "/folder",
 				Password: "",
 			},
-			path: "/folder",
-			want: false,
+			path:   "/folder",
+			want:   false,
 			reason: "empty password should not be encrypted",
 		},
 		{
@@ -204,8 +204,8 @@ func TestIsEncrypt(t *testing.T) {
 				Password: "secret",
 				PSub:     false,
 			},
-			path: "/folder",
-			want: true,
+			path:   "/folder",
+			want:   true,
 			reason: "exact path with password should be encrypted",
 		},
 		{
@@ -215,8 +215,8 @@ func TestIsEncrypt(t *testing.T) {
 				Password: "secret",
 				PSub:     true,
 			},
-			path: "/folder/subfolder",
-			want: true,
+			path:   "/folder/subfolder",
+			want:   true,
 			reason: "sub path with PSub=true should be encrypted",
 		},
 		{
@@ -226,8 +226,8 @@ func TestIsEncrypt(t *testing.T) {
 				Password: "secret",
 				PSub:     false,
 			},
-			path: "/folder/subfolder",
-			want: false,
+			path:   "/folder/subfolder",
+			want:   false,
 			reason: "sub path with PSub=false should not be encrypted",
 		},
 		{
@@ -237,8 +237,8 @@ func TestIsEncrypt(t *testing.T) {
 				Password: "secret",
 				PSub:     true,
 			},
-			path: "/other",
-			want: false,
+			path:   "/other",
+			want:   false,
 			reason: "non-sub path should not be encrypted even with PSub=true",
 		},
 	}
