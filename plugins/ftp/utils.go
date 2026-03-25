@@ -1,4 +1,4 @@
-package server
+package ftp
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"

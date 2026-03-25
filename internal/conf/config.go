@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"encoding/json"
 	"path/filepath"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
@@ -82,56 +83,37 @@ type Cors struct {
 	AllowHeaders []string `json:"allow_headers" env:"ALLOW_HEADERS"`
 }
 
-type S3 struct {
-	Enable bool `json:"enable" env:"ENABLE"`
-	Port   int  `json:"port" env:"PORT"`
-	SSL    bool `json:"ssl" env:"SSL"`
-}
-
-type FTP struct {
-	Enable                  bool   `json:"enable" env:"ENABLE"`
-	Listen                  string `json:"listen" env:"LISTEN"`
-	FindPasvPortAttempts    int    `json:"find_pasv_port_attempts" env:"FIND_PASV_PORT_ATTEMPTS"`
-	ActiveTransferPortNon20 bool   `json:"active_transfer_port_non_20" env:"ACTIVE_TRANSFER_PORT_NON_20"`
-	IdleTimeout             int    `json:"idle_timeout" env:"IDLE_TIMEOUT"`
-	ConnectionTimeout       int    `json:"connection_timeout" env:"CONNECTION_TIMEOUT"`
-	DisableActiveMode       bool   `json:"disable_active_mode" env:"DISABLE_ACTIVE_MODE"`
-	DefaultTransferBinary   bool   `json:"default_transfer_binary" env:"DEFAULT_TRANSFER_BINARY"`
-	EnableActiveConnIPCheck bool   `json:"enable_active_conn_ip_check" env:"ENABLE_ACTIVE_CONN_IP_CHECK"`
-	EnablePasvConnIPCheck   bool   `json:"enable_pasv_conn_ip_check" env:"ENABLE_PASV_CONN_IP_CHECK"`
-}
-
-type SFTP struct {
-	Enable bool   `json:"enable" env:"ENABLE"`
-	Listen string `json:"listen" env:"LISTEN"`
+type PluginConfig struct {
+	Name    string         `json:"name"`
+	Enable  bool           `json:"enable"`
+	Enabled *bool          `json:"enabled,omitempty"`
+	Data    map[string]any `json:"data"`
 }
 
 type Config struct {
-	Force                 bool        `json:"force" env:"FORCE"`
-	SiteURL               string      `json:"site_url" env:"SITE_URL"`
-	Cdn                   string      `json:"cdn" env:"CDN"`
-	JwtSecret             string      `json:"jwt_secret" env:"JWT_SECRET"`
-	TokenExpiresIn        int         `json:"token_expires_in" env:"TOKEN_EXPIRES_IN"`
-	Database              Database    `json:"database" envPrefix:"DB_"`
-	Meilisearch           Meilisearch `json:"meilisearch" envPrefix:"MEILISEARCH_"`
-	Scheme                Scheme      `json:"scheme"`
-	TempDir               string      `json:"temp_dir" env:"TEMP_DIR"`
-	BleveDir              string      `json:"bleve_dir" env:"BLEVE_DIR"`
-	DistDir               string      `json:"dist_dir"`
-	Log                   LogConfig   `json:"log" envPrefix:"LOG_"`
-	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
-	MaxBufferLimit        int         `json:"max_buffer_limitMB" env:"MAX_BUFFER_LIMIT_MB"`
-	MmapThreshold         int         `json:"mmap_thresholdMB" env:"MMAP_THRESHOLD_MB"`
-	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`
-	MaxConcurrency        int         `json:"max_concurrency" env:"MAX_CONCURRENCY"`
-	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
-	Tasks                 TasksConfig `json:"tasks" envPrefix:"TASKS_"`
-	Cors                  Cors        `json:"cors" envPrefix:"CORS_"`
-	S3                    S3          `json:"s3" envPrefix:"S3_"`
-	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
-	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
-	LastLaunchedVersion   string      `json:"last_launched_version"`
-	ProxyAddress          string      `json:"proxy_address" env:"PROXY_ADDRESS"`
+	Force                 bool           `json:"force" env:"FORCE"`
+	SiteURL               string         `json:"site_url" env:"SITE_URL"`
+	Cdn                   string         `json:"cdn" env:"CDN"`
+	JwtSecret             string         `json:"jwt_secret" env:"JWT_SECRET"`
+	TokenExpiresIn        int            `json:"token_expires_in" env:"TOKEN_EXPIRES_IN"`
+	Database              Database       `json:"database" envPrefix:"DB_"`
+	Meilisearch           Meilisearch    `json:"meilisearch" envPrefix:"MEILISEARCH_"`
+	Scheme                Scheme         `json:"scheme"`
+	TempDir               string         `json:"temp_dir" env:"TEMP_DIR"`
+	BleveDir              string         `json:"bleve_dir" env:"BLEVE_DIR"`
+	DistDir               string         `json:"dist_dir"`
+	Log                   LogConfig      `json:"log" envPrefix:"LOG_"`
+	DelayedStart          int            `json:"delayed_start" env:"DELAYED_START"`
+	MaxBufferLimit        int            `json:"max_buffer_limitMB" env:"MAX_BUFFER_LIMIT_MB"`
+	MmapThreshold         int            `json:"mmap_thresholdMB" env:"MMAP_THRESHOLD_MB"`
+	MaxConnections        int            `json:"max_connections" env:"MAX_CONNECTIONS"`
+	MaxConcurrency        int            `json:"max_concurrency" env:"MAX_CONCURRENCY"`
+	TlsInsecureSkipVerify bool           `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
+	Tasks                 TasksConfig    `json:"tasks" envPrefix:"TASKS_"`
+	Cors                  Cors           `json:"cors" envPrefix:"CORS_"`
+	Plugins               []PluginConfig `json:"plugins"`
+	LastLaunchedVersion   string         `json:"last_launched_version"`
+	ProxyAddress          string         `json:"proxy_address" env:"PROXY_ADDRESS"`
 }
 
 func DefaultConfig(dataDir string) *Config {
@@ -223,28 +205,75 @@ func DefaultConfig(dataDir string) *Config {
 			AllowMethods: []string{"*"},
 			AllowHeaders: []string{"*"},
 		},
-		S3: S3{
-			Enable: false,
-			Port:   5246,
-			SSL:    false,
-		},
-		FTP: FTP{
-			Enable:                  false,
-			Listen:                  ":5221",
-			FindPasvPortAttempts:    50,
-			ActiveTransferPortNon20: false,
-			IdleTimeout:             900,
-			ConnectionTimeout:       30,
-			DisableActiveMode:       false,
-			DefaultTransferBinary:   false,
-			EnableActiveConnIPCheck: true,
-			EnablePasvConnIPCheck:   true,
-		},
-		SFTP: SFTP{
-			Enable: false,
-			Listen: ":5222",
+		Plugins: []PluginConfig{
+			{
+				Name:   "webdav",
+				Enable: false,
+				Data: map[string]any{
+					"enabled": true,
+				},
+			},
+			{
+				Name:   "s3",
+				Enable: false,
+				Data: map[string]any{
+					"enabled": false,
+					"port":    5246,
+					"ssl":     false,
+				},
+			},
+			{
+				Name:   "ftp",
+				Enable: false,
+				Data: map[string]any{
+					"enabled":                     false,
+					"listen":                      ":5221",
+					"find_pasv_port_attempts":     50,
+					"active_transfer_port_non_20": false,
+					"idle_timeout":                900,
+					"connection_timeout":          30,
+					"disable_active_mode":         false,
+					"default_transfer_binary":     false,
+					"enable_active_conn_ip_check": true,
+					"enable_pasv_conn_ip_check":   true,
+				},
+			},
+			{
+				Name:   "sftp",
+				Enable: false,
+				Data: map[string]any{
+					"enabled": false,
+					"listen":  ":5222",
+				},
+			},
 		},
 		LastLaunchedVersion: "",
 		ProxyAddress:        "",
 	}
+}
+
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type configAlias Config
+	aux := struct {
+		*configAlias
+		Plugins *[]PluginConfig `json:"plugins"`
+	}{
+		configAlias: (*configAlias)(c),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.Plugins != nil {
+		c.Plugins = *aux.Plugins
+		for i := range c.Plugins {
+			if c.Plugins[i].Enabled != nil {
+				c.Plugins[i].Enable = *c.Plugins[i].Enabled
+				c.Plugins[i].Enabled = nil
+			}
+			if c.Plugins[i].Data == nil {
+				c.Plugins[i].Data = map[string]any{}
+			}
+		}
+	}
+	return nil
 }

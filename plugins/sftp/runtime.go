@@ -1,4 +1,4 @@
-package server
+package sftp
 
 import (
 	"context"
@@ -11,34 +11,35 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	pluginftp "github.com/OpenListTeam/OpenList/v4/plugins/ftp"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/OpenListTeam/OpenList/v4/server/ftp"
-	"github.com/OpenListTeam/OpenList/v4/server/sftp"
 	"github.com/OpenListTeam/sftpd-openlist"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 )
 
-type SftpDriver struct {
+type Driver struct {
 	proxyHeader http.Header
 	config      *sftpd.Config
+	listen      string
 }
 
-func NewSftpDriver() (*SftpDriver, error) {
-	ftp.InitStage()
-	sftp.InitHostKey()
-	return &SftpDriver{
+func NewDriver(cfg SFTP) (*Driver, error) {
+	pluginftp.InitStage()
+	InitHostKey()
+	return &Driver{
 		proxyHeader: http.Header{
 			"User-Agent": {base.UserAgent},
 		},
+		listen: cfg.Listen,
 	}, nil
 }
 
-func (d *SftpDriver) GetConfig() *sftpd.Config {
+func (d *Driver) GetConfig() *sftpd.Config {
 	if d.config != nil {
 		return d.config
 	}
-	var pwdAuth func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) = nil
+	var pwdAuth func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error)
 	if !setting.GetBool(conf.SFTPDisablePasswordLogin) {
 		pwdAuth = d.PasswordAuth
 	}
@@ -50,19 +51,18 @@ func (d *SftpDriver) GetConfig() *sftpd.Config {
 		AuthLogCallback:      d.AuthLogCallback,
 		BannerCallback:       d.GetBanner,
 	}
-	for _, k := range sftp.SSHSigners {
+	for _, k := range SSHSigners {
 		serverConfig.AddHostKey(k)
 	}
 	d.config = &sftpd.Config{
 		ServerConfig: serverConfig,
-		HostPort:     conf.Conf.SFTP.Listen,
+		HostPort:     d.listen,
 		ErrorLogFunc: utils.Log.Error,
-		// DebugLogFunc: utils.Log.Debugf,
 	}
 	return d.config
 }
 
-func (d *SftpDriver) GetFileSystem(sc *ssh.ServerConn) (sftpd.FileSystem, error) {
+func (d *Driver) GetFileSystem(sc *ssh.ServerConn) (sftpd.FileSystem, error) {
 	userObj, err := op.GetUserByName(sc.User())
 	if err != nil {
 		return nil, err
@@ -72,13 +72,12 @@ func (d *SftpDriver) GetFileSystem(sc *ssh.ServerConn) (sftpd.FileSystem, error)
 	ctx = context.WithValue(ctx, conf.MetaPassKey, "")
 	ctx = context.WithValue(ctx, conf.ClientIPKey, sc.RemoteAddr().String())
 	ctx = context.WithValue(ctx, conf.ProxyHeaderKey, d.proxyHeader)
-	return &sftp.DriverAdapter{FtpDriver: ftp.NewAferoAdapter(ctx)}, nil
+	return &DriverAdapter{FtpDriver: pluginftp.NewAferoAdapter(ctx)}, nil
 }
 
-func (d *SftpDriver) Close() {
-}
+func (d *Driver) Close() {}
 
-func (d *SftpDriver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, error) {
+func (d *Driver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, error) {
 	if conn.User() != "guest" {
 		return nil, errors.New("only guest is allowed to login without authorization")
 	}
@@ -92,7 +91,7 @@ func (d *SftpDriver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, erro
 	return nil, nil
 }
 
-func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+func (d *Driver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 	ip := conn.RemoteAddr().String()
 	count, ok := model.LoginCache.Get(ip)
 	if ok && count >= model.DefaultMaxAuthRetries {
@@ -121,7 +120,7 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 	return nil, nil
 }
 
-func (d *SftpDriver) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+func (d *Driver) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	userObj, err := op.GetUserByName(conn.User())
 	if err != nil {
 		return nil, err
@@ -148,7 +147,7 @@ func (d *SftpDriver) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*s
 	return nil, errors.New("public key refused")
 }
 
-func (d *SftpDriver) AuthLogCallback(conn ssh.ConnMetadata, method string, err error) {
+func (d *Driver) AuthLogCallback(conn ssh.ConnMetadata, method string, err error) {
 	ip := conn.RemoteAddr().String()
 	if err == nil {
 		utils.Log.Infof("[SFTP] %s(%s) logged in via %s", conn.User(), ip, method)
@@ -157,6 +156,6 @@ func (d *SftpDriver) AuthLogCallback(conn ssh.ConnMetadata, method string, err e
 	}
 }
 
-func (d *SftpDriver) GetBanner(_ ssh.ConnMetadata) string {
+func (d *Driver) GetBanner(_ ssh.ConnMetadata) string {
 	return setting.GetStr(conf.Announcement)
 }

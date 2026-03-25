@@ -1,9 +1,8 @@
-package server
+package webdav
 
 import (
 	"crypto/subtle"
 	"net/http"
-	"path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -13,16 +12,15 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/OpenList/v4/server/middlewares"
-	"github.com/OpenListTeam/OpenList/v4/server/webdav"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/webdav"
 )
 
 var handler *webdav.Handler
 
-func WebDav(dav *gin.RouterGroup) {
+func WebDav(dav *gin.Engine) {
 	handler = &webdav.Handler{
-		Prefix:     path.Join(conf.URL.Path, "/dav"),
 		LockSystem: webdav.NewMemLS(),
 		Logger: func(request *http.Request, err error) {
 			log.Errorf("%s %s %+v", request.Method, request.URL.Path, err)
@@ -32,9 +30,7 @@ func WebDav(dav *gin.RouterGroup) {
 	uploadLimiter := middlewares.UploadRateLimiter(stream.ClientUploadLimit)
 	downloadLimiter := middlewares.DownloadRateLimiter(stream.ClientDownloadLimit)
 	dav.Any("/*path", uploadLimiter, downloadLimiter, ServeWebDAV)
-	dav.Any("", uploadLimiter, downloadLimiter, ServeWebDAV)
 	dav.Handle("PROPFIND", "/*path", ServeWebDAV)
-	dav.Handle("PROPFIND", "", ServeWebDAV)
 	dav.Handle("MKCOL", "/*path", ServeWebDAV)
 	dav.Handle("LOCK", "/*path", ServeWebDAV)
 	dav.Handle("UNLOCK", "/*path", ServeWebDAV)
