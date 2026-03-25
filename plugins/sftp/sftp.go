@@ -6,12 +6,12 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/ftp"
+	pluginftp "github.com/OpenListTeam/OpenList/v4/plugins/ftp"
 	"github.com/OpenListTeam/sftpd-openlist"
 )
 
 type DriverAdapter struct {
-	FtpDriver *ftp.AferoAdapter
+	FtpDriver *pluginftp.AferoAdapter
 }
 
 func (s *DriverAdapter) OpenFile(_ string, _ uint32, _ *sftpd.Attr) (sftpd.File, error) {
