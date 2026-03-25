@@ -19,6 +19,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	netutil "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
@@ -418,7 +419,7 @@ func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string) err
 }
 
 func (d *PikPak) UploadByOSS(ctx context.Context, params *S3Params, s model.FileStreamer, up driver.UpdateProgress) error {
-	ossClient, err := oss.New(params.Endpoint, params.AccessKeyID, params.AccessKeySecret)
+	ossClient, err := netutil.NewOSSClient(params.Endpoint, params.AccessKeyID, params.AccessKeySecret)
 	if err != nil {
 		return err
 	}
@@ -451,7 +452,7 @@ func (d *PikPak) UploadByMultipart(ctx context.Context, params *S3Params, fileSi
 		bucket    *oss.Bucket
 	)
 
-	if ossClient, err = oss.New(params.Endpoint, params.AccessKeyID, params.AccessKeySecret); err != nil {
+	if ossClient, err = netutil.NewOSSClient(params.Endpoint, params.AccessKeyID, params.AccessKeySecret); err != nil {
 		return err
 	}
 

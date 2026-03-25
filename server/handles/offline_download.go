@@ -448,6 +448,7 @@ func SetThunderBrowser(c *gin.Context) {
 		case *thunder_browser.ThunderBrowser, *thunder_browser.ThunderBrowserExpert:
 		default:
 			common.ErrorStrResp(c, "unsupported storage driver for offline download, only ThunderBrowser is supported", 400)
+			return
 		}
 	}
 	items := []model.SettingItem{
