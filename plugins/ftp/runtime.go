@@ -1,4 +1,4 @@
-package server
+package ftp
 
 import (
 	"context"
@@ -20,31 +20,31 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/OpenListTeam/OpenList/v4/server/ftp"
 	ftpserver "github.com/fclairamb/ftpserverlib"
 )
 
-type FtpMainDriver struct {
+type MainDriver struct {
 	settings     *ftpserver.Settings
 	proxyHeader  http.Header
 	clients      map[uint32]ftpserver.ClientContext
 	shutdownLock sync.RWMutex
 	isShutdown   bool
 	tlsConfig    *tls.Config
+	conf         FTP
 }
 
-func NewMainDriver() (*FtpMainDriver, error) {
-	ftp.InitStage()
+func NewMainDriver(cfg FTP) (*MainDriver, error) {
+	InitStage()
 	transferType := ftpserver.TransferTypeASCII
-	if conf.Conf.FTP.DefaultTransferBinary {
+	if cfg.DefaultTransferBinary {
 		transferType = ftpserver.TransferTypeBinary
 	}
 	activeConnCheck := ftpserver.IPMatchDisabled
-	if conf.Conf.FTP.EnableActiveConnIPCheck {
+	if cfg.EnableActiveConnIPCheck {
 		activeConnCheck = ftpserver.IPMatchRequired
 	}
 	pasvConnCheck := ftpserver.IPMatchDisabled
-	if conf.Conf.FTP.EnablePasvConnIPCheck {
+	if cfg.EnablePasvConnIPCheck {
 		pasvConnCheck = ftpserver.IPMatchRequired
 	}
 	tlsRequired := ftpserver.ClearOrEncrypted
@@ -53,18 +53,18 @@ func NewMainDriver() (*FtpMainDriver, error) {
 	} else if setting.GetBool(conf.FTPMandatoryTLS) {
 		tlsRequired = ftpserver.MandatoryEncryption
 	}
-	tlsConf, err := getTlsConf(setting.GetStr(conf.FTPTLSPrivateKeyPath), setting.GetStr(conf.FTPTLSPublicCertPath))
+	tlsConf, err := getTLSConfig(setting.GetStr(conf.FTPTLSPrivateKeyPath), setting.GetStr(conf.FTPTLSPublicCertPath))
 	if err != nil && tlsRequired != ftpserver.ClearOrEncrypted {
 		return nil, fmt.Errorf("FTP mandatory TLS has been enabled, but the certificate failed to load: %w", err)
 	}
-	return &FtpMainDriver{
+	return &MainDriver{
 		settings: &ftpserver.Settings{
-			ListenAddr:               conf.Conf.FTP.Listen,
+			ListenAddr:               cfg.Listen,
 			PublicHost:               lookupIP(setting.GetStr(conf.FTPPublicHost)),
-			PassiveTransferPortRange: newPortMapper(setting.GetStr(conf.FTPPasvPortMap)),
-			ActiveTransferPortNon20:  conf.Conf.FTP.ActiveTransferPortNon20,
-			IdleTimeout:              conf.Conf.FTP.IdleTimeout,
-			ConnectionTimeout:        conf.Conf.FTP.ConnectionTimeout,
+			PassiveTransferPortRange: newPortMapper(setting.GetStr(conf.FTPPasvPortMap), cfg.FindPasvPortAttempts),
+			ActiveTransferPortNon20:  cfg.ActiveTransferPortNon20,
+			IdleTimeout:              cfg.IdleTimeout,
+			ConnectionTimeout:        cfg.ConnectionTimeout,
 			DisableMLSD:              false,
 			DisableMLST:              false,
 			DisableMFMT:              true,
@@ -72,7 +72,7 @@ func NewMainDriver() (*FtpMainDriver, error) {
 			TLSRequired:              tlsRequired,
 			DisableLISTArgs:          false,
 			DisableSite:              false,
-			DisableActiveMode:        conf.Conf.FTP.DisableActiveMode,
+			DisableActiveMode:        cfg.DisableActiveMode,
 			EnableHASH:               false,
 			DisableSTAT:              false,
 			DisableSYST:              false,
@@ -84,18 +84,17 @@ func NewMainDriver() (*FtpMainDriver, error) {
 		proxyHeader: http.Header{
 			"User-Agent": {base.UserAgent},
 		},
-		clients:      make(map[uint32]ftpserver.ClientContext),
-		shutdownLock: sync.RWMutex{},
-		isShutdown:   false,
-		tlsConfig:    tlsConf,
+		clients:   make(map[uint32]ftpserver.ClientContext),
+		tlsConfig: tlsConf,
+		conf:      cfg,
 	}, nil
 }
 
-func (d *FtpMainDriver) GetSettings() (*ftpserver.Settings, error) {
+func (d *MainDriver) GetSettings() (*ftpserver.Settings, error) {
 	return d.settings, nil
 }
 
-func (d *FtpMainDriver) ClientConnected(cc ftpserver.ClientContext) (string, error) {
+func (d *MainDriver) ClientConnected(cc ftpserver.ClientContext) (string, error) {
 	if d.isShutdown || !d.shutdownLock.TryRLock() {
 		return "", errors.New("server has shutdown")
 	}
@@ -104,15 +103,14 @@ func (d *FtpMainDriver) ClientConnected(cc ftpserver.ClientContext) (string, err
 	return "OpenList FTP Endpoint", nil
 }
 
-func (d *FtpMainDriver) ClientDisconnected(cc ftpserver.ClientContext) {
-	err := cc.Close()
-	if err != nil {
+func (d *MainDriver) ClientDisconnected(cc ftpserver.ClientContext) {
+	if err := cc.Close(); err != nil {
 		utils.Log.Errorf("failed to close client: %v", err)
 	}
 	delete(d.clients, cc.ID())
 }
 
-func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) (ftpserver.ClientDriver, error) {
+func (d *MainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) (ftpserver.ClientDriver, error) {
 	ip := cc.RemoteAddr().String()
 	count, ok := model.LoginCache.Get(ip)
 	if ok && count >= model.DefaultMaxAuthRetries {
@@ -156,22 +154,22 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 	}
 	ctx = context.WithValue(ctx, conf.ClientIPKey, ip)
 	ctx = context.WithValue(ctx, conf.ProxyHeaderKey, d.proxyHeader)
-	return ftp.NewAferoAdapter(ctx), nil
+	return NewAferoAdapter(ctx), nil
 }
 
-func (d *FtpMainDriver) GetTLSConfig() (*tls.Config, error) {
+func (d *MainDriver) GetTLSConfig() (*tls.Config, error) {
 	if d.tlsConfig == nil {
 		return nil, errors.New("TLS config not provided")
 	}
 	return d.tlsConfig, nil
 }
 
-func (d *FtpMainDriver) Stop() {
+func (d *MainDriver) Stop() {
 	d.isShutdown = true
 	d.shutdownLock.Lock()
 	defer d.shutdownLock.Unlock()
-	for _, value := range d.clients {
-		_ = value.Close()
+	for _, client := range d.clients {
+		_ = client.Close()
 	}
 }
 
@@ -201,6 +199,7 @@ type group struct {
 }
 
 type pasvPortGetter struct {
+	attempts    int
 	groups      []group
 	totalLength int
 }
@@ -210,19 +209,18 @@ func (m *pasvPortGetter) FetchNext() (int, int, bool) {
 	for _, g := range m.groups {
 		if idxPort >= g.Length {
 			idxPort -= g.Length
-		} else {
-			return g.ExposedStart + idxPort, g.ListenedStart + idxPort, true
+			continue
 		}
+		return g.ExposedStart + idxPort, g.ListenedStart + idxPort, true
 	}
-	// unreachable
 	return 0, 0, false
 }
 
 func (m *pasvPortGetter) NumberAttempts() int {
-	return conf.Conf.FTP.FindPasvPortAttempts
+	return m.attempts
 }
 
-func newPortMapper(str string) ftpserver.PasvPortGetter {
+func newPortMapper(str string, attempts int) ftpserver.PasvPortGetter {
 	if str == "" {
 		return nil
 	}
@@ -244,14 +242,12 @@ func newPortMapper(str string) ftpserver.PasvPortGetter {
 				return 0, 0, errors.New("invalid port")
 			}
 			return si, ei - si + 1, nil
-		} else {
-			ret, err := strconv.Atoi(str)
-			if err != nil {
-				return 0, 0, err
-			} else {
-				return ret, 1, nil
-			}
 		}
+		ret, err := strconv.Atoi(str)
+		if err != nil {
+			return 0, 0, err
+		}
+		return ret, 1, nil
 	}
 	for i, mapper := range pasvPortMappers {
 		var err error
@@ -290,10 +286,10 @@ func newPortMapper(str string) ftpserver.PasvPortGetter {
 			return nil
 		}
 	}
-	return &pasvPortGetter{groups: groups, totalLength: totalLength}
+	return &pasvPortGetter{attempts: attempts, groups: groups, totalLength: totalLength}
 }
 
-func getTlsConf(keyPath, certPath string) (*tls.Config, error) {
+func getTLSConfig(keyPath, certPath string) (*tls.Config, error) {
 	if keyPath == "" || certPath == "" {
 		return nil, errors.New("private key or certificate is not provided")
 	}
