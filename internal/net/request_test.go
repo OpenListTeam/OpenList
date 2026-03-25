@@ -153,7 +153,7 @@ func (c *downloadCaptureClient) HttpRequest(ctx context.Context, params *HttpReq
 
 	c.GetObjectInvocations++
 
-	if &params.Range != nil {
+	if params.Range.Length != 0 {
 		c.RetrievedRanges = append(c.RetrievedRanges, fmt.Sprintf("%d-%d", params.Range.Start, params.Range.Length))
 	}
 
