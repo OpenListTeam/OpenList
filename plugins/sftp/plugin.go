@@ -47,6 +47,8 @@ func (p *SFTPPlugin) Stop() error {
 	return err
 }
 
+var _ iplugin.Plugin = (*SFTPPlugin)(nil)
+
 func init() {
 	iplugin.RegisterPlugin("sftp", func() iplugin.Plugin {
 		return &SFTPPlugin{}

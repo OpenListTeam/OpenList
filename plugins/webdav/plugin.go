@@ -71,6 +71,8 @@ func (p *WebDAVPlugin) Stop() error {
 	return err
 }
 
+var _ iplugin.Plugin = (*WebDAVPlugin)(nil)
+
 func init() {
 	iplugin.RegisterPlugin("webdav", func() iplugin.Plugin {
 		return &WebDAVPlugin{}
