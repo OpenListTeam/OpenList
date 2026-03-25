@@ -1,0 +1,142 @@
+name: Beta Media Release builds
+
+on:
+  push:
+    branches: ["dev-media"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    name: Beta Media Release Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update ref
+        id: create-or-update-ref
+        uses: ovsds/create-or-update-ref-action@v1
+        with:
+          ref: tags/beta-media
+          sha: ${{ github.sha }}
+
+      - name: Delete beta-media tag
+        run: git tag -d beta-media
+        continue-on-error: true
+
+      - name: changelog
+        id: changelog
+        run: |
+          git tag -l
+          npx changelogithub --output CHANGELOG.md
+
+      - name: Upload assets to beta-media release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: CHANGELOG.md
+          files: CHANGELOG.md
+          prerelease: true
+          tag_name: beta-media
+
+      - name: Upload assets to github artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-media changelog
+          path: ${{ github.workspace }}/CHANGELOG.md
+          compression-level: 0
+          if-no-files-found: error
+
+  release:
+    needs:
+      - changelog
+    strategy:
+      matrix:
+        include:
+          - target: "!(*musl*|*windows-arm64*|*windows7-*|*android*|*freebsd*)" # xgo and loongarch
+            hash: "md5"
+          - target: "linux-!(arm*)-musl*" #musl-not-arm
+            hash: "md5-linux-musl"
+          - target: "linux-arm*-musl*" #musl-arm
+            hash: "md5-linux-musl-arm"
+          - target: "windows-arm64" #win-arm64
+            hash: "md5-windows-arm64"
+          - target: "windows7-*" #win7
+            hash: "md5-windows7"
+          - target: "android-*" #android
+            hash: "md5-android"
+          - target: "freebsd-*" #freebsd
+            hash: "md5-freebsd"
+
+    name: Beta Media Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+
+      - name: Setup web
+        run: bash build.sh dev web
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
+
+      - name: Build
+        uses: OpenListTeam/cgo-actions@v1.2.2
+        with:
+          targets: ${{ matrix.target }}
+          musl-target-format: $os-$musl-$arch
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          out-dir: build
+          output: openlist-$target$ext
+          musl-base-url: "https://github.com/OpenListTeam/musl-compilers/releases/latest/download/"
+          x-flags: |
+            github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at
+            github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>
+            github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
+            github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
+            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
+
+      - name: Compress
+        run: |
+          bash build.sh zip ${{ matrix.hash }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload assets to beta-media release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/compress/*
+          prerelease: true
+          tag_name: beta-media
+
+      - name: Clean illegal characters from matrix.target
+        id: clean_target_name
+        run: |
+          ILLEGAL_CHARS_REGEX='[":<>|*?\\/\r\n]'
+          CLEANED_TARGET=$(echo "${{ matrix.target }}" | sed -E "s/$ILLEGAL_CHARS_REGEX//g")
+          echo "Original target: ${{ matrix.target }}"
+          echo "Cleaned target: $CLEANED_TARGET"
+          echo "cleaned_target=$CLEANED_TARGET" >> $GITHUB_ENV
+
+      - name: Upload assets to github artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-media builds for ${{ env.cleaned_target }}
+          path: ${{ github.workspace }}/build/compress/*
+          compression-level: 0
+          if-no-files-found: error
