@@ -90,7 +90,18 @@ jobs:
           go-version: "1.25.0"
 
       - name: Setup web
-        run: bash build.sh dev web
+        run: |
+          frontendRepo="${FRONTEND_REPO:-OpenListTeam/OpenList-Frontend}"
+          release_json=$(curl -fsSL --max-time 10 \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$frontendRepo/releases/tags/beta-media")
+          tar_url=$(echo "$release_json" | jq -r '.assets[].browser_download_url' | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$")
+          echo "Downloading frontend from: $tar_url"
+          curl -fsSL "$tar_url" -o dist.tar.gz
+          rm -rf public/dist && mkdir -p public/dist
+          tar -zxvf dist.tar.gz -C public/dist
+          rm -rf dist.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
