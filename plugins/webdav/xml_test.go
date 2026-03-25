@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	ixml "github.com/OpenListTeam/OpenList/v4/server/webdav/internal/xml"
+	ixml "github.com/OpenListTeam/OpenList/v4/plugins/webdav/internal/xml"
 )
 
 func TestReadLockInfo(t *testing.T) {
