@@ -10,8 +10,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/OpenListTeam/OpenList/v4/pkg/generic"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 )

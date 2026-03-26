@@ -13,8 +13,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 )

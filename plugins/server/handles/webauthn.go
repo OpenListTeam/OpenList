@@ -12,7 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"

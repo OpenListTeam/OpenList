@@ -13,7 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 )
 
 type HostsResp struct {

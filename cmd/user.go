@@ -7,6 +7,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	iplugin "github.com/OpenListTeam/OpenList/v4/internal/plugin"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
@@ -24,14 +25,28 @@ func DelAdminCacheOnline() {
 func DelUserCacheOnline(username string) {
 	client := resty.New().SetTimeout(1 * time.Second).SetTLSClientConfig(&tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify})
 	token := setting.GetStr(conf.Token)
-	port := conf.Conf.Scheme.HttpPort
+	serverPlugin := conf.Conf.Plugin("server")
+	if serverPlugin == nil {
+		utils.Log.Warnf("[del_user_cache] server plugin config missing")
+		return
+	}
+	port, err := iplugin.IntValue(serverPlugin.Data, "http_port", -1)
+	if err != nil {
+		utils.Log.Warnf("[del_user_cache] parse server http_port failed: %+v", err)
+		return
+	}
 	u := fmt.Sprintf("http://localhost:%d/api/admin/user/del_cache", port)
 	if port == -1 {
-		if conf.Conf.Scheme.HttpsPort == -1 {
+		httpsPort, err := iplugin.IntValue(serverPlugin.Data, "https_port", -1)
+		if err != nil {
+			utils.Log.Warnf("[del_user_cache] parse server https_port failed: %+v", err)
+			return
+		}
+		if httpsPort == -1 {
 			utils.Log.Warnf("[del_user_cache] no open port")
 			return
 		}
-		u = fmt.Sprintf("https://localhost:%d/api/admin/user/del_cache", conf.Conf.Scheme.HttpsPort)
+		u = fmt.Sprintf("https://localhost:%d/api/admin/user/del_cache", httpsPort)
 	}
 	res, err := client.R().SetHeader("Authorization", token).SetQueryParam("username", username).Post(u)
 	if err != nil {

@@ -16,7 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/gin-gonic/gin"
 )
 

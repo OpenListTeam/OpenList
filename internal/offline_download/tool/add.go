@@ -21,7 +21,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )

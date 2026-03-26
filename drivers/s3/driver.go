@@ -15,7 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"

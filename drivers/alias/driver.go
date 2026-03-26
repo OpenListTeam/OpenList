@@ -19,7 +19,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 )
 
 type Alias struct {

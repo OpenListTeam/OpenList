@@ -1,116 +1,14 @@
 package server
 
 import (
-	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/message"
-	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/middlewares"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/OpenListTeam/OpenList/v4/server/handles"
-	"github.com/OpenListTeam/OpenList/v4/server/static"
+	"github.com/OpenListTeam/OpenList/v4/plugins/server/handles"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
-
-func Init(e *gin.Engine) {
-	e.ContextWithFallback = true
-	if !utils.SliceContains([]string{"", "/"}, conf.URL.Path) {
-		e.GET("/", func(c *gin.Context) {
-			c.Redirect(302, conf.URL.Path)
-		})
-	}
-	Cors(e)
-	g := e.Group(conf.URL.Path)
-	if conf.Conf.Scheme.HttpPort != -1 && conf.Conf.Scheme.HttpsPort != -1 && conf.Conf.Scheme.ForceHttps {
-		e.Use(middlewares.ForceHttps)
-	}
-	g.Any("/ping", func(c *gin.Context) {
-		c.String(200, "pong")
-	})
-	g.GET("/favicon.ico", handles.Favicon)
-	g.GET("/robots.txt", handles.Robots)
-	g.GET("/manifest.json", static.ManifestJSON)
-	g.GET("/i/:link_name", handles.Plist)
-	common.SecretKey = []byte(conf.Conf.JwtSecret)
-	g.Use(middlewares.StoragesLoaded)
-	if conf.Conf.MaxConnections > 0 {
-		g.Use(middlewares.MaxAllowed(conf.Conf.MaxConnections))
-	}
-
-	downloadLimiter := middlewares.DownloadRateLimiter(stream.ClientDownloadLimit)
-	signCheck := middlewares.Down(sign.Verify)
-	g.GET("/d/*path", middlewares.PathParse, signCheck, downloadLimiter, handles.Down)
-	g.GET("/p/*path", middlewares.PathParse, signCheck, downloadLimiter, handles.Proxy)
-	g.HEAD("/d/*path", middlewares.PathParse, signCheck, handles.Down)
-	g.HEAD("/p/*path", middlewares.PathParse, signCheck, handles.Proxy)
-	archiveSignCheck := middlewares.Down(sign.VerifyArchive)
-	g.GET("/ad/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveDown)
-	g.GET("/ap/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveProxy)
-	g.GET("/ae/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveInternalExtract)
-	g.HEAD("/ad/*path", middlewares.PathParse, archiveSignCheck, handles.ArchiveDown)
-	g.HEAD("/ap/*path", middlewares.PathParse, archiveSignCheck, handles.ArchiveProxy)
-	g.HEAD("/ae/*path", middlewares.PathParse, archiveSignCheck, handles.ArchiveInternalExtract)
-
-	g.GET("/sd/:sid", middlewares.EmptyPathParse, middlewares.SharingIdParse, downloadLimiter, handles.SharingDown)
-	g.GET("/sd/:sid/*path", middlewares.PathParse, middlewares.SharingIdParse, downloadLimiter, handles.SharingDown)
-	g.HEAD("/sd/:sid", middlewares.EmptyPathParse, middlewares.SharingIdParse, handles.SharingDown)
-	g.HEAD("/sd/:sid/*path", middlewares.PathParse, middlewares.SharingIdParse, handles.SharingDown)
-	g.GET("/sad/:sid", middlewares.EmptyPathParse, middlewares.SharingIdParse, downloadLimiter, handles.SharingArchiveExtract)
-	g.GET("/sad/:sid/*path", middlewares.PathParse, middlewares.SharingIdParse, downloadLimiter, handles.SharingArchiveExtract)
-	g.HEAD("/sad/:sid", middlewares.EmptyPathParse, middlewares.SharingIdParse, handles.SharingArchiveExtract)
-	g.HEAD("/sad/:sid/*path", middlewares.PathParse, middlewares.SharingIdParse, handles.SharingArchiveExtract)
-
-	api := g.Group("/api")
-	auth := api.Group("", middlewares.Auth(false))
-	webauthn := api.Group("/authn", middlewares.Authn)
-
-	api.POST("/auth/login", handles.Login)
-	api.POST("/auth/login/hash", handles.LoginHash)
-	api.POST("/auth/login/ldap", handles.LoginLdap)
-	auth.GET("/me", handles.CurrentUser)
-	auth.POST("/me/update", handles.UpdateCurrent)
-	auth.GET("/me/sshkey/list", handles.ListMyPublicKey)
-	auth.POST("/me/sshkey/add", handles.AddMyPublicKey)
-	auth.POST("/me/sshkey/delete", handles.DeleteMyPublicKey)
-	auth.POST("/auth/2fa/generate", handles.Generate2FA)
-	auth.POST("/auth/2fa/verify", handles.Verify2FA)
-	auth.GET("/auth/logout", handles.LogOut)
-
-	// auth
-	api.GET("/auth/sso", handles.SSOLoginRedirect)
-	api.GET("/auth/sso_callback", handles.SSOLoginCallback)
-	api.GET("/auth/get_sso_id", handles.SSOLoginCallback)
-	api.GET("/auth/sso_get_token", handles.SSOLoginCallback)
-
-	// webauthn
-	api.GET("/authn/webauthn_begin_login", handles.BeginAuthnLogin)
-	api.POST("/authn/webauthn_finish_login", handles.FinishAuthnLogin)
-	webauthn.GET("/webauthn_begin_registration", handles.BeginAuthnRegistration)
-	webauthn.POST("/webauthn_finish_registration", handles.FinishAuthnRegistration)
-	webauthn.POST("/delete_authn", handles.DeleteAuthnLogin)
-	webauthn.GET("/getcredentials", handles.GetAuthnCredentials)
-
-	// no need auth
-	public := api.Group("/public")
-	public.Any("/settings", handles.PublicSettings)
-	public.Any("/offline_download_tools", handles.OfflineDownloadTools)
-	public.Any("/archive_extensions", handles.ArchiveExtensions)
-
-	_fs(auth.Group("/fs"))
-	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
-	_task(auth.Group("/task", middlewares.AuthNotGuest))
-	_sharing(auth.Group("/share", middlewares.AuthNotGuest))
-	admin(auth.Group("/admin", middlewares.AuthAdmin))
-	if flags.Debug || flags.Dev {
-		debug(g.Group("/debug"))
-	}
-	static.Static(g, func(handlers ...gin.HandlerFunc) {
-		e.NoRoute(handlers...)
-	})
-}
 
 func admin(g *gin.RouterGroup) {
 	meta := g.Group("/meta")

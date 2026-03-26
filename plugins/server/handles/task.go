@@ -10,8 +10,8 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
 	"github.com/gin-gonic/gin"
 )

@@ -3,8 +3,10 @@ package webdav
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	iplugin "github.com/OpenListTeam/OpenList/v4/internal/plugin"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/gin-gonic/gin"
@@ -35,9 +37,11 @@ func (p *WebDAVPlugin) Init(config map[string]any) error {
 	if p.conf.CertFile, err = iplugin.StringValue(config, "cert_file", p.conf.CertFile); err != nil {
 		return err
 	}
+	p.conf.CertFile = resolvePluginPath(p.conf.CertFile)
 	if p.conf.KeyFile, err = iplugin.StringValue(config, "key_file", p.conf.KeyFile); err != nil {
 		return err
 	}
+	p.conf.KeyFile = resolvePluginPath(p.conf.KeyFile)
 	return nil
 }
 
@@ -49,15 +53,7 @@ func (p *WebDAVPlugin) Start() error {
 	fmt.Printf("start WebDAV server @ %s\n", p.conf.Listen)
 	p.server = &http.Server{Addr: p.conf.Listen, Handler: r}
 	if p.conf.SSL {
-		certFile := p.conf.CertFile
-		if certFile == "" {
-			certFile = conf.Conf.Scheme.CertFile
-		}
-		keyFile := p.conf.KeyFile
-		if keyFile == "" {
-			keyFile = conf.Conf.Scheme.KeyFile
-		}
-		return p.server.ListenAndServeTLS(certFile, keyFile)
+		return p.server.ListenAndServeTLS(p.conf.CertFile, p.conf.KeyFile)
 	}
 	return p.server.ListenAndServe()
 }
@@ -77,4 +73,21 @@ func init() {
 	iplugin.RegisterPlugin("webdav", func() iplugin.Plugin {
 		return &WebDAVPlugin{}
 	})
+}
+
+func resolvePluginPath(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	if flags.ForceBinDir {
+		executable, err := os.Executable()
+		if err == nil {
+			return filepath.Join(filepath.Dir(executable), path)
+		}
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(wd, path)
 }

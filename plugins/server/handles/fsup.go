@@ -14,8 +14,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
 

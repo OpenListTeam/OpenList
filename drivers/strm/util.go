@@ -10,8 +10,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 )
 
 func (d *Strm) listRoot() []model.Obj {

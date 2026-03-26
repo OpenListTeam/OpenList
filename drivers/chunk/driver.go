@@ -21,7 +21,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/avast/retry-go"
 )
 

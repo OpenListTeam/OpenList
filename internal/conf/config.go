@@ -26,19 +26,6 @@ type Meilisearch struct {
 	Index  string `json:"index" env:"INDEX"`
 }
 
-type Scheme struct {
-	Address      string `json:"address" env:"ADDR"`
-	HttpPort     int    `json:"http_port" env:"HTTP_PORT"`
-	HttpsPort    int    `json:"https_port" env:"HTTPS_PORT"`
-	ForceHttps   bool   `json:"force_https" env:"FORCE_HTTPS"`
-	CertFile     string `json:"cert_file" env:"CERT_FILE"`
-	KeyFile      string `json:"key_file" env:"KEY_FILE"`
-	UnixFile     string `json:"unix_file" env:"UNIX_FILE"`
-	UnixFilePerm string `json:"unix_file_perm" env:"UNIX_FILE_PERM"`
-	EnableH2c    bool   `json:"enable_h2c" env:"ENABLE_H2C"`
-	EnableH3     bool   `json:"enable_h3" env:"ENABLE_H3"`
-}
-
 type LogConfig struct {
 	Enable     bool            `json:"enable" env:"ENABLE"`
 	Name       string          `json:"name" env:"NAME"`
@@ -84,10 +71,9 @@ type Cors struct {
 }
 
 type PluginConfig struct {
-	Name    string         `json:"name"`
-	Enable  bool           `json:"enable"`
-	Enabled *bool          `json:"enabled,omitempty"`
-	Data    map[string]any `json:"data"`
+	Name   string         `json:"name"`
+	Enable bool           `json:"enable"`
+	Data   map[string]any `json:"data"`
 }
 
 type Config struct {
@@ -98,7 +84,6 @@ type Config struct {
 	TokenExpiresIn        int            `json:"token_expires_in" env:"TOKEN_EXPIRES_IN"`
 	Database              Database       `json:"database" envPrefix:"DB_"`
 	Meilisearch           Meilisearch    `json:"meilisearch" envPrefix:"MEILISEARCH_"`
-	Scheme                Scheme         `json:"scheme"`
 	TempDir               string         `json:"temp_dir" env:"TEMP_DIR"`
 	BleveDir              string         `json:"bleve_dir" env:"BLEVE_DIR"`
 	DistDir               string         `json:"dist_dir"`
@@ -122,15 +107,6 @@ func DefaultConfig(dataDir string) *Config {
 	logPath := filepath.Join(dataDir, "log/log.log")
 	dbPath := filepath.Join(dataDir, "data.db")
 	return &Config{
-		Scheme: Scheme{
-			Address:    "0.0.0.0",
-			UnixFile:   "",
-			HttpPort:   5244,
-			HttpsPort:  -1,
-			ForceHttps: false,
-			CertFile:   "",
-			KeyFile:    "",
-		},
 		JwtSecret:      random.String(16),
 		TokenExpiresIn: 48,
 		TempDir:        tempDir,
@@ -207,26 +183,44 @@ func DefaultConfig(dataDir string) *Config {
 		},
 		Plugins: []PluginConfig{
 			{
+				Name:   "server",
+				Enable: true,
+				Data: map[string]any{
+					"address":        "0.0.0.0",
+					"http_port":      5244,
+					"https_port":     -1,
+					"force_https":    false,
+					"cert_file":      "",
+					"key_file":       "",
+					"unix_file":      "",
+					"unix_file_perm": "",
+					"enable_h2c":     false,
+					"enable_h3":      false,
+				},
+			},
+			{
 				Name:   "webdav",
 				Enable: false,
 				Data: map[string]any{
-					"enabled": true,
+					"listen": ":5288",
+					"ssl":    false,
 				},
 			},
 			{
 				Name:   "s3",
 				Enable: false,
 				Data: map[string]any{
-					"enabled": false,
-					"port":    5246,
-					"ssl":     false,
+					"address":   "0.0.0.0",
+					"port":      5246,
+					"ssl":       false,
+					"cert_file": "",
+					"key_file":  "",
 				},
 			},
 			{
 				Name:   "ftp",
 				Enable: false,
 				Data: map[string]any{
-					"enabled":                     false,
 					"listen":                      ":5221",
 					"find_pasv_port_attempts":     50,
 					"active_transfer_port_non_20": false,
@@ -242,8 +236,7 @@ func DefaultConfig(dataDir string) *Config {
 				Name:   "sftp",
 				Enable: false,
 				Data: map[string]any{
-					"enabled": false,
-					"listen":  ":5222",
+					"listen": ":5222",
 				},
 			},
 		},
@@ -254,25 +247,21 @@ func DefaultConfig(dataDir string) *Config {
 
 func (c *Config) UnmarshalJSON(data []byte) error {
 	type configAlias Config
-	aux := struct {
-		*configAlias
-		Plugins *[]PluginConfig `json:"plugins"`
-	}{
-		configAlias: (*configAlias)(c),
-	}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	if err := json.Unmarshal(data, (*configAlias)(c)); err != nil {
 		return err
 	}
-	if aux.Plugins != nil {
-		c.Plugins = *aux.Plugins
-		for i := range c.Plugins {
-			if c.Plugins[i].Enabled != nil {
-				c.Plugins[i].Enable = *c.Plugins[i].Enabled
-				c.Plugins[i].Enabled = nil
-			}
-			if c.Plugins[i].Data == nil {
-				c.Plugins[i].Data = map[string]any{}
-			}
+	for i := range c.Plugins {
+		if c.Plugins[i].Data == nil {
+			c.Plugins[i].Data = map[string]any{}
+		}
+	}
+	return nil
+}
+
+func (c *Config) Plugin(name string) *PluginConfig {
+	for i := range c.Plugins {
+		if c.Plugins[i].Name == name {
+			return &c.Plugins[i]
 		}
 	}
 	return nil

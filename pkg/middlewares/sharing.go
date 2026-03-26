@@ -2,7 +2,7 @@ package middlewares
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/pkg/common"
 	"github.com/gin-gonic/gin"
 )
 
