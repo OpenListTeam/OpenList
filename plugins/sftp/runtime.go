@@ -1,8 +1,10 @@
 package sftp
 
 import (
-	"context"
+	"io"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -11,73 +13,149 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	pluginftp "github.com/OpenListTeam/OpenList/v4/plugins/ftp"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/OpenListTeam/sftpd-openlist"
+	pkgsftp "github.com/pkg/sftp"
 	"github.com/pkg/errors"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"golang.org/x/crypto/ssh"
 )
 
-type Driver struct {
-	proxyHeader http.Header
-	config      *sftpd.Config
+type Server struct {
 	listen      string
+	listener    net.Listener
+	proxyHeader http.Header
+	conns       map[net.Conn]struct{}
+	mu          sync.Mutex
 }
 
-func NewDriver(cfg SFTP) (*Driver, error) {
-	pluginftp.InitStage()
+func NewServer(cfg SFTP) (*Server, error) {
 	InitHostKey()
-	return &Driver{
+	return &Server{
+		listen: cfg.Listen,
 		proxyHeader: http.Header{
 			"User-Agent": {base.UserAgent},
 		},
-		listen: cfg.Listen,
+		conns: make(map[net.Conn]struct{}),
 	}, nil
 }
 
-func (d *Driver) GetConfig() *sftpd.Config {
-	if d.config != nil {
-		return d.config
+func (s *Server) Serve() error {
+	listener, err := net.Listen("tcp", s.listen)
+	if err != nil {
+		return err
 	}
+	s.listener = listener
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return err
+		}
+		s.trackConn(conn)
+		go s.handleConn(conn)
+	}
+}
+
+func (s *Server) Close() error {
+	if s.listener != nil {
+		_ = s.listener.Close()
+		s.listener = nil
+	}
+	s.mu.Lock()
+	for conn := range s.conns {
+		_ = conn.Close()
+	}
+	s.conns = make(map[net.Conn]struct{})
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Server) handleConn(conn net.Conn) {
+	defer s.untrackConn(conn)
+	sshConn, chans, reqs, err := ssh.NewServerConn(conn, s.serverConfig())
+	if err != nil {
+		utils.Log.Errorf("[SFTP] handshake failed from %s: %+v", conn.RemoteAddr(), err)
+		return
+	}
+	defer sshConn.Close()
+	go ssh.DiscardRequests(reqs)
+	for newChannel := range chans {
+		if newChannel.ChannelType() != "session" {
+			_ = newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
+			continue
+		}
+		channel, requests, err := newChannel.Accept()
+		if err != nil {
+			utils.Log.Errorf("[SFTP] accept session failed: %+v", err)
+			continue
+		}
+		go s.handleSession(sshConn, channel, requests)
+	}
+}
+
+func (s *Server) handleSession(conn *ssh.ServerConn, channel ssh.Channel, requests <-chan *ssh.Request) {
+	defer channel.Close()
+	for req := range requests {
+		ok := req.Type == "subsystem" && string(req.Payload[4:]) == "sftp"
+		if req.WantReply {
+			_ = req.Reply(ok, nil)
+		}
+		if !ok {
+			continue
+		}
+		handler, err := s.newHandler(conn)
+		if err != nil {
+			utils.Log.Errorf("[SFTP] init handler failed: %+v", err)
+			return
+		}
+		server := pkgsftp.NewRequestServer(channel, pkgsftp.Handlers{
+			FileGet:  handler,
+			FilePut:  handler,
+			FileCmd:  handler,
+			FileList: handler,
+		})
+		if err := server.Serve(); err != nil && !errors.Is(err, io.EOF) {
+			utils.Log.Errorf("[SFTP] request server failed: %+v", err)
+		}
+		_ = server.Close()
+		return
+	}
+}
+
+func (s *Server) newHandler(conn *ssh.ServerConn) (*Handler, error) {
+	userObj, err := op.GetUserByName(conn.User())
+	if err != nil {
+		return nil, err
+	}
+	return &Handler{
+		user:        userObj,
+		metaPass:    "",
+		clientIP:    conn.RemoteAddr().String(),
+		proxyHeader: s.proxyHeader,
+	}, nil
+}
+
+func (s *Server) serverConfig() *ssh.ServerConfig {
 	var pwdAuth func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error)
 	if !setting.GetBool(conf.SFTPDisablePasswordLogin) {
-		pwdAuth = d.PasswordAuth
+		pwdAuth = s.PasswordAuth
 	}
-	serverConfig := ssh.ServerConfig{
+	serverConfig := &ssh.ServerConfig{
 		NoClientAuth:         true,
-		NoClientAuthCallback: d.NoClientAuth,
+		NoClientAuthCallback: s.NoClientAuth,
 		PasswordCallback:     pwdAuth,
-		PublicKeyCallback:    d.PublicKeyAuth,
-		AuthLogCallback:      d.AuthLogCallback,
-		BannerCallback:       d.GetBanner,
+		PublicKeyCallback:    s.PublicKeyAuth,
+		AuthLogCallback:      s.AuthLogCallback,
+		BannerCallback:       s.GetBanner,
 	}
 	for _, k := range SSHSigners {
 		serverConfig.AddHostKey(k)
 	}
-	d.config = &sftpd.Config{
-		ServerConfig: serverConfig,
-		HostPort:     d.listen,
-		ErrorLogFunc: utils.Log.Error,
-	}
-	return d.config
+	return serverConfig
 }
 
-func (d *Driver) GetFileSystem(sc *ssh.ServerConn) (sftpd.FileSystem, error) {
-	userObj, err := op.GetUserByName(sc.User())
-	if err != nil {
-		return nil, err
-	}
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, conf.UserKey, userObj)
-	ctx = context.WithValue(ctx, conf.MetaPassKey, "")
-	ctx = context.WithValue(ctx, conf.ClientIPKey, sc.RemoteAddr().String())
-	ctx = context.WithValue(ctx, conf.ProxyHeaderKey, d.proxyHeader)
-	return &DriverAdapter{FtpDriver: pluginftp.NewAferoAdapter(ctx)}, nil
-}
-
-func (d *Driver) Close() {}
-
-func (d *Driver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, error) {
+func (s *Server) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, error) {
 	if conn.User() != "guest" {
 		return nil, errors.New("only guest is allowed to login without authorization")
 	}
@@ -91,7 +169,7 @@ func (d *Driver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, error) {
 	return nil, nil
 }
 
-func (d *Driver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+func (s *Server) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 	ip := conn.RemoteAddr().String()
 	count, ok := model.LoginCache.Get(ip)
 	if ok && count >= model.DefaultMaxAuthRetries {
@@ -120,7 +198,7 @@ func (d *Driver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.Perm
 	return nil, nil
 }
 
-func (d *Driver) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+func (s *Server) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	userObj, err := op.GetUserByName(conn.User())
 	if err != nil {
 		return nil, err
@@ -147,7 +225,7 @@ func (d *Driver) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.P
 	return nil, errors.New("public key refused")
 }
 
-func (d *Driver) AuthLogCallback(conn ssh.ConnMetadata, method string, err error) {
+func (s *Server) AuthLogCallback(conn ssh.ConnMetadata, method string, err error) {
 	ip := conn.RemoteAddr().String()
 	if err == nil {
 		utils.Log.Infof("[SFTP] %s(%s) logged in via %s", conn.User(), ip, method)
@@ -156,6 +234,18 @@ func (d *Driver) AuthLogCallback(conn ssh.ConnMetadata, method string, err error
 	}
 }
 
-func (d *Driver) GetBanner(_ ssh.ConnMetadata) string {
+func (s *Server) GetBanner(_ ssh.ConnMetadata) string {
 	return setting.GetStr(conf.Announcement)
+}
+
+func (s *Server) trackConn(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conns[conn] = struct{}{}
+}
+
+func (s *Server) untrackConn(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.conns, conn)
 }

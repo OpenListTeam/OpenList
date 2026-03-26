@@ -5,12 +5,10 @@ import (
 
 	iplugin "github.com/OpenListTeam/OpenList/v4/internal/plugin"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/sftpd-openlist"
 )
 
 type SFTPPlugin struct {
-	driver *Driver
-	server *sftpd.SftpServer
+	server *Server
 	conf   SFTP
 }
 
@@ -26,15 +24,14 @@ func (p *SFTPPlugin) Init(config map[string]any) error {
 }
 
 func (p *SFTPPlugin) Start() error {
-	driver, err := NewDriver(p.conf)
+	server, err := NewServer(p.conf)
 	if err != nil {
 		return err
 	}
-	p.driver = driver
+	p.server = server
 	utils.Log.Infof("start sftp server on %s", p.conf.Listen)
 	fmt.Printf("start sftp server on %s\n", p.conf.Listen)
-	p.server = sftpd.NewSftpServer(driver)
-	return p.server.RunServer()
+	return p.server.Serve()
 }
 
 func (p *SFTPPlugin) Stop() error {
@@ -43,7 +40,6 @@ func (p *SFTPPlugin) Stop() error {
 	}
 	err := p.server.Close()
 	p.server = nil
-	p.driver = nil
 	return err
 }
 
