@@ -18,7 +18,6 @@ type Addition struct {
 var config = driver.Config{
 	Name:        "Emby",
 	LocalSort:   true,
-	OnlyProxy:   false,
 	NoUpload:    true,
 	DefaultRoot: "1",
 	CheckStatus: true,
