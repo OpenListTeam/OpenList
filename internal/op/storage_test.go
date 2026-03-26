@@ -10,7 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/glebarez/sqlite"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
