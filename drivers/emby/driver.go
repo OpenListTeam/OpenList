@@ -157,7 +157,7 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 		}
 
 		obj := &model.Object{
-			ID:       it.ID,
+			ID:       id,
 			Name:     displayName,
 			Path:     path.Join(parentPath, displayName),
 			Size:     it.Size,
@@ -176,7 +176,8 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 	if file.IsDir() {
 		return nil, errs.NotFile
 	}
-	if strings.TrimSpace(file.GetID()) == "" {
+	fileID := strings.TrimSpace(file.GetID())
+	if fileID == "" {
 		return nil, fmt.Errorf("invalid file id")
 	}
 
@@ -190,7 +191,7 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 	mediaSourceID := ""
 	mediaContainer := ""
 	if !useDownload {
-		detailURL, parseErr := url.Parse(d.URL + "/Users/" + d.userID + "/Items/" + file.GetID())
+		detailURL, parseErr := url.Parse(d.URL + "/Users/" + d.userID + "/Items/" + fileID)
 		if parseErr == nil {
 			q := detailURL.Query()
 			q.Set("Fields", "MediaSources")
@@ -231,12 +232,12 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 	}
 
 	if useDownload {
-		u.Path = path.Join(u.Path, "/Items", file.GetID(), "Download")
+		u.Path = path.Join(u.Path, "/Items", fileID, "Download")
 	} else {
 		if mediaContainer != "" {
-			u.Path = path.Join(u.Path, "/Videos", file.GetID(), "stream."+mediaContainer)
+			u.Path = path.Join(u.Path, "/Videos", fileID, "stream."+mediaContainer)
 		} else {
-			u.Path = path.Join(u.Path, "/Videos", file.GetID(), "stream")
+			u.Path = path.Join(u.Path, "/Videos", fileID, "stream")
 		}
 	}
 	q := u.Query()
