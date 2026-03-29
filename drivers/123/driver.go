@@ -41,7 +41,9 @@ func (d *Pan123) GetAddition() driver.Additional {
 }
 
 func (d *Pan123) Init(ctx context.Context) error {
-	_, err := d.Request(UserInfo, http.MethodGet, nil, nil)
+	_, err := d.Request(UserInfo, http.MethodGet, func(req *resty.Request) {
+		req.SetHeader("platform", "web")
+	}, nil)
 	return err
 }
 
@@ -74,7 +76,6 @@ func (d *Pan123) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 			"type":      f.Type,
 		}
 		resp, err := d.Request(DownloadInfo, http.MethodPost, func(req *resty.Request) {
-
 			req.SetBody(data)
 		}, nil)
 		if err != nil {
@@ -252,6 +253,19 @@ func (d *Pan123) APIRateLimit(ctx context.Context, api string) error {
 	limiter := value.(*rate.Limiter)
 
 	return limiter.Wait(ctx)
+}
+
+func (d *Pan123) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	userInfo, err := d.getUserInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: userInfo.Data.SpacePermanent + userInfo.Data.SpaceTemp,
+			UsedSpace:  userInfo.Data.SpaceUsed,
+		},
+	}, nil
 }
 
 var _ driver.Driver = (*Pan123)(nil)

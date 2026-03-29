@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -26,47 +28,61 @@ func (f RangeReaderFunc) RangeRead(ctx context.Context, httpRange http_range.Ran
 }
 
 func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, error) {
-	if link.MFile != nil {
-		return GetRangeReaderFromMFile(size, link.MFile), nil
+	if link.RangeReader != nil {
+		if link.Concurrency < 1 && link.PartSize < 1 {
+			return link.RangeReader, nil
+		}
+		down := net.NewDownloader(func(d *net.Downloader) {
+			d.Concurrency = link.Concurrency
+			d.PartSize = link.PartSize
+			d.HttpClient = net.GetRangeReaderHttpRequestFunc(link.RangeReader)
+		})
+		rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
+			return down.Download(ctx, &net.HttpRequestParams{
+				Range: httpRange,
+				Size:  size,
+			})
+		}
+		// RangeReader只能在驱动限速
+		return RangeReaderFunc(rangeReader), nil
 	}
+
+	if len(link.URL) == 0 {
+		return nil, errors.New("invalid link: must have at least one of URL or RangeReader")
+	}
+
 	if link.Concurrency > 0 || link.PartSize > 0 {
 		down := net.NewDownloader(func(d *net.Downloader) {
 			d.Concurrency = link.Concurrency
 			d.PartSize = link.PartSize
-		})
-		var rangeReader RangeReaderFunc = func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
-			var req *net.HttpRequestParams
-			if link.RangeReader != nil {
-				req = &net.HttpRequestParams{
-					Range: httpRange,
-					Size:  size,
+			d.HttpClient = func(ctx context.Context, params *net.HttpRequestParams) (*http.Response, error) {
+				if ServerDownloadLimit == nil {
+					return net.DefaultHttpRequestFunc(ctx, params)
 				}
-			} else {
-				requestHeader, _ := ctx.Value(conf.RequestHeaderKey).(http.Header)
-				header := net.ProcessHeader(requestHeader, link.Header)
-				req = &net.HttpRequestParams{
-					Range:     httpRange,
-					Size:      size,
-					URL:       link.URL,
-					HeaderRef: header,
+				resp, err := net.DefaultHttpRequestFunc(ctx, params)
+				if err == nil && resp.Body != nil {
+					resp.Body = &RateLimitReader{
+						Ctx:     ctx,
+						Reader:  resp.Body,
+						Limiter: ServerDownloadLimit,
+					}
 				}
+				return resp, err
 			}
-			return down.Download(ctx, req)
+		})
+		rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
+			requestHeader, _ := ctx.Value(conf.RequestHeaderKey).(http.Header)
+			header := net.ProcessHeader(requestHeader, link.Header)
+			return down.Download(ctx, &net.HttpRequestParams{
+				Range:     httpRange,
+				Size:      size,
+				URL:       link.URL,
+				HeaderRef: header,
+			})
 		}
-		if link.RangeReader != nil {
-			down.HttpClient = net.GetRangeReaderHttpRequestFunc(link.RangeReader)
-			return rangeReader, nil
-		}
-		return RateLimitRangeReaderFunc(rangeReader), nil
+		return RangeReaderFunc(rangeReader), nil
 	}
 
-	if link.RangeReader != nil {
-		return link.RangeReader, nil
-	}
-
-	if len(link.URL) == 0 {
-		return nil, errors.New("invalid link: must have at least one of MFile, URL, or RangeReader")
-	}
 	rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 		if httpRange.Length < 0 || httpRange.Start+httpRange.Length > size {
 			httpRange.Length = size - httpRange.Start
@@ -77,12 +93,20 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 
 		response, err := net.RequestHttp(ctx, "GET", header, link.URL)
 		if err != nil {
-			if _, ok := errors.Unwrap(err).(net.HttpStatusCodeError); ok {
+			if _, ok := errs.UnwrapOrSelf(err).(net.HttpStatusCodeError); ok {
 				return nil, err
 			}
 			return nil, fmt.Errorf("http request failure, err:%w", err)
 		}
-		if httpRange.Start == 0 && (httpRange.Length == -1 || httpRange.Length == size) || response.StatusCode == http.StatusPartialContent ||
+		if ServerDownloadLimit != nil {
+			response.Body = &RateLimitReader{
+				Ctx:     ctx,
+				Reader:  response.Body,
+				Limiter: ServerDownloadLimit,
+			}
+		}
+		if httpRange.Start == 0 && httpRange.Length == size ||
+			response.StatusCode == http.StatusPartialContent ||
 			checkContentRange(&response.Header, httpRange.Start) {
 			return response.Body, nil
 		} else if response.StatusCode == http.StatusOK {
@@ -95,11 +119,10 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 		}
 		return response.Body, nil
 	}
-	return RateLimitRangeReaderFunc(rangeReader), nil
+	return RangeReaderFunc(rangeReader), nil
 }
 
-// RangeReaderIF.RangeRead返回的io.ReadCloser保留file的签名。
-func GetRangeReaderFromMFile(size int64, file model.File) model.RangeReaderIF {
+func GetRangeReaderFromMFile(size int64, file model.File) *model.FileRangeReader {
 	return &model.FileRangeReader{
 		RangeReaderIF: RangeReaderFunc(func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 			length := httpRange.Length
@@ -151,26 +174,52 @@ func CacheFullAndHash(stream model.FileStreamer, up *model.UpdateProgress, hashT
 	return tmpF, hex.EncodeToString(h.Sum(nil)), nil
 }
 
-type StreamSectionReader struct {
-	file    model.FileStreamer
-	off     int64
-	bufPool *pool.Pool[[]byte]
+type StreamSectionReaderIF interface {
+	// 线程不安全
+	GetSectionReader(off, length int64) (io.ReadSeeker, error)
+	FreeSectionReader(sr io.ReadSeeker)
+	// 线程不安全
+	DiscardSection(off int64, length int64) error
 }
 
-func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *model.UpdateProgress) (*StreamSectionReader, error) {
-	ss := &StreamSectionReader{file: file}
+func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *model.UpdateProgress) (StreamSectionReaderIF, error) {
 	if file.GetFile() != nil {
-		return ss, nil
+		return &cachedSectionReader{file.GetFile()}, nil
 	}
 
 	maxBufferSize = min(maxBufferSize, int(file.GetSize()))
 	if maxBufferSize > conf.MaxBufferLimit {
-		_, err := file.CacheFullAndWriter(up, nil)
+		f, err := os.CreateTemp(conf.Conf.TempDir, "file-*")
 		if err != nil {
 			return nil, err
 		}
+
+		if f.Truncate(file.GetSize()) != nil {
+			// fallback to full cache
+			_, _ = f.Close(), os.Remove(f.Name())
+			cache, err := file.CacheFullAndWriter(up, nil)
+			if err != nil {
+				return nil, err
+			}
+			return &cachedSectionReader{cache}, nil
+		}
+
+		ss := &fileSectionReader{file: file, temp: f}
+		ss.bufPool = &pool.Pool[*offsetWriterWithBase]{
+			New: func() *offsetWriterWithBase {
+				base := ss.tempOffset
+				ss.tempOffset += int64(maxBufferSize)
+				return &offsetWriterWithBase{io.NewOffsetWriter(ss.temp, base), base}
+			},
+		}
+		file.Add(utils.CloseFunc(func() error {
+			ss.bufPool.Reset()
+			return errors.Join(ss.temp.Close(), os.Remove(ss.temp.Name()))
+		}))
 		return ss, nil
 	}
+
+	ss := &directSectionReader{file: file}
 	if conf.MmapThreshold > 0 && maxBufferSize >= conf.MmapThreshold {
 		ss.bufPool = &pool.Pool[[]byte]{
 			New: func() []byte {
@@ -200,38 +249,114 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 	return ss, nil
 }
 
-// 线程不安全
-func (ss *StreamSectionReader) GetSectionReader(off, length int64) (*SectionReader, error) {
-	var cache io.ReaderAt = ss.file.GetFile()
-	var buf []byte
-	if cache == nil {
-		if off != ss.off {
-			return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.off)
-		}
-		tempBuf := ss.bufPool.Get()
-		buf = tempBuf[:length]
-		n, err := io.ReadFull(ss.file, buf)
-		if int64(n) != length {
-			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
-		}
-		ss.off += int64(n)
-		off = 0
-		cache = bytes.NewReader(buf)
-	}
-	return &SectionReader{io.NewSectionReader(cache, off, length), buf}, nil
+type cachedSectionReader struct {
+	cache io.ReaderAt
 }
 
-func (ss *StreamSectionReader) FreeSectionReader(sr *SectionReader) {
-	if sr != nil {
-		if sr.buf != nil {
-			ss.bufPool.Put(sr.buf[0:cap(sr.buf)])
-			sr.buf = nil
-		}
+func (*cachedSectionReader) DiscardSection(off int64, length int64) error {
+	return nil
+}
+func (s *cachedSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
+	return io.NewSectionReader(s.cache, off, length), nil
+}
+func (*cachedSectionReader) FreeSectionReader(sr io.ReadSeeker) {}
+
+type fileSectionReader struct {
+	file       model.FileStreamer
+	fileOffset int64
+	temp       *os.File
+	tempOffset int64
+	bufPool    *pool.Pool[*offsetWriterWithBase]
+}
+
+type offsetWriterWithBase struct {
+	*io.OffsetWriter
+	base int64
+}
+
+// 线程不安全
+func (ss *fileSectionReader) DiscardSection(off int64, length int64) error {
+	if off != ss.fileOffset {
+		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
+	}
+	n, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
+	ss.fileOffset += n
+	if err != nil {
+		return fmt.Errorf("failed to skip data: (expect =%d, actual =%d) %w", length, n, err)
+	}
+	return nil
+}
+
+type fileBufferSectionReader struct {
+	io.ReadSeeker
+	fileBuf *offsetWriterWithBase
+}
+
+// 线程不安全
+func (ss *fileSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
+	if off != ss.fileOffset {
+		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
+	}
+	fileBuf := ss.bufPool.Get()
+	_, _ = fileBuf.Seek(0, io.SeekStart)
+	n, err := utils.CopyWithBufferN(fileBuf, ss.file, length)
+	ss.fileOffset += n
+	if err != nil {
+		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
+	}
+	return &fileBufferSectionReader{io.NewSectionReader(ss.temp, fileBuf.base, length), fileBuf}, nil
+}
+
+func (ss *fileSectionReader) FreeSectionReader(rs io.ReadSeeker) {
+	if sr, ok := rs.(*fileBufferSectionReader); ok {
+		ss.bufPool.Put(sr.fileBuf)
+		sr.fileBuf = nil
 		sr.ReadSeeker = nil
 	}
 }
 
-type SectionReader struct {
+type directSectionReader struct {
+	file       model.FileStreamer
+	fileOffset int64
+	bufPool    *pool.Pool[[]byte]
+}
+
+// 线程不安全
+func (ss *directSectionReader) DiscardSection(off int64, length int64) error {
+	if off != ss.fileOffset {
+		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
+	}
+	n, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
+	ss.fileOffset += n
+	if err != nil {
+		return fmt.Errorf("failed to skip data: (expect =%d, actual =%d) %w", length, n, err)
+	}
+	return nil
+}
+
+type bufferSectionReader struct {
 	io.ReadSeeker
 	buf []byte
+}
+
+// 线程不安全
+func (ss *directSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
+	if off != ss.fileOffset {
+		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
+	}
+	tempBuf := ss.bufPool.Get()
+	buf := tempBuf[:length]
+	n, err := io.ReadFull(ss.file, buf)
+	ss.fileOffset += int64(n)
+	if int64(n) != length {
+		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
+	}
+	return &bufferSectionReader{bytes.NewReader(buf), buf}, nil
+}
+func (ss *directSectionReader) FreeSectionReader(rs io.ReadSeeker) {
+	if sr, ok := rs.(*bufferSectionReader); ok {
+		ss.bufPool.Put(sr.buf[0:cap(sr.buf)])
+		sr.buf = nil
+		sr.ReadSeeker = nil
+	}
 }

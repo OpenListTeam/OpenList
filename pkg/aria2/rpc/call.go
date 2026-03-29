@@ -69,14 +69,11 @@ func (h *httpCaller) setNotifier(ctx context.Context, u url.URL, notifier Notifi
 	go func() {
 		defer h.wg.Done()
 		defer conn.Close()
-		select {
-		case <-ctx.Done():
-			conn.SetWriteDeadline(time.Now().Add(time.Second))
-			if err := conn.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
-				log.Printf("sending websocket close message: %v", err)
-			}
-			return
+		<-ctx.Done()
+		conn.SetWriteDeadline(time.Now().Add(time.Second))
+		if err := conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+			log.Printf("sending websocket close message: %v", err)
 		}
 	}()
 	h.wg.Add(1)
@@ -120,7 +117,7 @@ func (h *httpCaller) setNotifier(ctx context.Context, u url.URL, notifier Notifi
 	return
 }
 
-func (h httpCaller) Call(method string, params, reply interface{}) (err error) {
+func (h *httpCaller) Call(method string, params, reply interface{}) (err error) {
 	payload, err := EncodeClientRequest(method, params)
 	if err != nil {
 		return
@@ -236,7 +233,7 @@ func (w *websocketCaller) Close() (err error) {
 	return
 }
 
-func (w websocketCaller) Call(method string, params, reply interface{}) (err error) {
+func (w *websocketCaller) Call(method string, params, reply interface{}) (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
 	defer cancel()
 	select {
@@ -251,11 +248,9 @@ func (w websocketCaller) Call(method string, params, reply interface{}) (err err
 		return errors.New("sending channel blocking")
 	}
 
-	select {
-	case <-ctx.Done():
-		if err := ctx.Err(); err == context.DeadlineExceeded {
-			return err
-		}
+	<-ctx.Done()
+	if err := ctx.Err(); err == context.DeadlineExceeded {
+		return err
 	}
 	return
 }

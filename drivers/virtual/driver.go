@@ -2,11 +2,11 @@ package virtual
 
 import (
 	"context"
-	"io"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 )
 
@@ -42,16 +42,14 @@ func (d *Virtual) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	return res, nil
 }
 
-type DummyMFile struct {
-	io.Reader
-}
+type DummyMFile struct{}
 
 func (f DummyMFile) Read(p []byte) (n int, err error) {
-	return f.Reader.Read(p)
+	return random.Rand.Read(p)
 }
 
 func (f DummyMFile) ReadAt(p []byte, off int64) (n int, err error) {
-	return f.Reader.Read(p)
+	return random.Rand.Read(p)
 }
 
 func (DummyMFile) Seek(offset int64, whence int) (int64, error) {
@@ -60,7 +58,7 @@ func (DummyMFile) Seek(offset int64, whence int) (int64, error) {
 
 func (d *Virtual) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	return &model.Link{
-		MFile: DummyMFile{Reader: random.Rand},
+		RangeReader: stream.GetRangeReaderFromMFile(file.GetSize(), DummyMFile{}),
 	}, nil
 }
 

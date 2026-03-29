@@ -45,7 +45,7 @@ func (d *AliDrive) GetAddition() driver.Additional {
 
 func (d *AliDrive) Init(ctx context.Context) error {
 	// TODO login / refresh token
-	//op.MustSaveDriverStorage(d)
+	// op.MustSaveDriverStorage(d)
 	err := d.refreshToken()
 	if err != nil {
 		return err
@@ -171,7 +171,7 @@ func (d *AliDrive) Put(ctx context.Context, dstDir model.Obj, streamer model.Fil
 		Mimetype: streamer.GetMimetype(),
 	}
 	const DEFAULT int64 = 10485760
-	var count = int(math.Ceil(float64(streamer.GetSize()) / float64(DEFAULT)))
+	count := int(math.Ceil(float64(streamer.GetSize()) / float64(DEFAULT)))
 
 	partInfoList := make([]base.Json, 0, count)
 	for i := 1; i <= count; i++ {
@@ -325,6 +325,23 @@ func (d *AliDrive) Put(ctx context.Context, dstDir model.Obj, streamer model.Fil
 		return nil
 	}
 	return fmt.Errorf("%+v", resp2)
+}
+
+func (d *AliDrive) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	res, err, _ := d.request("https://api.aliyundrive.com/adrive/v1/user/driveCapacityDetails", http.MethodPost, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	used := utils.Json.Get(res, "drive_used_size").ToInt64()
+	total := utils.Json.Get(res, "drive_total_size").ToInt64()
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: total,
+			UsedSpace:  used,
+		},
+	}, nil
 }
 
 func (d *AliDrive) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {

@@ -89,3 +89,15 @@ type FileSystemInfoFacet struct {
 	CreatedDateTime      time.Time `json:"createdDateTime,omitempty"`      // The UTC date and time the file was created on a client.
 	LastModifiedDateTime time.Time `json:"lastModifiedDateTime,omitempty"` // The UTC date and time the file was last modified on a client.
 }
+
+type DriveResp struct {
+	ID        string `json:"id"`
+	DriveType string `json:"driveType"`
+	Quota     struct {
+		Deleted   uint64 `json:"deleted"`
+		Remaining int64  `json:"remaining"`
+		State     string `json:"state"`
+		Total     int64  `json:"total"`
+		Used      int64  `json:"used"`
+	} `json:"quota"`
+}

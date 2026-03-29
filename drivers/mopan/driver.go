@@ -330,7 +330,7 @@ func (d *MoPan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 				if resp.StatusCode != http.StatusOK {
 					return fmt.Errorf("upload err,code=%d", resp.StatusCode)
 				}
-				up(100 * float64(threadG.Success()) / float64(len(parts)))
+				up(100 * float64(threadG.Success()+1) / float64(len(parts)+1))
 				initUpdload.PartInfos[i] = ""
 				return nil
 			})
@@ -353,6 +353,19 @@ func (d *MoPan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 		Name:     uFile.FileName,
 		Size:     int64(uFile.FileSize),
 		Modified: time.Time(uFile.CreateDate),
+	}, nil
+}
+
+func (d *MoPan) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	quota, err := d.client.UsedSpace()
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: int64(quota.Capacity),
+			UsedSpace:  int64(quota.Used),
+		},
 	}, nil
 }
 

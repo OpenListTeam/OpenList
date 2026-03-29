@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -114,7 +115,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 		reader, err := RangeReadCloser.RangeRead(ctx, http_range.Range{Length: -1})
 		if err != nil {
 			code = http.StatusRequestedRangeNotSatisfiable
-			if statusCode, ok := errors.Unwrap(err).(HttpStatusCodeError); ok {
+			if statusCode, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError); ok {
 				code = int(statusCode)
 			}
 			http.Error(w, err.Error(), code)
@@ -137,7 +138,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 		sendContent, err = RangeReadCloser.RangeRead(ctx, ra)
 		if err != nil {
 			code = http.StatusRequestedRangeNotSatisfiable
-			if statusCode, ok := errors.Unwrap(err).(HttpStatusCodeError); ok {
+			if statusCode, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError); ok {
 				code = int(statusCode)
 			}
 			http.Error(w, err.Error(), code)
@@ -199,7 +200,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 				log.Warnf("Maybe size incorrect or reader not giving correct/full data, or connection closed before finish. written bytes: %d ,sendSize:%d, ", written, sendSize)
 			}
 			code = http.StatusInternalServerError
-			if statusCode, ok := errors.Unwrap(err).(HttpStatusCodeError); ok {
+			if statusCode, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError); ok {
 				code = int(statusCode)
 			}
 			w.WriteHeader(code)
@@ -282,11 +283,15 @@ func HttpClient() *http.Client {
 }
 
 func NewHttpClient() *http.Client {
+	transport := &http.Transport{
+		Proxy:           http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
+	}
+
+	SetProxyIfConfigured(transport)
+
 	return &http.Client{
-		Timeout: time.Hour * 48,
-		Transport: &http.Transport{
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
-		},
+		Timeout:   time.Hour * 48,
+		Transport: transport,
 	}
 }

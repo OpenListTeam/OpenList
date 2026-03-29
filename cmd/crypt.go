@@ -1,19 +1,17 @@
 package cmd
 
 import (
-	log "github.com/sirupsen/logrus"
-
 	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	rcCrypt "github.com/rclone/rclone/backend/crypt"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/obscure"
+	log "github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
 )
 
 // encryption and decryption command format for Crypt driver

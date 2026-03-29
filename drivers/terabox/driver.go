@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math"
 	stdpath "path"
 	"strconv"
 
@@ -63,7 +62,9 @@ func (d *Terabox) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 		return nil, err
 	}
 	return utils.SliceConvert(files, func(src File) (model.Obj, error) {
-		return fileToObj(src), nil
+		obj := fileToObj(src)
+		obj.Path = stdpath.Join(dir.GetPath(), obj.Name)
+		return obj, nil
 	})
 }
 
@@ -193,7 +194,7 @@ func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 	streamSize := stream.GetSize()
 	chunkSize := calculateChunkSize(streamSize)
 	chunkByteData := make([]byte, chunkSize)
-	count := int(math.Ceil(float64(streamSize) / float64(chunkSize)))
+	count := int((streamSize + chunkSize - 1) / chunkSize)
 	left := streamSize
 	uploadBlockList := make([]string, 0, count)
 	h := md5.New()

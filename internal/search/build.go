@@ -199,14 +199,13 @@ func Config(ctx context.Context) searcher.Config {
 	return instance.Config()
 }
 
-func Update(parent string, objs []model.Obj) {
+func Update(ctx context.Context, parent string, objs []model.Obj) {
 	if instance == nil || !instance.Config().AutoUpdate || !setting.GetBool(conf.AutoUpdateIndex) || Running() {
 		return
 	}
 	if isIgnorePath(parent) {
 		return
 	}
-	ctx := context.Background()
 	// only update when index have built
 	progress, err := Progress()
 	if err != nil {
@@ -216,6 +215,16 @@ func Update(parent string, objs []model.Obj) {
 	if !progress.IsDone {
 		return
 	}
+
+	// Use task queue for Meilisearch to avoid race conditions with async indexing
+	if msInstance, ok := instance.(interface {
+		EnqueueUpdate(parent string, objs []model.Obj)
+	}); ok {
+		// Enqueue task for async processing (diff calculation happens at consumption time)
+		msInstance.EnqueueUpdate(parent, objs)
+		return
+	}
+
 	nodes, err := instance.Get(ctx, parent)
 	if err != nil {
 		log.Errorf("update search index error while get nodes: %+v", err)
@@ -242,27 +251,23 @@ func Update(parent string, objs []model.Obj) {
 			}
 		}
 	}
+	// collect files and folders to add in batch
+	var toAddObjs []ObjWithParent
 	for i := range objs {
 		if toAdd.Contains(objs[i].GetName()) {
-			if !objs[i].IsDir() {
-				log.Debugf("add index: %s", path.Join(parent, objs[i].GetName()))
-				err = Index(ctx, parent, objs[i])
-				if err != nil {
-					log.Errorf("update search index error while index new node: %+v", err)
-					return
-				}
-			} else {
-				// build index if it's a folder
-				dir := path.Join(parent, objs[i].GetName())
-				err = BuildIndex(ctx,
-					[]string{dir},
-					conf.SlicesMap[conf.IgnorePaths],
-					setting.GetInt(conf.MaxIndexDepth, 20)-strings.Count(dir, "/"), false)
-				if err != nil {
-					log.Errorf("update search index error while build index: %+v", err)
-					return
-				}
-			}
+			log.Debugf("add index: %s", path.Join(parent, objs[i].GetName()))
+			toAddObjs = append(toAddObjs, ObjWithParent{
+				Parent: parent,
+				Obj:    objs[i],
+			})
+		}
+	}
+	// batch index all files and folders at once
+	if len(toAddObjs) > 0 {
+		err = BatchIndex(ctx, toAddObjs)
+		if err != nil {
+			log.Errorf("update search index error while batch index new nodes: %+v", err)
+			return
 		}
 	}
 }

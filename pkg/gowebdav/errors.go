@@ -1,8 +1,8 @@
 package gowebdav
 
 import (
-	"fmt"
 	"os"
+	"strconv"
 )
 
 // StatusError implements error and wraps
@@ -12,7 +12,7 @@ type StatusError struct {
 }
 
 func (se StatusError) Error() string {
-	return fmt.Sprintf("%d", se.Status)
+	return strconv.Itoa(se.Status)
 }
 
 // IsErrCode returns true if the given error

@@ -38,18 +38,26 @@ func GetSharingsByCreatorId(creator uint, pageIndex, pageSize int) (sharings []m
 }
 
 func CreateSharing(s *model.SharingDB) (string, error) {
-	id := random.String(8)
-	for len(id) < 12 {
-		old := model.SharingDB{
-			ID: id,
+	if s.ID == "" {
+		id := random.String(8)
+		for len(id) < 12 {
+			old := model.SharingDB{
+				ID: id,
+			}
+			if err := db.Where(old).First(&old).Error; err != nil {
+				s.ID = id
+				return id, errors.WithStack(db.Create(s).Error)
+			}
+			id += random.String(1)
 		}
-		if err := db.Where(old).First(&old).Error; err != nil {
-			s.ID = id
-			return id, errors.WithStack(db.Create(s).Error)
+		return "", errors.New("failed find valid id")
+	} else {
+		query := model.SharingDB{ID: s.ID}
+		if err := db.Where(query).First(&query).Error; err == nil {
+			return "", errors.New("sharing already exist")
 		}
-		id += random.String(1)
+		return s.ID, errors.WithStack(db.Create(s).Error)
 	}
-	return "", errors.New("failed find valid id")
 }
 
 func UpdateSharing(s *model.SharingDB) error {
@@ -59,4 +67,8 @@ func UpdateSharing(s *model.SharingDB) error {
 func DeleteSharingById(id string) error {
 	s := model.SharingDB{ID: id}
 	return errors.WithStack(db.Where(s).Delete(&s).Error)
+}
+
+func DeleteSharingsByCreatorId(creatorId uint) error {
+	return errors.WithStack(db.Where("creator_id = ?", creatorId).Delete(&model.SharingDB{}).Error)
 }

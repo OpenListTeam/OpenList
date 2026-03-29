@@ -68,8 +68,7 @@ func (d *Pan115) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		return nil, err
 	}
 	userAgent := args.Header.Get("User-Agent")
-	downloadInfo, err := d.
-		DownloadWithUA(file.(*FileObj).PickCode, userAgent)
+	downloadInfo, err := d.client.DownloadWithUA(file.(*FileObj).PickCode, userAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +242,19 @@ func (d *Pan115) OfflineDownload(ctx context.Context, uris []string, dstDir mode
 
 func (d *Pan115) DeleteOfflineTasks(ctx context.Context, hashes []string, deleteFiles bool) error {
 	return d.client.DeleteOfflineTasks(hashes, deleteFiles)
+}
+
+func (d *Pan115) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	info, err := d.client.GetInfo()
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: info.SpaceInfo.AllTotal.Size,
+			UsedSpace:  info.SpaceInfo.AllUse.Size,
+		},
+	}, nil
 }
 
 var _ driver.Driver = (*Pan115)(nil)

@@ -13,6 +13,7 @@ type Addition struct {
 	Password    string `json:"password" required:"true"`
 	TwoFACode   string `json:"two_fa_code" required:"false" help:"2FA 6-digit code, filling in the 2FA code alone will not support reloading driver"`
 	TwoFASecret string `json:"two_fa_secret" required:"false" help:"2FA secret"`
+	MoveToTrash bool   `json:"move_to_trash" default:"true" help:"move to trash when deleting files"`
 }
 
 var config = driver.Config{

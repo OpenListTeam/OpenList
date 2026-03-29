@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	stdpath "path"
 	"strings"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
@@ -18,7 +19,7 @@ type Seafile struct {
 	Addition
 
 	authorization string
-	libraryMap    map[string]*LibraryInfo
+	root          model.Obj
 }
 
 func (d *Seafile) Config() driver.Config {
@@ -31,46 +32,103 @@ func (d *Seafile) GetAddition() driver.Additional {
 
 func (d *Seafile) Init(ctx context.Context) error {
 	d.Address = strings.TrimSuffix(d.Address, "/")
+	err := d.getToken()
+	if err != nil {
+		return err
+	}
 	d.RootFolderPath = utils.FixAndCleanPath(d.RootFolderPath)
-	d.libraryMap = make(map[string]*LibraryInfo)
-	return d.getToken()
+	if d.RepoId != "" {
+		library, err := d.getLibraryInfo(d.RepoId)
+		if err != nil {
+			return err
+		}
+		library.path = d.RootFolderPath
+		library.ObjMask = model.Locked
+		d.root = &LibraryInfo{
+			LibraryItemResp: library,
+		}
+		return nil
+	}
+	if len(d.RootFolderPath) <= 1 {
+		d.root = &model.Object{
+			Name:     "root",
+			Path:     d.RootFolderPath,
+			IsFolder: true,
+			Modified: d.Modified,
+			Mask:     model.Locked,
+		}
+		return nil
+	}
+
+	var resp []LibraryItemResp
+	_, err = d.request(http.MethodGet, "/api2/repos/", func(req *resty.Request) {
+		req.SetResult(&resp)
+	})
+	if err != nil {
+		return err
+	}
+	for _, library := range resp {
+		p, found := strings.CutPrefix(d.RootFolderPath[1:], library.Name)
+		if !found {
+			continue
+		}
+		if p == "" {
+			p = "/"
+		} else if p[0] != '/' {
+			continue
+		}
+		// d.RepoId = library.Id
+		// d.RootFolderPath = p
+
+		library.path = p
+		library.ObjMask = model.Locked
+		d.root = &LibraryInfo{
+			LibraryItemResp: library,
+		}
+		return nil
+	}
+	return fmt.Errorf("Library for root folder path %q not found", d.RootFolderPath)
 }
 
 func (d *Seafile) Drop(ctx context.Context) error {
+	d.root = nil
 	return nil
+}
+
+func (d *Seafile) GetRoot(ctx context.Context) (model.Obj, error) {
+	if d.root == nil {
+		return nil, errs.StorageNotInit
+	}
+	return d.root, nil
 }
 
 func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) (result []model.Obj, err error) {
 	path := dir.GetPath()
-	if path == d.RootFolderPath {
-		libraries, err := d.listLibraries()
-		if err != nil {
-			return nil, err
+	switch o := dir.(type) {
+	default:
+		var resp []LibraryItemResp
+		_, err = d.request(http.MethodGet, "/api2/repos/", func(req *resty.Request) {
+			req.SetResult(&resp)
+		})
+		return utils.SliceConvert(resp, func(f LibraryItemResp) (model.Obj, error) {
+			f.path = path
+			return &LibraryInfo{
+				LibraryItemResp: f,
+			}, nil
+		})
+	case *LibraryInfo:
+		if o.Encrypted {
+			err = d.decryptLibrary(o)
+			if err != nil {
+				return nil, err
+			}
 		}
-		if path == "/" && d.RepoId == "" {
-			return utils.SliceConvert(libraries, func(f LibraryItemResp) (model.Obj, error) {
-				return &model.Object{
-					Name:     f.Name,
-					Modified: time.Unix(f.Modified, 0),
-					Size:     f.Size,
-					IsFolder: true,
-				}, nil
-			})
-		}
+	case *RepoItemResp:
+		// do nothing
 	}
-	var repo *LibraryInfo
-	repo, path, err = d.getRepoAndPath(path)
-	if err != nil {
-		return nil, err
-	}
-	if repo.Encrypted {
-		err = d.decryptLibrary(repo)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var resp []RepoDirItemResp
-	_, err = d.request(http.MethodGet, fmt.Sprintf("/api2/repos/%s/dir/", repo.Id), func(req *resty.Request) {
+
+	var resp []RepoItemResp
+	_, err = d.request(http.MethodGet, fmt.Sprintf("/api2/repos/%s/dir/", dir.GetID()), func(req *resty.Request) {
 		req.SetResult(&resp).SetQueryParams(map[string]string{
 			"p": path,
 		})
@@ -78,27 +136,17 @@ func (d *Seafile) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	if err != nil {
 		return nil, err
 	}
-	return utils.SliceConvert(resp, func(f RepoDirItemResp) (model.Obj, error) {
-		return &model.ObjThumb{
-			Object: model.Object{
-				Name:     f.Name,
-				Modified: time.Unix(f.Modified, 0),
-				Size:     f.Size,
-				IsFolder: f.Type == "dir",
-			},
-			// Thumbnail: model.Thumbnail{Thumbnail: f.Thumb},
-		}, nil
+	return utils.SliceConvert(resp, func(f RepoItemResp) (model.Obj, error) {
+		f.path = stdpath.Join(path, f.Name)
+		f.repoID = dir.GetID()
+		return &f, nil
 	})
 }
 
 func (d *Seafile) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	repo, path, err := d.getRepoAndPath(file.GetPath())
-	if err != nil {
-		return nil, err
-	}
-	res, err := d.request(http.MethodGet, fmt.Sprintf("/api2/repos/%s/file/", repo.Id), func(req *resty.Request) {
+	res, err := d.request(http.MethodGet, fmt.Sprintf("/api2/repos/%s/file/", file.GetID()), func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"p":     path,
+			"p":     file.GetPath(),
 			"reuse": "1",
 		})
 	})
@@ -111,14 +159,9 @@ func (d *Seafile) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 }
 
 func (d *Seafile) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	repo, path, err := d.getRepoAndPath(parentDir.GetPath())
-	if err != nil {
-		return err
-	}
-	path, _ = utils.JoinBasePath(path, dirName)
-	_, err = d.request(http.MethodPost, fmt.Sprintf("/api2/repos/%s/dir/", repo.Id), func(req *resty.Request) {
+	_, err := d.request(http.MethodPost, fmt.Sprintf("/api2/repos/%s/dir/", parentDir.GetID()), func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"p": path,
+			"p": stdpath.Join(parentDir.GetPath(), dirName),
 		}).SetFormData(map[string]string{
 			"operation": "mkdir",
 		})
@@ -127,34 +170,22 @@ func (d *Seafile) MakeDir(ctx context.Context, parentDir model.Obj, dirName stri
 }
 
 func (d *Seafile) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	repo, path, err := d.getRepoAndPath(srcObj.GetPath())
-	if err != nil {
-		return err
-	}
-	dstRepo, dstPath, err := d.getRepoAndPath(dstDir.GetPath())
-	if err != nil {
-		return err
-	}
-	_, err = d.request(http.MethodPost, fmt.Sprintf("/api2/repos/%s/file/", repo.Id), func(req *resty.Request) {
+	_, err := d.request(http.MethodPost, fmt.Sprintf("/api2/repos/%s/file/", srcObj.GetID()), func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"p": path,
+			"p": srcObj.GetPath(),
 		}).SetFormData(map[string]string{
 			"operation": "move",
-			"dst_repo":  dstRepo.Id,
-			"dst_dir":   dstPath,
+			"dst_repo":  dstDir.GetID(),
+			"dst_dir":   dstDir.GetPath(),
 		})
 	}, true)
 	return err
 }
 
 func (d *Seafile) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	repo, path, err := d.getRepoAndPath(srcObj.GetPath())
-	if err != nil {
-		return err
-	}
-	_, err = d.request(http.MethodPost, fmt.Sprintf("/api2/repos/%s/file/", repo.Id), func(req *resty.Request) {
+	_, err := d.request(http.MethodPost, fmt.Sprintf("/api2/repos/%s/file/", srcObj.GetID()), func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"p": path,
+			"p": srcObj.GetPath(),
 		}).SetFormData(map[string]string{
 			"operation": "rename",
 			"newname":   newName,
@@ -164,47 +195,31 @@ func (d *Seafile) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 }
 
 func (d *Seafile) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	repo, path, err := d.getRepoAndPath(srcObj.GetPath())
-	if err != nil {
-		return err
-	}
-	dstRepo, dstPath, err := d.getRepoAndPath(dstDir.GetPath())
-	if err != nil {
-		return err
-	}
-	_, err = d.request(http.MethodPost, fmt.Sprintf("/api2/repos/%s/file/", repo.Id), func(req *resty.Request) {
+	_, err := d.request(http.MethodPost, fmt.Sprintf("/api2/repos/%s/file/", srcObj.GetID()), func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"p": path,
+			"p": srcObj.GetPath(),
 		}).SetFormData(map[string]string{
 			"operation": "copy",
-			"dst_repo":  dstRepo.Id,
-			"dst_dir":   dstPath,
+			"dst_repo":  dstDir.GetID(),
+			"dst_dir":   dstDir.GetPath(),
 		})
 	})
 	return err
 }
 
 func (d *Seafile) Remove(ctx context.Context, obj model.Obj) error {
-	repo, path, err := d.getRepoAndPath(obj.GetPath())
-	if err != nil {
-		return err
-	}
-	_, err = d.request(http.MethodDelete, fmt.Sprintf("/api2/repos/%s/file/", repo.Id), func(req *resty.Request) {
+	_, err := d.request(http.MethodDelete, fmt.Sprintf("/api2/repos/%s/file/", obj.GetID()), func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"p": path,
+			"p": obj.GetPath(),
 		})
 	})
 	return err
 }
 
 func (d *Seafile) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
-	repo, path, err := d.getRepoAndPath(dstDir.GetPath())
-	if err != nil {
-		return err
-	}
-	res, err := d.request(http.MethodGet, fmt.Sprintf("/api2/repos/%s/upload-link/", repo.Id), func(req *resty.Request) {
+	res, err := d.request(http.MethodGet, fmt.Sprintf("/api2/repos/%s/upload-link/", dstDir.GetID()), func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"p": path,
+			"p": dstDir.GetPath(),
 		})
 	})
 	if err != nil {
@@ -220,7 +235,7 @@ func (d *Seafile) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 		})
 		req.SetFileReader("file", s.GetName(), r).
 			SetFormData(map[string]string{
-				"parent_dir": path,
+				"parent_dir": dstDir.GetPath(),
 				"replace":    "1",
 			}).
 			SetContext(ctx)

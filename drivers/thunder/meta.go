@@ -46,6 +46,8 @@ type ExpertAddition struct {
 
 	//优先使用视频链接代替下载链接
 	UseVideoUrl bool `json:"use_video_url"`
+
+	Space string `json:"space" default:"" help:"device id for remote device"`
 }
 
 // 登录特征,用于判断是否重新登录
@@ -80,6 +82,8 @@ type Addition struct {
 	CreditKey string `json:"credit_key" help:"credit key,used for login"`
 	// 登录设备ID
 	DeviceID string `json:"device_id" default:""`
+
+	Space string `json:"space" default:"" help:"device id for remote device"`
 }
 
 // 登录特征,用于判断是否重新登录
@@ -90,7 +94,6 @@ func (i *Addition) GetIdentity() string {
 var config = driver.Config{
 	Name:      "Thunder",
 	LocalSort: true,
-	OnlyProxy: true,
 }
 
 var configExpert = driver.Config{

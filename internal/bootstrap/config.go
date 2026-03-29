@@ -39,7 +39,22 @@ func InitConfig() {
 	if !filepath.IsAbs(dataDir) {
 		flags.DataDir = filepath.Join(pwd, flags.DataDir)
 	}
-	configPath := filepath.Join(flags.DataDir, "config.json")
+	// Determine config file path: use flags.ConfigPath if provided, otherwise default to <dataDir>/config.json
+	configPath := flags.ConfigPath
+	if configPath == "" {
+		configPath = filepath.Join(flags.DataDir, "config.json")
+	} else {
+		// if relative, resolve relative to working directory
+		if !filepath.IsAbs(configPath) {
+			if absPath, err := filepath.Abs(configPath); err == nil {
+				configPath = absPath
+			} else {
+				configPath = filepath.Join(pwd, configPath)
+			}
+		}
+	}
+	configPath = filepath.Clean(configPath)
+	conf.ConfigPath = configPath
 	log.Infof("reading config file: %s", configPath)
 	if !utils.Exists(configPath) {
 		log.Infof("config file not exists, creating default config file")
@@ -126,6 +141,10 @@ func InitConfig() {
 		log.Fatalf("create temp dir error: %+v", err)
 	}
 	log.Debugf("config: %+v", conf.Conf)
+
+	// Validate and display proxy configuration status
+	validateProxyConfig()
+
 	base.InitClient()
 	initURL()
 }
@@ -162,6 +181,17 @@ func CleanTempDir() {
 	for _, file := range files {
 		if err := os.RemoveAll(filepath.Join(conf.Conf.TempDir, file.Name())); err != nil {
 			log.Errorln("failed delete temp file: ", err)
+		}
+	}
+}
+
+// validateProxyConfig validates proxy configuration and displays status at startup
+func validateProxyConfig() {
+	if conf.Conf.ProxyAddress != "" {
+		if _, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
+			log.Infof("Proxy enabled: %s", conf.Conf.ProxyAddress)
+		} else {
+			log.Errorf("Invalid proxy address format: %s, error: %v", conf.Conf.ProxyAddress, err)
 		}
 	}
 }

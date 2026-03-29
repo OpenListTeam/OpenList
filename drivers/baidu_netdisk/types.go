@@ -1,12 +1,16 @@
 package baidu_netdisk
 
 import (
+	"errors"
 	"path"
 	"strconv"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+)
+
+var (
+	ErrBaiduEmptyFilesNotAllowed = errors.New("empty files are not allowed by baidu netdisk")
 )
 
 type TokenErrResp struct {
@@ -71,9 +75,7 @@ func fileToObj(f File) *model.ObjThumb {
 			Modified: time.Unix(f.ServerMtime, 0),
 			Ctime:    time.Unix(f.ServerCtime, 0),
 			IsFolder: f.Isdir == 1,
-
-			// 直接获取的MD5是错误的
-			HashInfo: utils.NewHashInfo(utils.MD5, DecryptMd5(f.Md5)),
+			// 百度API返回的MD5不可信，不使用HashInfo
 		},
 		Thumbnail: model.Thumbnail{Thumbnail: f.Thumbs.Url3},
 	}
@@ -188,13 +190,39 @@ type PrecreateResp struct {
 
 	// return_type=2
 	File File `json:"info"`
+
+	UploadURL string `json:"-"` // 保存断点续传对应的上传域名
+}
+
+type UploadServerResp struct {
+	BakServer  []any `json:"bak_server"`
+	BakServers []struct {
+		Server string `json:"server"`
+	} `json:"bak_servers"`
+	ClientIP    string `json:"client_ip"`
+	ErrorCode   int    `json:"error_code"`
+	ErrorMsg    string `json:"error_msg"`
+	Expire      int    `json:"expire"`
+	Host        string `json:"host"`
+	Newno       string `json:"newno"`
+	QuicServer  []any  `json:"quic_server"`
+	QuicServers []struct {
+		Server string `json:"server"`
+	} `json:"quic_servers"`
+	RequestID  int64 `json:"request_id"`
+	Server     []any `json:"server"`
+	ServerTime int   `json:"server_time"`
+	Servers    []struct {
+		Server string `json:"server"`
+	} `json:"servers"`
+	Sl int `json:"sl"`
 }
 
 type QuotaResp struct {
-	Errno     int    `json:"errno"`
-	RequestId int64  `json:"request_id"`
-	Total     uint64 `json:"total"`
-	Used      uint64 `json:"used"`
-	//Free      uint64 `json:"free"`
+	Errno     int   `json:"errno"`
+	RequestId int64 `json:"request_id"`
+	Total     int64 `json:"total"`
+	Used      int64 `json:"used"`
+	//FreeSpace      uint64 `json:"free"`
 	//Expire    bool   `json:"expire"`
 }

@@ -73,6 +73,7 @@ func (d *Cloudreve) List(ctx context.Context, dir model.Obj, args model.ListArgs
 			}
 			src.Size = dprop.Size
 		}
+		src.Path = path.Join(dir.GetPath(), src.Name)
 		return objectToObj(src, thumb), nil
 	})
 }
@@ -201,6 +202,17 @@ func (d *Cloudreve) create(ctx context.Context, dir model.Obj, file model.Obj) e
 	return d.request(http.MethodPost, "/file/create", func(req *resty.Request) {
 		req.SetBody(body)
 	}, nil)
+}
+
+func (d *Cloudreve) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	var r StorageDetails
+	d.request(http.MethodGet, "/user/storage", nil, &r)
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: r.Total,
+			UsedSpace:  r.Used,
+		},
+	}, nil
 }
 
 //func (d *Cloudreve) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {

@@ -14,7 +14,7 @@ type TaskExtension struct {
 	Creator    *model.User
 	startTime  *time.Time
 	endTime    *time.Time
-	totalBytes int64
+	TotalBytes int64
 	ApiUrl     string
 }
 
@@ -58,25 +58,25 @@ func (t *TaskExtension) ClearEndTime() {
 }
 
 func (t *TaskExtension) SetTotalBytes(totalBytes int64) {
-	t.totalBytes = totalBytes
+	t.TotalBytes = totalBytes
 }
 
 func (t *TaskExtension) GetTotalBytes() int64 {
-	return t.totalBytes
+	return t.TotalBytes
 }
 
-func (t *TaskExtension) ReinitCtx() error {
+func (t *TaskExtension) SetRetry(retry int, maxRetry int) {
+	t.Base.SetRetry(retry, maxRetry)
+	if retry > 0 || !conf.Conf.Tasks.AllowRetryCanceled || t.Ctx() == nil {
+		return
+	}
 	select {
 	case <-t.Ctx().Done():
-		if !conf.Conf.Tasks.AllowRetryCanceled {
-			return t.Ctx().Err()
-		}
 		ctx, cancel := context.WithCancel(context.Background())
 		t.SetCtx(ctx)
 		t.SetCancelFunc(cancel)
 	default:
 	}
-	return nil
 }
 
 type TaskExtensionInfo interface {

@@ -2,6 +2,7 @@ package tool
 
 import (
 	"fmt"
+	"path"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -32,9 +33,6 @@ type DownloadTask struct {
 }
 
 func (t *DownloadTask) Run() error {
-	if err := t.ReinitCtx(); err != nil {
-		return err
-	}
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
@@ -111,6 +109,9 @@ outer:
 	if t.tool.Name() == "115 Open" {
 		return nil
 	}
+	if t.tool.Name() == "123 Open" {
+		return nil
+	}
 	t.Status = "offline download completed, maybe transferring"
 	// hack for qBittorrent
 	if t.tool.Name() == "qBittorrent" {
@@ -174,7 +175,7 @@ func (t *DownloadTask) Update() (bool, error) {
 
 func (t *DownloadTask) Transfer() error {
 	toolName := t.tool.Name()
-	if toolName == "115 Cloud" || toolName == "115 Open" || toolName == "PikPak" || toolName == "Thunder" || toolName == "ThunderX" || toolName == "ThunderBrowser" {
+	if toolName == "115 Cloud" || toolName == "115 Open" || toolName == "123 Open" || toolName == "123Pan" || toolName == "PikPak" || toolName == "Thunder" || toolName == "ThunderX" || toolName == "ThunderBrowser" {
 		// 如果不是直接下载到目标路径，则进行转存
 		if t.TempDir != t.DstDirPath {
 			return transferObj(t.Ctx(), t.TempDir, t.DstDirPath, t.DeletePolicy)
@@ -198,11 +199,11 @@ func (t *DownloadTask) Transfer() error {
 				DstStorage:    dstStorage,
 				DstStorageMp:  dstStorage.GetStorage().MountPath,
 			},
-			groupID:      t.DstDirPath,
 			DeletePolicy: t.DeletePolicy,
 			Url:          t.Url,
 		}
 		tsk.SetTotalBytes(t.GetTotalBytes())
+		tsk.groupID = path.Join(tsk.DstStorageMp, tsk.DstActualPath)
 		task_group.TransferCoordinator.AddTask(tsk.groupID, nil)
 		TransferTaskManager.Add(tsk)
 		return nil

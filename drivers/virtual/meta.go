@@ -14,11 +14,11 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:          "Virtual",
-	OnlyLinkMFile: true,
-	LocalSort:     true,
-	NeedMs:        true,
-	NoLinkURL:     true,
+	Name:      "Virtual",
+	LocalSort: true,
+	OnlyProxy: true,
+	NeedMs:    true,
+	NoLinkURL: true,
 }
 
 func init() {

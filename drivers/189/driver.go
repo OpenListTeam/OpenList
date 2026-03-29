@@ -194,4 +194,17 @@ func (d *Cloud189) Put(ctx context.Context, dstDir model.Obj, stream model.FileS
 	return d.newUpload(ctx, dstDir, stream, up)
 }
 
+func (d *Cloud189) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	capacityInfo, err := d.getCapacityInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: capacityInfo.CloudCapacityInfo.TotalSize,
+			UsedSpace:  capacityInfo.CloudCapacityInfo.UsedSize,
+		},
+	}, nil
+}
+
 var _ driver.Driver = (*Cloud189)(nil)

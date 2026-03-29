@@ -57,10 +57,14 @@ func setBody(body interface{}) base.ReqCallback {
 }
 
 func handleFolderId(dir model.Obj) interface{} {
-	if dir.GetID() == "" {
-		return nil
+	if isRootFolder(dir) {
+		return nil // Root folder doesn't need folderId
 	}
 	return dir.GetID()
+}
+
+func isRootFolder(dir model.Obj) bool {
+	return dir.GetID() == ""
 }
 
 // API layer methods
@@ -68,7 +72,7 @@ func handleFolderId(dir model.Obj) interface{} {
 func (d *Misskey) getFiles(dir model.Obj) ([]model.Obj, error) {
 	var files []MFile
 	var body map[string]string
-	if dir.GetPath() != "/" {
+	if !isRootFolder(dir) {
 		body = map[string]string{"folderId": dir.GetID()}
 	} else {
 		body = map[string]string{}
@@ -85,7 +89,7 @@ func (d *Misskey) getFiles(dir model.Obj) ([]model.Obj, error) {
 func (d *Misskey) getFolders(dir model.Obj) ([]model.Obj, error) {
 	var folders []MFolder
 	var body map[string]string
-	if dir.GetPath() != "/" {
+	if !isRootFolder(dir) {
 		body = map[string]string{"folderId": dir.GetID()}
 	} else {
 		body = map[string]string{}
@@ -197,16 +201,24 @@ func (d *Misskey) put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 		Reader:         stream,
 		UpdateProgress: up,
 	})
+
+	// Build form data, only add folderId if not root folder
+	formData := map[string]string{
+		"name":        stream.GetName(),
+		"comment":     "",
+		"isSensitive": "false",
+		"force":       "false",
+	}
+
+	folderId := handleFolderId(dstDir)
+	if folderId != nil {
+		formData["folderId"] = folderId.(string)
+	}
+
 	req := base.RestyClient.R().
 		SetContext(ctx).
 		SetFileReader("file", stream.GetName(), reader).
-		SetFormData(map[string]string{
-			"folderId":    handleFolderId(dstDir).(string),
-			"name":        stream.GetName(),
-			"comment":     "",
-			"isSensitive": "false",
-			"force":       "false",
-		}).
+		SetFormData(formData).
 		SetResult(&file).
 		SetAuthToken(d.AccessToken)
 

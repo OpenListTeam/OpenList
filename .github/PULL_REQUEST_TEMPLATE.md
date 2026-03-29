@@ -2,11 +2,13 @@
   Provide a general summary of your changes in the Title above.
   The PR title must start with `feat(): `, `docs(): `, `fix(): `, `style(): `, or `refactor(): `, `chore(): `. For example: `feat(component): add new feature`.
   If it spans multiple components, use the main component as the prefix and enumerate in the title, describe in the body.
+  For breaking changes, add `!` after the type, e.g., `feat(component)!: breaking change`.
 -->
 <!--
   在上方标题中提供您更改的总体摘要。
   PR 标题需以 `feat(): `, `docs(): `, `fix(): `, `style(): `, `refactor(): `, `chore(): ` 其中之一开头，例如：`feat(component): 新增功能`。
   如果跨多个组件，请使用主要组件作为前缀，并在标题中枚举、描述中说明。
+  如果是破坏性变更，请在类型后添加 `!`，例如 `feat(component)!: 破坏性变更`。
 -->
 
 ## Description / 描述

@@ -1,6 +1,8 @@
 package teldrive
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
@@ -36,6 +39,11 @@ func (d *Teldrive) touch(name, path string) error {
 	}
 
 	return nil
+}
+
+func getMD5Hash(text string) string {
+	hash := md5.Sum([]byte(text))
+	return hex.EncodeToString(hash[:])
 }
 
 func (d *Teldrive) createFileOnUploadSuccess(name, id, path string, uploadedFileParts []FilePart, totalSize int64) error {
@@ -101,11 +109,9 @@ func (d *Teldrive) getFilePart(fileId string) ([]FilePart, error) {
 	return uploadedParts, nil
 }
 
-func (d *Teldrive) singleUploadRequest(fileId string, callback base.ReqCallback, resp interface{}) error {
+func (d *Teldrive) singleUploadRequest(ctx context.Context, fileId string, callback base.ReqCallback, resp any) error {
 	url := d.Address + "/api/uploads/" + fileId
 	client := resty.New().SetTimeout(0)
-
-	ctx := context.Background()
 
 	req := client.R().
 		SetContext(ctx)
@@ -135,16 +141,18 @@ func (d *Teldrive) singleUploadRequest(fileId string, callback base.ReqCallback,
 }
 
 func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up model.UpdateProgress,
-	totalParts int, chunkSize int64, fileId string) error {
+	maxRetried, totalParts int, chunkSize int64, fileId string) error {
 
 	totalSize := file.GetSize()
 	var fileParts []FilePart
 	var uploaded int64 = 0
-	ss, err := stream.NewStreamSectionReader(file, int(totalSize), &up)
+	var partName string
+	chunkSize = min(totalSize, chunkSize)
+	ss, err := stream.NewStreamSectionReader(file, int(chunkSize), &up)
 	if err != nil {
 		return err
 	}
-
+	chunkCnt := 0
 	for uploaded < totalSize {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -154,6 +162,7 @@ func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file mo
 		if err != nil {
 			return err
 		}
+		chunkCnt += 1
 		filePart := &FilePart{}
 		if err := retry.Do(func() error {
 
@@ -161,13 +170,19 @@ func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file mo
 				return err
 			}
 
-			if err := d.singleUploadRequest(fileId, func(req *resty.Request) {
+			if d.RandomChunkName {
+				partName = getMD5Hash(uuid.New().String())
+			} else {
+				partName = file.GetName()
+				if totalParts > 1 {
+					partName = fmt.Sprintf("%s.part.%03d", file.GetName(), chunkCnt)
+				}
+			}
+
+			if err := d.singleUploadRequest(ctx, fileId, func(req *resty.Request) {
 				uploadParams := map[string]string{
-					"partName": func() string {
-						digits := len(fmt.Sprintf("%d", totalParts))
-						return file.GetName() + fmt.Sprintf(".%0*d", digits, 1)
-					}(),
-					"partNo":   strconv.Itoa(1),
+					"partName": partName,
+					"partNo":   strconv.Itoa(chunkCnt),
 					"fileName": file.GetName(),
 				}
 				req.SetQueryParams(uploadParams)
@@ -179,7 +194,8 @@ func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file mo
 
 			return nil
 		},
-			retry.Attempts(3),
+			retry.Context(ctx),
+			retry.Attempts(uint(maxRetried)),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second)); err != nil {
 			return err
@@ -188,8 +204,11 @@ func (d *Teldrive) doSingleUpload(ctx context.Context, dstDir model.Obj, file mo
 		if filePart.Name != "" {
 			fileParts = append(fileParts, *filePart)
 			uploaded += curChunkSize
-			up(float64(uploaded) / float64(totalSize))
+			up(float64(uploaded) / float64(totalSize) * 100)
 			ss.FreeSectionReader(rd)
+		} else {
+			// For common situation this code won't reach
+			return fmt.Errorf("[Teldrive] upload chunk %d failed: filePart Somehow missing", chunkCnt)
 		}
 
 	}
@@ -317,6 +336,7 @@ func (d *Teldrive) doMultiUpload(ctx context.Context, dstDir model.Obj, file mod
 func (d *Teldrive) uploadSingleChunk(ctx context.Context, fileId string, task chunkTask, totalParts, maxRetried int) (*FilePart, error) {
 	filePart := &FilePart{}
 	retryCount := 0
+	var partName string
 	defer task.ss.FreeSectionReader(task.reader)
 
 	for {
@@ -330,12 +350,22 @@ func (d *Teldrive) uploadSingleChunk(ctx context.Context, fileId string, task ch
 			return &existingPart, nil
 		}
 
-		err := d.singleUploadRequest(fileId, func(req *resty.Request) {
+		if _, err := task.reader.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+
+		if d.RandomChunkName {
+			partName = getMD5Hash(uuid.New().String())
+		} else {
+			partName = task.fileName
+			if totalParts > 1 {
+				partName = fmt.Sprintf("%s.part.%03d", task.fileName, task.chunkIdx)
+			}
+		}
+
+		err := d.singleUploadRequest(ctx, fileId, func(req *resty.Request) {
 			uploadParams := map[string]string{
-				"partName": func() string {
-					digits := len(fmt.Sprintf("%d", totalParts))
-					return task.fileName + fmt.Sprintf(".%0*d", digits, task.chunkIdx)
-				}(),
+				"partName": partName,
 				"partNo":   strconv.Itoa(task.chunkIdx),
 				"fileName": task.fileName,
 			}

@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"fmt"
-
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch"

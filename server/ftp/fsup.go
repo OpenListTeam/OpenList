@@ -15,7 +15,9 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	ftpserver "github.com/fclairamb/ftpserverlib"
 	"github.com/pkg/errors"
@@ -31,14 +33,18 @@ type FileUploadProxy struct {
 
 func uploadAuth(ctx context.Context, path string) error {
 	user := ctx.Value(conf.UserKey).(*model.User)
-	meta, err := op.GetNearestMeta(stdpath.Dir(path))
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			return err
-		}
+	if !user.CanFTPManage() {
+		return errs.PermissionDenied
 	}
-	if !(common.CanAccess(user, meta, path, ctx.Value(conf.MetaPassKey).(string)) &&
-		((user.CanFTPManage() && user.CanWrite()) || common.CanWrite(meta, stdpath.Dir(path)))) {
+	parentPath := stdpath.Dir(path)
+	parentMeta, err := op.GetNearestMeta(parentPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return err
+	}
+	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+		return errs.PermissionDenied
+	}
+	if !common.CanWrite(user, parentMeta, parentPath) {
 		return errs.PermissionDenied
 	}
 	return nil
@@ -48,6 +54,11 @@ func OpenUpload(ctx context.Context, path string, trunc bool) (*FileUploadProxy,
 	err := uploadAuth(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	// Check if system file should be ignored
+	_, name := stdpath.Split(path)
+	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(name) {
+		return nil, errs.IgnoredSystemFile
 	}
 	tmpFile, err := os.CreateTemp(conf.Conf.TempDir, "file-*")
 	if err != nil {
@@ -149,6 +160,11 @@ func OpenUploadWithLength(ctx context.Context, path string, trunc bool, length i
 	err := uploadAuth(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	// Check if system file should be ignored
+	_, name := stdpath.Split(path)
+	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(name) {
+		return nil, errs.IgnoredSystemFile
 	}
 	if trunc {
 		_ = fs.Remove(ctx, path)

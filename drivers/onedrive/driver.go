@@ -22,6 +22,7 @@ type Onedrive struct {
 	AccessToken string
 	root        *Object
 	mutex       sync.Mutex
+	ref         *Onedrive
 }
 
 func (d *Onedrive) Config() driver.Config {
@@ -36,10 +37,22 @@ func (d *Onedrive) Init(ctx context.Context) error {
 	if d.ChunkSize < 1 {
 		d.ChunkSize = 5
 	}
+	if d.ref != nil {
+		return nil
+	}
 	return d.refreshToken()
 }
 
+func (d *Onedrive) InitReference(refStorage driver.Driver) error {
+	if ref, ok := refStorage.(*Onedrive); ok {
+		d.ref = ref
+		return nil
+	}
+	return errs.NotSupport
+}
+
 func (d *Onedrive) Drop(ctx context.Context) error {
+	d.ref = nil
 	return nil
 }
 
@@ -85,7 +98,9 @@ func (d *Onedrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		return nil, err
 	}
 	return utils.SliceConvert(files, func(src File) (model.Obj, error) {
-		return fileToObj(src, dir.GetID()), nil
+		obj := fileToObj(src, dir.GetID())
+		obj.Path = path.Join(dir.GetPath(), obj.GetName())
+		return obj, nil
 	})
 }
 
@@ -205,6 +220,37 @@ func (d *Onedrive) Put(ctx context.Context, dstDir model.Obj, stream model.FileS
 		err = d.upBig(ctx, dstDir, stream, up)
 	}
 	return err
+}
+
+func (d *Onedrive) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if d.DisableDiskUsage {
+		return nil, errs.NotImplement
+	}
+	drive, err := d.getDrive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: drive.Quota.Total,
+			UsedSpace:  drive.Quota.Used,
+		},
+	}, nil
+}
+
+func (d *Onedrive) GetDirectUploadTools() []string {
+	if !d.EnableDirectUpload {
+		return nil
+	}
+	return []string{"HttpDirect"}
+}
+
+// GetDirectUploadInfo returns the direct upload info for OneDrive
+func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, _ int64) (any, error) {
+	if !d.EnableDirectUpload {
+		return nil, errs.NotImplement
+	}
+	return d.getDirectUploadInfo(ctx, path.Join(dstDir.GetPath(), fileName))
 }
 
 var _ driver.Driver = (*Onedrive)(nil)

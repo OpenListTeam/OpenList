@@ -40,6 +40,7 @@ func (d *DoubaoShare) Drop(ctx context.Context) error {
 	return nil
 }
 
+// 潜在bug：配置二级目录时，可能会出问题
 func (d *DoubaoShare) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	// 检查是否为根目录
 	if dir.GetID() == "" && dir.GetPath() == "/" {
@@ -91,18 +92,17 @@ func (d *DoubaoShare) Link(ctx context.Context, file model.Obj, args model.LinkA
 
 			downloadUrl = r.Data.OriginalMediaInfo.MainURL
 		default:
-			var r GetFileUrlResp
-			_, err := d.request("/alice/message/get_file_url", http.MethodPost, func(req *resty.Request) {
+			var r GetDownloadInfoResp
+			_, err := d.request("/samantha/aispace/get_download_info", http.MethodPost, func(req *resty.Request) {
 				req.SetBody(base.Json{
-					"uris": []string{u.Key},
-					"type": FileNodeType[u.NodeType],
+					"requests": []base.Json{{"node_id": file.GetID()}},
 				})
 			}, &r)
 			if err != nil {
 				return nil, err
 			}
 
-			downloadUrl = r.Data.FileUrls[0].MainURL
+			downloadUrl = r.Data.DownloadInfos[0].MainURL
 		}
 
 		// 生成标准的Content-Disposition

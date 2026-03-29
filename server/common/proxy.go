@@ -18,11 +18,11 @@ import (
 )
 
 func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.Obj) error {
-	if link.MFile != nil {
-		attachHeader(w, file, link)
-		http.ServeContent(w, r, file.GetName(), file.ModTime(), link.MFile)
-		return nil
-	}
+	// if link.MFile != nil {
+	// 	attachHeader(w, file, link)
+	// 	http.ServeContent(w, r, file.GetName(), file.ModTime(), link.MFile)
+	// 	return nil
+	// }
 
 	if link.Concurrency > 0 || link.PartSize > 0 {
 		attachHeader(w, file, link)
@@ -101,7 +101,7 @@ func GetEtag(file model.Obj, size int64) string {
 }
 
 func ProxyRange(ctx context.Context, link *model.Link, size int64) *model.Link {
-	if link.MFile == nil && link.RangeReader == nil && !strings.HasPrefix(link.URL, GetApiUrl(ctx)+"/") {
+	if link.RangeReader == nil && !strings.HasPrefix(link.URL, GetApiUrl(ctx)+"/") {
 		if link.ContentLength > 0 {
 			size = link.ContentLength
 		}

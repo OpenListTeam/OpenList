@@ -19,6 +19,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -257,7 +258,7 @@ func (b *s3Backend) PutObject(
 	if err != nil {
 		if errs.IsObjectNotFound(err) && strings.Contains(objectName, "/") {
 			log.Debugf("reqPath: %s not found and objectName contains /, need to makeDir", reqPath)
-			err = fs.MakeDir(ctx, reqPath, true)
+			err = fs.MakeDir(ctx, reqPath)
 			if err != nil {
 				return result, errors.WithMessagef(err, "failed to makeDir, reqPath: %s", reqPath)
 			}
@@ -280,11 +281,20 @@ func (b *s3Backend) PutObject(
 		ti, _ = swift.FloatStringToTime(val)
 	}
 
+	// If Modified is not set, use current time
+	if ti.IsZero() {
+		ti = time.Now()
+	}
+
 	obj := model.Object{
 		Name:     path.Base(fp),
 		Size:     size,
 		Modified: ti,
 		Ctime:    time.Now(),
+	}
+	// Check if system file should be ignored
+	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
+		return result, errs.IgnoredSystemFile
 	}
 	stream := &stream.FileStream{
 		Obj:      &obj,

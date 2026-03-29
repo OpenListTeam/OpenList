@@ -347,3 +347,21 @@ type ReviewData struct {
 	Deviceid   string `json:"deviceid"`
 	Devicesign string `json:"devicesign"`
 }
+
+type AboutResponse struct {
+	// Kind  string `json:"kind"`
+	Quota struct {
+		// Kind           string `json:"kind"`
+		Limit string `json:"limit"`
+		Usage string `json:"usage"`
+		// UsageInTrash   string `json:"usage_in_trash"`
+		// PlayTimesLimit string `json:"play_times_limit"`
+		// PlayTimesUsage string `json:"play_times_usage"`
+		// IsUnlimited    bool   `json:"is_unlimited"`
+		// UpgradeType    string `json:"upgrade_type"`
+	} `json:"quota"`
+	// ExpiresAt string `json:"expires_at"`
+	// Quotas    struct {
+	// } `json:"quotas"`
+	// IsSearchFlushed bool `json:"is_search_flushed"`
+}

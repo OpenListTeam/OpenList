@@ -11,7 +11,7 @@ import (
 func SearchIndex(c *gin.Context) {
 	mode := setting.GetStr(conf.SearchIndex)
 	if mode == "none" {
-		common.ErrorResp(c, errs.SearchNotAvailable, 500)
+		common.ErrorResp(c, errs.SearchNotAvailable, 404)
 		c.Abort()
 	} else {
 		c.Next()

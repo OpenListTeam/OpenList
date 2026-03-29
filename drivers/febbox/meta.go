@@ -16,9 +16,10 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:        "FebBox",
-	NoUpload:    true,
-	DefaultRoot: "0",
+	Name:          "FebBox",
+	NoUpload:      true,
+	DefaultRoot:   "0",
+	LinkCacheMode: driver.LinkCacheIP,
 }
 
 func init() {

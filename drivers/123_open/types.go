@@ -19,6 +19,7 @@ func (a *ApiInfo) Require() {
 		a.token <- struct{}{}
 	}
 }
+
 func (a *ApiInfo) Release() {
 	if a.qps > 0 {
 		time.AfterFunc(time.Second, func() {
@@ -26,13 +27,16 @@ func (a *ApiInfo) Release() {
 		})
 	}
 }
+
 func (a *ApiInfo) SetQPS(qps int) {
 	a.qps = qps
 	a.token = make(chan struct{}, qps)
 }
+
 func (a *ApiInfo) NowLen() int {
 	return len(a.token)
 }
+
 func InitApiInfo(url string, qps int) *ApiInfo {
 	return &ApiInfo{
 		url:   url,
@@ -54,9 +58,13 @@ type File struct {
 	Category     int    `json:"category"`
 	Status       int    `json:"status"`
 	Trashed      int    `json:"trashed"`
+	SHA1         string
 }
 
 func (f File) GetHash() utils.HashInfo {
+	if len(f.SHA1) == utils.SHA1.Width && len(f.Etag) != utils.MD5.Width {
+		return utils.NewHashInfo(utils.SHA1, f.SHA1)
+	}
 	return utils.NewHashInfo(utils.MD5, f.Etag)
 }
 
@@ -133,9 +141,9 @@ type UserInfoResp struct {
 		// HeadImage      string `json:"headImage"`
 		// Passport       string `json:"passport"`
 		// Mail           string `json:"mail"`
-		SpaceUsed      uint64 `json:"spaceUsed"`
-		SpacePermanent uint64 `json:"spacePermanent"`
-		SpaceTemp      uint64 `json:"spaceTemp"`
+		SpaceUsed      int64 `json:"spaceUsed"`
+		SpacePermanent int64 `json:"spacePermanent"`
+		SpaceTemp      int64 `json:"spaceTemp"`
 		// SpaceTempExpr  int64  `json:"spaceTempExpr"`
 		// Vip            bool   `json:"vip"`
 		// DirectTraffic  int64  `json:"directTraffic"`
@@ -183,5 +191,28 @@ type UploadCompleteResp struct {
 	Data struct {
 		Completed bool  `json:"completed"`
 		FileID    int64 `json:"fileID"`
+	} `json:"data"`
+}
+
+type SHA1ReuseResp struct {
+	BaseResp
+	Data struct {
+		FileID int64 `json:"fileID"`
+		Reuse  bool  `json:"reuse"`
+	} `json:"data"`
+}
+
+type OfflineDownloadResp struct {
+	BaseResp
+	Data struct {
+		TaskID int `json:"taskID"`
+	} `json:"data"`
+}
+
+type OfflineDownloadProcessResp struct {
+	BaseResp
+	Data struct {
+		Process float64 `json:"process"`
+		Status  int     `json:"status"`
 	} `json:"data"`
 }

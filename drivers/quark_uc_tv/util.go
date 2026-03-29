@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -70,8 +71,16 @@ func (d *QuarkUCTV) request(ctx context.Context, pathname string, method string,
 		return nil, err
 	}
 	// 判断 是否需要 刷新 access_token
-	if e.Status == -1 && e.Errno == 10001 {
-		// token 过期
+	errInfoLower := strings.ToLower(strings.TrimSpace(e.ErrorInfo))
+	maybeTokenInvalid :=
+		(e.Status == -1 && (e.Errno == 10001 || e.Errno == 11001)) ||
+			(errInfoLower != "" &&
+				(strings.Contains(errInfoLower, "access token") ||
+					strings.Contains(errInfoLower, "access_token") ||
+					strings.Contains(errInfoLower, "token无效") ||
+					strings.Contains(errInfoLower, "token 无效")))
+	if maybeTokenInvalid {
+		// token 过期 / 无效
 		err = d.getRefreshTokenByTV(ctx, d.Addition.RefreshToken, true)
 		if err != nil {
 			return nil, err

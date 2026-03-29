@@ -312,3 +312,79 @@ type RefreshTokenResp struct {
 	AccessToken string   `xml:"accessToken"`
 	Desc        string   `xml:"desc"`
 }
+
+type PersonalDiskInfoResp struct {
+	BaseResp
+	Data struct {
+		FreeDiskSize         string `json:"freeDiskSize"`
+		DiskSize             string `json:"diskSize"`
+		IsInfinitePicStorage *bool  `json:"isInfinitePicStorage"`
+	} `json:"data"`
+}
+
+type FamilyDiskInfoResp struct {
+	BaseResp
+	Data struct {
+		UsedSize string `json:"usedSize"`
+		DiskSize string `json:"diskSize"`
+	} `json:"data"`
+}
+
+type AndAlbumUploadResp struct {
+	Result struct {
+		ResultCode string `json:"resultCode"`
+		ResultDesc string `json:"resultDesc"`
+	} `json:"result"`
+	UploadResult struct {
+		UploadTaskID     string `json:"uploadTaskID"`
+		RedirectionURL   string `json:"redirectionUrl"`
+		NewContentIDList []struct {
+			ContentID   string `json:"contentID"`
+			ContentName string `json:"contentName"`
+		} `json:"newContentIDList"`
+	} `json:"uploadResult"`
+}
+
+type ModifyCloudDocV2Req struct {
+	CatalogType       int    `json:"catalogType"`
+	CloudID           string `json:"cloudID"`
+	CommonAccountInfo struct {
+		Account     string `json:"account"`
+		AccountType string `json:"accountType"`
+	} `json:"commonAccountInfo"`
+	DocLibName   string `json:"docLibName"`
+	DocLibraryID string `json:"docLibraryID"`
+	Path         string `json:"path"`
+}
+
+type ModifyCloudDocV2Resp struct {
+	Result struct {
+		ResultCode string `json:"resultCode"`
+		ResultDesc string `json:"resultDesc"`
+	} `json:"result"`
+}
+
+type CreateBatchOprTaskReq struct {
+	CatalogList       []string `json:"catalogList"`
+	CommonAccountInfo struct {
+		Account     string `json:"account"`
+		AccountType string `json:"accountType"`
+	} `json:"commonAccountInfo"`
+	ContentList       []string `json:"contentList"`
+	DestCatalogID     string   `json:"destCatalogID"`
+	DestGroupID       string   `json:"destGroupID"`
+	DestPath          string   `json:"destPath"`
+	DestType          int      `json:"destType"`
+	SourceCatalogType int      `json:"sourceCatalogType"`
+	SourceCloudID     string   `json:"sourceCloudID"`
+	SourceType        int      `json:"sourceType"`
+	TaskType          int      `json:"taskType"`
+}
+
+type CreateBatchOprTaskResp struct {
+	Result struct {
+		ResultCode string `json:"resultCode"`
+		ResultDesc string `json:"resultDesc"`
+	} `json:"result"`
+	TaskID string `json:"taskID"`
+}

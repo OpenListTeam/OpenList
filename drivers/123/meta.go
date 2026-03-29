@@ -12,13 +12,15 @@ type Addition struct {
 	//OrderBy        string `json:"order_by" type:"select" options:"file_id,file_name,size,update_at" default:"file_name"`
 	//OrderDirection string `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
 	AccessToken  string
-	UploadThread int `json:"UploadThread" type:"number" default:"3" help:"the threads of upload"`
+	UploadThread int    `json:"UploadThread" type:"number" default:"3" help:"the threads of upload"`
+	Platform     string `json:"platform" type:"string" default:"web" help:"the platform header value, sent with API requests"`
 }
 
 var config = driver.Config{
 	Name:        "123Pan",
 	DefaultRoot: "0",
 	LocalSort:   true,
+	PreferProxy: true,
 }
 
 func init() {
@@ -27,6 +29,7 @@ func init() {
 		return &Pan123{
 			Addition: Addition{
 				UploadThread: 3,
+				Platform:     "web",
 			},
 		}
 	})

@@ -45,7 +45,11 @@ func getDiskUsage(path string) (model.DiskUsage, error) {
 		return model.DiskUsage{}, err
 	}
 	return model.DiskUsage{
-		TotalSpace: totalBytes,
-		FreeSpace:  freeBytes,
+		TotalSpace: int64(totalBytes),
+		UsedSpace:  int64(totalBytes - freeBytes),
 	}, nil
+}
+
+func isCrossDeviceError(err error) bool {
+	return errors.Is(err, windows.ERROR_NOT_SAME_DEVICE)
 }

@@ -6,6 +6,7 @@ import (
 	stdpath "path"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -38,15 +39,15 @@ func (t *UploadTask) Run() error {
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
-	return op.Put(t.Ctx(), t.storage, t.dstDirActualPath, t.file, t.SetProgress, true)
+	return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.storage, t.dstDirActualPath, t.file, t.SetProgress)
 }
 
 func (t *UploadTask) OnSucceeded() {
-	task_group.TransferCoordinator.Done(stdpath.Join(t.storage.GetStorage().MountPath, t.dstDirActualPath), true)
+	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), stdpath.Join(t.storage.GetStorage().MountPath, t.dstDirActualPath), true)
 }
 
 func (t *UploadTask) OnFailed() {
-	task_group.TransferCoordinator.Done(stdpath.Join(t.storage.GetStorage().MountPath, t.dstDirActualPath), false)
+	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), stdpath.Join(t.storage.GetStorage().MountPath, t.dstDirActualPath), false)
 }
 
 func (t *UploadTask) SetRetry(retry int, maxRetry int) {
@@ -87,13 +88,13 @@ func putAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) 
 		file:             file,
 	}
 	t.SetTotalBytes(file.GetSize())
-	task_group.TransferCoordinator.AddTask(dstDirPath, nil)
+	task_group.TransferCoordinator.AddTask(stdpath.Join(storage.GetStorage().MountPath, dstDirActualPath), nil)
 	UploadTaskManager.Add(t)
 	return t, nil
 }
 
 // putDirect put the file and return after finish
-func putDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer, lazyCache ...bool) error {
+func putDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer, skipHook ...bool) error {
 	storage, dstDirActualPath, err := op.GetStorageAndActualPath(dstDirPath)
 	if err != nil {
 		_ = file.Close()
@@ -103,5 +104,16 @@ func putDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer
 		_ = file.Close()
 		return errors.WithStack(errs.UploadNotSupported)
 	}
-	return op.Put(ctx, storage, dstDirActualPath, file, nil, lazyCache...)
+	if utils.IsBool(skipHook...) {
+		ctx = context.WithValue(ctx, conf.SkipHookKey, struct{}{})
+	}
+	return op.Put(ctx, storage, dstDirActualPath, file, nil)
+}
+
+func getDirectUploadInfo(ctx context.Context, tool, dstDirPath, dstName string, fileSize int64) (any, error) {
+	storage, dstDirActualPath, err := op.GetStorageAndActualPath(dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed get storage")
+	}
+	return op.GetDirectUploadInfo(ctx, tool, storage, dstDirActualPath, dstName, fileSize)
 }

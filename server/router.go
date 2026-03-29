@@ -160,6 +160,8 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_transmission", handles.SetTransmission)
 	setting.POST("/set_115", handles.Set115)
 	setting.POST("/set_115_open", handles.Set115Open)
+	setting.POST("/set_123_pan", handles.Set123Pan)
+	setting.POST("/set_123_open", handles.Set123Open)
 	setting.POST("/set_pikpak", handles.SetPikPak)
 	setting.POST("/set_thunder", handles.SetThunder)
 	setting.POST("/set_thunderx", handles.SetThunderX)
@@ -178,6 +180,11 @@ func admin(g *gin.RouterGroup) {
 	index.POST("/stop", middlewares.SearchIndex, handles.StopIndex)
 	index.POST("/clear", middlewares.SearchIndex, handles.ClearIndex)
 	index.GET("/progress", middlewares.SearchIndex, handles.GetProgress)
+
+	scan := g.Group("/scan")
+	scan.POST("/start", handles.StartManualScan)
+	scan.POST("/stop", handles.StopManualScan)
+	scan.GET("/progress", handles.GetManualScanProgress)
 }
 
 func fsAndShare(g *gin.RouterGroup) {
@@ -210,6 +217,8 @@ func _fs(g *gin.RouterGroup) {
 	// g.POST("/add_transmission", handles.SetTransmission)
 	g.POST("/add_offline_download", handles.AddOfflineDownload)
 	g.POST("/archive/decompress", handles.FsArchiveDecompress)
+	// Direct upload (client-side upload to storage)
+	g.POST("/get_direct_upload_info", middlewares.FsUp, handles.FsGetDirectUploadInfo)
 }
 
 func _task(g *gin.RouterGroup) {

@@ -35,6 +35,7 @@ type Scheme struct {
 	UnixFile     string `json:"unix_file" env:"UNIX_FILE"`
 	UnixFilePerm string `json:"unix_file_perm" env:"UNIX_FILE_PERM"`
 	EnableH2c    bool   `json:"enable_h2c" env:"ENABLE_H2C"`
+	EnableH3     bool   `json:"enable_h3" env:"ENABLE_H3"`
 }
 
 type LogConfig struct {
@@ -130,6 +131,7 @@ type Config struct {
 	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
 	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
 	LastLaunchedVersion   string      `json:"last_launched_version"`
+	ProxyAddress          string      `json:"proxy_address" env:"PROXY_ADDRESS"`
 }
 
 func DefaultConfig(dataDir string) *Config {
@@ -180,7 +182,7 @@ func DefaultConfig(dataDir string) *Config {
 		MmapThreshold:         4,
 		MaxConnections:        0,
 		MaxConcurrency:        64,
-		TlsInsecureSkipVerify: true,
+		TlsInsecureSkipVerify: false,
 		Tasks: TasksConfig{
 			Download: TaskConfig{
 				Workers:  5,
@@ -243,5 +245,6 @@ func DefaultConfig(dataDir string) *Config {
 			Listen: ":5222",
 		},
 		LastLaunchedVersion: "",
+		ProxyAddress:        "",
 	}
 }

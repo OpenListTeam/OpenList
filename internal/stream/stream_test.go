@@ -7,13 +7,12 @@ import (
 	"io"
 	"testing"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 func TestFileStream_RangeRead(t *testing.T) {
-	conf.MaxBufferLimit = 16 * 1024 * 1024
 	type args struct {
 		httpRange http_range.Range
 	}
@@ -73,16 +72,38 @@ func TestFileStream_RangeRead(t *testing.T) {
 			}
 		})
 	}
-	t.Run("after", func(t *testing.T) {
-		if f.GetFile() == nil {
-			t.Error("not cached")
-		}
-		buf2 := make([]byte, len(buf))
-		if _, err := io.ReadFull(f, buf2); err != nil {
-			t.Errorf("FileStream.Read() error = %v", err)
-		}
-		if !bytes.Equal(buf, buf2) {
-			t.Errorf("FileStream.Read() = %s, want %s", buf2, buf)
-		}
-	})
+	if f.GetFile() == nil {
+		t.Error("not cached")
+	}
+	buf2 := make([]byte, len(buf))
+	if _, err := io.ReadFull(f, buf2); err != nil {
+		t.Errorf("FileStream.Read() error = %v", err)
+	}
+	if !bytes.Equal(buf, buf2) {
+		t.Errorf("FileStream.Read() = %s, want %s", buf2, buf)
+	}
+}
+
+func TestFileStream_With_PreHash(t *testing.T) {
+	buf := []byte("github.com/OpenListTeam/OpenList")
+	f := &FileStream{
+		Obj: &model.Object{
+			Size: int64(len(buf)),
+		},
+		Reader: io.NopCloser(bytes.NewReader(buf)),
+	}
+
+	const hashSize int64 = 20
+	reader, _ := f.RangeRead(http_range.Range{Start: 0, Length: hashSize})
+	preHash, _ := utils.HashReader(utils.SHA1, reader)
+	if preHash == "" {
+		t.Error("preHash is empty")
+	}
+	tmpF, fullHash, _ := CacheFullAndHash(f, nil, utils.SHA1)
+	fmt.Println(fullHash)
+	fileFullHash, _ := utils.HashFile(utils.SHA1, tmpF)
+	fmt.Println(fileFullHash)
+	if fullHash != fileFullHash {
+		t.Errorf("fullHash and fileFullHash should match: fullHash=%s fileFullHash=%s", fullHash, fileFullHash)
+	}
 }

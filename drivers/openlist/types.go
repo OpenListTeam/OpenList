@@ -167,4 +167,5 @@ type DecompressReq struct {
 	Name          []string `json:"name"`
 	PutIntoNewDir bool     `json:"put_into_new_dir"`
 	SrcDir        string   `json:"src_dir"`
+	Overwrite     bool     `json:"overwrite"`
 }

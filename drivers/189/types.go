@@ -66,3 +66,21 @@ type DownResp struct {
 	ResMessage      string `json:"res_message"`
 	FileDownloadUrl string `json:"downloadUrl"`
 }
+
+type CapacityResp struct {
+	ResCode           int    `json:"res_code"`
+	ResMessage        string `json:"res_message"`
+	Account           string `json:"account"`
+	CloudCapacityInfo struct {
+		FreeSize     int64 `json:"freeSize"`
+		MailUsedSize int64 `json:"mail189UsedSize"`
+		TotalSize    int64 `json:"totalSize"`
+		UsedSize     int64 `json:"usedSize"`
+	} `json:"cloudCapacityInfo"`
+	FamilyCapacityInfo struct {
+		FreeSize  int64 `json:"freeSize"`
+		TotalSize int64 `json:"totalSize"`
+		UsedSize  int64 `json:"usedSize"`
+	} `json:"familyCapacityInfo"`
+	TotalSize uint64 `json:"totalSize"`
+}

@@ -69,15 +69,10 @@ func (d *SFTP) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 		Limiter: stream.ServerDownloadLimit,
 		Ctx:     ctx,
 	}
-	if !d.Config().OnlyLinkMFile {
-		return &model.Link{
-			RangeReader: stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
-			SyncClosers: utils.NewSyncClosers(remoteFile),
-		}, nil
-	}
 	return &model.Link{
-		MFile:       mFile,
-		SyncClosers: utils.NewSyncClosers(remoteFile),
+		RangeReader:      stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
+		SyncClosers:      utils.NewSyncClosers(remoteFile),
+		RequireReference: true,
 	}, nil
 }
 
@@ -136,12 +131,12 @@ func (d *SFTP) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 		}
 		return nil, err
 	}
-	total := stat.Blocks * stat.Bsize
-	free := stat.Bfree * stat.Bsize
+	total := int64(stat.Blocks * stat.Bsize)
+	free := int64(stat.Bfree * stat.Bsize)
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
 			TotalSpace: total,
-			FreeSpace:  free,
+			UsedSpace:  total - free,
 		},
 	}, nil
 }

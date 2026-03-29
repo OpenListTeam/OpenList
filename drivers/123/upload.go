@@ -124,28 +124,19 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 			if cur == chunkCount {
 				curSize = lastChunkSize
 			}
-			var reader *stream.SectionReader
-			var rateLimitedRd io.Reader
+			var reader io.ReadSeeker
 			threadG.GoWithLifecycle(errgroup.Lifecycle{
-				Before: func(ctx context.Context) error {
-					if reader == nil {
-						var err error
-						reader, err = ss.GetSectionReader(offset, curSize)
-						if err != nil {
-							return err
-						}
-						rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
-					}
-					return nil
+				Before: func(ctx context.Context) (err error) {
+					reader, err = ss.GetSectionReader(offset, curSize)
+					return
 				},
-				Do: func(ctx context.Context) error {
+				Do: func(ctx context.Context) (err error) {
 					reader.Seek(0, io.SeekStart)
 					uploadUrl := s3PreSignedUrls.Data.PreSignedUrls[strconv.Itoa(cur)]
 					if uploadUrl == "" {
 						return fmt.Errorf("upload url is empty, s3PreSignedUrls: %+v", s3PreSignedUrls)
 					}
-					reader.Seek(0, io.SeekStart)
-					req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadUrl, rateLimitedRd)
+					req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadUrl, driver.NewLimitedUploadStream(ctx, reader))
 					if err != nil {
 						return err
 					}
@@ -157,7 +148,7 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 					}
 					defer res.Body.Close()
 					if res.StatusCode == http.StatusForbidden {
-						singleflight.AnyGroup.Do(fmt.Sprintf("Pan123.newUpload_%p", threadG), func() (any, error) {
+						_, err, _ = singleflight.AnyGroup.Do(fmt.Sprintf("Pan123.newUpload_%p", threadG), func() (any, error) {
 							newS3PreSignedUrls, err := getS3UploadUrl(ctx, upReq, cur, end)
 							if err != nil {
 								return nil, err
@@ -177,7 +168,7 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 						}
 						return fmt.Errorf("upload s3 chunk %d failed, status code: %d, body: %s", cur, res.StatusCode, body)
 					}
-					progress := 10.0 + 85.0*float64(threadG.Success())/float64(chunkCount)
+					progress := 100 * float64(threadG.Success()+1) / float64(chunkCount+1)
 					up(progress)
 					return nil
 				},

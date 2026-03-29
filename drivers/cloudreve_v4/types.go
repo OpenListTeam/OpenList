@@ -122,6 +122,18 @@ type File struct {
 	PrimaryEntity string         `json:"primary_entity"`
 }
 
+func fileToObject(f *File) *model.Object {
+	return &model.Object{
+		ID:       f.ID,
+		Path:     f.Path,
+		Name:     f.Name,
+		Size:     f.Size,
+		Modified: f.UpdatedAt,
+		Ctime:    f.CreatedAt,
+		IsFolder: f.Type == 1,
+	}
+}
+
 type StoragePolicy struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -206,7 +218,7 @@ type FolderSummaryResp struct {
 }
 
 type CapacityResp struct {
-	Total uint64 `json:"total"`
-	Used  uint64 `json:"used"`
+	Total int64 `json:"total"`
+	Used  int64 `json:"used"`
 	// StoragePackTotal uint64 `json:"storage_pack_total"`
 }

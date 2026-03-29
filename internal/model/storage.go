@@ -1,22 +1,24 @@
 package model
 
 import (
+	"encoding/json"
 	"time"
 )
 
 type Storage struct {
-	ID              uint      `json:"id" gorm:"primaryKey"`                        // unique key
-	MountPath       string    `json:"mount_path" gorm:"unique" binding:"required"` // must be standardized
-	Order           int       `json:"order"`                                       // use to sort
-	Driver          string    `json:"driver"`                                      // driver used
-	CacheExpiration int       `json:"cache_expiration"`                            // cache expire time
-	Status          string    `json:"status"`
-	Addition        string    `json:"addition" gorm:"type:text"` // Additional information, defined in the corresponding driver
-	Remark          string    `json:"remark"`
-	Modified        time.Time `json:"modified"`
-	Disabled        bool      `json:"disabled"` // if disabled
-	DisableIndex    bool      `json:"disable_index"`
-	EnableSign      bool      `json:"enable_sign"`
+	ID                  uint      `json:"id" gorm:"primaryKey"`                        // unique key
+	MountPath           string    `json:"mount_path" gorm:"unique" binding:"required"` // must be standardized
+	Order               int       `json:"order"`                                       // use to sort
+	Driver              string    `json:"driver"`                                      // driver used
+	CacheExpiration     int       `json:"cache_expiration"`                            // cache expire time
+	CustomCachePolicies string    `json:"custom_cache_policies" gorm:"type:text"`
+	Status              string    `json:"status"`
+	Addition            string    `json:"addition" gorm:"type:text"` // Additional information, defined in the corresponding driver
+	Remark              string    `json:"remark"`
+	Modified            time.Time `json:"modified"`
+	Disabled            bool      `json:"disabled"` // if disabled
+	DisableIndex        bool      `json:"disable_index"`
+	EnableSign          bool      `json:"enable_sign"`
 	Sort
 	Proxy
 }
@@ -32,7 +34,7 @@ type Proxy struct {
 	WebdavPolicy string `json:"webdav_policy"`
 	ProxyRange   bool   `json:"proxy_range"`
 	DownProxyURL string `json:"down_proxy_url"`
-	//Disable sign for DownProxyURL
+	// Disable sign for DownProxyURL
 	DisableProxySign bool `json:"disable_proxy_sign"`
 }
 
@@ -57,33 +59,44 @@ func (p Proxy) WebdavProxyURL() bool {
 }
 
 type DiskUsage struct {
-	TotalSpace uint64 `json:"total_space"`
-	FreeSpace  uint64 `json:"free_space"`
+	TotalSpace int64
+	UsedSpace  int64
+}
+
+func (d DiskUsage) FreeSpace() int64 {
+	return d.TotalSpace - d.UsedSpace
+}
+
+func (d DiskUsage) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"total_space": d.TotalSpace,
+		"used_space":  d.UsedSpace,
+		"free_space":  d.FreeSpace(),
+	})
 }
 
 type StorageDetails struct {
 	DiskUsage
 }
 
-type StorageDetailsWithName struct {
-	*StorageDetails
-	DriverName string `json:"driver_name"`
-}
-
 type ObjWithStorageDetails interface {
-	GetStorageDetails() *StorageDetailsWithName
+	GetStorageDetails() *StorageDetails
 }
 
 type ObjStorageDetails struct {
 	Obj
-	StorageDetailsWithName
+	*StorageDetails
 }
 
-func (o ObjStorageDetails) GetStorageDetails() *StorageDetailsWithName {
-	return &o.StorageDetailsWithName
+func (o *ObjStorageDetails) Unwrap() Obj {
+	return o.Obj
 }
 
-func GetStorageDetails(obj Obj) (*StorageDetailsWithName, bool) {
+func (o *ObjStorageDetails) GetStorageDetails() *StorageDetails {
+	return o.StorageDetails
+}
+
+func GetStorageDetails(obj Obj) (*StorageDetails, bool) {
 	if obj, ok := obj.(ObjWithStorageDetails); ok {
 		return obj.GetStorageDetails(), true
 	}

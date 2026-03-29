@@ -53,6 +53,12 @@ func (d *Open115) Init(ctx context.Context) error {
 	if d.Addition.LimitRate > 0 {
 		d.limiter = rate.NewLimiter(rate.Limit(d.Addition.LimitRate), 1)
 	}
+	if d.PageSize <= 0 {
+		d.PageSize = 200
+	} else if d.PageSize > 1150 {
+		d.PageSize = 1150
+	}
+
 	return nil
 }
 
@@ -69,7 +75,7 @@ func (d *Open115) Drop(ctx context.Context) error {
 
 func (d *Open115) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	var res []model.Obj
-	pageSize := int64(200)
+	pageSize := int64(d.PageSize)
 	offset := int64(0)
 	for {
 		if err := d.WaitLimit(ctx); err != nil {
@@ -131,23 +137,6 @@ func (d *Open115) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	}, nil
 }
 
-func (d *Open115) GetObjInfo(ctx context.Context, path string) (model.Obj, error) {
-	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
-	}
-	resp, err := d.client.GetFolderInfoByPath(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-	return &Obj{
-		Fid:  resp.FileID,
-		Fn:   resp.FileName,
-		Fc:   resp.FileCategory,
-		Sha1: resp.Sha1,
-		Pc:   resp.PickCode,
-	}, nil
-}
-
 func (d *Open115) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	if err := d.WaitLimit(ctx); err != nil {
 		return nil, err
@@ -187,7 +176,7 @@ func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 	}
 	_, err := d.client.UpdateFile(ctx, &sdk.UpdateFileReq{
 		FileID:  srcObj.GetID(),
-		FileNma: newName,
+		FileName: newName,
 	})
 	if err != nil {
 		return nil, err
@@ -342,18 +331,18 @@ func (d *Open115) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 	if err != nil {
 		return nil, err
 	}
-	total, err := userInfo.RtSpaceInfo.AllTotal.Size.Int64()
+	total, err := ParseInt64(userInfo.RtSpaceInfo.AllTotal.Size)
 	if err != nil {
 		return nil, err
 	}
-	free, err := userInfo.RtSpaceInfo.AllRemain.Size.Int64()
+	used, err := ParseInt64(userInfo.RtSpaceInfo.AllUse.Size)
 	if err != nil {
 		return nil, err
 	}
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
-			TotalSpace: uint64(total),
-			FreeSpace:  uint64(free),
+			TotalSpace: total,
+			UsedSpace:  used,
 		},
 	}, nil
 }

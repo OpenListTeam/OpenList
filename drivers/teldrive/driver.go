@@ -6,6 +6,8 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"path"
+	"strconv"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -16,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 type Teldrive struct {
@@ -52,19 +55,60 @@ func (d *Teldrive) Drop(ctx context.Context) error {
 }
 
 func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	var listResp ListResp
+	var firstResp ListResp
 	err := d.request(http.MethodGet, "/api/files", func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
 			"path":  dir.GetPath(),
-			"limit": "1000", // overide default 500, TODO pagination
+			"limit": "500",
+			"page":  "1",
 		})
-	}, &listResp)
+	}, &firstResp)
+
 	if err != nil {
 		return nil, err
 	}
 
-	return utils.SliceConvert(listResp.Items, func(src Object) (model.Obj, error) {
+	pagesData := make([][]Object, firstResp.Meta.TotalPages)
+	pagesData[0] = firstResp.Items
+
+	if firstResp.Meta.TotalPages > 1 {
+		g, _ := errgroup.WithContext(ctx)
+		g.SetLimit(8)
+
+		for i := 2; i <= firstResp.Meta.TotalPages; i++ {
+			page := i
+			g.Go(func() error {
+				var resp ListResp
+				err := d.request(http.MethodGet, "/api/files", func(req *resty.Request) {
+					req.SetQueryParams(map[string]string{
+						"path":  dir.GetPath(),
+						"limit": "500",
+						"page":  strconv.Itoa(page),
+					})
+				}, &resp)
+
+				if err != nil {
+					return err
+				}
+
+				pagesData[page-1] = resp.Items
+				return nil
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			return nil, err
+		}
+	}
+
+	var allItems []Object
+	for _, items := range pagesData {
+		allItems = append(allItems, items...)
+	}
+
+	return utils.SliceConvert(allItems, func(src Object) (model.Obj, error) {
 		return &model.Object{
+			Path: path.Join(dir.GetPath(), src.Name),
 			ID:   src.ID,
 			Name: src.Name,
 			Size: func() int64 {
@@ -182,7 +226,7 @@ func (d *Teldrive) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 	}
 
 	if totalParts <= 1 {
-		return d.doSingleUpload(ctx, dstDir, file, up, totalParts, chunkSize, fileId)
+		return d.doSingleUpload(ctx, dstDir, file, up, maxRetried, totalParts, chunkSize, fileId)
 	}
 
 	return d.doMultiUpload(ctx, dstDir, file, up, maxRetried, totalParts, chunkSize, fileId)

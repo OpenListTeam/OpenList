@@ -2,11 +2,13 @@ package webdav
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
@@ -54,6 +56,7 @@ func (d *WebDav) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 	}
 	return utils.SliceConvert(files, func(src os.FileInfo) (model.Obj, error) {
 		return &model.Object{
+			Path:     path.Join(dir.GetPath(), src.Name()),
 			Name:     src.Name(),
 			Size:     src.Size(),
 			Modified: src.ModTime(),
@@ -66,6 +69,22 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 	url, header, err := d.client.Link(file.GetPath())
 	if err != nil {
 		return nil, err
+	}
+	if args.Redirect {
+		// get the url after redirect
+		req := base.NoRedirectClient.R()
+		req.Header = header
+		req.SetDoNotParseResponse(true)
+		res, err := req.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		_ = res.RawResponse.Body.Close()
+		if (res.StatusCode() == 302 || res.StatusCode() == 307 || res.StatusCode() == 308) && res.Header().Get("location") != "" {
+			url = res.Header().Get("location")
+		} else {
+			return nil, fmt.Errorf("redirect failed, status: %d", res.StatusCode())
+		}
 	}
 	return &model.Link{
 		URL:    url,

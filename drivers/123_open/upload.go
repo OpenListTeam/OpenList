@@ -67,31 +67,26 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 		partNumber := partIndex + 1 // 分片号从1开始
 		offset := partIndex * chunkSize
 		size := min(chunkSize, size-offset)
-		var reader *stream.SectionReader
+		var reader io.ReadSeeker
 		var rateLimitedRd io.Reader
 		sliceMD5 := ""
 		// 表单
 		b := bytes.NewBuffer(make([]byte, 0, 2048))
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
-				if reader == nil {
-					var err error
-					// 每个分片一个reader
-					reader, err = ss.GetSectionReader(offset, size)
-					if err != nil {
-						return err
-					}
-					// 计算当前分片的MD5
+			Before: func(ctx context.Context) (err error) {
+				reader, err = ss.GetSectionReader(offset, size)
+				return
+			},
+			Do: func(ctx context.Context) (err error) {
+				reader.Seek(0, io.SeekStart)
+				if sliceMD5 == "" {
+					// 把耗时的计算放在这里，避免阻塞其他协程
 					sliceMD5, err = utils.HashReader(utils.MD5, reader)
 					if err != nil {
 						return err
 					}
+					reader.Seek(0, io.SeekStart)
 				}
-				return nil
-			},
-			Do: func(ctx context.Context) error {
-				// 重置分片reader位置，因为HashReader、上一次失败已经读取到分片EOF
-				reader.Seek(0, io.SeekStart)
 
 				b.Reset()
 				w := multipart.NewWriter(b)
@@ -121,6 +116,10 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				head := bytes.NewReader(b.Bytes()[:headSize])
 				tail := bytes.NewReader(b.Bytes()[headSize:])
 				rateLimitedRd = driver.NewLimitedUploadStream(ctx, io.MultiReader(head, reader, tail))
+				token, err := d.getAccessToken(false)
+				if err != nil {
+					return err
+				}
 				// 创建请求并设置header
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadDomain+"/upload/v2/file/slice", rateLimitedRd)
 				if err != nil {
@@ -128,7 +127,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				}
 
 				// 设置请求头
-				req.Header.Add("Authorization", "Bearer "+d.AccessToken)
+				req.Header.Add("Authorization", "Bearer "+token)
 				req.Header.Add("Content-Type", w.FormDataContentType())
 				req.Header.Add("Platform", "open_platform")
 
@@ -140,12 +139,13 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				if res.StatusCode != 200 {
 					return fmt.Errorf("slice %d upload failed, status code: %d", partNumber, res.StatusCode)
 				}
-				var resp BaseResp
-				respBody, err := io.ReadAll(res.Body)
+				b.Reset()
+				_, err = b.ReadFrom(res.Body)
 				if err != nil {
 					return err
 				}
-				err = json.Unmarshal(respBody, &resp)
+				var resp BaseResp
+				err = json.Unmarshal(b.Bytes(), &resp)
 				if err != nil {
 					return err
 				}
@@ -153,7 +153,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 					return fmt.Errorf("slice %d upload failed: %s", partNumber, resp.Message)
 				}
 
-				progress := 10.0 + 85.0*float64(threadG.Success())/float64(uploadNums)
+				progress := 100 * float64(threadG.Success()+1) / float64(uploadNums+1)
 				up(progress)
 				return nil
 			},
@@ -176,6 +176,24 @@ func (d *Open123) complete(preuploadID string) (*UploadCompleteResp, error) {
 	_, err := d.Request(UploadComplete, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(base.Json{
 			"preuploadID": preuploadID,
+		})
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// SHA1 秒传
+func (d *Open123) sha1Reuse(parentFileID int64, filename string, sha1Hash string, size int64, duplicate int) (*SHA1ReuseResp, error) {
+	var resp SHA1ReuseResp
+	_, err := d.Request(UploadSHA1Reuse, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"parentFileID": parentFileID,
+			"filename":     filename,
+			"sha1":         strings.ToLower(sha1Hash),
+			"size":         size,
+			"duplicate":    duplicate,
 		})
 	}, &resp)
 	if err != nil {

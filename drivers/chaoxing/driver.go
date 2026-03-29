@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,21 +226,18 @@ func (d *ChaoXing) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 	if resp.Result != 1 {
 		return errors.New("get upload data error")
 	}
-	body := &bytes.Buffer{}
+	body := bytes.NewBuffer(make([]byte, 0, bytes.MinRead))
 	writer := multipart.NewWriter(body)
-	filePart, err := writer.CreateFormFile("file", file.GetName())
+	_, err = writer.CreateFormFile("file", file.GetName())
 	if err != nil {
 		return err
 	}
-	_, err = utils.CopyWithBuffer(filePart, file)
-	if err != nil {
-		return err
-	}
+	headSize := body.Len()
 	err = writer.WriteField("_token", resp.Msg.Token)
 	if err != nil {
 		return err
 	}
-	err = writer.WriteField("puid", fmt.Sprintf("%d", resp.Msg.Puid))
+	err = writer.WriteField("puid", strconv.Itoa(resp.Msg.Puid))
 	if err != nil {
 		fmt.Println("Error writing param2 to request body:", err)
 		return err
@@ -248,30 +246,34 @@ func (d *ChaoXing) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 	if err != nil {
 		return err
 	}
+	head := bytes.NewReader(body.Bytes()[:headSize])
+	tail := bytes.NewReader(body.Bytes()[headSize:])
 	r := driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
 		Reader: &driver.SimpleReaderWithSize{
-			Reader: body,
-			Size:   int64(body.Len()),
+			Reader: io.MultiReader(head, file, tail),
+			Size:   int64(body.Len()) + file.GetSize(),
 		},
 		UpdateProgress: up,
 	})
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://pan-yz.chaoxing.com/upload", r)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Content-Length", fmt.Sprintf("%d", body.Len()))
+	req.ContentLength = int64(body.Len()) + file.GetSize()
 	resps, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resps.Body.Close()
-	bodys, err := io.ReadAll(resps.Body)
+	body.Reset()
+	_, err = body.ReadFrom(resps.Body)
 	if err != nil {
 		return err
 	}
 	var fileRsp UploadFileDataRsp
-	err = json.Unmarshal(bodys, &fileRsp)
+	err = json.Unmarshal(body.Bytes(), &fileRsp)
 	if err != nil {
 		return err
 	}

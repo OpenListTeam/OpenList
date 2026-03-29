@@ -78,3 +78,12 @@ type Error struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
+
+type AboutResp struct {
+	StorageQuota struct {
+		Limit             *string `json:"limit"`
+		Usage             string  `json:"usage"`
+		UsageInDrive      string  `json:"usageInDrive"`
+		UsageInDriveTrash string  `json:"usageInDriveTrash"`
+	}
+}

@@ -34,9 +34,9 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 		return
 	}
 	_ = countAccess(c.ClientIP(), s)
-	fakePath := fmt.Sprintf("/%s/%s", sid, path)
 	url := ""
 	if !obj.IsDir() {
+		fakePath := fmt.Sprintf("/%s/%s", sid, path)
 		url = fmt.Sprintf("%s/sd%s", common.GetApiUrl(c), utils.EncodePath(fakePath, true))
 		if s.Pwd != "" {
 			url += "?pwd=" + s.Pwd
@@ -45,8 +45,6 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 	thumb, _ := model.GetThumb(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{
-			Id:          "",
-			Path:        fakePath,
 			Name:        obj.GetName(),
 			Size:        obj.GetSize(),
 			IsDir:       obj.IsDir(),
@@ -80,14 +78,11 @@ func SharingList(c *gin.Context, req *ListReq) {
 		return
 	}
 	_ = countAccess(c.ClientIP(), s)
-	fakePath := fmt.Sprintf("/%s/%s", sid, path)
 	total, objs := pagination(objs, &req.PageReq)
 	common.SuccessResp(c, FsListResp{
 		Content: utils.MustSliceConvert(objs, func(obj model.Obj) ObjResp {
 			thumb, _ := model.GetThumb(obj)
 			return ObjResp{
-				Id:          "",
-				Path:        stdpath.Join(fakePath, obj.GetName()),
 				Name:        obj.GetName(),
 				Size:        obj.GetSize(),
 				IsDir:       obj.IsDir(),
@@ -408,7 +403,7 @@ func ListSharings(c *gin.Context) {
 	})
 }
 
-type CreateSharingReq struct {
+type UpdateSharingReq struct {
 	Files       []string   `json:"files"`
 	Expires     *time.Time `json:"expires"`
 	Pwd         string     `json:"pwd"`
@@ -418,12 +413,9 @@ type CreateSharingReq struct {
 	Readme      string     `json:"readme"`
 	Header      string     `json:"header"`
 	model.Sort
-}
-
-type UpdateSharingReq struct {
-	ID       string `json:"id"`
-	Accessed int    `json:"accessed"`
-	CreateSharingReq
+	CreatorName string `json:"creator"`
+	Accessed    int    `json:"accessed"`
+	ID          string `json:"id"`
 }
 
 func UpdateSharing(c *gin.Context) {
@@ -436,23 +428,37 @@ func UpdateSharing(c *gin.Context) {
 		common.ErrorStrResp(c, "must add at least 1 object", 400)
 		return
 	}
-	user := c.Request.Context().Value(conf.UserKey).(*model.User)
-	if !user.CanShare() {
-		common.ErrorStrResp(c, "permission denied", 403)
-		return
+	var user *model.User
+	var err error
+	reqUser := c.Request.Context().Value(conf.UserKey).(*model.User)
+	if reqUser.IsAdmin() && req.CreatorName != "" {
+		user, err = op.GetUserByName(req.CreatorName)
+		if err != nil {
+			common.ErrorStrResp(c, "no such a user", 400)
+			return
+		}
+	} else {
+		user = reqUser
+		if !user.CanShare() {
+			common.ErrorStrResp(c, "permission denied", 403)
+			return
+		}
 	}
 	for i, s := range req.Files {
 		s = utils.FixAndCleanPath(s)
 		req.Files[i] = s
-		if !user.IsAdmin() && !strings.HasPrefix(s, user.BasePath) {
+		if !reqUser.IsAdmin() && !strings.HasPrefix(s, user.BasePath) {
 			common.ErrorStrResp(c, fmt.Sprintf("permission denied to share path [%s]", s), 500)
 			return
 		}
 	}
 	s, err := op.GetSharingById(req.ID)
-	if err != nil || (!user.IsAdmin() && s.CreatorId != user.ID) {
+	if err != nil || (!reqUser.IsAdmin() && s.CreatorId != user.ID) {
 		common.ErrorStrResp(c, "sharing not found", 404)
 		return
+	}
+	if reqUser.IsAdmin() && req.CreatorName == "" {
+		user = s.Creator
 	}
 	s.Files = req.Files
 	s.Expires = req.Expires
@@ -464,6 +470,7 @@ func UpdateSharing(c *gin.Context) {
 	s.Header = req.Header
 	s.Readme = req.Readme
 	s.Remark = req.Remark
+	s.Creator = user
 	if err = op.UpdateSharing(s); err != nil {
 		common.ErrorResp(c, err, 500)
 	} else {
@@ -476,7 +483,7 @@ func UpdateSharing(c *gin.Context) {
 }
 
 func CreateSharing(c *gin.Context) {
-	var req CreateSharingReq
+	var req UpdateSharingReq
 	var err error
 	if err = c.ShouldBind(&req); err != nil {
 		common.ErrorResp(c, err, 400)
@@ -486,24 +493,35 @@ func CreateSharing(c *gin.Context) {
 		common.ErrorStrResp(c, "must add at least 1 object", 400)
 		return
 	}
-	user := c.Request.Context().Value(conf.UserKey).(*model.User)
-	if !user.CanShare() {
-		common.ErrorStrResp(c, "permission denied", 403)
-		return
+	var user *model.User
+	reqUser := c.Request.Context().Value(conf.UserKey).(*model.User)
+	if reqUser.IsAdmin() && req.CreatorName != "" {
+		user, err = op.GetUserByName(req.CreatorName)
+		if err != nil {
+			common.ErrorStrResp(c, "no such a user", 400)
+			return
+		}
+	} else {
+		user = reqUser
+		if !user.CanShare() || (!user.IsAdmin() && req.ID != "") {
+			common.ErrorStrResp(c, "permission denied", 403)
+			return
+		}
 	}
 	for i, s := range req.Files {
 		s = utils.FixAndCleanPath(s)
 		req.Files[i] = s
-		if !user.IsAdmin() && !strings.HasPrefix(s, user.BasePath) {
+		if !reqUser.IsAdmin() && !strings.HasPrefix(s, user.BasePath) {
 			common.ErrorStrResp(c, fmt.Sprintf("permission denied to share path [%s]", s), 500)
 			return
 		}
 	}
 	s := &model.Sharing{
 		SharingDB: &model.SharingDB{
+			ID:          req.ID,
 			Expires:     req.Expires,
 			Pwd:         req.Pwd,
-			Accessed:    0,
+			Accessed:    req.Accessed,
 			MaxAccessed: req.MaxAccessed,
 			Disabled:    req.Disabled,
 			Sort:        req.Sort,

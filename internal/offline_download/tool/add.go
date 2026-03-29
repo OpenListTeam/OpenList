@@ -2,18 +2,17 @@ package tool
 
 import (
 	"context"
-	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
-
-	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
-
 	"net/url"
 	stdpath "path"
 	"path/filepath"
 
 	_115 "github.com/OpenListTeam/OpenList/v4/drivers/115"
+	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
+	_123 "github.com/OpenListTeam/OpenList/v4/drivers/123"
+	_123_open "github.com/OpenListTeam/OpenList/v4/drivers/123_open"
 	"github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder"
+	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -22,6 +21,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )
@@ -103,6 +103,19 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 			tempDir = args.DstDirPath
 		} else {
 			tempDir = filepath.Join(setting.GetStr(conf.Pan115OpenTempDir), uid)
+		}
+	case "123 Open":
+		if _, ok := storage.(*_123_open.Open123); ok && dstDirActualPath != "/" {
+			// directly offline downloading to the root path is not allowed via 123 open platform
+			tempDir = args.DstDirPath
+		} else {
+			tempDir = filepath.Join(setting.GetStr(conf.Pan123OpenTempDir), uid)
+		}
+	case "123Pan":
+		if _, ok := storage.(*_123.Pan123); ok {
+			tempDir = args.DstDirPath
+		} else {
+			tempDir = filepath.Join(setting.GetStr(conf.Pan123TempDir), uid)
 		}
 	case "PikPak":
 		if _, ok := storage.(*pikpak.PikPak); ok {

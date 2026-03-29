@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"math"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -18,7 +17,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -62,7 +60,7 @@ const (
 	VideoDataType    = "video"
 	DefaultChunkSize = int64(5 * 1024 * 1024) // 5MB
 	MaxRetryAttempts = 3                      // 最大重试次数
-	UserAgent        = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+	UserAgent        = base.UserAgentNT
 	Region           = "cn-north-1"
 	UploadTimeout    = 3 * time.Minute
 )
@@ -486,7 +484,7 @@ func (d *Doubao) Upload(ctx context.Context, config *UploadConfig, dstDir model.
 			"Authorization":       {storeInfo.Auth},
 			"Content-Type":        {"application/octet-stream"},
 			"Content-Crc32":       {crc32Value},
-			"Content-Length":      {fmt.Sprintf("%d", file.GetSize())},
+			"Content-Length":      {strconv.FormatInt(file.GetSize(), 10)},
 			"Content-Disposition": {fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI))},
 		}
 		res, err := base.HttpClient.Do(req)
@@ -562,9 +560,7 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 		retry.MaxJitter(200*time.Millisecond),
 	)
 
-	var partsMutex sync.Mutex
 	// 并行上传所有分片
-	hash := crc32.NewIEEE()
 	for partIndex := range totalParts {
 		if utils.IsCanceled(uploadCtx) {
 			break
@@ -577,33 +573,39 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 		if partIndex == totalParts-1 {
 			size = fileSize - offset
 		}
-		var reader *stream.SectionReader
-		var rateLimitedRd io.Reader
+		var reader io.ReadSeeker
 		crc32Value := ""
 		threadG.GoWithLifecycle(errgroup.Lifecycle{
-			Before: func(ctx context.Context) error {
-				if reader == nil {
-					var err error
-					reader, err = ss.GetSectionReader(offset, size)
-					if err != nil {
-						return err
-					}
-					hash.Reset()
-					w, err := utils.CopyWithBuffer(hash, reader)
+			Before: func(ctx context.Context) (err error) {
+				reader, err = ss.GetSectionReader(offset, size)
+				return
+			},
+			Do: func(ctx context.Context) (err error) {
+				reader.Seek(0, io.SeekStart)
+				if crc32Value == "" {
+					// 把耗时的计算放在这里，避免阻塞其他协程
+					crc32Hash := crc32.NewIEEE()
+					w, err := utils.CopyWithBuffer(crc32Hash, reader)
 					if w != size {
 						return fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", size, w, err)
 					}
-					crc32Value = hex.EncodeToString(hash.Sum(nil))
-					rateLimitedRd = driver.NewLimitedUploadStream(ctx, reader)
+					crc32Value = hex.EncodeToString(crc32Hash.Sum(nil))
+					reader.Seek(0, io.SeekStart)
 				}
-				return nil
-			},
-			Do: func(ctx context.Context) error {
-				reader.Seek(0, io.SeekStart)
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s?uploadid=%s&part_number=%d&phase=transfer", uploadUrl, uploadID, partNumber), rateLimitedRd)
+				req, err := http.NewRequestWithContext(
+					ctx,
+					http.MethodPost,
+					uploadUrl,
+					driver.NewLimitedUploadStream(ctx, reader),
+				)
 				if err != nil {
 					return err
 				}
+				query := req.URL.Query()
+				query.Add("uploadid", uploadID)
+				query.Add("part_number", strconv.FormatInt(partNumber, 10))
+				query.Add("phase", "transfer")
+				req.URL.RawQuery = query.Encode()
 				req.Header = map[string][]string{
 					"Referer":             {BaseURL + "/"},
 					"Origin":              {BaseURL},
@@ -612,7 +614,7 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 					"Authorization":       {storeInfo.Auth},
 					"Content-Type":        {"application/octet-stream"},
 					"Content-Crc32":       {crc32Value},
-					"Content-Length":      {fmt.Sprintf("%d", size)},
+					"Content-Length":      {strconv.FormatInt(size, 10)},
 					"Content-Disposition": {fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI))},
 				}
 				res, err := base.HttpClient.Do(req)
@@ -629,16 +631,14 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 					return fmt.Errorf("upload part failed: crc32 mismatch, expected %s, got %s", crc32Value, uploadResp.Data.Crc32)
 				}
 				// 记录成功上传的分片
-				partsMutex.Lock()
 				parts[partIndex] = UploadPart{
 					PartNumber: strconv.FormatInt(partNumber, 10),
 					Etag:       uploadResp.Data.Etag,
 					Crc32:      crc32Value,
 				}
-				partsMutex.Unlock()
 				// 更新进度
-				progress := 10.0 + 90.0*float64(threadG.Success()+1)/float64(totalParts)
-				up(math.Min(progress, 95.0))
+				progress := 95 * float64(threadG.Success()+1) / float64(totalParts)
+				up(progress)
 				return nil
 			},
 			After: func(err error) {

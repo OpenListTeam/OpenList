@@ -80,6 +80,13 @@ func getMainItems(config driver.Config) []driver.Item {
 			Required: true,
 			Help:     "The cache expiration time for this storage",
 		})
+		items = append(items, driver.Item{
+			Name:     "custom_cache_policies",
+			Type:     conf.TypeText,
+			Default:  "",
+			Required: false,
+			Help:     "The cache expiration rules for this storage",
+		})
 	}
 	if config.MustProxy() {
 		items = append(items, driver.Item{
@@ -90,17 +97,32 @@ func getMainItems(config driver.Config) []driver.Item {
 			Required: true,
 		})
 	} else {
-		items = append(items, []driver.Item{{
-			Name: "web_proxy",
-			Type: conf.TypeBool,
-		}, {
-			Name:     "webdav_policy",
-			Type:     conf.TypeSelect,
-			Options:  "302_redirect,use_proxy_url,native_proxy",
-			Default:  "302_redirect",
-			Required: true,
-		},
-		}...)
+		if config.DefaultProxy() {
+			items = append(items, []driver.Item{{
+				Name:    "web_proxy",
+				Type:    conf.TypeBool,
+				Default: "true",
+			}, {
+				Name:     "webdav_policy",
+				Type:     conf.TypeSelect,
+				Options:  "302_redirect,use_proxy_url,native_proxy",
+				Default:  "native_proxy",
+				Required: true,
+			},
+			}...)
+		} else {
+			items = append(items, []driver.Item{{
+				Name: "web_proxy",
+				Type: conf.TypeBool,
+			}, {
+				Name:     "webdav_policy",
+				Type:     conf.TypeSelect,
+				Options:  "302_redirect,use_proxy_url,native_proxy",
+				Default:  "302_redirect",
+				Required: true,
+			},
+			}...)
+		}
 		if config.ProxyRangeOption {
 			item := driver.Item{
 				Name: "proxy_range",

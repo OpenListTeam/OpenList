@@ -65,6 +65,7 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [WebDAV](https://en.wikipedia.org/wiki/WebDAV)
   - [x] Teambition([中国](https://www.teambition.com), [国際](https://us.teambition.com))
   - [x] [Mediatrack](https://www.mediatrack.cn)
+  - [x] [ProtonDrive](https://proton.me/drive)
   - [x] [139yun](https://yun.139.com)（個人、家族、グループ）
   - [x] [YandexDisk](https://disk.yandex.com)
   - [x] [BaiduNetdisk](http://pan.baidu.com)
@@ -93,6 +94,7 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [Weiyun](https://www.weiyun.com)
+  - [x] [MediaFire](https://www.mediafire.com)
 - [x] 簡単にデプロイでき、すぐに使える
 - [x] ファイルプレビュー（PDF、markdown、コード、テキストなど）
 - [x] ギャラリーモードでの画像プレビュー
@@ -120,11 +122,16 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 
 ## デモ
 
-N/A（再構築中）
+- 🌎 [グローバルデモ](https://demo.oplist.org)
+- 🇨🇳 [CNデモ](https://demo.oplist.org.cn)
 
 ## ディスカッション
 
 一般的な質問は [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) をご利用ください。***Issues* はバグ報告と機能リクエスト専用です。**
+
+## スポンサー
+
+[![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
 ## ライセンス
 

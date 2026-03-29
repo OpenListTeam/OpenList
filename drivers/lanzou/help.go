@@ -1,7 +1,8 @@
 package lanzou
 
 import (
-	"bytes"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -9,8 +10,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	log "github.com/sirupsen/logrus"
 )
 
 const DAY time.Duration = 84600000000000
@@ -122,20 +121,26 @@ var findAcwScV2Reg = regexp.MustCompile(`arg1='([0-9A-Z]+)'`)
 
 // 在页面被过多访问或其他情况下，有时候会先返回一个加密的页面，其执行计算出一个acw_sc__v2后放入页面后再重新访问页面才能获得正常页面
 // 若该页面进行了js加密，则进行解密，计算acw_sc__v2，并加入cookie
-func CalcAcwScV2(html string) (string, error) {
-	log.Debugln("acw_sc__v2", html)
-	acwScV2s := findAcwScV2Reg.FindStringSubmatch(html)
-	if len(acwScV2s) != 2 {
-		return "", fmt.Errorf("无法匹配acw_sc__v2")
+func CalcAcwScV2(htmlContent string) (string, error) {
+	matches := findAcwScV2Reg.FindStringSubmatch(htmlContent)
+	if len(matches) != 2 {
+		return "", errors.New("无法匹配到 arg1 参数")
 	}
-	return HexXor(Unbox(acwScV2s[1]), "3000176000856006061501533003690027800375"), nil
+	arg1 := matches[1]
+
+	mask := "3000176000856006061501533003690027800375"
+	result, err := hexXor(unbox(arg1), mask)
+	if err != nil {
+		return "", fmt.Errorf("hexXor 操作失败: %w", err)
+	}
+
+	return result, nil
 }
 
-func Unbox(hex string) string {
+func unbox(hex string) string {
 	var box = []int{6, 28, 34, 31, 33, 18, 30, 23, 9, 8, 19, 38, 17, 24, 0, 5, 32, 21, 10, 22, 25, 14, 15, 3, 16, 27, 13, 35, 2, 29, 11, 26, 4, 36, 1, 39, 37, 7, 20, 12}
 	var newBox = make([]byte, len(hex))
-	for i := 0; i < len(box); i++ {
-		j := box[i]
+	for i, j := range box {
 		if len(newBox) > j {
 			newBox[j] = hex[i]
 		}
@@ -143,14 +148,21 @@ func Unbox(hex string) string {
 	return string(newBox)
 }
 
-func HexXor(hex1, hex2 string) string {
-	out := bytes.NewBuffer(make([]byte, len(hex1)))
-	for i := 0; i < len(hex1) && i < len(hex2); i += 2 {
-		v1, _ := strconv.ParseInt(hex1[i:i+2], 16, 64)
-		v2, _ := strconv.ParseInt(hex2[i:i+2], 16, 64)
-		out.WriteString(strconv.FormatInt(v1^v2, 16))
+func hexXor(hex1, hex2 string) (string, error) {
+	bytes1, err := hex.DecodeString(hex1)
+	if err != nil {
+		return "", fmt.Errorf("解码 hex1 失败: %w", err)
 	}
-	return out.String()
+	bytes2, err := hex.DecodeString(hex2)
+	if err != nil {
+		return "", fmt.Errorf("解码 hex2 失败: %w", err)
+	}
+	minLength := min(len(bytes2), len(bytes1))
+	resultBytes := make([]byte, minLength)
+	for i := range minLength {
+		resultBytes[i] = bytes1[i] ^ bytes2[i]
+	}
+	return hex.EncodeToString(resultBytes), nil
 }
 
 var findDataReg = regexp.MustCompile(`data[:\s]+({[^}]+})`)    // 查找json

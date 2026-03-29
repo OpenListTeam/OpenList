@@ -1,18 +1,20 @@
 package net
 
 import (
-	"fmt"
 	"io"
-	"math"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/rclone/rclone/lib/readers"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -305,39 +307,9 @@ func rangesMIMESize(ranges []http_range.Range, contentType string, contentSize i
 	return encSize, nil
 }
 
-// LimitedReadCloser wraps a io.ReadCloser and limits the number of bytes that can be read from it.
-type LimitedReadCloser struct {
-	rc        io.ReadCloser
-	remaining int
-}
-
-func (l *LimitedReadCloser) Read(buf []byte) (int, error) {
-	if l.remaining <= 0 {
-		return 0, io.EOF
-	}
-
-	if len(buf) > l.remaining {
-		buf = buf[0:l.remaining]
-	}
-
-	n, err := l.rc.Read(buf)
-	l.remaining -= n
-
-	return n, err
-}
-
-func (l *LimitedReadCloser) Close() error {
-	return l.rc.Close()
-}
-
 // GetRangedHttpReader some http server doesn't support "Range" header,
 // so this function read readCloser with whole data, skip offset, then return ReaderCloser.
 func GetRangedHttpReader(readCloser io.ReadCloser, offset, length int64) (io.ReadCloser, error) {
-	var length_int int
-	if length > math.MaxInt {
-		return nil, fmt.Errorf("doesnot support length bigger than int32 max ")
-	}
-	length_int = int(length)
 
 	if offset > 100*1024*1024 {
 		log.Warnf("offset is more than 100MB, if loading data from internet, high-latency and wasting of bandwidth is expected")
@@ -348,5 +320,25 @@ func GetRangedHttpReader(readCloser io.ReadCloser, offset, length int64) (io.Rea
 	}
 
 	// return an io.ReadCloser that is limited to `length` bytes.
-	return &LimitedReadCloser{readCloser, length_int}, nil
+	return readers.NewLimitedReadCloser(readCloser, length), nil
+}
+
+// SetProxyIfConfigured sets proxy for HTTP Transport if configured
+func SetProxyIfConfigured(transport *http.Transport) {
+	// If proxy address is configured, override environment variable settings
+	if conf.Conf.ProxyAddress != "" {
+		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+}
+
+// SetRestyProxyIfConfigured sets proxy for Resty client if configured
+func SetRestyProxyIfConfigured(client *resty.Client) {
+	// If proxy address is configured, override environment variable settings
+	if conf.Conf.ProxyAddress != "" {
+		if proxyURL, err := url.Parse(conf.Conf.ProxyAddress); err == nil {
+			client.SetProxy(proxyURL.String())
+		}
+	}
 }

@@ -27,17 +27,25 @@ import (
 
 // do others that not defined in Driver interface
 
+// Google Drive API field constants
+const (
+	// File list query fields
+	FilesListFields = "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken"
+	// Single file query fields
+	FileInfoFields = "id,name,mimeType,size,md5Checksum,sha1Checksum,sha256Checksum"
+)
+
 type googleDriveServiceAccount struct {
-	//Type                    string `json:"type"`
-	//ProjectID               string `json:"project_id"`
-	//PrivateKeyID            string `json:"private_key_id"`
+	// Type                    string `json:"type"`
+	// ProjectID               string `json:"project_id"`
+	// PrivateKeyID            string `json:"private_key_id"`
 	PrivateKey  string `json:"private_key"`
 	ClientEMail string `json:"client_email"`
-	//ClientID                string `json:"client_id"`
-	//AuthURI                 string `json:"auth_uri"`
+	// ClientID                string `json:"client_id"`
+	// AuthURI                 string `json:"auth_uri"`
 	TokenURI string `json:"token_uri"`
-	//AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
-	//ClientX509CertURL       string `json:"client_x509_cert_url"`
+	// AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
+	// ClientX509CertURL       string `json:"client_x509_cert_url"`
 }
 
 func (d *GoogleDrive) refreshToken() error {
@@ -50,7 +58,6 @@ func (d *GoogleDrive) refreshToken() error {
 			ErrorMessage string `json:"text"`
 		}
 		_, err := base.RestyClient.R().
-			SetHeader("User-Agent", "Mozilla/5.0 (Macintosh; Apple macOS 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/138.0.0.0 Openlist/425.6.30").
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -235,7 +242,7 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 		}
 		query := map[string]string{
 			"orderBy":  orderBy,
-			"fields":   "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken",
+			"fields":   FilesListFields,
 			"pageSize": "1000",
 			"q":        fmt.Sprintf("'%s' in parents and trashed = false", id),
 			//"includeItemsFromAllDrives": "true",
@@ -249,13 +256,84 @@ func (d *GoogleDrive) getFiles(id string) ([]File, error) {
 			return nil, err
 		}
 		pageToken = resp.NextPageToken
+
+		// Batch process shortcuts, API calls only for file shortcuts
+		shortcutTargetIds := make([]string, 0)
+		shortcutIndices := make([]int, 0)
+
+		// Collect target IDs of all file shortcuts (skip folder shortcuts)
+		for i := range resp.Files {
+			if resp.Files[i].MimeType == "application/vnd.google-apps.shortcut" &&
+				resp.Files[i].ShortcutDetails.TargetId != "" &&
+				resp.Files[i].ShortcutDetails.TargetMimeType != "application/vnd.google-apps.folder" {
+				shortcutTargetIds = append(shortcutTargetIds, resp.Files[i].ShortcutDetails.TargetId)
+				shortcutIndices = append(shortcutIndices, i)
+			}
+		}
+
+		// Batch get target file info (only for file shortcuts)
+		if len(shortcutTargetIds) > 0 {
+			targetFiles := d.batchGetTargetFilesInfo(shortcutTargetIds)
+			// Update shortcut file info
+			for j, targetId := range shortcutTargetIds {
+				if targetFile, exists := targetFiles[targetId]; exists {
+					fileIndex := shortcutIndices[j]
+					if targetFile.Size != "" {
+						resp.Files[fileIndex].Size = targetFile.Size
+					}
+					if targetFile.MD5Checksum != "" {
+						resp.Files[fileIndex].MD5Checksum = targetFile.MD5Checksum
+					}
+					if targetFile.SHA1Checksum != "" {
+						resp.Files[fileIndex].SHA1Checksum = targetFile.SHA1Checksum
+					}
+					if targetFile.SHA256Checksum != "" {
+						resp.Files[fileIndex].SHA256Checksum = targetFile.SHA256Checksum
+					}
+				}
+			}
+		}
+
 		res = append(res, resp.Files...)
 	}
 	return res, nil
 }
 
+// getTargetFileInfo gets target file details for shortcuts
+func (d *GoogleDrive) getTargetFileInfo(targetId string) (File, error) {
+	var targetFile File
+	url := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s", targetId)
+	query := map[string]string{
+		"fields": FileInfoFields,
+	}
+	_, err := d.request(url, http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(query)
+	}, &targetFile)
+	if err != nil {
+		return File{}, err
+	}
+	return targetFile, nil
+}
+
+// batchGetTargetFilesInfo batch gets target file info, sequential processing to avoid concurrency complexity
+func (d *GoogleDrive) batchGetTargetFilesInfo(targetIds []string) map[string]File {
+	if len(targetIds) == 0 {
+		return make(map[string]File)
+	}
+
+	result := make(map[string]File)
+	// Sequential processing to avoid concurrency complexity
+	for _, targetId := range targetIds {
+		file, err := d.getTargetFileInfo(targetId)
+		if err == nil {
+			result[targetId] = file
+		}
+	}
+	return result
+}
+
 func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, url string, up driver.UpdateProgress) error {
-	var defaultChunkSize = d.ChunkSize * 1024 * 1024
+	defaultChunkSize := d.ChunkSize * 1024 * 1024
 	ss, err := stream.NewStreamSectionReader(file, int(defaultChunkSize), &up)
 	if err != nil {
 		return err
@@ -304,6 +382,7 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 			up(float64(offset+chunkSize) / float64(file.GetSize()) * 100)
 			return nil
 		},
+			retry.Context(ctx),
 			retry.Attempts(3),
 			retry.DelayType(retry.BackOffDelay),
 			retry.Delay(time.Second))
@@ -314,4 +393,19 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 		offset += chunkSize
 	}
 	return nil
+}
+
+func (d *GoogleDrive) getAbout(ctx context.Context) (*AboutResp, error) {
+	query := map[string]string{
+		"fields": "storageQuota",
+	}
+	var resp AboutResp
+	_, err := d.request("https://www.googleapis.com/drive/v3/about", http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(query)
+		req.SetContext(ctx)
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

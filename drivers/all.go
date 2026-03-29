@@ -13,9 +13,11 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/189_tv"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/189pc"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/alias"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/alist_v3"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/aliyundrive"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/aliyundrive_open"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/aliyundrive_share"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/autoindex"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/azure_blob"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/baidu_netdisk"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/baidu_photo"
@@ -27,6 +29,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/crypt"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/degoo"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/doubao"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/doubao_new"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/doubao_share"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/dropbox"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/febbox"
@@ -36,12 +39,14 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/google_drive"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/google_photo"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud_open"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/ilanzou"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/ipfs_api"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/kodbox"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/lanzou"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/lenovonas_share"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/local"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/mediafire"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/mediatrack"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/mega"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/micloud"
@@ -55,6 +60,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/openlist_share"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/pikpak_share"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/proton_drive"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/quark_open"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/quark_uc"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/quark_uc_tv"
@@ -75,11 +81,11 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/webdav"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/weiyun"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/wopan"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/wps"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/yandex_disk"
 )
 
 // All do nothing,just for import
 // same as _ import
 func All() {
-
 }
