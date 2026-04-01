@@ -216,3 +216,8 @@ type OfflineDownloadProcessResp struct {
 		Status  int     `json:"status"`
 	} `json:"data"`
 }
+
+type TokenErrResp struct {
+	ErrorDescription string `json:"error_description"`
+	Error            string `json:"error"`
+}
