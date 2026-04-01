@@ -43,7 +43,37 @@ func (d *Open123) getAccessToken(forceRefresh bool) (string, error) {
 }
 
 func (d *Open123) flushAccessToken() error {
-	// directly send request to avoid deadlock
+	// 使用在线API刷新Token，无需ClientID和ClientSecret
+	if d.UseOnlineAPI && len(d.APIAddress) > 0 {
+		u := d.APIAddress
+		var resp struct {
+			RefreshToken string `json:"refresh_token"`
+			AccessToken  string `json:"access_token"`
+			ErrorMessage string `json:"text"`
+		}
+		_, err := base.RestyClient.R().
+			SetResult(&resp).
+			SetQueryParams(map[string]string{
+				"refresh_ui": d.RefreshToken,
+				"server_use": "true",
+				"driver_txt": "123cloud_oa",
+			}).
+			Get(u)
+		if err != nil {
+			return err
+		}
+		if resp.RefreshToken == "" || resp.AccessToken == "" {
+			if resp.ErrorMessage != "" {
+				return fmt.Errorf("failed to refresh token: %s", resp.ErrorMessage)
+			}
+			return fmt.Errorf("empty token returned from official API, a wrong refresh token may have been used")
+		}
+		d.AccessToken = resp.AccessToken
+		d.RefreshToken = resp.RefreshToken
+		op.MustSaveDriverStorage(d)
+		return nil
+	}
+	// 走原有的刷新逻辑
 	req := base.RestyClient.R()
 	req.SetHeaders(map[string]string{
 		"authorization": "Bearer " + d.AccessToken,

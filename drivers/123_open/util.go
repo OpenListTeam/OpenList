@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
@@ -277,67 +275,4 @@ func (d *Open123) queryOfflineDownloadStatus(ctx context.Context, taskID int) (p
 		return .0, 0, err
 	}
 	return resp.Data.Process, resp.Data.Status, nil
-}
-
-func (d *Open123) _refreshToken() error {
-	// 使用在线API刷新Token，无需ClientID和ClientSecret
-	if d.UseOnlineAPI && len(d.APIAddress) > 0 {
-		u := d.APIAddress
-		var resp struct {
-			RefreshToken string `json:"refresh_token"`
-			AccessToken  string `json:"access_token"`
-			ErrorMessage string `json:"text"`
-		}
-		_, err := base.RestyClient.R().
-			SetResult(&resp).
-			SetQueryParams(map[string]string{
-				"refresh_ui": d.RefreshToken,
-				"server_use": "true",
-				"driver_txt": "123cloud_oa",
-			}).
-			Get(u)
-		if err != nil {
-			return err
-		}
-		if resp.RefreshToken == "" || resp.AccessToken == "" {
-			if resp.ErrorMessage != "" {
-				return fmt.Errorf("failed to refresh token: %s", resp.ErrorMessage)
-			}
-			return fmt.Errorf("empty token returned from official API, a wrong refresh token may have been used")
-		}
-		d.AccessToken = resp.AccessToken
-		d.RefreshToken = resp.RefreshToken
-		op.MustSaveDriverStorage(d)
-		return nil
-	}
-	// 使用本地客户端的情况下检查是否为空
-	if d.ClientID == "" || d.ClientSecret == "" {
-		return fmt.Errorf("empty ClientID or ClientSecret")
-	}
-	// 走原有的刷新逻辑
-	u := "https://open-api.123pan.com/api/v1/oauth2/access_token"
-	var resp base.TokenResp
-	var e TokenErrResp
-	_, err := base.RestyClient.R().
-		SetResult(&resp).
-		SetError(&e).
-		SetQueryParams(map[string]string{
-			"grant_type":    "refresh_token",
-			"refresh_token": d.RefreshToken,
-			"client_id":     d.ClientID,
-			"client_secret": d.ClientSecret,
-		}).
-		Get(u)
-	if err != nil {
-		return err
-	}
-	if e.Error != "" {
-		return fmt.Errorf("%s : %s", e.Error, e.ErrorDescription)
-	}
-	if resp.RefreshToken == "" {
-		return errs.EmptyToken
-	}
-	d.AccessToken, d.RefreshToken = resp.AccessToken, resp.RefreshToken
-	op.MustSaveDriverStorage(d)
-	return nil
 }
