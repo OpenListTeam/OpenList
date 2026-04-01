@@ -134,7 +134,8 @@ func doScan(cfg *model.MediaConfig, p *ScanProgress) error {
 
 	if cfg.PathMerge {
 		// 路径合并模式：每个子文件夹作为一个条目
-		entries, err := fs.List(ctx, scanRoot, &fs.ListArgs{NoLog: true})
+		// 先刷新根目录缓存，再扫描
+		entries, err := fs.List(ctx, scanRoot, &fs.ListArgs{NoLog: true, Refresh: true})
 		if err != nil {
 			return err
 		}
@@ -144,7 +145,7 @@ func doScan(cfg *model.MediaConfig, p *ScanProgress) error {
 			}
 		}
 	} else {
-		// 普通模式：递归扫描所有匹配文件
+		// 普通模式：递归扫描所有匹配文件（每个目录都刷新缓存）
 		if err := walkVFS(ctx, scanRoot, cfg.MediaType, &targets); err != nil {
 			return err
 		}
@@ -209,9 +210,9 @@ func FetchFileReader(ctx context.Context, vfsPath string) io.ReadCloser {
 	return resp.Body
 }
 
-// walkVFS 递归遍历 VFS 路径，收集匹配的媒体文件路径
+// walkVFS 递归遍历 VFS 路径，收集匹配的媒体文件路径（每个目录都刷新缓存）
 func walkVFS(ctx context.Context, dirPath string, mediaType model.MediaType, targets *[]string) error {
-	entries, err := fs.List(ctx, dirPath, &fs.ListArgs{NoLog: true})
+	entries, err := fs.List(ctx, dirPath, &fs.ListArgs{NoLog: true, Refresh: true})
 	if err != nil {
 		log.Warnf("media scan: list vfs path [%s] error: %v", dirPath, err)
 		return nil // 跳过无权限目录，不中断整体扫描
