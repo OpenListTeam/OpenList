@@ -124,12 +124,26 @@ type AccessTokenResp struct {
 	} `json:"data"`
 }
 
+type TokenPayload struct {
+	AccessToken       string `json:"access_token"`
+	AccessTokenCamel  string `json:"accessToken"`
+	RefreshToken      string `json:"refresh_token"`
+	RefreshTokenCamel string `json:"refreshToken"`
+	ExpiresIn         int64  `json:"expires_in"`
+	ExpiresInCamel    int64  `json:"expiresIn"`
+	ExpiredAt         string `json:"expiredAt"`
+}
+
 type RefreshTokenResp struct {
-	AccessToken  string `json:"access_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	RefreshToken string `json:"refresh_token"`
-	Scope        string `json:"scope"`
-	TokenType    string `json:"token_type"`
+	TokenPayload
+	Code             int          `json:"code"`
+	Message          string       `json:"message"`
+	Data             TokenPayload `json:"data"`
+	Scope            string       `json:"scope"`
+	TokenType        string       `json:"token_type"`
+	ErrorDescription string       `json:"error_description"`
+	Error            string       `json:"error"`
+	Text             string       `json:"text"`
 }
 
 type UserInfoResp struct {
@@ -215,9 +229,4 @@ type OfflineDownloadProcessResp struct {
 		Process float64 `json:"process"`
 		Status  int     `json:"status"`
 	} `json:"data"`
-}
-
-type TokenErrResp struct {
-	ErrorDescription string `json:"error_description"`
-	Error            string `json:"error"`
 }
