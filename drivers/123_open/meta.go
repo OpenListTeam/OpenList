@@ -18,7 +18,7 @@ type Addition struct {
 
 	// 使用在线API
 	UseOnlineAPI bool   `json:"use_online_api" default:"true"`
-	APIAddress   string `json:"api_url_address" default:"https://api.oplist.org/123cloud/callback"`
+	APIAddress   string `json:"api_url_address" default:"https://api.oplist.org/123cloud/renewapi"`
 
 	//  用户名+密码方式登录的AccessToken可以兼容
 	//Username string `json:"username" required:"false"`
