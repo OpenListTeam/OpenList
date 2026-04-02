@@ -1,4 +1,4 @@
-//go:build !(linux && (mips || mips64 || mipsle))
+//go:build !sqlite_cgo_compat && !(linux && (mips || mips64 || mipsle))
 
 package bootstrap
 

@@ -404,12 +404,16 @@ BuildReleaseLinuxMusl() {
   for i in "${!OS_ARCHES[@]}"; do
     os_arch=${OS_ARCHES[$i]}
     cgo_cc=${CGO_ARGS[$i]}
+    build_tags="jsoniter"
+    if [ "$os_arch" = "linux-musl-mips" ] || [ "$os_arch" = "linux-musl-mips64" ] || [ "$os_arch" = "linux-musl-mipsle" ]; then
+      build_tags="jsoniter,sqlite_cgo_compat"
+    fi
     echo building for ${os_arch}
     export GOOS=${os_arch%%-*}
     export GOARCH=${os_arch##*-}
     export CC=${cgo_cc}
     export CGO_ENABLED=1
-    go build -o ./build/$appName-$os_arch -ldflags="$muslflags" -tags=jsoniter .
+    go build -o ./build/$appName-$os_arch -ldflags="$muslflags" -tags="$build_tags" .
   done
 }
 
