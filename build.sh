@@ -48,6 +48,19 @@ ldflags="\
 -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=$webVersion' \
 "
 
+# Keep sqlite driver tag selection centralized to avoid target drift.
+GetBuildTagsForTarget() {
+  local target="$1"
+  case "$target" in
+    linux-loong64|linux-musl-loong64|linux-musl-mips|linux-musl-mips64|linux-musl-mipsle)
+      echo "jsoniter,sqlite_cgo_compat"
+      ;;
+    *)
+      echo "jsoniter"
+      ;;
+  esac
+}
+
 FetchWebRolling() {
   pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/rolling\"")
   pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[].browser_download_url')
@@ -193,10 +206,7 @@ BuildDockerMultiplatform() {
     cgo_cc=${CGO_ARGS[$i]}
     os=${os_arch%%-*}
     arch=${os_arch##*-}
-    build_tags="jsoniter"
-    if [ "$os_arch" = "linux-loong64" ]; then
-      build_tags="jsoniter,sqlite_cgo_compat"
-    fi
+    build_tags=$(GetBuildTagsForTarget "$os_arch")
     export GOOS=$os
     export GOARCH=$arch
     export CC=${cgo_cc}
@@ -241,6 +251,8 @@ BuildLoongGLIBC() {
   local target_abi="$2"
   local output_file="$1"
   local oldWorldGoVersion="1.25.0"
+  local loong_tags
+  loong_tags=$(GetBuildTagsForTarget "linux-loong64")
   
   if [ "$target_abi" = "abi1.0" ]; then
     echo building for linux-loong64-abi1.0
@@ -310,7 +322,6 @@ BuildLoongGLIBC() {
     echo "Using isolated cache directory: $abi1_cache_dir"
     
     # Use env command to set environment variables locally without affecting global environment
-    loong_tags="jsoniter,sqlite_cgo_compat"
     if ! env GOOS=linux GOARCH=loong64 \
         CC="$(pwd)/gcc8-loong64-abi1.0/bin/loongarch64-linux-gnu-gcc" \
         CXX="$(pwd)/gcc8-loong64-abi1.0/bin/loongarch64-linux-gnu-g++" \
@@ -368,7 +379,6 @@ BuildLoongGLIBC() {
     export CC=$(pwd)/gcc12-loong64-abi2.0/bin/loongarch64-unknown-linux-gnu-gcc
     export CXX=$(pwd)/gcc12-loong64-abi2.0/bin/loongarch64-unknown-linux-gnu-g++
     export CGO_ENABLED=1
-    loong_tags="jsoniter,sqlite_cgo_compat"
     
     # Use standard Go compiler for new-world build
     echo "Building with standard Go compiler for new-world ABI2.0..."
@@ -410,10 +420,7 @@ BuildReleaseLinuxMusl() {
   for i in "${!OS_ARCHES[@]}"; do
     os_arch=${OS_ARCHES[$i]}
     cgo_cc=${CGO_ARGS[$i]}
-    build_tags="jsoniter"
-    if [ "$os_arch" = "linux-musl-mips" ] || [ "$os_arch" = "linux-musl-mips64" ] || [ "$os_arch" = "linux-musl-mipsle" ] || [ "$os_arch" = "linux-musl-loong64" ]; then
-      build_tags="jsoniter,sqlite_cgo_compat"
-    fi
+    build_tags=$(GetBuildTagsForTarget "$os_arch")
     echo building for ${os_arch}
     export GOOS=${os_arch%%-*}
     export GOARCH=${os_arch##*-}
