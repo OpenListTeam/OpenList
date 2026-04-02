@@ -64,10 +64,10 @@ jobs:
           - target: "!(*musl*|*windows-arm64*|*windows7-*|*android*|*freebsd*)" # xgo and loongarch
             hash: "md5"
             flags: ""
-          - target: "linux-(mips|mips64|mipsle)-musl*" # musl-mips-family
+          - target: "linux-(mips|mips64|mipsle|loong64)-musl*" # musl-compat-family
             hash: "md5-linux-musl-mips"
             flags: "-tags=sqlite_cgo_compat"
-          - target: "linux-!(arm*|mips|mips64|mipsle)-musl*" # musl-not-arm (exclude mips-family)
+          - target: "linux-!(arm*|mips|mips64|mipsle|loong64)-musl*" # musl-not-arm (exclude compat-family)
             hash: "md5-linux-musl"
             flags: ""
           - target: "linux-arm*-musl*" #musl-arm

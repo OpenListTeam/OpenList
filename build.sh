@@ -193,11 +193,15 @@ BuildDockerMultiplatform() {
     cgo_cc=${CGO_ARGS[$i]}
     os=${os_arch%%-*}
     arch=${os_arch##*-}
+    build_tags="jsoniter"
+    if [ "$os_arch" = "linux-loong64" ]; then
+      build_tags="jsoniter,sqlite_cgo_compat"
+    fi
     export GOOS=$os
     export GOARCH=$arch
     export CC=${cgo_cc}
     echo "building for $os_arch"
-    go build -o build/$os/$arch/"$appName" -ldflags="$docker_lflags" -tags=jsoniter .
+    go build -o build/$os/$arch/"$appName" -ldflags="$docker_lflags" -tags="$build_tags" .
   done
 
   DOCKER_ARM_ARCHES=(linux-arm/v6 linux-arm/v7)
@@ -306,12 +310,13 @@ BuildLoongGLIBC() {
     echo "Using isolated cache directory: $abi1_cache_dir"
     
     # Use env command to set environment variables locally without affecting global environment
+    loong_tags="jsoniter,sqlite_cgo_compat"
     if ! env GOOS=linux GOARCH=loong64 \
         CC="$(pwd)/gcc8-loong64-abi1.0/bin/loongarch64-linux-gnu-gcc" \
         CXX="$(pwd)/gcc8-loong64-abi1.0/bin/loongarch64-linux-gnu-g++" \
         CGO_ENABLED=1 \
         GOCACHE="$abi1_cache_dir" \
-        $(pwd)/go-loong64-abi1.0/bin/go build -a -o "$output_file" -ldflags="$ldflags" -tags=jsoniter .; then
+        $(pwd)/go-loong64-abi1.0/bin/go build -a -o "$output_file" -ldflags="$ldflags" -tags="$loong_tags" .; then
       echo "Error: Build failed with patched Go compiler"
       echo "Attempting retry with cache cleanup..."
       env GOCACHE="$abi1_cache_dir" $(pwd)/go-loong64-abi1.0/bin/go clean -cache
@@ -320,7 +325,7 @@ BuildLoongGLIBC() {
           CXX="$(pwd)/gcc8-loong64-abi1.0/bin/loongarch64-linux-gnu-g++" \
           CGO_ENABLED=1 \
           GOCACHE="$abi1_cache_dir" \
-          $(pwd)/go-loong64-abi1.0/bin/go build -a -o "$output_file" -ldflags="$ldflags" -tags=jsoniter .; then
+          $(pwd)/go-loong64-abi1.0/bin/go build -a -o "$output_file" -ldflags="$ldflags" -tags="$loong_tags" .; then
         echo "Error: Build failed again after cache cleanup"
         echo "Build environment details:"
         echo "GOOS=linux"
@@ -363,14 +368,15 @@ BuildLoongGLIBC() {
     export CC=$(pwd)/gcc12-loong64-abi2.0/bin/loongarch64-unknown-linux-gnu-gcc
     export CXX=$(pwd)/gcc12-loong64-abi2.0/bin/loongarch64-unknown-linux-gnu-g++
     export CGO_ENABLED=1
+    loong_tags="jsoniter,sqlite_cgo_compat"
     
     # Use standard Go compiler for new-world build
     echo "Building with standard Go compiler for new-world ABI2.0..."
-    if ! go build -a -o "$output_file" -ldflags="$ldflags" -tags=jsoniter .; then
+    if ! go build -a -o "$output_file" -ldflags="$ldflags" -tags="$loong_tags" .; then
       echo "Error: Build failed with standard Go compiler"
       echo "Attempting retry with cache cleanup..."
       go clean -cache
-      if ! go build -a -o "$output_file" -ldflags="$ldflags" -tags=jsoniter .; then
+      if ! go build -a -o "$output_file" -ldflags="$ldflags" -tags="$loong_tags" .; then
         echo "Error: Build failed again after cache cleanup"
         echo "Build environment details:"
         echo "GOOS=$GOOS"
@@ -405,7 +411,7 @@ BuildReleaseLinuxMusl() {
     os_arch=${OS_ARCHES[$i]}
     cgo_cc=${CGO_ARGS[$i]}
     build_tags="jsoniter"
-    if [ "$os_arch" = "linux-musl-mips" ] || [ "$os_arch" = "linux-musl-mips64" ] || [ "$os_arch" = "linux-musl-mipsle" ]; then
+    if [ "$os_arch" = "linux-musl-mips" ] || [ "$os_arch" = "linux-musl-mips64" ] || [ "$os_arch" = "linux-musl-mipsle" ] || [ "$os_arch" = "linux-musl-loong64" ]; then
       build_tags="jsoniter,sqlite_cgo_compat"
     fi
     echo building for ${os_arch}
