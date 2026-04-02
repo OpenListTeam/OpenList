@@ -15,6 +15,13 @@ var (
 	AccessToken = "https://open-api.123pan.com/api/v1/access_token"
 )
 
+func expiresInToExpiredAt(expiresIn int64) (time.Time, error) {
+	if expiresIn <= 0 {
+		return time.Time{}, errors.New("invalid expires_in from official API")
+	}
+	return time.Now().UTC().Add(time.Duration(expiresIn) * time.Second), nil
+}
+
 type tokenManager struct {
 	// accessToken  string
 	expiredAt    time.Time
@@ -72,13 +79,14 @@ func (d *Open123) flushAccessToken() error {
 			}
 			return fmt.Errorf("empty access_token or refresh_token returned from official API")
 		}
-		if resp.ExpiresIn <= 0 {
-			return errors.New("invalid expires_in from official API")
+		expiredAt, err := expiresInToExpiredAt(resp.ExpiresIn)
+		if err != nil {
+			return err
 		}
 
 		d.AccessToken = resp.AccessToken
 		d.RefreshToken = resp.RefreshToken
-		d.tm.expiredAt = time.Now().UTC().Add(time.Duration(resp.ExpiresIn) * time.Second)
+		d.tm.expiredAt = expiredAt
 		op.MustSaveDriverStorage(d)
 		d.tm.blockRefresh = false
 		return nil
