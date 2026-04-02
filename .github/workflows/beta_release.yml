@@ -63,7 +63,7 @@ jobs:
         include:
           - target: "!(*musl*|*windows-arm64*|*windows7-*|*android*|*freebsd*)" # xgo and loongarch
             hash: "md5"
-          - target: "linux-!(arm*)-musl*" #musl-not-arm
+          - target: "linux-!(arm*)-musl*" # musl-not-arm, keep mips-family targets enabled
             hash: "md5-linux-musl"
           - target: "linux-arm*-musl*" #musl-arm
             hash: "md5-linux-musl-arm"
