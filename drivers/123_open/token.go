@@ -1,7 +1,6 @@
 package _123_open
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,46 +14,6 @@ import (
 var (
 	AccessToken = "https://open-api.123pan.com/api/v1/access_token"
 )
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func firstPositive(values ...int64) int64 {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
-}
-
-func resolveExpiredAt(expiredAt string, expiresIn int64) (time.Time, error) {
-	if expiredAt != "" {
-		t, err := time.Parse(time.RFC3339, expiredAt)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("parse expire time failed: %w", err)
-		}
-		return t.UTC(), nil
-	}
-	if expiresIn > 0 {
-		return time.Now().UTC().Add(time.Duration(expiresIn) * time.Second), nil
-	}
-	return time.Time{}, errors.New("missing expiredAt and expires_in")
-}
-
-func readTokenPayload(resp RefreshTokenResp) (accessToken, refreshToken string, expiresIn int64, expiredAt string) {
-	accessToken = firstNonEmpty(resp.AccessToken, resp.AccessTokenCamel, resp.Data.AccessToken, resp.Data.AccessTokenCamel)
-	refreshToken = firstNonEmpty(resp.RefreshToken, resp.RefreshTokenCamel, resp.Data.RefreshToken, resp.Data.RefreshTokenCamel)
-	expiresIn = firstPositive(resp.ExpiresIn, resp.ExpiresInCamel, resp.Data.ExpiresIn, resp.Data.ExpiresInCamel)
-	expiredAt = firstNonEmpty(resp.ExpiredAt, resp.Data.ExpiredAt)
-	return
-}
 
 type tokenManager struct {
 	// accessToken  string
@@ -82,46 +41,50 @@ func (d *Open123) getAccessToken(forceRefresh bool) (string, error) {
 }
 
 func (d *Open123) flushAccessToken() error {
-	// 使用在线API刷新Token，无需ClientID和ClientSecret
+	// Official app renewapi response contains access_token, refresh_token and expires_in.
 	if d.UseOnlineAPI && d.RefreshToken != "" && len(d.APIAddress) > 0 {
-		u := d.APIAddress
 		var resp RefreshTokenResp
-		res, err := base.RestyClient.R().
+		_, err := base.RestyClient.R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
 				"server_use": "true",
 				"driver_txt": "123cloud_oa",
 			}).
-			Get(u)
+			Get(d.APIAddress)
 		if err != nil {
 			return err
 		}
-		if err = json.Unmarshal(res.Body(), &resp); err != nil {
-			return err
-		}
 
-		accessToken, refreshToken, expiresIn, expiredAtText := readTokenPayload(resp)
-		if accessToken == "" || refreshToken == "" {
-			errMessage := firstNonEmpty(resp.ErrorDescription, resp.Text, resp.Message, resp.Error)
+		if resp.AccessToken == "" || resp.RefreshToken == "" {
+			errMessage := resp.ErrorDescription
+			if errMessage == "" {
+				errMessage = resp.Text
+			}
+			if errMessage == "" {
+				errMessage = resp.Message
+			}
+			if errMessage == "" {
+				errMessage = resp.Error
+			}
 			if errMessage != "" {
 				return fmt.Errorf("failed to refresh token: %s", errMessage)
 			}
 			return fmt.Errorf("empty access_token or refresh_token returned from official API")
 		}
-		expiredAt, err := resolveExpiredAt(expiredAtText, expiresIn)
-		if err != nil {
-			return err
+		if resp.ExpiresIn <= 0 {
+			return errors.New("invalid expires_in from official API")
 		}
 
-		d.AccessToken = accessToken
-		d.RefreshToken = refreshToken
-		d.tm.expiredAt = expiredAt
+		d.AccessToken = resp.AccessToken
+		d.RefreshToken = resp.RefreshToken
+		d.tm.expiredAt = time.Now().UTC().Add(time.Duration(resp.ExpiresIn) * time.Second)
 		op.MustSaveDriverStorage(d)
 		d.tm.blockRefresh = false
 		return nil
 	}
-	// 走本地开发者API刷新逻辑，必须使用ClientID和ClientSecret
+
+	// Developer API response contains code/message/data(accessToken, expiredAt).
 	if d.ClientID != "" && d.ClientSecret != "" {
 		req := base.RestyClient.R()
 		req.SetHeaders(map[string]string{
@@ -134,17 +97,15 @@ func (d *Open123) flushAccessToken() error {
 			"clientSecret": d.ClientSecret,
 		})
 		req.SetResult(&resp)
-		res, err := req.Execute(http.MethodPost, AccessToken)
+		_, err := req.Execute(http.MethodPost, AccessToken)
 		if err != nil {
 			return err
 		}
-		body := res.Body()
-		var baseResp BaseResp
-		if err = json.Unmarshal(body, &baseResp); err != nil {
-			return err
+		if resp.Code != 0 {
+			return fmt.Errorf("get access token failed: %s", resp.Message)
 		}
-		if baseResp.Code != 0 {
-			return fmt.Errorf("get access token failed: %s", baseResp.Message)
+		if resp.Data.AccessToken == "" || resp.Data.ExpiredAt == "" {
+			return errors.New("invalid token payload from developer API")
 		}
 		expiredAt, err := time.Parse(time.RFC3339, resp.Data.ExpiredAt)
 		if err != nil {

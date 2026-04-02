@@ -124,26 +124,15 @@ type AccessTokenResp struct {
 	} `json:"data"`
 }
 
-type TokenPayload struct {
-	AccessToken       string `json:"access_token"`
-	AccessTokenCamel  string `json:"accessToken"`
-	RefreshToken      string `json:"refresh_token"`
-	RefreshTokenCamel string `json:"refreshToken"`
-	ExpiresIn         int64  `json:"expires_in"`
-	ExpiresInCamel    int64  `json:"expiresIn"`
-	ExpiredAt         string `json:"expiredAt"`
-}
-
 type RefreshTokenResp struct {
-	TokenPayload
-	Code             int          `json:"code"`
-	Message          string       `json:"message"`
-	Data             TokenPayload `json:"data"`
-	Scope            string       `json:"scope"`
-	TokenType        string       `json:"token_type"`
-	ErrorDescription string       `json:"error_description"`
-	Error            string       `json:"error"`
-	Text             string       `json:"text"`
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresIn        int64  `json:"expires_in"`
+	Code             int    `json:"code"`
+	Message          string `json:"message"`
+	ErrorDescription string `json:"error_description"`
+	Error            string `json:"error"`
+	Text             string `json:"text"`
 }
 
 type UserInfoResp struct {
