@@ -19,11 +19,49 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            let comment = "";
+            const issueTitle = context.payload.issue.title || "";
+            const titleNotEdited = /(请修改标题|Please modify the title)/i.test(issueTitle);
+            if (titleNotEdited) {
+              comment = "⚠️ 请修改标题以更好地描述您的问题或需求，并删除示例提示。当前 Issue 将被自动关闭。如需继续提交，请创建新的 Issue。\n";
+              comment += "⚠️ Please modify the title to better describe your issue or request, and remove the example prompt. This issue will be automatically closed. If you wish to proceed, please create a new issue.\n";
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+                labels: ['invalid']
+              });
+              return;
+            }
             const issueBody = context.payload.issue.body || "";
-            const unchecked = /- \[ \] (?!我没有阅读这个清单|I have not read these checkboxes)/.test(issueBody);
-            let comment = "感谢您联系OpenList。我们会尽快回复您。\n";
-            comment += "Thanks for contacting OpenList. We will reply to you as soon as possible.\n\n";
-            if (unchecked) {
+            const confirmHasRead = /- \[ \] (?!我没有阅读这个清单|I have not read these checkboxes)/.test(issueBody);
+            const confirmNotRead = /- \[[xX]\] (?:我没有阅读这个清单|I have not read these checkboxes)/.test(issueBody);
+            if (confirmNotRead) {
+              comment = "⚠️ 你的 Issue 不符合提交规则。请先阅读相关规范后再重新提交。当前 Issue 将被自动关闭。如需继续提交，请确认已了解规则后重新打开或创建新的 Issue。\n";
+              comment += "⚠️ Your issue does not comply with the submission rules. Please read the guidelines before submitting again. This issue will be automatically closed. If you wish to proceed, please confirm that you have reviewed the rules before reopening or creating a new issue.\n";
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+                labels: ['invalid']
+              });
+              return;
+            }
+            if (confirmHasRead) {
+              comment = "感谢您联系OpenList。我们会尽快回复您。\n";
+              comment += "Thanks for contacting OpenList. We will reply to you as soon as possible.\n\n";
               comment += "由于您提出的 Issue 中包含部分未确认的项目，为了更好地管理项目，在人工审核后可能会直接关闭此问题。\n";
               comment += "如果您能确认并补充相关未确认项目的信息，欢迎随时重新提交。我们会及时关注并处理。感谢您的理解与支持！\n";
               comment += "Since your issue contains some unchecked tasks, it may be closed after manual review.\n";
@@ -31,12 +69,12 @@ jobs:
               comment += "We will pay attention and handle it in a timely manner.\n\n";
               comment += "感谢您的理解与支持！\n";
               comment += "Thank you for your understanding and support!\n";
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
             }
-            await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: context.issue.number,
-              body: comment
-            });
 
   pr-title-check:
     runs-on: ubuntu-latest

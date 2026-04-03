@@ -20,7 +20,15 @@ const (
 	ADMIN
 )
 
-const StaticHashSalt = "https://github.com/alist-org/alist"
+const (
+	StaticHashSalt = "https://github.com/alist-org/alist"
+
+	InvalidUsernameOrPassword = "Invalid username or password"
+	Invalid2FACode            = "Invalid 2FA code"
+	TooManyAttempts           = "Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later."
+	GuestCannotUpdateProfile  = "Guest user can not update profile"
+	GuestCannotGenerate2FA    = "Guest user can not generate 2FA code"
+)
 
 var LoginCache = cache.NewMemCache[int]()
 
@@ -115,12 +123,12 @@ func (u *User) CanAddOfflineDownloadTasks() bool {
 	return CanAddOfflineDownloadTasks(u.Permission)
 }
 
-func CanWrite(permission int32) bool {
+func CanWriteContent(permission int32) bool {
 	return (permission>>3)&1 == 1
 }
 
-func (u *User) CanWrite() bool {
-	return CanWrite(u.Permission)
+func (u *User) CanWriteContent() bool {
+	return CanWriteContent(u.Permission)
 }
 
 func CanRename(permission int32) bool {
