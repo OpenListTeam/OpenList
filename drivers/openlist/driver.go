@@ -84,7 +84,7 @@ func (d *OpenList) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 			},
 			Path:     dir.GetPath(),
 			Password: d.MetaPassword,
-			Refresh:  false,
+			Refresh:  d.PassRefreshFlagToUpsteam && args.Refresh,
 		})
 	})
 	if err != nil {
