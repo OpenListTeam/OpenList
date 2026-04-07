@@ -65,6 +65,7 @@ type MediaItem struct {
 	// 目录合并模式
 	IsFolder   bool   `gorm:"default:false" json:"is_folder"`   // 是否为文件夹模式条目
 	FolderPath string `json:"folder_path"`                      // 所属文件夹路径
+	Episodes   string `gorm:"type:text"     json:"episodes"`    // 选集信息，JSON数组，格式：[[文件名,序号,选集标题],...]
 
 	ScrapedAt *time.Time `json:"scraped_at"`
 }

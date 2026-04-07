@@ -8,9 +8,11 @@ import (
 	"mime"
 	"net/http"
 	stdpath "path"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	log "github.com/sirupsen/logrus"
 
@@ -133,15 +135,19 @@ func doScan(cfg *model.MediaConfig, p *ScanProgress) error {
 	ctx := context.Background()
 
 	if cfg.PathMerge {
-		// 路径合并模式：每个子文件夹作为一个条目
-		// 先刷新根目录缓存，再扫描
+		// 路径合并模式：
+		//   - 子文件夹 → 作为一个合并条目（带 Episodes 选集信息）
+		//   - 直接放在根目录下的单个媒体文件 → 正常作为独立条目扫描
 		entries, err := fs.List(ctx, scanRoot, &fs.ListArgs{NoLog: true, Refresh: true})
 		if err != nil {
 			return err
 		}
 		for _, e := range entries {
+			childPath := stdpath.Join(scanRoot, e.GetName())
 			if e.IsDir() {
-				targets = append(targets, stdpath.Join(scanRoot, e.GetName()))
+				targets = append(targets, childPath)
+			} else if isMediaFile(e.GetName(), cfg.MediaType) {
+				targets = append(targets, childPath)
 			}
 		}
 	} else {
@@ -164,6 +170,15 @@ func doScan(cfg *model.MediaConfig, p *ScanProgress) error {
 
 		// 书籍类型：扫描阶段只记录基本信息，不读取文件内容，不刮削
 		// 封面提取和豆瓣刮削在用户手动触发刮削时进行
+
+		// 路径合并模式下，扫描文件夹内的文件，填充选集信息
+		if cfg.PathMerge && item.IsFolder {
+			if episodes, err := buildEpisodesFromFolder(ctx, target, cfg.MediaType); err == nil {
+				item.Episodes = episodes
+			} else {
+				log.Warnf("build episodes error [%s]: %v", target, err)
+			}
+		}
 
 		if err := db.CreateOrUpdateMediaItem(item); err != nil {
 			log.Warnf("save media item error [%s]: %v", target, err)
@@ -313,6 +328,102 @@ func buildMediaItemFromVFS(ctx context.Context, vfsPath string, cfg *model.Media
 	}
 
 	return item, nil
+}
+
+// episodeNumRe 匹配文件名开头的数字序号，支持 "1、" "2." "3-" "4 " 等分隔符
+var episodeNumRe = regexp.MustCompile(`^(\d+)[、.\-\s_]+(.*)`)
+
+// EpisodeInfo 选集信息
+type EpisodeInfo struct {
+	FileName string `json:"file_name"` // 原始文件名（含扩展名）
+	Index    int    `json:"index"`     // 序号，默认0，文件名开头有数字则取该数字
+	Title    string `json:"title"`     // 选集标题（去掉序号后的文件名，不含扩展名）
+}
+
+// buildEpisodesFromFolder 扫描文件夹内的媒体文件，构建选集信息 JSON 字符串
+func buildEpisodesFromFolder(ctx context.Context, folderPath string, mediaType model.MediaType) (string, error) {
+	entries, err := fs.List(ctx, folderPath, &fs.ListArgs{NoLog: true})
+	if err != nil {
+		return "", err
+	}
+
+	var episodes []EpisodeInfo
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.GetName()
+		if !isMediaFile(name, mediaType) {
+			continue
+		}
+
+		// 去掉扩展名得到裸文件名
+		ext := stdpath.Ext(name)
+		baseName := strings.TrimSuffix(name, ext)
+
+		ep := EpisodeInfo{
+			FileName: name,
+			Index:    0,
+			Title:    baseName,
+		}
+
+		// 尝试从文件名开头提取数字序号
+		if m := episodeNumRe.FindStringSubmatch(baseName); len(m) == 3 {
+			if idx := parseLeadingInt(m[1]); idx > 0 {
+				ep.Index = idx
+				ep.Title = strings.TrimSpace(m[2])
+			}
+		} else {
+			// 文件名直接以纯数字开头（无分隔符），也尝试提取
+			if idx, rest := splitLeadingNumber(baseName); idx > 0 {
+				ep.Index = idx
+				ep.Title = strings.TrimSpace(rest)
+			}
+		}
+
+		episodes = append(episodes, ep)
+	}
+
+	if len(episodes) == 0 {
+		return "", nil
+	}
+
+	b, err := json.Marshal(episodes)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// parseLeadingInt 将纯数字字符串解析为 int，失败返回 0
+func parseLeadingInt(s string) int {
+	v := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		v = v*10 + int(c-'0')
+	}
+	return v
+}
+
+// splitLeadingNumber 从字符串开头提取连续数字，返回 (数字值, 剩余字符串)
+// 仅当开头确实有数字时才返回非零值
+func splitLeadingNumber(s string) (int, string) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 || i == len(s) {
+		// 没有数字，或者整个字符串都是数字（没有标题部分）
+		return 0, s
+	}
+	// 剩余部分必须以非字母数字字符开头，避免把 "1080p" 之类的误识别
+	if unicode.IsLetter(rune(s[i])) || unicode.IsDigit(rune(s[i])) {
+		return 0, s
+	}
+	v := parseLeadingInt(s[:i])
+	return v, s[i:]
 }
 
 // isMediaFile 判断文件名是否为指定媒体类型（按扩展名判断）
