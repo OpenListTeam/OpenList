@@ -123,12 +123,12 @@ func (u *User) CanAddOfflineDownloadTasks() bool {
 	return CanAddOfflineDownloadTasks(u.Permission)
 }
 
-func CanWrite(permission int32) bool {
+func CanWriteContent(permission int32) bool {
 	return (permission>>3)&1 == 1
 }
 
-func (u *User) CanWrite() bool {
-	return CanWrite(u.Permission)
+func (u *User) CanWriteContent() bool {
+	return CanWriteContent(u.Permission)
 }
 
 func CanRename(permission int32) bool {
