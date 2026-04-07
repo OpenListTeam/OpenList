@@ -125,11 +125,14 @@ type AccessTokenResp struct {
 }
 
 type RefreshTokenResp struct {
-	AccessToken  string `json:"access_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	RefreshToken string `json:"refresh_token"`
-	Scope        string `json:"scope"`
-	TokenType    string `json:"token_type"`
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresIn        int64  `json:"expires_in"`
+	Code             int    `json:"code"`
+	Message          string `json:"message"`
+	ErrorDescription string `json:"error_description"`
+	Error            string `json:"error"`
+	Text             string `json:"text"`
 }
 
 type UserInfoResp struct {
