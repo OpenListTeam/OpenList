@@ -80,17 +80,17 @@ func DeleteMediaScanPath(id uint) error {
 
 // MediaItemQuery 媒体条目查询参数
 type MediaItemQuery struct {
-	MediaType   model.MediaType
-	ScanPathID  uint   // 按扫描路径ID筛选
-	FolderPath  string // 按文件夹路径筛选
-	TypeTag     string // 按类型标签筛选（电影、电视剧等）
-	ContentTag  string // 按内容标签筛选（喜剧、惊悚等）
-	Hidden      *bool
-	Keyword     string
-	OrderBy     string // "name", "date", "size"
-	OrderDir    string // "asc", "desc"
-	Page        int
-	PageSize    int
+	MediaType  model.MediaType
+	ScanPathID uint   // 按扫描路径ID筛选
+	FolderPath string // 按文件夹路径筛选
+	TypeTag    string // 按类型标签筛选（电影、电视剧等）
+	ContentTag string // 按内容标签筛选（喜剧、惊悚等）
+	Hidden     *bool
+	Keyword    string
+	OrderBy    string // "name", "date", "size"
+	OrderDir   string // "asc", "desc"
+	Page       int
+	PageSize   int
 }
 
 // ListMediaItems 分页查询媒体条目
