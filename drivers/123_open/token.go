@@ -1,7 +1,6 @@
 package _123_open
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,9 +12,15 @@ import (
 )
 
 var (
-	AccessToken  = "https://open-api.123pan.com/api/v1/access_token"
-	RefreshToken = "https://open-api.123pan.com/api/v1/oauth2/access_token"
+	AccessToken = "https://open-api.123pan.com/api/v1/access_token"
 )
+
+func expiresInToExpiredAt(expiresIn int64) (time.Time, error) {
+	if expiresIn <= 0 {
+		return time.Time{}, errors.New("invalid expires_in from official API")
+	}
+	return time.Now().UTC().Add(time.Duration(expiresIn) * time.Second), nil
+}
 
 type tokenManager struct {
 	// accessToken  string
@@ -43,73 +48,82 @@ func (d *Open123) getAccessToken(forceRefresh bool) (string, error) {
 }
 
 func (d *Open123) flushAccessToken() error {
-	// directly send request to avoid deadlock
-	req := base.RestyClient.R()
-	req.SetHeaders(map[string]string{
-		"authorization": "Bearer " + d.AccessToken,
-		"platform":      "open_platform",
-		"Content-Type":  "application/json",
-	})
-
-	if d.ClientID != "" {
-		if d.RefreshToken != "" {
-			var resp RefreshTokenResp
-			req.SetQueryParam("client_id", d.ClientID)
-			if d.ClientSecret != "" {
-				req.SetQueryParam("client_secret", d.ClientSecret)
-			}
-			req.SetQueryParam("grant_type", "refresh_token")
-			req.SetQueryParam("refresh_token", d.RefreshToken)
-			req.SetResult(&resp)
-			res, err := req.Execute(http.MethodPost, RefreshToken)
-			if err != nil {
-				return err
-			}
-			body := res.Body()
-			var baseResp BaseResp
-			if err = json.Unmarshal(body, &baseResp); err != nil {
-				return err
-			}
-			if baseResp.Code != 0 {
-				return fmt.Errorf("get access token failed: %s", baseResp.Message)
-			}
-
-			d.AccessToken = resp.AccessToken
-			// add token expire time
-			d.tm.expiredAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
-			d.RefreshToken = resp.RefreshToken
-			op.MustSaveDriverStorage(d)
-			d.tm.blockRefresh = false
-			return nil
-		} else if d.ClientSecret != "" {
-			var resp AccessTokenResp
-			req.SetBody(base.Json{
-				"clientID":     d.ClientID,
-				"clientSecret": d.ClientSecret,
-			})
-			req.SetResult(&resp)
-			res, err := req.Execute(http.MethodPost, AccessToken)
-			if err != nil {
-				return err
-			}
-			body := res.Body()
-			var baseResp BaseResp
-			if err = json.Unmarshal(body, &baseResp); err != nil {
-				return err
-			}
-			if baseResp.Code != 0 {
-				return fmt.Errorf("get access token failed: %s", baseResp.Message)
-			}
-			d.AccessToken = resp.Data.AccessToken
-			// parse token expire time
-			d.tm.expiredAt, err = time.Parse(time.RFC3339, resp.Data.ExpiredAt)
-			if err != nil {
-				return fmt.Errorf("parse expire time failed: %w", err)
-			}
-			op.MustSaveDriverStorage(d)
-			d.tm.blockRefresh = false
-			return nil
+	// Official app renewapi response contains access_token, refresh_token and expires_in.
+	if d.UseOnlineAPI && d.RefreshToken != "" && len(d.APIAddress) > 0 {
+		var resp RefreshTokenResp
+		_, err := base.RestyClient.R().
+			SetResult(&resp).
+			SetQueryParams(map[string]string{
+				"refresh_ui": d.RefreshToken,
+				"server_use": "true",
+				"driver_txt": "123cloud_oa",
+			}).
+			Get(d.APIAddress)
+		if err != nil {
+			return err
 		}
+
+		if resp.AccessToken == "" || resp.RefreshToken == "" {
+			errMessage := resp.ErrorDescription
+			if errMessage == "" {
+				errMessage = resp.Text
+			}
+			if errMessage == "" {
+				errMessage = resp.Message
+			}
+			if errMessage == "" {
+				errMessage = resp.Error
+			}
+			if errMessage != "" {
+				return fmt.Errorf("failed to refresh token: %s", errMessage)
+			}
+			return fmt.Errorf("empty access_token or refresh_token returned from official API")
+		}
+		expiredAt, err := expiresInToExpiredAt(resp.ExpiresIn)
+		if err != nil {
+			return err
+		}
+
+		d.AccessToken = resp.AccessToken
+		d.RefreshToken = resp.RefreshToken
+		d.tm.expiredAt = expiredAt
+		op.MustSaveDriverStorage(d)
+		d.tm.blockRefresh = false
+		return nil
+	}
+
+	// Developer API response contains code/message/data(accessToken, expiredAt).
+	if d.ClientID != "" && d.ClientSecret != "" {
+		req := base.RestyClient.R()
+		req.SetHeaders(map[string]string{
+			"platform":     "open_platform",
+			"Content-Type": "application/json",
+		})
+		var resp AccessTokenResp
+		req.SetBody(base.Json{
+			"clientID":     d.ClientID,
+			"clientSecret": d.ClientSecret,
+		})
+		req.SetResult(&resp)
+		_, err := req.Execute(http.MethodPost, AccessToken)
+		if err != nil {
+			return err
+		}
+		if resp.Code != 0 {
+			return fmt.Errorf("get access token failed: %s", resp.Message)
+		}
+		if resp.Data.AccessToken == "" || resp.Data.ExpiredAt == "" {
+			return errors.New("invalid token payload from developer API")
+		}
+		expiredAt, err := time.Parse(time.RFC3339, resp.Data.ExpiredAt)
+		if err != nil {
+			return fmt.Errorf("parse expire time failed: %w", err)
+		}
+		d.AccessToken = resp.Data.AccessToken
+		d.tm.expiredAt = expiredAt.UTC()
+		op.MustSaveDriverStorage(d)
+		d.tm.blockRefresh = false
+		return nil
 	}
 	return errors.New("no valid authentication method available")
 }

@@ -15,7 +15,6 @@ import (
 
 func FsUp(c *gin.Context) {
 	path := c.GetHeader("File-Path")
-	password := c.GetHeader("Password")
 	path, err := url.PathUnescape(path)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
@@ -28,15 +27,19 @@ func FsUp(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-	meta, err := op.GetNearestMeta(stdpath.Dir(path))
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			common.ErrorResp(c, err, 500, true)
-			c.Abort()
-			return
-		}
+	parentPath := stdpath.Dir(path)
+	parentMeta, err := op.GetNearestMeta(parentPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		c.Abort()
+		return
 	}
-	if !(common.CanAccess(user, meta, path, password) && (user.CanWrite() || common.CanWrite(meta, stdpath.Dir(path)))) {
+	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		c.Abort()
+		return
+	}
+	if !common.CanWrite(user, parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		c.Abort()
 		return
