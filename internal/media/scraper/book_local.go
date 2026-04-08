@@ -79,7 +79,7 @@ func (s *BookLocalScraper) ScrapeBookLocal(item *model.MediaItem, reader io.Read
 				coverData = extractPDFCoverData(data)
 			}
 			if len(coverData) > 0 {
-				cover := s.storeCover(item.FilePath, coverData)
+				cover := s.storeCover(item.FolderPath, coverData)
 				if cover != "" {
 					item.Cover = cover
 				}

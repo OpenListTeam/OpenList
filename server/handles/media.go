@@ -20,7 +20,6 @@ import (
 
 // ListMediaConfigs 获取所有媒体库配置
 func ListMediaConfigs(c *gin.Context) {
-	// 确保四种类型都有配置返回
 	types := []model.MediaType{
 		model.MediaTypeVideo,
 		model.MediaTypeMusic,
@@ -43,8 +42,6 @@ func ListMediaConfigs(c *gin.Context) {
 type SaveMediaConfigReq struct {
 	MediaType model.MediaType `json:"media_type" binding:"required"`
 	Enabled   bool            `json:"enabled"`
-	ScanPath  string          `json:"scan_path"`
-	PathMerge bool            `json:"path_merge"`
 }
 
 // SaveMediaConfig 保存媒体库配置
@@ -57,13 +54,128 @@ func SaveMediaConfig(c *gin.Context) {
 	cfg := &model.MediaConfig{
 		MediaType: req.MediaType,
 		Enabled:   req.Enabled,
-		ScanPath:  req.ScanPath,
-		PathMerge: req.PathMerge,
-	}
-	if cfg.ScanPath == "" {
-		cfg.ScanPath = "/"
 	}
 	if err := db.SaveMediaConfig(cfg); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c)
+}
+
+// ==================== 扫描路径管理 ====================
+
+// ListMediaScanPaths 获取指定媒体类型的扫描路径列表
+func ListMediaScanPaths(c *gin.Context) {
+	mediaType := model.MediaType(c.Query("media_type"))
+	paths, err := db.ListMediaScanPaths(mediaType)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c, paths)
+}
+
+// CreateMediaScanPathReq 创建扫描路径请求
+type CreateMediaScanPathReq struct {
+	MediaType    model.MediaType `json:"media_type" binding:"required"`
+	Name         string          `json:"name"`
+	Path         string          `json:"path" binding:"required"`
+	PathMerge    bool            `json:"path_merge"`
+	TypeTag      string          `json:"type_tag"`
+	ContentTags  string          `json:"content_tags"`
+	EnableScrape bool            `json:"enable_scrape"`
+}
+
+// CreateMediaScanPath 创建扫描路径
+func CreateMediaScanPath(c *gin.Context) {
+	var req CreateMediaScanPathReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	if req.Path == "" {
+		req.Path = "/"
+	}
+	name := req.Name
+	if name == "" {
+		name = req.Path
+	}
+	sp := &model.MediaScanPath{
+		MediaType:    req.MediaType,
+		Name:         name,
+		Path:         req.Path,
+		PathMerge:    req.PathMerge,
+		TypeTag:      req.TypeTag,
+		ContentTags:  req.ContentTags,
+		EnableScrape: req.EnableScrape,
+	}
+	if err := db.CreateMediaScanPath(sp); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c, sp)
+}
+
+// UpdateMediaScanPathReq 更新扫描路径请求
+type UpdateMediaScanPathReq struct {
+	ID           uint   `json:"id" binding:"required"`
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	PathMerge    bool   `json:"path_merge"`
+	TypeTag      string `json:"type_tag"`
+	ContentTags  string `json:"content_tags"`
+	EnableScrape bool   `json:"enable_scrape"`
+}
+
+// UpdateMediaScanPath 更新扫描路径
+func UpdateMediaScanPath(c *gin.Context) {
+	var req UpdateMediaScanPathReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	sp, err := db.GetMediaScanPath(req.ID)
+	if err != nil {
+		common.ErrorResp(c, err, 404)
+		return
+	}
+	sp.Name = req.Name
+	sp.Path = req.Path
+	sp.PathMerge = req.PathMerge
+	sp.TypeTag = req.TypeTag
+	sp.ContentTags = req.ContentTags
+	sp.EnableScrape = req.EnableScrape
+	if err := db.UpdateMediaScanPath(sp); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c)
+}
+
+// DeleteMediaScanPath 删除扫描路径
+func DeleteMediaScanPath(c *gin.Context) {
+	idStr := c.Query("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		common.ErrorStrResp(c, "无效的ID", 400)
+		return
+	}
+	if err := db.DeleteMediaScanPath(uint(id)); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c)
+}
+
+// ClearMediaScanPathDB 清空指定扫描路径的媒体数据
+func ClearMediaScanPathDB(c *gin.Context) {
+	idStr := c.Query("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		common.ErrorStrResp(c, "无效的ID", 400)
+		return
+	}
+	if err := db.ClearMediaItemsByScanPath(uint(id)); err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
@@ -80,14 +192,22 @@ func ListMediaItemsAdmin(c *gin.Context) {
 	keyword := c.Query("keyword")
 	orderBy := c.DefaultQuery("order_by", "name")
 	orderDir := c.DefaultQuery("order_dir", "asc")
+	scanPathIDStr := c.Query("scan_path_id")
+	var scanPathID uint
+	if scanPathIDStr != "" {
+		if id, err := strconv.ParseUint(scanPathIDStr, 10, 64); err == nil {
+			scanPathID = uint(id)
+		}
+	}
 
 	q := db.MediaItemQuery{
-		MediaType: mediaType,
-		Keyword:   keyword,
-		OrderBy:   orderBy,
-		OrderDir:  orderDir,
-		Page:      page,
-		PageSize:  pageSize,
+		MediaType:  mediaType,
+		ScanPathID: scanPathID,
+		Keyword:    keyword,
+		OrderBy:    orderBy,
+		OrderDir:   orderDir,
+		Page:       page,
+		PageSize:   pageSize,
 	}
 	items, total, err := db.ListMediaItems(q)
 	if err != nil {
@@ -183,7 +303,8 @@ func ClearMediaDB(c *gin.Context) {
 
 // ScanMediaReq 扫描请求
 type ScanMediaReq struct {
-	MediaType model.MediaType `json:"media_type" binding:"required"`
+	MediaType  model.MediaType `json:"media_type" binding:"required"`
+	ScanPathID uint            `json:"scan_path_id"` // 0 表示扫描全部路径
 }
 
 // StartMediaScan 开始扫描
@@ -202,7 +323,19 @@ func StartMediaScan(c *gin.Context) {
 		common.ErrorStrResp(c, "该媒体库未启用", 400)
 		return
 	}
-	media.ScanMedia(cfg)
+
+	if req.ScanPathID > 0 {
+		// 扫描单个路径
+		sp, err := db.GetMediaScanPath(req.ScanPathID)
+		if err != nil {
+			common.ErrorResp(c, err, 404)
+			return
+		}
+		media.ScanMediaPath(sp)
+	} else {
+		// 扫描全部路径
+		media.ScanMedia(cfg)
+	}
 	common.SuccessResp(c)
 }
 
@@ -273,27 +406,26 @@ func StartMediaScrape(c *gin.Context) {
 				s := scraper.NewDiscogsScraper(discogsToken)
 				scrapeErr = s.ScrapeMusic(item)
 			case model.MediaTypeBook:
-				// 步骤1：优先通过豆瓣刮削获取书名、评分、简介、封面
 				doubanScraper := scraper.NewDoubanScraperWithConfig(
 					thumbnailMode,
 					thumbnailPath,
 				)
 				doubanErr := doubanScraper.ScrapeBook(item)
 				if doubanErr != nil {
-					log.Debugf("豆瓣刮削失败 [%s]: %v，将尝试本地提取封面", item.FilePath, doubanErr)
+					log.Debugf("豆瓣刮削失败 [%s/%s]: %v，将尝试本地提取封面", item.FolderPath, item.FileName, doubanErr)
 				}
 
-				// 步骤2：若豆瓣未能获取到封面（cover 为空），则本地读取文件提取封面
-				// 绝不将文件路径作为 cover
 				if item.Cover == "" {
 					bookCtx, bookCancel := context.WithTimeout(context.Background(), 60*time.Second)
-					bookReader := media.FetchFileReader(bookCtx, item.FilePath)
+					// 书籍文件路径 = folder_path + "/" + file_name
+					bookFilePath := item.FolderPath + "/" + item.FileName
+					bookReader := media.FetchFileReader(bookCtx, bookFilePath)
 					if bookReader != nil {
 						localScraper := scraper.NewBookLocalScraperWithConfig(
 							thumbnailMode,
 							thumbnailPath,
 						)
-						if localCover := localScraper.ExtractLocalCover(item.FileName, item.FilePath, bookReader); localCover != "" {
+						if localCover := localScraper.ExtractLocalCover(item.FileName, bookFilePath, bookReader); localCover != "" {
 							item.Cover = localCover
 						}
 						_ = bookReader.Close()
@@ -301,14 +433,14 @@ func StartMediaScrape(c *gin.Context) {
 					bookCancel()
 				}
 
-				// 豆瓣刮削失败且本地也无封面时，整体视为刮削失败
 				if doubanErr != nil && item.Cover == "" {
 					scrapeErr = doubanErr
 				}
 			case model.MediaTypeImage:
-				// 读取图片文件流，用于 EXIF 解析和缩略图生成
 				imgCtx, imgCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				imgReader := media.FetchFileReader(imgCtx, item.FilePath)
+				// 图片文件路径 = folder_path + "/" + file_name
+				imgFilePath := item.FolderPath + "/" + item.FileName
+				imgReader := media.FetchFileReader(imgCtx, imgFilePath)
 				s := scraper.NewImageScraperWithConfig(
 					storeThumbnail,
 					thumbnailMode,
@@ -322,20 +454,19 @@ func StartMediaScrape(c *gin.Context) {
 			}
 
 			if scrapeErr != nil {
-				log.Warnf("刮削失败 [%s] %s: %v", req.MediaType, item.FilePath, scrapeErr)
+				log.Warnf("刮削失败 [%s] %s: %v", req.MediaType, item.FolderPath, scrapeErr)
 				continue
 			}
-			// 标记刮削完成时间，避免下次刮削重复处理
 			now := time.Now()
 			item.ScrapedAt = &now
 			if err := db.UpdateMediaItem(item); err != nil {
-				log.Warnf("保存刮削结果失败 [%s]: %v", item.FilePath, err)
+				log.Warnf("保存刮削结果失败 [%s]: %v", item.FolderPath, err)
 			}
 		}
 		log.Infof("刮削完成 [%s]，共处理 %d 条", req.MediaType, len(items))
 	}()
 
-	_ = cfg // cfg 仅用于校验媒体库是否存在，刮削配置已从系统设置读取
+	_ = cfg
 	common.SuccessResp(c)
 }
 
@@ -350,11 +481,23 @@ func PublicListMedia(c *gin.Context) {
 	orderDir := c.DefaultQuery("order_dir", "asc")
 	folderPath := c.Query("folder_path")
 	keyword := c.Query("keyword")
+	typeTag := c.Query("type_tag")
+	contentTag := c.Query("content_tag")
+	scanPathIDStr := c.Query("scan_path_id")
+	var scanPathID uint
+	if scanPathIDStr != "" {
+		if id, err := strconv.ParseUint(scanPathIDStr, 10, 64); err == nil {
+			scanPathID = uint(id)
+		}
+	}
 
 	hidden := false
 	q := db.MediaItemQuery{
 		MediaType:  mediaType,
+		ScanPathID: scanPathID,
 		FolderPath: folderPath,
+		TypeTag:    typeTag,
+		ContentTag: contentTag,
 		Hidden:     &hidden,
 		Keyword:    keyword,
 		OrderBy:    orderBy,
@@ -395,14 +538,22 @@ func PublicListAlbums(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "40"))
 	keyword := c.Query("keyword")
+	scanPathIDStr := c.Query("scan_path_id")
+	var scanPathID uint
+	if scanPathIDStr != "" {
+		if id, err := strconv.ParseUint(scanPathIDStr, 10, 64); err == nil {
+			scanPathID = uint(id)
+		}
+	}
 
 	hidden := false
 	q := db.MediaItemQuery{
-		MediaType: model.MediaTypeMusic,
-		Hidden:    &hidden,
-		Keyword:   keyword,
-		Page:      page,
-		PageSize:  pageSize,
+		MediaType:  model.MediaTypeMusic,
+		ScanPathID: scanPathID,
+		Hidden:     &hidden,
+		Keyword:    keyword,
+		Page:       page,
+		PageSize:   pageSize,
 	}
 	albums, total, err := db.ListAlbums(q)
 	if err != nil {
@@ -436,6 +587,17 @@ func PublicListFolders(c *gin.Context) {
 		return
 	}
 	paths, err := db.ListFolderPaths(mediaType)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c, paths)
+}
+
+// PublicListScanPaths 公开获取扫描路径列表（前端筛选用）
+func PublicListScanPaths(c *gin.Context) {
+	mediaType := model.MediaType(c.Query("media_type"))
+	paths, err := db.ListMediaScanPaths(mediaType)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return

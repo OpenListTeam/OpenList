@@ -80,7 +80,7 @@ func GetProgress(mediaType model.MediaType) model.MediaScanProgress {
 	}
 }
 
-// ScanMedia 扫描媒体文件（异步）
+// ScanMedia 扫描媒体文件（异步），扫描指定媒体类型下的所有启用扫描路径
 func ScanMedia(cfg *model.MediaConfig) {
 	p, ok := progressMap[cfg.MediaType]
 	if !ok {
@@ -105,26 +105,92 @@ func ScanMedia(cfg *model.MediaConfig) {
 			p.mu.Unlock()
 		}()
 
-		if err := doScan(cfg, p); err != nil {
+		// 获取该媒体类型下所有扫描路径
+		scanPaths, err := db.ListMediaScanPaths(cfg.MediaType)
+		if err != nil {
+			p.mu.Lock()
+			p.Error = err.Error()
+			p.Message = "获取扫描路径失败"
+			p.mu.Unlock()
+			return
+		}
+		if len(scanPaths) == 0 {
+			p.mu.Lock()
+			p.Message = "没有配置扫描路径"
+			p.mu.Unlock()
+			return
+		}
+
+		for i := range scanPaths {
+			sp := &scanPaths[i]
+			p.mu.Lock()
+			p.Message = "正在扫描路径: " + sp.Name
+			p.mu.Unlock()
+
+			if err := doScanPath(sp, p); err != nil {
+				log.Errorf("media scan error [%s] path[%s]: %v", cfg.MediaType, sp.Path, err)
+			} else {
+				// 更新最后扫描时间
+				now := time.Now()
+				sp.LastScanAt = &now
+				_ = db.UpdateMediaScanPath(sp)
+			}
+		}
+
+		p.mu.Lock()
+		p.Message = "扫描完成"
+		p.mu.Unlock()
+		// 更新媒体库最后扫描时间
+		now := time.Now()
+		cfg.LastScanAt = &now
+		_ = db.SaveMediaConfig(cfg)
+	}()
+}
+
+// ScanMediaPath 扫描单个扫描路径（异步）
+func ScanMediaPath(sp *model.MediaScanPath) {
+	p, ok := progressMap[sp.MediaType]
+	if !ok {
+		return
+	}
+	p.mu.Lock()
+	if p.Running {
+		p.mu.Unlock()
+		return
+	}
+	p.Running = true
+	p.Total = 0
+	p.Done = 0
+	p.Error = ""
+	p.Message = "正在扫描路径: " + sp.Name
+	p.mu.Unlock()
+
+	go func() {
+		defer func() {
+			p.mu.Lock()
+			p.Running = false
+			p.mu.Unlock()
+		}()
+
+		if err := doScanPath(sp, p); err != nil {
 			p.mu.Lock()
 			p.Error = err.Error()
 			p.Message = "扫描失败"
 			p.mu.Unlock()
-			log.Errorf("media scan error [%s]: %v", cfg.MediaType, err)
+			log.Errorf("media scan error [%s] path[%s]: %v", sp.MediaType, sp.Path, err)
 		} else {
 			p.mu.Lock()
 			p.Message = "扫描完成"
 			p.mu.Unlock()
-			// 更新最后扫描时间
 			now := time.Now()
-			cfg.LastScanAt = &now
-			_ = db.SaveMediaConfig(cfg)
+			sp.LastScanAt = &now
+			_ = db.UpdateMediaScanPath(sp)
 		}
 	}()
 }
 
-func doScan(cfg *model.MediaConfig, p *ScanProgress) error {
-	scanRoot := cfg.ScanPath
+func doScanPath(sp *model.MediaScanPath, p *ScanProgress) error {
+	scanRoot := sp.Path
 	if scanRoot == "" {
 		scanRoot = "/"
 	}
@@ -134,7 +200,7 @@ func doScan(cfg *model.MediaConfig, p *ScanProgress) error {
 
 	ctx := context.Background()
 
-	if cfg.PathMerge {
+	if sp.PathMerge {
 		// 路径合并模式：
 		//   - 子文件夹 → 作为一个合并条目（带 Episodes 选集信息）
 		//   - 直接放在根目录下的单个媒体文件 → 正常作为独立条目扫描
@@ -146,34 +212,36 @@ func doScan(cfg *model.MediaConfig, p *ScanProgress) error {
 			childPath := stdpath.Join(scanRoot, e.GetName())
 			if e.IsDir() {
 				targets = append(targets, childPath)
-			} else if isMediaFile(e.GetName(), cfg.MediaType) {
+			} else if isMediaFile(e.GetName(), sp.MediaType) {
 				targets = append(targets, childPath)
 			}
 		}
 	} else {
 		// 普通模式：递归扫描所有匹配文件（每个目录都刷新缓存）
-		if err := walkVFS(ctx, scanRoot, cfg.MediaType, &targets); err != nil {
+		if err := walkVFS(ctx, scanRoot, sp.MediaType, &targets); err != nil {
 			return err
 		}
 	}
 
 	p.mu.Lock()
-	p.Total = len(targets)
+	p.Total += len(targets)
 	p.mu.Unlock()
 
+	// 音乐类型：按专辑合并处理
+	if sp.MediaType == model.MediaTypeMusic {
+		return doScanMusicByAlbum(ctx, targets, sp, p)
+	}
+
 	for _, target := range targets {
-		item, err := buildMediaItemFromVFS(ctx, target, cfg)
+		item, err := buildMediaItemFromVFS(ctx, target, sp)
 		if err != nil {
 			log.Warnf("build media item error [%s]: %v", target, err)
 			continue
 		}
 
-		// 书籍类型：扫描阶段只记录基本信息，不读取文件内容，不刮削
-		// 封面提取和豆瓣刮削在用户手动触发刮削时进行
-
 		// 路径合并模式下，扫描文件夹内的文件，填充选集信息
-		if cfg.PathMerge && item.IsFolder {
-			if episodes, err := buildEpisodesFromFolder(ctx, target, cfg.MediaType); err == nil {
+		if sp.PathMerge && item.IsFolder {
+			if episodes, err := buildEpisodesFromFolder(ctx, target, sp.MediaType); err == nil {
 				item.Episodes = episodes
 			} else {
 				log.Warnf("build episodes error [%s]: %v", target, err)
@@ -186,6 +254,223 @@ func doScan(cfg *model.MediaConfig, p *ScanProgress) error {
 		p.mu.Lock()
 		p.Done++
 		p.Message = "已扫描: " + stdpath.Base(target)
+		p.mu.Unlock()
+	}
+	return nil
+}
+
+// doScanMusicByAlbum 音乐扫描
+// 存储规则：
+//   - 普通文件（is_folder=false）：
+//     folder_path=文件所在目录，file_name=音乐文件名，episodes=空
+//   - 合并文件夹（is_folder=true）：
+//     folder_path=扫描根路径(sp.Path)，file_name=文件夹名，
+//     episodes=文件夹内所有音乐文件列表，封面/标签取第一首
+func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaScanPath, p *ScanProgress) error {
+	for _, target := range targets {
+		obj, err := fs.Get(ctx, target, &fs.GetArgs{NoLog: true})
+		if err != nil {
+			log.Warnf("get vfs object error [%s]: %v", target, err)
+			p.mu.Lock()
+			p.Done++
+			p.mu.Unlock()
+			continue
+		}
+
+		name := obj.GetName()
+
+		if obj.IsDir() {
+			// ---- 合并文件夹模式：文件夹条目 ----
+			// 列出文件夹内所有音乐文件
+			entries, err := fs.List(ctx, target, &fs.ListArgs{NoLog: true})
+			if err != nil {
+				log.Warnf("list music folder error [%s]: %v", target, err)
+				p.mu.Lock()
+				p.Done++
+				p.mu.Unlock()
+				continue
+			}
+
+			var musicFiles []string
+			var episodes []EpisodeInfo
+			for idx, e := range entries {
+				if e.IsDir() || !isMediaFile(e.GetName(), sp.MediaType) {
+					continue
+				}
+				musicFiles = append(musicFiles, stdpath.Join(target, e.GetName()))
+				ep := EpisodeInfo{
+					FileName: e.GetName(),
+					Index:    idx + 1,
+					Title:    strings.TrimSuffix(e.GetName(), stdpath.Ext(e.GetName())),
+				}
+				episodes = append(episodes, ep)
+			}
+
+			if len(musicFiles) == 0 {
+				p.mu.Lock()
+				p.Done++
+				p.mu.Unlock()
+				continue
+			}
+
+			// 取第一首音乐文件读取标签
+			firstFile := musicFiles[0]
+			firstExt := strings.ToLower(stdpath.Ext(firstFile))
+			var tag *MusicTag
+			readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
+			if reader := FetchFileReader(readCtx, firstFile); reader != nil {
+				switch firstExt {
+				case ".flac":
+					tag, _ = ParseFLACVorbisComment(reader)
+				default:
+					tag, _ = ParseID3v2(reader)
+				}
+				_ = reader.Close()
+			}
+			readCancel()
+
+			// 解析标签（用文件夹名作为默认专辑名）
+			albumName := name
+			albumArtist := ""
+			cover := ""
+			releaseDate := ""
+			genre := ""
+			authors := ""
+			if tag != nil {
+				if tag.Album != "" {
+					albumName = tag.Album
+				}
+				albumArtist = tag.AlbumArtist
+				if albumArtist == "" {
+					albumArtist = tag.Artist
+				}
+				if tag.Year != "" && len(tag.Year) >= 4 {
+					releaseDate = tag.Year[:4] + "-01-01"
+				}
+				if tag.Genre != "" {
+					genre = tag.Genre
+				}
+				if tag.Artist != "" {
+					if authorsJSON, err := json.Marshal([]string{tag.Artist}); err == nil {
+						authors = string(authorsJSON)
+					}
+				}
+				if len(tag.CoverData) > 0 {
+					mimeType := tag.CoverMIME
+					if mimeType == "" {
+						mimeType = "image/jpeg"
+					}
+					cover = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(tag.CoverData)
+				}
+			}
+
+			episodesJSON := ""
+			if b, err := json.Marshal(episodes); err == nil {
+				episodesJSON = string(b)
+			}
+
+			item := &model.MediaItem{
+				MediaType:   sp.MediaType,
+				ScanPathID:  sp.ID,
+				FileName:    name,     // 文件夹名
+				FolderPath:  sp.Path,  // 扫描根路径
+				IsFolder:    true,
+				AlbumName:   albumName,
+				AlbumArtist: albumArtist,
+				ScrapedName: albumName,
+				Cover:       cover,
+				ReleaseDate: releaseDate,
+				Genre:       genre,
+				Authors:     authors,
+				Episodes:    episodesJSON,
+			}
+
+			if err := db.CreateOrUpdateMediaItem(item); err != nil {
+				log.Warnf("save music folder item error [%s]: %v", target, err)
+			}
+		} else {
+			// ---- 普通文件：每首歌独立一条记录 ----
+			folderPath := stdpath.Dir(target)
+			ext := strings.ToLower(stdpath.Ext(name))
+
+			var tag *MusicTag
+			readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
+			if reader := FetchFileReader(readCtx, target); reader != nil {
+				switch ext {
+				case ".flac":
+					tag, _ = ParseFLACVorbisComment(reader)
+				default:
+					tag, _ = ParseID3v2(reader)
+				}
+				_ = reader.Close()
+			}
+			readCancel()
+
+			albumName := ""
+			albumArtist := ""
+			trackTitle := strings.TrimSuffix(name, stdpath.Ext(name))
+			trackNumber := 0
+			cover := ""
+			releaseDate := ""
+			genre := ""
+			authors := ""
+
+			if tag != nil {
+				albumName = tag.Album
+				albumArtist = tag.AlbumArtist
+				if albumArtist == "" {
+					albumArtist = tag.Artist
+				}
+				if tag.Title != "" {
+					trackTitle = tag.Title
+				}
+				trackNumber = tag.TrackNumber
+				if tag.Year != "" && len(tag.Year) >= 4 {
+					releaseDate = tag.Year[:4] + "-01-01"
+				}
+				if tag.Genre != "" {
+					genre = tag.Genre
+				}
+				if tag.Artist != "" {
+					if authorsJSON, err := json.Marshal([]string{tag.Artist}); err == nil {
+						authors = string(authorsJSON)
+					}
+				}
+				if len(tag.CoverData) > 0 {
+					mimeType := tag.CoverMIME
+					if mimeType == "" {
+						mimeType = "image/jpeg"
+					}
+					cover = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(tag.CoverData)
+				}
+			}
+
+			item := &model.MediaItem{
+				MediaType:   sp.MediaType,
+				ScanPathID:  sp.ID,
+				FileName:    name,
+				FolderPath:  folderPath,
+				IsFolder:    false,
+				FileSize:    obj.GetSize(),
+				MimeType:    mime.TypeByExtension(ext),
+				AlbumName:   albumName,
+				AlbumArtist: albumArtist,
+				ScrapedName: trackTitle,
+				Cover:       cover,
+				ReleaseDate: releaseDate,
+				Genre:       genre,
+				Authors:     authors,
+				TrackNumber: trackNumber,
+			}
+
+			if err := db.CreateOrUpdateMediaItem(item); err != nil {
+				log.Warnf("save music item error [%s]: %v", target, err)
+			}
+		}
+
+		p.mu.Lock()
+		p.Done++
+		p.Message = "已扫描: " + name
 		p.mu.Unlock()
 	}
 	return nil
@@ -245,86 +530,33 @@ func walkVFS(ctx context.Context, dirPath string, mediaType model.MediaType, tar
 	return nil
 }
 
-// buildMediaItemFromVFS 根据 VFS 路径构建 MediaItem
-func buildMediaItemFromVFS(ctx context.Context, vfsPath string, cfg *model.MediaConfig) (*model.MediaItem, error) {
+// buildMediaItemFromVFS 根据 VFS 路径构建 MediaItem（非音乐类型使用）
+// 存储规则：
+//   - folder_path：恒定为扫描根路径 sp.Path
+//   - file_name：文件夹就是文件夹名，文件就是文件名
+//   - episodes：文件夹时存里面每个文件的信息，文件时为空
+func buildMediaItemFromVFS(ctx context.Context, vfsPath string, sp *model.MediaScanPath) (*model.MediaItem, error) {
 	obj, err := fs.Get(ctx, vfsPath, &fs.GetArgs{NoLog: true})
 	if err != nil {
 		return nil, err
 	}
 
 	name := obj.GetName()
-	folderPath := stdpath.Dir(vfsPath)
+	ext := strings.ToLower(stdpath.Ext(name))
 
 	item := &model.MediaItem{
-		MediaType:  cfg.MediaType,
-		FilePath:   vfsPath,
-		FileName:   name,
-		FolderPath: folderPath,
+		MediaType:  sp.MediaType,
+		ScanPathID: sp.ID,
+		FileName:   name,                          // 文件夹名 或 文件名
+		FolderPath: sp.Path,                       // 恒定为扫描根路径
 		IsFolder:   obj.IsDir(),
+		ScrapedName: strings.TrimSuffix(name, stdpath.Ext(name)), // 去掉扩展名作为默认名称
 	}
 
 	if !obj.IsDir() {
+		// 普通文件：记录大小和 MIME 类型，episodes 为空
 		item.FileSize = obj.GetSize()
-		ext := strings.ToLower(stdpath.Ext(name))
 		item.MimeType = mime.TypeByExtension(ext)
-	}
-
-	// 路径合并模式：使用文件夹名作为名称
-	if cfg.PathMerge && obj.IsDir() {
-		item.ScrapedName = name
-	} else {
-		// 去掉扩展名作为默认名称
-		ext := stdpath.Ext(name)
-		item.ScrapedName = strings.TrimSuffix(name, ext)
-	}
-
-	// 音乐文件：尝试读取标签（MP3 读 ID3v2，FLAC 读 Vorbis Comment），填充专辑/艺术家/曲目等元数据
-	if cfg.MediaType == model.MediaTypeMusic && !obj.IsDir() {
-		ext := strings.ToLower(stdpath.Ext(name))
-		readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
-		if reader := FetchFileReader(readCtx, vfsPath); reader != nil {
-			var tag *MusicTag
-			switch ext {
-			case ".flac":
-				tag, _ = ParseFLACVorbisComment(reader)
-			default:
-				// MP3 及其他格式尝试 ID3v2
-				tag, _ = ParseID3v2(reader)
-			}
-			if tag != nil {
-				if tag.Title != "" {
-					item.ScrapedName = tag.Title
-				}
-				item.AlbumName = tag.Album
-				item.AlbumArtist = tag.AlbumArtist
-				if item.AlbumArtist == "" {
-					item.AlbumArtist = tag.Artist
-				}
-				// 将艺术家写入 Authors 字段（JSON 数组格式）
-				if tag.Artist != "" {
-					if authorsJSON, err := json.Marshal([]string{tag.Artist}); err == nil {
-						item.Authors = string(authorsJSON)
-					}
-				}
-				item.TrackNumber = tag.TrackNumber
-				if tag.Year != "" && len(tag.Year) >= 4 {
-					item.ReleaseDate = tag.Year[:4] + "-01-01"
-				}
-				if tag.Genre != "" {
-					item.Genre = tag.Genre
-				}
-				// 提取内嵌封面图片，转为 data URI 存入 Cover（仅当 Cover 为空时）
-				if item.Cover == "" && len(tag.CoverData) > 0 {
-					mime := tag.CoverMIME
-					if mime == "" {
-						mime = "image/jpeg"
-					}
-					item.Cover = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(tag.CoverData)
-				}
-			}
-			_ = reader.Close()
-		}
-		readCancel()
 	}
 
 	return item, nil

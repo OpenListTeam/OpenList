@@ -97,7 +97,7 @@ func (s *DoubanScraper) ScrapeBook(item *model.MediaItem) error {
 	// 仅在豆瓣返回了有效封面图片URL时才覆盖本地封面
 	// 下载封面图片并根据 ThumbnailMode 存储，避免豆瓣防盗链导致前端无法显示
 	if bookDetail.Cover != "" {
-		if cover := s.downloadAndStoreCover(item.FilePath, bookDetail.Cover); cover != "" {
+		if cover := s.downloadAndStoreCover(item.FolderPath, bookDetail.Cover); cover != "" {
 			item.Cover = cover
 		} else {
 			// 下载失败时保留原 URL（降级）

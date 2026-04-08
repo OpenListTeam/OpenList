@@ -16,6 +16,24 @@ const (
 	MediaTypeBook  MediaType = "book"
 )
 
+// MediaScanPath 媒体库扫描路径（每个媒体库可配置多个扫描路径）
+type MediaScanPath struct {
+	gorm.Model
+	ID        uint           `gorm:"primarykey"           json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index"                json:"-"`
+
+	MediaType   MediaType `gorm:"index;not null"       json:"media_type"`   // 所属媒体类型
+	Name        string    `json:"name"`                                     // 路径名称（用于前端筛选显示）
+	Path        string    `gorm:"not null"             json:"path"`         // VFS 扫描路径
+	PathMerge   bool      `gorm:"default:false"        json:"path_merge"`   // 路径合并模式（子文件夹作为一个条目）
+	TypeTag     string    `json:"type_tag"`                                 // 类型标签：电影、电视剧等
+	ContentTags string    `json:"content_tags"`                             // 内容标签：喜剧、惊悚等（逗号分隔）
+	EnableScrape bool     `gorm:"default:true"         json:"enable_scrape"` // 是否启用刮削
+	LastScanAt  *time.Time `json:"last_scan_at"`                            // 最后扫描时间
+}
+
 // MediaItem 媒体条目（统一表，通过 media_type 区分类型，便于后期扩展新类型）
 type MediaItem struct {
 	gorm.Model
@@ -25,12 +43,12 @@ type MediaItem struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index"                json:"-"`
 	// 基础信息
-	MediaType MediaType `gorm:"index;not null"          json:"media_type"`
-	FilePath  string    `gorm:"uniqueIndex;not null"    json:"file_path"`  // 原始文件路径（唯一）
-	FileName  string    `json:"file_name"`
-	FileSize  int64     `json:"file_size"`
-	MimeType  string    `json:"mime_type"`
-	Hidden    bool      `gorm:"default:false"           json:"hidden"`
+	MediaType  MediaType `gorm:"index;not null"          json:"media_type"`
+	ScanPathID uint      `gorm:"index"                   json:"scan_path_id"` // 关联的扫描路径ID
+	FileName   string    `gorm:"uniqueIndex:idx_media_folder_file_album" json:"file_name"`
+	FileSize   int64     `json:"file_size"`
+	MimeType   string    `json:"mime_type"`
+	Hidden     bool      `gorm:"default:false"           json:"hidden"`
 
 	// 刮削/编辑信息
 	ScrapedName string  `json:"scraped_name"`
@@ -47,7 +65,7 @@ type MediaItem struct {
 	ExternalID string `json:"external_id"` // TMDB ID / Discogs ID / 豆瓣ID
 
 	// 音乐专属字段
-	AlbumName   string `json:"album_name"`   // 所属专辑名
+	AlbumName   string `gorm:"uniqueIndex:idx_media_folder_file_album" json:"album_name"` // 所属专辑名
 	AlbumArtist string `json:"album_artist"` // 专辑艺术家
 	TrackNumber int    `json:"track_number"` // 曲目编号
 	Duration    int    `json:"duration"`     // 时长（秒）
@@ -63,9 +81,9 @@ type MediaItem struct {
 	ISBN      string `json:"isbn"`      // ISBN
 
 	// 目录合并模式
-	IsFolder   bool   `gorm:"default:false" json:"is_folder"`   // 是否为文件夹模式条目
-	FolderPath string `json:"folder_path"`                      // 所属文件夹路径
-	Episodes   string `gorm:"type:text"     json:"episodes"`    // 选集信息，JSON数组，格式：[[文件名,序号,选集标题],...]
+	IsFolder   bool   `gorm:"default:false"                                    json:"is_folder"`   // 是否为文件夹模式条目
+	FolderPath string `gorm:"index;uniqueIndex:idx_media_folder_file_album"     json:"folder_path"` // 扫描根路径（恒定为扫描路径，与file_name+album_name组合唯一）
+	Episodes   string `gorm:"type:text"                                         json:"episodes"`    // 选集信息，JSON数组，格式：[{file_name,index,title},...]
 
 	ScrapedAt *time.Time `json:"scraped_at"`
 }
@@ -77,20 +95,19 @@ type MediaConfig struct {
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index"                json:"-"`
-	MediaType  MediaType  `gorm:"uniqueIndex;not null" json:"media_type"`
-	Enabled    bool       `gorm:"default:false"        json:"enabled"`
-	ScanPath   string     `gorm:"default:/"            json:"scan_path"`
-	PathMerge  bool       `gorm:"default:false"        json:"path_merge"` // 路径合并模式
-	LastScanAt    *time.Time `json:"last_scan_at"`
-	LastScrapeAt  *time.Time `json:"last_scrape_at"`
+	MediaType    MediaType  `gorm:"uniqueIndex;not null" json:"media_type"`
+	Enabled      bool       `gorm:"default:false"        json:"enabled"`
+	LastScanAt   *time.Time `json:"last_scan_at"`
+	LastScrapeAt *time.Time `json:"last_scrape_at"`
 }
 
 // MediaScanProgress 扫描进度（内存中维护，不持久化）
 type MediaScanProgress struct {
-	MediaType MediaType `json:"media_type"`
-	Running   bool      `json:"running"`
-	Total     int       `json:"total"`
-	Done      int       `json:"done"`
-	Message   string    `json:"message"`
-	Error     string    `json:"error,omitempty"`
+	MediaType  MediaType `json:"media_type"`
+	ScanPathID uint      `json:"scan_path_id,omitempty"` // 0 表示全部路径
+	Running    bool      `json:"running"`
+	Total      int       `json:"total"`
+	Done       int       `json:"done"`
+	Message    string    `json:"message"`
+	Error      string    `json:"error,omitempty"`
 }

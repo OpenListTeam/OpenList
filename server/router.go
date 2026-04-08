@@ -197,6 +197,12 @@ func admin(g *gin.RouterGroup) {
 	mediaAdmin.GET("/scan/progress", handles.GetMediaScanProgress)
 	mediaAdmin.POST("/scrape/start", handles.StartMediaScrape)
 	mediaAdmin.POST("/clear", handles.ClearMediaDB)
+	// 扫描路径管理
+	mediaAdmin.GET("/scan_paths", handles.ListMediaScanPaths)
+	mediaAdmin.POST("/scan_paths/create", handles.CreateMediaScanPath)
+	mediaAdmin.POST("/scan_paths/update", handles.UpdateMediaScanPath)
+	mediaAdmin.POST("/scan_paths/delete", handles.DeleteMediaScanPath)
+	mediaAdmin.POST("/scan_paths/clear", handles.ClearMediaScanPathDB)
 }
 
 func fsAndShare(g *gin.RouterGroup) {
@@ -213,6 +219,7 @@ func fsAndShare(g *gin.RouterGroup) {
 	mediaPublic.GET("/albums", handles.PublicListAlbums)
 	mediaPublic.GET("/album", handles.PublicGetAlbum)
 	mediaPublic.GET("/folders", handles.PublicListFolders)
+	mediaPublic.GET("/scan_paths", handles.PublicListScanPaths)
 }
 
 func _fs(g *gin.RouterGroup) {

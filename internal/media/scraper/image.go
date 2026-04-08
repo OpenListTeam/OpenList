@@ -90,7 +90,7 @@ func (s *ImageScraper) ScrapeImage(item *model.MediaItem, reader io.Reader) erro
 	// ── 2. 生成缩略图并存储 ──────────────────────────────────────
 	if s.ThumbnailMode == "local" {
 		// 本地存储模式：将缩略图保存到指定目录，Cover 存储本地路径
-		if localPath := s.saveThumbnailLocal(item.FilePath, data); localPath != "" {
+		if localPath := s.saveThumbnailLocal(item.FolderPath, data); localPath != "" {
 			item.Cover = localPath
 		}
 		// 本地存储失败时 cover 保持为空，不降级为文件路径
