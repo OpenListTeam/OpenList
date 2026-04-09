@@ -46,6 +46,9 @@ func (d *CloudreveV4) Init(ctx context.Context) error {
 	if d.ref != nil {
 		return nil
 	}
+	if d.isShare() {
+		return nil
+	}
 	if d.canLogin() {
 		return d.login()
 	}

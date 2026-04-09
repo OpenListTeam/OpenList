@@ -7,7 +7,7 @@ body:
     attributes:
       label: 请确认以下事项
       description: |
-        您必须勾选以下内容，否则您的问题可能会被直接关闭。
+        您必须阅读、检查、确认、同意以下内容，否则您的问题可能会被直接关闭。
         或者您可以去[讨论区](https://github.com/OpenListTeam/OpenList/discussions)。
       options:
         - label: |
@@ -28,6 +28,8 @@ body:
             我已确认此功能尚未被实现。
         - label: |
             我已确认此功能是合理的，且有普遍需求，并非我个人需要。
+        - label: |
+            我没有阅读这个清单，只是闭眼选中了所有的复选框，请关闭这个 Issue 。
   - type: textarea
     id: feature-description
     attributes:

@@ -12,12 +12,14 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
+	"github.com/pkg/errors"
 )
 
 type SetAria2Req struct {
@@ -448,6 +450,7 @@ func SetThunderBrowser(c *gin.Context) {
 		case *thunder_browser.ThunderBrowser, *thunder_browser.ThunderBrowserExpert:
 		default:
 			common.ErrorStrResp(c, "unsupported storage driver for offline download, only ThunderBrowser is supported", 400)
+			return
 		}
 	}
 	items := []model.SettingItem{
@@ -496,6 +499,15 @@ func AddOfflineDownload(c *gin.Context) {
 	reqPath, err := user.JoinPath(req.Path)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
+		return
+	}
+	meta, err := op.GetNearestMeta(reqPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, meta, reqPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
 	var tasks []task.TaskExtensionInfo

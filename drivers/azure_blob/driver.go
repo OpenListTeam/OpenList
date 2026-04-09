@@ -85,6 +85,9 @@ func (d *AzureBlob) Drop(ctx context.Context) error {
 // List retrieves blobs and directories under the specified path.
 func (d *AzureBlob) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	prefix := ensureTrailingSlash(dir.GetPath())
+	if prefix == "/" {
+		prefix = ""
+	}
 
 	pager := d.containerClient.NewListBlobsHierarchyPager("/", &container.ListBlobsHierarchyOptions{
 		Prefix: &prefix,
@@ -100,10 +103,11 @@ func (d *AzureBlob) List(ctx context.Context, dir model.Obj, args model.ListArgs
 		// Process directories
 		for _, blobPrefix := range page.Segment.BlobPrefixes {
 			objs = append(objs, &model.Object{
-				Name:     path.Base(strings.TrimSuffix(*blobPrefix.Name, "/")),
-				Path:     *blobPrefix.Name,
-				Modified: *blobPrefix.Properties.LastModified,
-				Ctime:    *blobPrefix.Properties.CreationTime,
+				Name: path.Base(strings.TrimSuffix(*blobPrefix.Name, "/")),
+				Path: *blobPrefix.Name,
+				// Azure does not support properties now.
+				//Modified: *blobPrefix.Properties.LastModified,
+				//Ctime:    *blobPrefix.Properties.CreationTime,
 				IsFolder: true,
 			})
 		}

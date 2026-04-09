@@ -58,9 +58,13 @@ type File struct {
 	Category     int    `json:"category"`
 	Status       int    `json:"status"`
 	Trashed      int    `json:"trashed"`
+	SHA1         string
 }
 
 func (f File) GetHash() utils.HashInfo {
+	if len(f.SHA1) == utils.SHA1.Width && len(f.Etag) != utils.MD5.Width {
+		return utils.NewHashInfo(utils.SHA1, f.SHA1)
+	}
 	return utils.NewHashInfo(utils.MD5, f.Etag)
 }
 
@@ -121,11 +125,14 @@ type AccessTokenResp struct {
 }
 
 type RefreshTokenResp struct {
-	AccessToken  string `json:"access_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	RefreshToken string `json:"refresh_token"`
-	Scope        string `json:"scope"`
-	TokenType    string `json:"token_type"`
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresIn        int64  `json:"expires_in"`
+	Code             int    `json:"code"`
+	Message          string `json:"message"`
+	ErrorDescription string `json:"error_description"`
+	Error            string `json:"error"`
+	Text             string `json:"text"`
 }
 
 type UserInfoResp struct {
@@ -187,6 +194,14 @@ type UploadCompleteResp struct {
 	Data struct {
 		Completed bool  `json:"completed"`
 		FileID    int64 `json:"fileID"`
+	} `json:"data"`
+}
+
+type SHA1ReuseResp struct {
+	BaseResp
+	Data struct {
+		FileID int64 `json:"fileID"`
+		Reuse  bool  `json:"reuse"`
 	} `json:"data"`
 }
 

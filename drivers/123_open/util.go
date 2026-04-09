@@ -21,16 +21,17 @@ import (
 var ( // 不同情况下获取的AccessTokenQPS限制不同 如下模块化易于拓展
 	Api = "https://open-api.123pan.com"
 
-	UserInfo       = InitApiInfo(Api+"/api/v1/user/info", 1)
-	FileList       = InitApiInfo(Api+"/api/v2/file/list", 3)
-	DownloadInfo   = InitApiInfo(Api+"/api/v1/file/download_info", 5)
-	DirectLink     = InitApiInfo(Api+"/api/v1/direct-link/url", 5)
-	Mkdir          = InitApiInfo(Api+"/upload/v1/file/mkdir", 2)
-	Move           = InitApiInfo(Api+"/api/v1/file/move", 1)
-	Rename         = InitApiInfo(Api+"/api/v1/file/name", 1)
-	Trash          = InitApiInfo(Api+"/api/v1/file/trash", 2)
-	UploadCreate   = InitApiInfo(Api+"/upload/v2/file/create", 2)
-	UploadComplete = InitApiInfo(Api+"/upload/v2/file/upload_complete", 0)
+	UserInfo        = InitApiInfo(Api+"/api/v1/user/info", 1)
+	FileList        = InitApiInfo(Api+"/api/v2/file/list", 3)
+	DownloadInfo    = InitApiInfo(Api+"/api/v1/file/download_info", 5)
+	DirectLink      = InitApiInfo(Api+"/api/v1/direct-link/url", 5)
+	Mkdir           = InitApiInfo(Api+"/upload/v1/file/mkdir", 2)
+	Move            = InitApiInfo(Api+"/api/v1/file/move", 1)
+	Rename          = InitApiInfo(Api+"/api/v1/file/name", 1)
+	Trash           = InitApiInfo(Api+"/api/v1/file/trash", 2)
+	UploadCreate    = InitApiInfo(Api+"/upload/v2/file/create", 2)
+	UploadComplete  = InitApiInfo(Api+"/upload/v2/file/upload_complete", 0)
+	UploadSHA1Reuse = InitApiInfo(Api+"/upload/v2/file/sha1_reuse", 2)
 
 	OfflineDownload        = InitApiInfo(Api+"/api/v1/offline/download", 1)
 	OfflineDownloadProcess = InitApiInfo(Api+"/api/v1/offline/download/process", 5)

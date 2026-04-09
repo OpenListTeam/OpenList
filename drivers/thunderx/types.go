@@ -303,3 +303,10 @@ type Media struct {
 	IsVisible      bool          `json:"is_visible"`
 	Category       string        `json:"category"`
 }
+
+type AboutResponse struct {
+	Quota struct {
+		Limit string `json:"limit"`
+		Usage string `json:"usage"`
+	} `json:"quota"`
+}
