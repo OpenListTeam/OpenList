@@ -45,6 +45,8 @@ jobs:
         uses: OpenListTeam/cgo-actions@v1.2.2
         with:
           targets: ${{ matrix.target }}
+          flags: ${{ contains(matrix.target, '-musl') && '-ldflags=-linkmode external -extldflags ''-static -fpic''' || '-ldflags=' }}
+          static-link-for-musl: true
           musl-target-format: $os-$musl-$arch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           out-dir: build
@@ -55,6 +57,16 @@ jobs:
             github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
             github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
           output: openlist$ext
+
+      - name: Verify musl binary is static
+        if: contains(matrix.target, '-musl')
+        run: |
+          set -e
+          if readelf -l build/openlist | grep -q "Requesting program interpreter"; then
+            echo "Dynamic binary detected: build/openlist"
+            readelf -l build/openlist | grep "Requesting program interpreter" || true
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

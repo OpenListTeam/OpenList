@@ -67,32 +67,39 @@ jobs:
             goflags: ""
           - target: "linux-(mips|mips64|mipsle|mips64le|loong64)-musl*" # musl-compat-family
             hash: "md5-linux-musl-mips"
-            flags: ""
+            flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
             goflags: ""
+            musl_static: "true"
           - target: "linux-!(arm*|mips|mips64|mipsle|mips64le|loong64)-musl*" # musl-not-arm (exclude compat-family)
             hash: "md5-linux-musl"
-            flags: ""
+            flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
             goflags: ""
+            musl_static: "true"
           - target: "linux-arm*-musl*" #musl-arm
             hash: "md5-linux-musl-arm"
-            flags: ""
+            flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
             goflags: ""
+            musl_static: "true"
           - target: "windows-arm64" #win-arm64
             hash: "md5-windows-arm64"
             flags: ""
             goflags: ""
+            musl_static: "false"
           - target: "windows7-*" #win7
             hash: "md5-windows7"
             flags: ""
             goflags: "-tags=sqlite_cgo_compat"
+            musl_static: "false"
           - target: "android-*" #android
             hash: "md5-android"
             flags: ""
             goflags: ""
+            musl_static: "false"
           - target: "freebsd-*" #freebsd
             hash: "md5-freebsd"
             flags: ""
             goflags: ""
+            musl_static: "false"
 
     name: Beta Release
     runs-on: ubuntu-latest
@@ -118,6 +125,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
           flags: ${{ matrix.flags || '-ldflags=' }}
+          static-link-for-musl: true
           musl-target-format: $os-$musl-$arch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           out-dir: build
@@ -131,6 +139,24 @@ jobs:
             github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
         env:
           GOFLAGS: ${{ matrix.goflags }}
+
+      - name: Verify musl binaries are static
+        if: matrix.musl_static == 'true'
+        run: |
+          set -e
+          shopt -s nullglob
+          files=(build/openlist-*-musl-*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No musl binaries found"
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            if readelf -l "$f" | grep -q "Requesting program interpreter"; then
+              echo "Dynamic binary detected: $f"
+              readelf -l "$f" | grep "Requesting program interpreter" || true
+              exit 1
+            fi
+          done
 
       - name: Compress
         run: |
