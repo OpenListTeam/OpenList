@@ -58,7 +58,7 @@ func (d *RakutenDrive) Drop(ctx context.Context) error {
 }
 
 func (d *RakutenDrive) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	remoteDir := d.toRemotePath(dir.GetPath(), true)
+	remoteDir := d.localPath2RemotePath(dir.GetPath(), true)
 	pageSize := d.PageSize
 	if pageSize <= 0 {
 		pageSize = 200
@@ -98,7 +98,7 @@ func (d *RakutenDrive) List(ctx context.Context, dir model.Obj, args model.ListA
 func (d *RakutenDrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	remotePath := file.GetID()
 	if remotePath == "" {
-		remotePath = d.toRemotePath(file.GetPath(), false)
+		remotePath = d.localPath2RemotePath(file.GetPath(), false)
 	}
 	dirPath := path.Dir(remotePath)
 	if dirPath == "." {
@@ -124,7 +124,7 @@ func (d *RakutenDrive) Link(ctx context.Context, file model.Obj, args model.Link
 }
 
 func (d *RakutenDrive) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	remoteDir := d.toRemotePath(parentDir.GetPath(), true)
+	remoteDir := d.localPath2RemotePath(parentDir.GetPath(), true)
 	if remoteDir == "/" {
 		remoteDir = ""
 	}
@@ -139,7 +139,7 @@ func (d *RakutenDrive) MakeDir(ctx context.Context, parentDir model.Obj, dirName
 	}
 	newPath := path.Join(parentDir.GetPath(), dirName)
 	return &model.Object{
-		ID:       d.toRemotePath(newPath, true),
+		ID:       d.localPath2RemotePath(newPath, true),
 		Path:     newPath,
 		Name:     dirName,
 		IsFolder: true,
@@ -154,10 +154,10 @@ func (d *RakutenDrive) Move(ctx context.Context, srcObj, dstDir model.Obj) (mode
 	}
 	srcRemote := f.GetID()
 	if srcRemote == "" {
-		srcRemote = d.toRemotePath(srcObj.GetPath(), srcObj.IsDir())
+		srcRemote = d.localPath2RemotePath(srcObj.GetPath(), srcObj.IsDir())
 	}
 	prefix := d.normalizePrefix(srcRemote)
-	dstRemote := d.toRemotePath(dstDir.GetPath(), true)
+	dstRemote := d.localPath2RemotePath(dstDir.GetPath(), true)
 	body := base.Json{
 		"host_id":   d.HostID,
 		"file":      []base.Json{{"path": srcRemote, "size": f.GetSize(), "version_id": f.VersionID, "last_modified": f.LastModified}},
@@ -171,7 +171,7 @@ func (d *RakutenDrive) Move(ctx context.Context, srcObj, dstDir model.Obj) (mode
 	}
 	newPath := path.Join(dstDir.GetPath(), srcObj.GetName())
 	f.Path = newPath
-	f.ID = d.toRemotePath(newPath, srcObj.IsDir())
+	f.ID = d.localPath2RemotePath(newPath, srcObj.IsDir())
 	return f, nil
 }
 
@@ -182,7 +182,7 @@ func (d *RakutenDrive) Rename(ctx context.Context, srcObj model.Obj, newName str
 	}
 	srcRemote := f.GetID()
 	if srcRemote == "" {
-		srcRemote = d.toRemotePath(srcObj.GetPath(), srcObj.IsDir())
+		srcRemote = d.localPath2RemotePath(srcObj.GetPath(), srcObj.IsDir())
 	}
 	prefix := d.normalizePrefix(srcRemote)
 	body := base.Json{
@@ -198,7 +198,7 @@ func (d *RakutenDrive) Rename(ctx context.Context, srcObj model.Obj, newName str
 	newPath := path.Join(path.Dir(srcObj.GetPath()), newName)
 	f.Path = newPath
 	f.Name = newName
-	f.ID = d.toRemotePath(newPath, srcObj.IsDir())
+	f.ID = d.localPath2RemotePath(newPath, srcObj.IsDir())
 	return f, nil
 }
 
@@ -209,10 +209,10 @@ func (d *RakutenDrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) (mode
 	}
 	srcRemote := f.GetID()
 	if srcRemote == "" {
-		srcRemote = d.toRemotePath(srcObj.GetPath(), srcObj.IsDir())
+		srcRemote = d.localPath2RemotePath(srcObj.GetPath(), srcObj.IsDir())
 	}
 	prefix := d.normalizePrefix(srcRemote)
-	dstRemote := d.toRemotePath(dstDir.GetPath(), true)
+	dstRemote := d.localPath2RemotePath(dstDir.GetPath(), true)
 	body := base.Json{
 		"host_id":   d.HostID,
 		"file":      []base.Json{{"path": srcRemote, "size": f.GetSize(), "version_id": f.VersionID, "last_modified": f.LastModified}},
@@ -247,7 +247,7 @@ func (d *RakutenDrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) (mode
 	}
 	newPath := path.Join(dstDir.GetPath(), srcObj.GetName())
 	return &model.Object{
-		ID:       d.toRemotePath(newPath, srcObj.IsDir()),
+		ID:       d.localPath2RemotePath(newPath, srcObj.IsDir()),
 		Path:     newPath,
 		Name:     srcObj.GetName(),
 		Size:     srcObj.GetSize(),
@@ -263,7 +263,7 @@ func (d *RakutenDrive) Remove(ctx context.Context, obj model.Obj) error {
 	}
 	remotePath := f.GetID()
 	if remotePath == "" {
-		remotePath = d.toRemotePath(obj.GetPath(), obj.IsDir())
+		remotePath = d.localPath2RemotePath(obj.GetPath(), obj.IsDir())
 	}
 	prefix := d.normalizePrefix(remotePath)
 	body := base.Json{
@@ -301,7 +301,7 @@ func (d *RakutenDrive) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	remoteDir := d.toRemotePath(dstDir.GetPath(), true)
+	remoteDir := d.localPath2RemotePath(dstDir.GetPath(), true)
 	if remoteDir == "/" {
 		remoteDir = ""
 	}
@@ -523,7 +523,7 @@ func (d *RakutenDrive) parseList(body []byte, remoteDir, localDir string) ([]mod
 			created = parseTimeAny(item.Get("Created").ToString())
 		}
 		name := path.Base(strings.TrimSuffix(remotePath, "/"))
-		localPath := d.toLocalPath(remotePath)
+		localPath := d.remotePath2LocalPath(remotePath)
 		if localDir != "" && !strings.HasSuffix(localDir, "/") && !strings.HasPrefix(localPath, "/") {
 			localPath = path.Join(localDir, name)
 		}

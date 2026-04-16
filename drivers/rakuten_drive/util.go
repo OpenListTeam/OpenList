@@ -94,7 +94,7 @@ func parseJWTExp(token string) (time.Time, error) {
 	return time.Unix(exp, 0), nil
 }
 
-func (d *RakutenDrive) toRemotePath(p string, isDir bool) string {
+func (d *RakutenDrive) localPath2RemotePath(p string, isDir bool) string {
 	p = strings.TrimPrefix(p, "/")
 	root := strings.Trim(d.GetRootPath(), "/")
 	if root != "" {
@@ -113,7 +113,7 @@ func (d *RakutenDrive) toRemotePath(p string, isDir bool) string {
 	return strings.TrimSuffix(p, "/")
 }
 
-func (d *RakutenDrive) toLocalPath(remote string) string {
+func (d *RakutenDrive) remotePath2LocalPath(remote string) string {
 	remote = strings.TrimPrefix(remote, "/")
 	root := strings.Trim(d.GetRootPath(), "/")
 	if root != "" && strings.HasPrefix(remote, root) {
