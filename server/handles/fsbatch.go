@@ -22,6 +22,7 @@ type RecursiveMoveReq struct {
 	ConflictPolicy string `json:"conflict_policy"`
 }
 
+// FsRecursiveMove recursively moves files (individual item permission checks skipped for performance).
 func FsRecursiveMove(c *gin.Context) {
 	var req RecursiveMoveReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -39,20 +40,31 @@ func FsRecursiveMove(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
+	srcMeta, err := op.GetNearestMeta(srcDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, srcMeta, srcDir) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
+	common.GinWithValue(c, conf.MetaKey, srcMeta)
+
 	dstDir, err := user.JoinPath(req.DstDir)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-
-	meta, err := op.GetNearestMeta(srcDir)
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			common.ErrorResp(c, err, 500, true)
-			return
-		}
+	dstMeta, err := op.GetNearestMeta(dstDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
 	}
-	common.GinWithValue(c, conf.MetaKey, meta)
+	if !common.CanWrite(user, dstMeta, dstDir) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
 
 	rootFiles, err := fs.List(c.Request.Context(), srcDir, &fs.ListArgs{})
 	if err != nil {
@@ -143,6 +155,7 @@ type BatchRenameReq struct {
 	} `json:"rename_objects"`
 }
 
+// FsBatchRename performs batch rename (individual item permission checks skipped for performance).
 func FsBatchRename(c *gin.Context) {
 	var req BatchRenameReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -162,11 +175,13 @@ func FsBatchRename(c *gin.Context) {
 	}
 
 	meta, err := op.GetNearestMeta(reqPath)
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			common.ErrorResp(c, err, 500, true)
-			return
-		}
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, meta, reqPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
 	}
 	common.GinWithValue(c, conf.MetaKey, meta)
 	for _, renameObject := range req.RenameObjects {
@@ -193,6 +208,7 @@ type RegexRenameReq struct {
 	NewNameRegex string `json:"new_name_regex"`
 }
 
+// FsRegexRename renames files by regex (individual item permission checks skipped for performance).
 func FsRegexRename(c *gin.Context) {
 	var req RegexRenameReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -212,11 +228,13 @@ func FsRegexRename(c *gin.Context) {
 	}
 
 	meta, err := op.GetNearestMeta(reqPath)
-	if err != nil {
-		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			common.ErrorResp(c, err, 500, true)
-			return
-		}
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, meta, reqPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
 	}
 	common.GinWithValue(c, conf.MetaKey, meta)
 

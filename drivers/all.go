@@ -29,6 +29,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/crypt"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/degoo"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/doubao"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/doubao_new"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/doubao_share"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/dropbox"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/febbox"
