@@ -158,6 +158,7 @@ const (
 	TaskDecompressDownloadThreadsNum      = "decompress_download_task_threads_num"
 	TaskDecompressUploadThreadsNum        = "decompress_upload_task_threads_num"
 	ProxyMaxConcurrentRequestsPerIP       = "proxy_max_concurrent_requests_per_ip"
+	ProxyClientIPHeader                   = "proxy_client_ip_header"
 	StreamMaxClientDownloadSpeed          = "max_client_download_speed"
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"

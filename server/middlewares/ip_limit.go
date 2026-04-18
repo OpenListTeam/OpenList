@@ -1,14 +1,19 @@
 package middlewares
 
 import (
+	"errors"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
 
+// NOTE: Counts are per-process; in multi-instance deployments the effective limit is limit * N.
 var (
 	proxyIPCounts   = make(map[string]int)
 	proxyIPCountsMu sync.Mutex
@@ -27,25 +32,35 @@ func ProxyIPConcurrencyLimit() gin.HandlerFunc {
 
 		if limit == 0 {
 			// 0 means completely disabled
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"code":    http.StatusForbidden,
-				"message": "Proxy is disabled",
-				"data":    nil,
-			})
+			common.ErrorPage(c, errors.New("Proxy is disabled"), http.StatusForbidden)
 			return
 		}
 
-		ip := c.ClientIP()
+		ipHeader := setting.GetStr(conf.ProxyClientIPHeader)
+		var ip string
+
+		// Extract IP based on user configuration to prevent spoofing
+		if ipHeader != "" {
+			ip = c.Request.Header.Get(ipHeader)
+			if idx := strings.Index(ip, ","); idx != -1 {
+				ip = ip[:idx]
+			}
+			ip = strings.TrimSpace(ip)
+		}
+
+		// Fallback to strict remote address if missing or not configured
+		if ip == "" {
+			ip = c.Request.RemoteAddr
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				ip = host
+			}
+		}
 
 		proxyIPCountsMu.Lock()
 		count := proxyIPCounts[ip]
 		if count >= limit {
 			proxyIPCountsMu.Unlock()
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"code":    http.StatusTooManyRequests,
-				"message": "Too Many Proxy Requests from this IP",
-				"data":    nil,
-			})
+			common.ErrorPage(c, errors.New("Too Many Proxy Requests from this IP"), http.StatusTooManyRequests)
 			return
 		}
 		proxyIPCounts[ip] = count + 1
