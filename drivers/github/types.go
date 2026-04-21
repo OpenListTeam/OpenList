@@ -1,8 +1,6 @@
 package github
 
 import (
-	"time"
-
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
@@ -35,7 +33,8 @@ func (o *Object) toModelObj() *model.Object {
 	return &model.Object{
 		Name:     o.Name,
 		Size:     o.Size,
-		Modified: time.Unix(0, 0),
+		Modified: githubZeroTime,
+		Ctime:    githubZeroTime,
 		IsFolder: o.Type == "dir",
 		Path:     utils.FixAndCleanPath(o.Path),
 	}
@@ -69,7 +68,8 @@ func (o *TreeObjResp) toModelObj() *model.Object {
 	return &model.Object{
 		Name:     o.Path,
 		Size:     o.Size,
-		Modified: time.Unix(0, 0),
+		Modified: githubZeroTime,
+		Ctime:    githubZeroTime,
 		IsFolder: o.Type == "tree",
 		Path:     utils.FixAndCleanPath(o.Path),
 	}
