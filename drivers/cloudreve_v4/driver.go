@@ -167,6 +167,10 @@ func (d *CloudreveV4) Link(ctx context.Context, file model.Obj, args model.LinkA
 	return &model.Link{
 		URL:        url.Urls[0].URL,
 		Expiration: &exp,
+		Header: http.Header{
+			"Referer":    {d.Address},
+			"User-Agent": {d.getUA()},
+		},
 	}, nil
 }
 
