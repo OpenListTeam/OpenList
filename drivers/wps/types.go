@@ -128,6 +128,14 @@ type spacesResp struct {
 	} `json:"used_parts"`
 }
 
+type serviceSpaceResp struct {
+	Info []struct {
+		ID         int64 `json:"id"`
+		SpaceTotal int64 `json:"space_total"`
+		SpaceUsed  int64 `json:"space_used"`
+	} `json:"info"`
+}
+
 type uploadCreateUpdateResp struct {
 	apiResult
 	Method  string `json:"method"`

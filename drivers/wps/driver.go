@@ -382,8 +382,25 @@ func (d *Wps) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 }
 
 func (d *Wps) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	url := fmt.Sprintf("%s/api/v3/spaces", d.driveHost()+d.drivePrefix())
-	var resp spacesResp
+	if d.isPersonal() {
+		url := ENDPOINT_PERSONAL + "/api/v3/spaces"
+		var resp spacesResp
+		r, err := d.request(ctx).SetResult(&resp).SetError(&resp).Get(url)
+		if err != nil {
+			return nil, err
+		}
+		if r != nil && r.IsError() {
+			return nil, fmt.Errorf("http error: %d", r.StatusCode())
+		}
+		return &model.StorageDetails{
+			DiskUsage: model.DiskUsage{
+				TotalSpace: resp.Total,
+				UsedSpace:  resp.Used,
+			},
+		}, nil
+	}
+	url := ENDPOINT_BUSINESS + "/3rd/plussvr/compose/v1/u/companies/batch/service-space?comp_ids=" + fmt.Sprint(d.login.CompanyID)
+	var resp serviceSpaceResp
 	r, err := d.request(ctx).SetResult(&resp).SetError(&resp).Get(url)
 	if err != nil {
 		return nil, err
@@ -391,12 +408,21 @@ func (d *Wps) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	if r != nil && r.IsError() {
 		return nil, fmt.Errorf("http error: %d", r.StatusCode())
 	}
-	return &model.StorageDetails{
-		DiskUsage: model.DiskUsage{
-			TotalSpace: resp.Total,
-			UsedSpace:  resp.Used,
-		},
-	}, nil
+	if len(resp.Info) == 0 {
+		return nil, fmt.Errorf("empty service space info")
+	}
+	// info := resp.Info[0]
+	for _, info := range resp.Info {
+		if info.ID == d.login.CompanyID {
+			return &model.StorageDetails{
+				DiskUsage: model.DiskUsage{
+					TotalSpace: info.SpaceTotal,
+					UsedSpace:  info.SpaceUsed,
+				},
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("service space info not found for company ID: %d", d.login.CompanyID)
 }
 
 var _ driver.Driver = (*Wps)(nil)
