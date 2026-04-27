@@ -175,7 +175,13 @@ func (d *Wps) Link(ctx context.Context, file model.Obj, _ model.LinkArgs) (*mode
 	if resp.URL == "" {
 		return nil, fmt.Errorf("empty download url")
 	}
-	return &model.Link{URL: resp.URL, Header: http.Header{}}, nil
+	return &model.Link{
+		URL: resp.URL,
+		Header: http.Header{
+			"User-Agent": []string{d.getUA()},
+			"Referer":    []string{d.driveHost()},
+		},
+	}, nil
 }
 
 func (d *Wps) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
