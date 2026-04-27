@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -59,6 +60,59 @@ func (d *Wps) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (d *Wps) GetRoot(ctx context.Context) (model.Obj, error) {
+	root := &Obj{
+		Obj: &model.Object{
+			Path:     "/",
+			Name:     "root",
+			Modified: d.Modified,
+			Ctime:    d.Modified,
+			IsFolder: true,
+		},
+		Kind: "root",
+	}
+	rootPath := d.RootFolderPath
+	if rootPath != "" && rootPath != "/" {
+		parts := strings.Split(strings.Trim(rootPath, "/"), "/")
+		groups, err := d.getGroups(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var current *Obj
+		for _, g := range groups {
+			if g.Name == parts[0] {
+				current = g.groupToObj("/")
+				break
+			}
+		}
+		if current == nil {
+			return nil, fmt.Errorf("root path %q not found", rootPath)
+		}
+		parentID := int64(0)
+		for _, name := range parts[1:] {
+			files, err := d.getFiles(ctx, current.GroupID, parentID)
+			if err != nil {
+				return nil, err
+			}
+			var next *Obj
+			for _, f := range files {
+				if f.Type == "folder" && f.Name == name {
+					next = f.fileToObj(current.GetPath(), d.isPersonal())
+					break
+				}
+			}
+			if next == nil {
+				return nil, fmt.Errorf("root path %q not found", rootPath)
+			}
+			current = next
+			parentID = current.FileID
+		}
+		current.Obj = &model.Object{ID: current.GetID(), Path: "/", Name: current.GetName(), IsFolder: true}
+		root = current
+	}
+	return root, nil
+}
+
 func (d *Wps) List(ctx context.Context, dir model.Obj, _ model.ListArgs) ([]model.Obj, error) {
 	basePath := "/"
 	if dir != nil {
@@ -66,33 +120,18 @@ func (d *Wps) List(ctx context.Context, dir model.Obj, _ model.ListArgs) ([]mode
 			basePath = p
 		}
 	}
-	if basePath == "/" {
+	node, err := unwrapWpsObj(dir)
+	if err != nil {
+		return nil, err
+	}
+	if node.Kind == "root" {
 		groups, err := d.getGroups(ctx)
 		if err != nil {
 			return nil, err
 		}
-		res := make([]model.Obj, 0, len(groups))
-		for _, g := range groups {
-			path := joinPath(basePath, g.Name)
-			obj := &Obj{
-				Obj: &model.Object{
-					ID:       strconv.FormatInt(g.GroupID, 10),
-					Path:     path,
-					Name:     g.Name,
-					Modified: parseTime(0),
-					Ctime:    parseTime(0),
-					IsFolder: true,
-				},
-				Kind:    "group",
-				GroupID: g.GroupID,
-			}
-			res = append(res, obj)
-		}
-		return res, nil
-	}
-	node, err := unwrapWpsObj(dir)
-	if err != nil {
-		return nil, err
+		return utils.SliceConvert(groups, func(g Group) (model.Obj, error) {
+			return g.groupToObj(basePath), nil
+		})
 	}
 	if node.Kind != "group" && node.Kind != "folder" {
 		return nil, nil
@@ -105,11 +144,9 @@ func (d *Wps) List(ctx context.Context, dir model.Obj, _ model.ListArgs) ([]mode
 	if err != nil {
 		return nil, err
 	}
-	res := make([]model.Obj, 0, len(files))
-	for _, f := range files {
-		res = append(res, f.fileToObj(basePath, d.isPersonal()))
-	}
-	return res, nil
+	return utils.SliceConvert(files, func(f FileInfo) (model.Obj, error) {
+		return f.fileToObj(basePath, d.isPersonal()), nil
+	})
 }
 
 func (d *Wps) Link(ctx context.Context, file model.Obj, _ model.LinkArgs) (*model.Link, error) {
@@ -357,3 +394,4 @@ func (d *Wps) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 }
 
 var _ driver.Driver = (*Wps)(nil)
+var _ driver.GetRooter = (*Wps)(nil)
