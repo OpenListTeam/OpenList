@@ -13,11 +13,10 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:              "WPS",
-	LocalSort:         true,
-	DefaultRoot:       "/",
-	Alert:             "",
-	NoOverwriteUpload: true,
+	Name:        "WPS",
+	LocalSort:   true,
+	DefaultRoot: "/",
+	Alert:       "",
 }
 
 func init() {
