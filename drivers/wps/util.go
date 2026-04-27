@@ -155,7 +155,9 @@ func checkAPI(resp *resty.Response, result apiResult) error {
 }
 
 func (d *Wps) getGroups(ctx context.Context) ([]Group, error) {
-	if d.isPersonal() {
+	// different APIs
+	switch d.Mode {
+	case "Personal":
 		var resp personalGroupsResp
 		r, err := d.request(ctx).SetResult(&resp).SetError(&resp).Get(d.driveURL("/api/v3/groups"))
 		if err != nil {
@@ -169,17 +171,19 @@ func (d *Wps) getGroups(ctx context.Context) ([]Group, error) {
 			res = append(res, Group{GroupID: g.ID, Name: g.Name})
 		}
 		return res, nil
+	case "Business":
+		var resp groupsResp
+		url := fmt.Sprintf("%s/3rd/plus/groups/v1/companies/%d/users/self/groups/private", ENDPOINT_BUSINESS, d.login.CompanyID)
+		r, err := d.request(ctx).SetResult(&resp).SetError(&resp).Get(url)
+		if err != nil {
+			return nil, err
+		}
+		if r != nil && r.IsError() {
+			return nil, fmt.Errorf("http error: %d", r.StatusCode())
+		}
+		return resp.Groups, nil
 	}
-	var resp groupsResp
-	url := fmt.Sprintf("%s/3rd/plus/groups/v1/companies/%d/users/self/groups/private", ENDPOINT_BUSINESS, d.login.CompanyID)
-	r, err := d.request(ctx).SetResult(&resp).SetError(&resp).Get(url)
-	if err != nil {
-		return nil, err
-	}
-	if r != nil && r.IsError() {
-		return nil, fmt.Errorf("http error: %d", r.StatusCode())
-	}
-	return resp.Groups, nil
+	return nil, fmt.Errorf("unsupported mode: %s", d.Mode)
 }
 
 func (d *Wps) getFiles(ctx context.Context, groupID, parentID int64) ([]FileInfo, error) {
