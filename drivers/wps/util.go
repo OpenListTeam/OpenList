@@ -16,7 +16,7 @@ import (
 )
 
 const ENDPOINT_BUSINESS = "https://365.kdocs.cn"
-const ENDPOINT_PERSIONAL = "https://drive.wps.cn"
+const ENDPOINT_PERSONAL = "https://drive.wps.cn"
 
 func (d *Wps) isPersonal() bool {
 	// prefer d.login if available, as it may be set by islogin API
@@ -31,7 +31,7 @@ func (d *Wps) isPersonal() bool {
 
 func (d *Wps) driveHost() string {
 	if d.isPersonal() {
-		return ENDPOINT_PERSIONAL
+		return ENDPOINT_PERSONAL
 	}
 	return ENDPOINT_BUSINESS
 }
