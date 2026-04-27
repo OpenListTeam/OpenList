@@ -90,9 +90,9 @@ func (d *Wps) List(ctx context.Context, dir model.Obj, _ model.ListArgs) ([]mode
 		}
 		return res, nil
 	}
-	node, ok := dir.(*Obj)
-	if !ok {
-		return nil, fmt.Errorf("invalid object type")
+	node, err := unwrapWpsObj(dir)
+	if err != nil {
+		return nil, err
 	}
 	if node.Kind != "group" && node.Kind != "folder" {
 		return nil, nil
@@ -116,9 +116,9 @@ func (d *Wps) Link(ctx context.Context, file model.Obj, _ model.LinkArgs) (*mode
 	if file == nil {
 		return nil, errs.NotSupport
 	}
-	node, ok := file.(*Obj)
-	if !ok {
-		return nil, fmt.Errorf("invalid object type")
+	node, err := unwrapWpsObj(file)
+	if err != nil {
+		return nil, err
 	}
 	if node.Kind != "file" || !node.HasFile {
 		return nil, errs.NotSupport
@@ -145,9 +145,9 @@ func (d *Wps) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) 
 	if parentDir == nil {
 		return errs.NotSupport
 	}
-	node, ok := parentDir.(*Obj)
-	if !ok {
-		return fmt.Errorf("invalid object type")
+	node, err := unwrapWpsObj(parentDir)
+	if err != nil {
+		return err
 	}
 	if node.Kind != "group" && node.Kind != "folder" {
 		return errs.NotSupport
@@ -171,13 +171,13 @@ func (d *Wps) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if srcObj == nil || dstDir == nil {
 		return errs.NotSupport
 	}
-	nodeSrc, ok := srcObj.(*Obj)
-	if !ok {
-		return fmt.Errorf("invalid source object type")
+	nodeSrc, err := unwrapWpsObj(srcObj)
+	if err != nil {
+		return fmt.Errorf("invalid source object type: %w", err)
 	}
-	nodeDst, ok := dstDir.(*Obj)
-	if !ok {
-		return fmt.Errorf("invalid destination object type")
+	nodeDst, err := unwrapWpsObj(dstDir)
+	if err != nil {
+		return fmt.Errorf("invalid destination object type: %w", err)
 	}
 	if nodeSrc.Kind != "file" && nodeSrc.Kind != "folder" {
 		return errs.NotSupport
@@ -223,9 +223,9 @@ func (d *Wps) Rename(ctx context.Context, srcObj model.Obj, newName string) erro
 	if srcObj == nil {
 		return errs.NotSupport
 	}
-	node, ok := srcObj.(*Obj)
-	if !ok {
-		return fmt.Errorf("invalid object type")
+	node, err := unwrapWpsObj(srcObj)
+	if err != nil {
+		return err
 	}
 	if node.Kind != "file" && node.Kind != "folder" {
 		return errs.NotSupport
@@ -242,13 +242,13 @@ func (d *Wps) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if srcObj == nil || dstDir == nil {
 		return errs.NotSupport
 	}
-	nodeSrc, ok := srcObj.(*Obj)
-	if !ok {
-		return fmt.Errorf("invalid source object type")
+	nodeSrc, err := unwrapWpsObj(srcObj)
+	if err != nil {
+		return fmt.Errorf("invalid source object type: %w", err)
 	}
-	nodeDst, ok := dstDir.(*Obj)
-	if !ok {
-		return fmt.Errorf("invalid destination object type")
+	nodeDst, err := unwrapWpsObj(dstDir)
+	if err != nil {
+		return fmt.Errorf("invalid destination object type: %w", err)
 	}
 	if nodeSrc.Kind != "file" && nodeSrc.Kind != "folder" {
 		return errs.NotSupport
@@ -296,9 +296,9 @@ func (d *Wps) Remove(ctx context.Context, obj model.Obj) error {
 	if obj == nil {
 		return errs.NotSupport
 	}
-	node, ok := obj.(*Obj)
-	if !ok {
-		return fmt.Errorf("invalid object type")
+	node, err := unwrapWpsObj(obj)
+	if err != nil {
+		return err
 	}
 	if node.Kind != "file" && node.Kind != "folder" {
 		return errs.NotSupport

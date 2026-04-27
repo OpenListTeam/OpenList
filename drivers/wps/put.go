@@ -113,9 +113,9 @@ func (d *Wps) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	if up == nil {
 		up = func(float64) {}
 	}
-	node, ok := dstDir.(*Obj)
-	if !ok {
-		return fmt.Errorf("invalid object type while uploading")
+	node, err := unwrapWpsObj(dstDir)
+	if err != nil {
+		return err
 	}
 	if node.Kind != "group" && node.Kind != "folder" {
 		return errs.NotSupport

@@ -11,6 +11,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -241,4 +242,18 @@ func (d *Wps) doJSON(ctx context.Context, method, url string, body interface{}) 
 		return err
 	}
 	return checkAPI(resp, result)
+}
+
+func unwrapWpsObj(obj model.Obj) (*Obj, error) {
+	for obj != nil {
+		if node, ok := obj.(*Obj); ok {
+			return node, nil
+		}
+		unwrap, ok := obj.(model.ObjUnwrap)
+		if !ok {
+			break
+		}
+		obj = unwrap.Unwrap()
+	}
+	return nil, fmt.Errorf("invalid object type")
 }
