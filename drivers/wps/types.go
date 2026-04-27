@@ -1,15 +1,24 @@
 package wps
 
 import (
-	"time"
+	"strconv"
 
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
-type workspaceResp struct {
-	Companies []struct {
-		ID int64 `json:"id"`
-	} `json:"companies"`
+type apiResult struct {
+	Result string `json:"result"`
+	Msg    string `json:"msg"`
+}
+
+type loginState struct {
+	AccountNum       int    `json:"account_num"`
+	CompanyID        int64  `json:"companyid"`
+	CurrentCompanyID int64  `json:"current_companyid"`
+	IsCompanyAccount bool   `json:"is_company_account"`
+	IsPlus           bool   `json:"is_plus"`
+	LoginMode        string `json:"loginmode"`
+	UserID           int64  `json:"userid"`
 }
 
 type Group struct {
@@ -21,6 +30,14 @@ type Group struct {
 
 type groupsResp struct {
 	Groups []Group `json:"groups"`
+}
+
+type personalGroupsResp struct {
+	apiResult
+	Groups []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	} `json:"groups"`
 }
 
 type filePerms struct {
@@ -38,6 +55,42 @@ type FileInfo struct {
 	ID        int64     `json:"id"`
 	Deleted   bool      `json:"deleted"`
 	FilePerms filePerms `json:"file_perms_acl"`
+}
+
+func (f *FileInfo) canDownload(isPersonal bool) bool {
+	if f == nil || f.Type == "folder" {
+		return false
+	}
+	if f.FilePerms.Download != 0 {
+		return true
+	}
+	return isPersonal
+}
+
+func (f FileInfo) fileToObj(basePath string, isPersonal bool) *Obj {
+	name := f.Name
+	path := joinPath(basePath, name)
+	kind := "file"
+	if f.Type == "folder" {
+		kind = "folder"
+	}
+	obj := &Obj{
+		Obj: &model.Object{
+			ID:       strconv.FormatInt(f.ID, 10),
+			Path:     path,
+			Name:     name,
+			Size:     f.Size,
+			Modified: parseTime(f.Mtime),
+			Ctime:    parseTime(f.Ctime),
+			IsFolder: f.Type == "folder",
+		},
+		Kind:        kind,
+		FileID:      f.ID,
+		GroupID:     f.GroupID,
+		HasFile:     true,
+		CanDownload: f.canDownload(isPersonal),
+	}
+	return obj
 }
 
 type filesResp struct {
@@ -62,46 +115,33 @@ type spacesResp struct {
 	} `json:"used_parts"`
 }
 
+type uploadCreateUpdateResp struct {
+	apiResult
+	Method  string `json:"method"`
+	URL     string `json:"url"`
+	Store   string `json:"store"`
+	Request struct {
+		Headers  map[string]string `json:"headers"`
+		FormData map[string]string `json:"formData"`
+	} `json:"request"`
+	Response struct {
+		ExpectCode []int  `json:"expect_code"`
+		ArgsETag   string `json:"args_etag"`
+		ArgsKey    string `json:"args_key"`
+	} `json:"response"`
+}
+
+type uploadPutResp struct {
+	NewFilename string `json:"newfilename"`
+	Sha1        string `json:"sha1"`
+	MD5         string `json:"md5"`
+}
+
 type Obj struct {
-	id          string
-	name        string
-	size        int64
-	ctime       time.Time
-	mtime       time.Time
-	isDir       bool
-	hash        utils.HashInfo
-	path        string
-	canDownload bool
-}
-
-func (o *Obj) GetSize() int64 {
-	return o.size
-}
-
-func (o *Obj) GetName() string {
-	return o.name
-}
-
-func (o *Obj) ModTime() time.Time {
-	return o.mtime
-}
-
-func (o *Obj) CreateTime() time.Time {
-	return o.ctime
-}
-
-func (o *Obj) IsDir() bool {
-	return o.isDir
-}
-
-func (o *Obj) GetHash() utils.HashInfo {
-	return o.hash
-}
-
-func (o *Obj) GetID() string {
-	return o.id
-}
-
-func (o *Obj) GetPath() string {
-	return o.path
+	model.Obj
+	Kind        string // root / group / file / folder
+	FileID      int64
+	GroupID     int64
+	HasFile     bool // only FileInfo has file, otherwise the FileID is 0
+	CanDownload bool
 }
