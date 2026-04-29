@@ -125,4 +125,29 @@ func (d *WebDav) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer
 	return err
 }
 
+// implements driver.Getter interface
+func (d *WebDav) Get(ctx context.Context, path string) (model.Obj, error) {
+	if utils.PathEqual(path, "/") {
+		return &model.Object{
+			Name:     "Root",
+			IsFolder: true,
+			Path:     "/",
+		}, nil
+	}
+
+	info, err := d.client.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.Object{
+		Name:     info.Name(),
+		Size:     info.Size(),
+		Modified: info.ModTime(),
+		IsFolder: info.IsDir(),
+		Path:     path,
+	}, nil
+}
+
 var _ driver.Driver = (*WebDav)(nil)
+var _ driver.Getter = (*WebDav)(nil)
