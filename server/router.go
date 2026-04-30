@@ -67,7 +67,7 @@ func Init(e *gin.Engine) {
 
 	api := g.Group("/api")
 	auth := api.Group("", middlewares.Auth(false))
-	webauthn := api.Group("/authn", middlewares.Authn)
+	authn := api.Group("/authn", middlewares.Authn)
 
 	api.POST("/auth/login", handles.Login)
 	api.POST("/auth/login/hash", handles.LoginHash)
@@ -87,13 +87,14 @@ func Init(e *gin.Engine) {
 	api.GET("/auth/get_sso_id", handles.SSOLoginCallback)
 	api.GET("/auth/sso_get_token", handles.SSOLoginCallback)
 
-	// webauthn
-	api.GET("/authn/webauthn_begin_login", handles.BeginAuthnLogin)
-	api.POST("/authn/webauthn_finish_login", handles.FinishAuthnLogin)
-	webauthn.GET("/webauthn_begin_registration", handles.BeginAuthnRegistration)
-	webauthn.POST("/webauthn_finish_registration", handles.FinishAuthnRegistration)
-	webauthn.POST("/delete_authn", handles.DeleteAuthnLogin)
-	webauthn.GET("/getcredentials", handles.GetAuthnCredentials)
+	// passkey
+	api.GET("/authn/passkey_begin_login", handles.BeginAuthnLogin)
+	api.GET("/authn/passkey_legacy_status", handles.LegacyAuthnStatus)
+	api.POST("/authn/passkey_finish_login", handles.FinishAuthnLogin)
+	authn.GET("/passkey_begin_registration", handles.BeginAuthnRegistration)
+	authn.POST("/passkey_finish_registration", handles.FinishAuthnRegistration)
+	authn.POST("/delete_authn", handles.DeleteAuthnLogin)
+	authn.GET("/getcredentials", handles.GetAuthnCredentials)
 
 	// no need auth
 	public := api.Group("/public")
