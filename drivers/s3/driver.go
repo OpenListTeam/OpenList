@@ -249,7 +249,8 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 // implements driver.Getter interface
 func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 	// try to get object as a file using HeadObject
-	key := getKey(stdpath.Join(d.GetRootPath(), path), false)
+	path = stdpath.Join(d.GetRootPath(), path)
+	key := getKey(path, false)
 	headInput := &s3.HeadObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &key,
@@ -303,7 +304,7 @@ func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 		return nil, fmt.Errorf("unsupported ListObjectVersion: %s", d.ListObjectVersion)
 	}
 	if len(contents) > 0 || len(commonPrefixes) > 0 {
-		dirName := stdpath.Base(path + "/")
+		dirName := stdpath.Base(path)
 		return &model.Object{
 			Name:     dirName,
 			Modified: d.Modified,
