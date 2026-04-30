@@ -126,16 +126,9 @@ func (d *WebDav) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer
 }
 
 // implements driver.Getter interface
-func (d *WebDav) Get(ctx context.Context, path string) (model.Obj, error) {
-	if utils.PathEqual(path, "/") {
-		return &model.Object{
-			Name:     "Root",
-			IsFolder: true,
-			Path:     "/",
-		}, nil
-	}
-
-	info, err := d.client.Stat(path)
+func (d *WebDav) Get(ctx context.Context, _path string) (model.Obj, error) {
+	_path = path.Join(d.GetRootPath(), _path)
+	info, err := d.client.Stat(_path)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +138,7 @@ func (d *WebDav) Get(ctx context.Context, path string) (model.Obj, error) {
 		Size:     info.Size(),
 		Modified: info.ModTime(),
 		IsFolder: info.IsDir(),
-		Path:     path,
+		Path:     _path,
 	}, nil
 }
 
