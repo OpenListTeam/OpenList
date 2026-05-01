@@ -313,3 +313,5 @@ replace github.com/ProtonMail/go-proton-api => github.com/henrybear327/go-proton
 replace github.com/cronokirby/saferith => github.com/Da3zKi7/saferith v0.33.0-fixed
 
 // replace github.com/OpenListTeam/115-sdk-go => ../../OpenListTeam/115-sdk-go
+
+replace github.com/OpenListTeam/OpenList/v4/drivers/cfimgbed => ./drivers/cfimgbed
