@@ -82,7 +82,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/wopan"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/wps"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/yandex_disk"
-	_ "github.com/OpenListTeam/OpenList/v4/drivers/cfimgbed"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/cloudflare_imgbed"
 )
 
 // All do nothing,just for import

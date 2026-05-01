@@ -1,4 +1,4 @@
-package cfimgbed
+package cloudflare_imgbed
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -12,7 +12,7 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:              "CFImgBed",
+	Name:              "cloudflare_imgbed",
 	LocalSort:         false,
 	OnlyProxy:         false,
 	NoCache:           false,

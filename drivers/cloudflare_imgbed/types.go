@@ -1,4 +1,4 @@
-package cfimgbed
+package cloudflare_imgbed
 
 import (
 	"fmt"
