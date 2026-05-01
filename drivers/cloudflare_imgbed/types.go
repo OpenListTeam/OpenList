@@ -10,64 +10,67 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
-// File represents a file object parsed from the CFImgBed List API response.
-// It implements the model.Obj interface.
+// File 表示从 CFImgBed 列表 API 响应中解析出的文件对象，实现 model.Obj 接口。
 type File struct {
-	Path     string
-	Name_    string
-	Size_    int64
-	ModTime_ time.Time
-	Mime_    string
+	path    string    // 文件相对路径，如 "example/image.jpg"
+	name    string    // 显示名称（路径最后一段），如 "image.jpg"
+	size    int64     // 文件大小（字节）
+	modTime time.Time // 最后修改时间（从 Unix 毫秒时间戳转换而来）
+	mime    string    // MIME 类型，如 "image/jpeg"
 }
 
-func (f *File) GetPath() string         { return f.Path }
-func (f *File) GetName() string         { return f.Name_ }
-func (f *File) ModTime() time.Time      { return f.ModTime_ }
-func (f *File) CreateTime() time.Time   { return f.ModTime_ }
-func (f *File) GetSize() int64          { return f.Size_ }
+func (f *File) GetPath() string         { return f.path }
+func (f *File) GetName() string         { return f.name }
+func (f *File) ModTime() time.Time      { return f.modTime }
+func (f *File) CreateTime() time.Time   { return f.modTime }
+func (f *File) GetSize() int64          { return f.size }
 func (f *File) IsDir() bool             { return false }
-func (f *File) GetID() string           { return f.Path }
+func (f *File) GetID() string           { return f.path }
 func (f *File) GetHash() utils.HashInfo { return utils.HashInfo{} }
 
-// Dir represents a directory object parsed from the CFImgBed List API response.
-// It implements the model.Obj interface.
+// Dir 表示从 CFImgBed 列表 API 响应中解析出的目录对象，实现 model.Obj 接口。
 type Dir struct {
-	Path  string
-	Name_ string
+	path string // 目录相对路径，如 "example/subfolder"
+	name string // 显示名称（路径最后一段），如 "subfolder"
 }
 
-func (d *Dir) GetPath() string         { return d.Path }
-func (d *Dir) GetName() string         { return d.Name_ }
+func (d *Dir) GetPath() string         { return d.path }
+func (d *Dir) GetName() string         { return d.name }
 func (d *Dir) ModTime() time.Time      { return time.Time{} }
 func (d *Dir) CreateTime() time.Time   { return time.Time{} }
 func (d *Dir) GetSize() int64          { return 0 }
 func (d *Dir) IsDir() bool             { return true }
-func (d *Dir) GetID() string           { return d.Path }
+func (d *Dir) GetID() string           { return d.path }
 func (d *Dir) GetHash() utils.HashInfo { return utils.HashInfo{} }
 
-// Compile-time checks to ensure File and Dir implement model.Obj.
+// 编译时检查 File 和 Dir 是否完整实现 model.Obj 接口。
 var _ model.Obj = (*File)(nil)
 var _ model.Obj = (*Dir)(nil)
 
-// ListResponse represents the JSON structure returned by the CFImgBed List API.
+// listPageSize 定义每次向 API 请求的最大条目数。
+// 采用内部分页循环拉取，以防止单目录文件过多导致 API 响应超时或内存异常。
+const listPageSize = 1000
+
+// ListResponse 表示 CFImgBed 列表 API 返回的 JSON 结构。
 type ListResponse struct {
 	Files       []FileItem `json:"files"`
 	Directories []string   `json:"directories"`
 }
 
-// FileItem represents a single file entry in the List API response.
-// Metadata uses map[string]interface{} because the actual API returns mixed types:
-//   - TimeStamp: integer (e.g. 1774910085474) in newer versions
-//   - FileSizeBytes: integer (e.g. 3936071)
-//   - FileSize: string (e.g. "3.75") — human-readable size
-//   - FileType: string (e.g. "audio/mpeg")
-//   - Legacy fields may use string values for numbers
+// FileItem 表示列表 API 返回的单个文件条目。
+// 注意：Metadata 使用 map[string]interface{} 而非 map[string]string，
+// 因为实际 API 返回的字段类型不统一：
+//   - TimeStamp: 可能是整数（如 1774910085474），也可能在旧版本中是字符串
+//   - FileSizeBytes: 整数（如 3936071）
+//   - FileSize: 字符串（如 "3.75"）— 仅供人类阅读的格式化大小
+//   - FileType: 字符串（如 "audio/mpeg"）
 type FileItem struct {
 	Name     string                 `json:"name"`
 	Metadata map[string]interface{} `json:"metadata"`
 }
 
-// getString safely extracts a string value from metadata, trying key in order.
+// getString 从 metadata 中安全提取字符串值，按 keys 顺序依次尝试。
+// 支持 string 和 float64（JSON 数字反序列化后的默认类型）两种输入。
 func getString(m map[string]interface{}, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := m[k]; ok {
@@ -84,8 +87,9 @@ func getString(m map[string]interface{}, keys ...string) string {
 	return ""
 }
 
-// getInt64 safely extracts an int64 value from metadata, trying key in order.
-// Supports string, float64 (JSON number), and int64 types.
+// getInt64 从 metadata 中安全提取 int64 值，按 keys 顺序依次尝试。
+// 同时兼容 string、float64（JSON 数字）和 int64 三种反序列化类型，
+// 确保在不同 API 版本下均能正确解析。
 func getInt64(m map[string]interface{}, keys ...string) int64 {
 	for _, k := range keys {
 		if v, ok := m[k]; ok {
@@ -103,11 +107,11 @@ func getInt64(m map[string]interface{}, keys ...string) int64 {
 	return 0
 }
 
-// parseFile converts an API FileItem to a *File model.Obj.
-// It tries multiple key names for each field to handle different API versions:
-//   - Size: FileSizeBytes (int) > File-Size (string)
-//   - MIME: FileType > File-Mime
-//   - Time: TimeStamp (handles both int and string)
+// parseFile 将 API 返回的 FileItem 转换为 *File 对象。
+// 字段提取策略（兼容新旧 API 版本）：
+//   - 文件大小：优先取 FileSizeBytes（int），回退到 File-Size（string）
+//   - MIME 类型：优先取 FileType，回退到 File-Mime
+//   - 修改时间：取 TimeStamp（同时处理 int 和 string 两种格式）
 func parseFile(item FileItem) *File {
 	name := path.Base(item.Name)
 	var size int64
@@ -115,13 +119,8 @@ func parseFile(item FileItem) *File {
 	var mime string
 
 	if item.Metadata != nil {
-		// Try FileSizeBytes (int) first, fall back to File-Size (string)
 		size = getInt64(item.Metadata, "FileSizeBytes", "File-Size")
-
-		// Try FileType first, fall back to File-Mime
 		mime = getString(item.Metadata, "FileType", "File-Mime")
-
-		// TimeStamp may be int or string depending on API version
 		ts := getInt64(item.Metadata, "TimeStamp")
 		if ts > 0 {
 			modTime = time.UnixMilli(ts)
@@ -129,18 +128,19 @@ func parseFile(item FileItem) *File {
 	}
 
 	return &File{
-		Path:     item.Name,
-		Name_:    name,
-		Size_:    size,
-		ModTime_: modTime,
-		Mime_:    mime,
+		path:    item.Name,
+		name:    name,
+		size:    size,
+		modTime: modTime,
+		mime:    mime,
 	}
 }
 
-// parseDir converts a directory path string from the API to a *Dir model.Obj.
+// parseDir 将 API 返回的目录路径字符串转换为 *Dir 对象。
+// 显示名称取路径的最后一段（即最深层目录名）。
 func parseDir(dirPath string) *Dir {
 	return &Dir{
-		Path:  dirPath,
-		Name_: path.Base(dirPath),
+		path: dirPath,
+		name: path.Base(dirPath),
 	}
 }
