@@ -13,17 +13,10 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:              "cloudflare_imgbed",
-	LocalSort:         false,
-	OnlyProxy:         false,
-	NoCache:           false,
-	NoUpload:          true,
-	NeedMs:            false,
-	DefaultRoot:       "/",
-	CheckStatus:       false,
-	Alert:             "",
-	NoOverwriteUpload: false,
-	NoLinkURL:         false,
+	Name:        "cloudflare_imgbed",
+	LocalSort:   true,
+	NoUpload:    true,
+	DefaultRoot: "/",
 }
 
 func init() {
