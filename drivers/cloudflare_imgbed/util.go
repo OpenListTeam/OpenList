@@ -1,76 +1,137 @@
 package cloudflare_imgbed
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"path"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/go-resty/resty/v2"
+	log "github.com/sirupsen/logrus"
 )
 
-// getString 从 metadata 中安全提取字符串值，按 keys 顺序依次尝试。
-// 支持 string 和 float64（JSON 数字反序列化后的默认类型）两种输入。
-func getString(m map[string]interface{}, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := m[k]; ok {
-			switch val := v.(type) {
-			case string:
-				return val
-			case float64:
-				return strconv.FormatInt(int64(val), 10)
-			default:
-				return fmt.Sprintf("%v", val)
+const (
+	ListApi           = "/api/manage/list"
+	UploadApi         = "/upload"
+	HFGetUrlApi       = "/upload/huggingface/getUploadUrl"
+	HFCommitApi       = "/upload/huggingface/commitUpload"
+	hfDirectThreshold int64 = 20 * 1024 * 1024
+	fileSampleSize    = 512 // HF 申请上传地址时需提供文件前 512 字节的 Sample
+)
+
+// doRequest 通用请求封装，包含重试和 API 错误解析
+func (d *CFImgBed) doRequest(method, urlPath string, callback func(*resty.Request), resp interface{}) ([]byte, error) {
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		req := d.client.R()
+		if callback != nil {
+			callback(req)
+		}
+		if resp != nil {
+			req.SetResult(resp)
+		}
+
+		res, err := req.Execute(method, urlPath)
+		if err != nil {
+			log.WithError(err).Warnf("request %s %s failed, attempt %d/%d", method, urlPath, i+1, maxRetries)
+			if i < maxRetries-1 {
+				time.Sleep(time.Duration(i+1) * time.Second)
+				continue
+			}
+			return nil, err
+		}
+
+		body := res.Body()
+		var apiErr apiError
+		if err := json.Unmarshal(body, &apiErr); err == nil {
+			if apiErr.Error != "" || apiErr.Message != "" {
+				msg := apiErr.Error
+				if msg == "" {
+					msg = apiErr.Message
+				}
+				return nil, fmt.Errorf("API error: %s", msg)
 			}
 		}
-	}
-	return ""
-}
 
-// getInt64 从 metadata 中安全提取 int64 值，按 keys 顺序依次尝试。
-// 同时兼容 string、float64（JSON 数字）和 int64 三种反序列化类型，
-// 确保在不同 API 版本下均能正确解析。
-func getInt64(m map[string]interface{}, keys ...string) int64 {
-	for _, k := range keys {
-		if v, ok := m[k]; ok {
-			switch val := v.(type) {
-			case string:
-				n, _ := strconv.ParseInt(val, 10, 64)
-				return n
-			case float64:
-				return int64(val)
-			case int64:
-				return val
-			}
+		if res.StatusCode() == 429 {
+			time.Sleep(time.Duration(i+1) * 2 * time.Second)
+			continue
 		}
+
+		if res.IsError() {
+			return nil, fmt.Errorf("HTTP %d", res.StatusCode())
+		}
+		return body, nil
 	}
-	return 0
+	return nil, fmt.Errorf("max retries exceeded")
 }
 
-// parseFile 将 API 返回的 FileItem 转换为 *File 对象。
-// 字段提取策略（兼容新旧 API 版本）：
-//   - 文件大小：优先取 FileSizeBytes（int），回退到 File-Size（string）
-//   - MIME 类型：优先取 FileType，回退到 File-Mime
-//   - 修改时间：取 TimeStamp（同时处理 int 和 string 两种格式）
-func parseFile(item FileItem) *model.Object {
-	name := path.Base(item.Name)
-	var size int64
-	var modTime time.Time
-	// var mime string
-
-	if item.Metadata != nil {
-		size = getInt64(item.Metadata, "FileSizeBytes", "File-Size")
-		// mime = getString(item.Metadata, "FileType", "File-Mime")
-		ts := getInt64(item.Metadata, "TimeStamp")
-		if ts > 0 {
-			modTime = time.UnixMilli(ts)
+// prepareHFUploadData 为 HF 直传计算 SHA256 哈希并提取头部样本数据
+func prepareHFUploadData(file model.FileStreamer) (string, string, error) {
+	if file.GetFile() == nil {
+		if _, err := file.CacheFullAndWriter(nil, nil); err != nil {
+			return "", "", err
 		}
 	}
 
-	return &model.Object{
-		Name:     name,
-		Size:     size,
-		Modified: modTime,
-		// ID:       mime,
+	cached := file.GetFile()
+
+	// 优先从 HashInfo 获取，避免重复全量读取文件
+	sha256Hex := file.GetHash().GetHash(utils.SHA256)
+	if len(sha256Hex) == 0 {
+		cached.Seek(0, io.SeekStart)
+		hash := sha256.New()
+		io.Copy(hash, cached)
+		sha256Hex = hex.EncodeToString(hash.Sum(nil))
 	}
+
+	// 提取前 512 字节作为样本
+	cached.Seek(0, io.SeekStart)
+	sampleBuf := make([]byte, fileSampleSize)
+	n, err := io.ReadFull(cached, sampleBuf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return "", "", err
+	}
+	sampleBase64 := base64.StdEncoding.EncodeToString(sampleBuf[:n])
+
+	return sha256Hex, sampleBase64, nil
+}
+
+func getUploadDir(d *CFImgBed, dstDir model.Obj) string {
+	rootPath := strings.Trim(d.GetRootPath(), "/")
+	var dirPath string
+	if dstDir != nil {
+		dirPath = strings.Trim(dstDir.GetPath(), "/")
+	}
+	if rootPath != "" && dirPath != "" {
+		return path.Join(rootPath, dirPath)
+	}
+	if rootPath != "" {
+		return rootPath
+	}
+	return dirPath
+}
+
+func stripRootPrefix(p, rootPath string) string {
+	if rootPath == "" {
+		return p
+	}
+	prefix := rootPath + "/"
+	if strings.HasPrefix(p, prefix) {
+		return strings.TrimPrefix(p, prefix)
+	}
+	return p
+}
+
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+
+func escapeQuotes(s string) string {
+	return quoteEscaper.Replace(s)
 }

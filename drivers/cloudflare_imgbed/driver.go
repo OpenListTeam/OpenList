@@ -3,14 +3,17 @@ package cloudflare_imgbed
 import (
 	"context"
 	"fmt"
-	stdpath "path"
+	"net/http"
+	"path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
+	log "github.com/sirupsen/logrus"
 )
 
 type CFImgBed struct {
@@ -19,114 +22,145 @@ type CFImgBed struct {
 	client *resty.Client
 }
 
-func (d *CFImgBed) Config() driver.Config {
-	return config
-}
+func (d *CFImgBed) Config() driver.Config         { return config }
+func (d *CFImgBed) GetAddition() driver.Additional { return &d.Addition }
 
-func (d *CFImgBed) GetAddition() driver.Additional {
-	return &d.Addition
-}
-
-// Init 使用 base 包提供的工厂方法初始化 HTTP 客户端，
-// 并设置 API 基础地址和鉴权请求头。
 func (d *CFImgBed) Init(ctx context.Context) error {
-	d.Address = strings.TrimRight(d.Address, "/")
-	d.client = base.NewRestyClient()
-	d.client.SetBaseURL(d.Address).
+	if d.UploadThread <= 0 || d.UploadThread > 32 {
+		d.UploadThread = 3
+	}
+
+	d.client = base.NewRestyClient().
+		SetBaseURL(strings.TrimRight(d.Address, "/")).
 		SetHeader("Authorization", "Bearer "+d.Token).
 		SetDebug(false)
+
+	// 连通性测试：尝试获取根目录单条数据
+	_, err := d.doRequest(http.MethodGet, ListApi, func(req *resty.Request) {
+		req.SetQueryParams(map[string]string{
+			"start": "0",
+			"count": "1",
+			"dir":   "/",
+		})
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("init verification failed: %w", err)
+	}
+	log.Info("Cloudflare ImgBed driver initialized successfully")
 	return nil
 }
 
-func (d *CFImgBed) Drop(ctx context.Context) error {
-	return nil
+func (d *CFImgBed) Drop(ctx context.Context) error { return nil }
+
+// buildReqPath 拼接存储根路径与业务请求路径，确保生成的路径符合 API 预期
+func buildReqPath(rootPath, dirPath string) string {
+	rootPath = strings.Trim(rootPath, "/")
+	dirPath = strings.Trim(dirPath, "/")
+	if dirPath == "" || dirPath == rootPath {
+		return rootPath
+	}
+	if rootPath == "" {
+		return dirPath
+	}
+	return rootPath + "/" + dirPath
 }
 
-// apiError 表示 CFImgBed API 返回的通用错误响应结构。
-type apiError struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-}
-
-// List 获取指定目录下的文件和子目录列表。
-//
-// 采用内部分页循环拉取，以防止单目录文件过多导致 API 响应超时或内存异常。
-// 每次请求 listPageSize 条记录，直到返回数量不足一页时退出循环，
-// 最终将所有分页结果汇总后一次性返回给 OpenList。
 func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	reqPath := dir.GetPath()
+	rootPath := strings.Trim(d.GetRootPath(), "/")
+	var dirPath string
+	if dir != nil {
+		dirPath = strings.Trim(dir.GetPath(), "/")
+	}
+	reqPath := buildReqPath(rootPath, dirPath)
 
-	// 用于去重：API 在分页时每个页面都可能重复返回相同的目录列表，
-	// 确保同一个目录对象只被添加一次。
-	dirSeen := ":"
+	dirSeen := make(map[string]bool)
+	fileSeen := make(map[string]bool)
 	objs := make([]model.Obj, 0)
 
-	// 分页拉取循环
 	start := 0
 	for {
 		var resp ListResponse
-		var errResp apiError
-		res, err := d.client.R().
-			SetQueryParam("dir", reqPath).
-			SetQueryParam("start", fmt.Sprintf("%d", start)).
-			SetQueryParam("count", fmt.Sprintf("%d", listPageSize)).
-			SetResult(&resp).
-			SetError(&errResp).
-			Get("/api/manage/list")
-
+		_, err := d.doRequest(http.MethodGet, ListApi, func(req *resty.Request) {
+			req.SetQueryParams(map[string]string{
+				"dir":   reqPath,
+				"start": fmt.Sprintf("%d", start),
+				"count": fmt.Sprintf("%d", listPageSize),
+			})
+		}, &resp)
 		if err != nil {
 			return nil, err
 		}
-		if res.IsError() {
-			if errResp.Message != "" {
-				return nil, fmt.Errorf("CFImgBed API error: %s", errResp.Message)
-			}
-			return nil, fmt.Errorf("CFImgBed API returned status %d", res.StatusCode())
-		}
 
-		// 裁剪 API 返回路径中的挂载根前缀，
-		// 使 GetPath() 返回的是相对于 OpenList 挂载点的路径，而非图床的绝对路径。
 		for _, rawDir := range resp.Directories {
-			p := strings.TrimRight(rawDir, "/")
-			// 目录去重：分页场景下不同页面可能返回相同的目录条目
-			if !strings.Contains(dirSeen, ":"+p+":") {
-				dirSeen += p + ":"
-				name := stdpath.Base(p)
-				objs = append(objs, &model.Object{
-					Name:     name,
-					Path:     stdpath.Join(reqPath, name),
-					Modified: d.Modified,
-					IsFolder: true,
-				})
+			cleanDir := strings.TrimRight(rawDir, "/")
+			p := stripRootPrefix(cleanDir, rootPath)
+			if !dirSeen[p] {
+				dirSeen[p] = true
+				objs = append(objs, parseDir(p))
 			}
 		}
 
 		for _, item := range resp.Files {
-			obj := parseFile(item)
-			obj.Path = stdpath.Join(reqPath, obj.Name)
-			objs = append(objs, obj)
+			p := stripRootPrefix(item.Name, rootPath)
+			if !fileSeen[p] {
+				fileSeen[p] = true
+				objs = append(objs, parseFile(FileItem{Name: p, Metadata: item.Metadata}))
+			}
 		}
 
-		// 判断是否已到最后一页：当返回的文件和目录总数小于请求的每页数量时，
-		// 说明本页已经是最后一页，无需继续请求。
-		fetched := len(resp.Files) + len(resp.Directories)
-		if fetched < listPageSize {
+		// 如果当前获取的数量少于分页大小，说明已加载完毕
+		if len(resp.Files)+len(resp.Directories) < listPageSize {
 			break
 		}
-
 		start += listPageSize
 	}
-
 	return objs, nil
 }
 
-// Link 拼装文件的直接下载/访问链接。
-// 路径中可能包含空格、中文、#、+ 等特殊字符，必须进行安全编码以生成有效 URL。
 func (d *CFImgBed) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	// 对路径进行安全编码，处理空格、特殊字符等可能导致链接失效的情况
-	link := d.Address + "/file/" + utils.EncodePath(file.GetPath())
+	rootPath := strings.Trim(d.GetRootPath(), "/")
+	filePath := strings.Trim(file.GetPath(), "/")
+
+	var fullPath string
+	if rootPath != "" && filePath != "" {
+		fullPath = rootPath + "/" + filePath
+	} else if rootPath != "" {
+		fullPath = rootPath
+	} else {
+		fullPath = filePath
+	}
+
+	link := strings.TrimRight(d.Address, "/") + "/file/" + utils.EncodePath(fullPath)
 	return &model.Link{URL: link}, nil
 }
 
-// 编译时检查 CFImgBed 是否完整实现 driver.Driver 接口。
+// MakeDir 在图床中通常是虚拟的，此处返回虚拟目录对象以支持上传时的路径展示
+func (d *CFImgBed) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
+	var parentPath string
+	if parentDir != nil {
+		parentPath = parentDir.GetPath()
+	}
+	fullPath := path.Join(parentPath, dirName)
+	return &model.Object{
+		ID:       fullPath,
+		Path:     fullPath,
+		Name:     dirName,
+		IsFolder: true,
+	}, nil
+}
+
+func (d *CFImgBed) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	return nil, errs.NotImplement
+}
+func (d *CFImgBed) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
+	return nil, errs.NotImplement
+}
+func (d *CFImgBed) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	return nil, errs.NotImplement
+}
+func (d *CFImgBed) Remove(ctx context.Context, obj model.Obj) error { return errs.NotImplement }
+func (d *CFImgBed) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	return nil, errs.NotImplement
+}
+
 var _ driver.Driver = (*CFImgBed)(nil)
