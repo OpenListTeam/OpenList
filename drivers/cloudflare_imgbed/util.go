@@ -1,17 +1,10 @@
 package cloudflare_imgbed
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
-	"strings"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -71,41 +64,4 @@ func (d *CFImgBed) doRequest(method, urlPath string, callback func(*resty.Reques
 		return body, nil
 	}
 	return nil, fmt.Errorf("max retries exceeded")
-}
-
-// prepareHFUploadData 为 HF 直传计算 SHA256 哈希并提取头部样本数据
-func prepareHFUploadData(file model.FileStreamer) (string, string, error) {
-	if file.GetFile() == nil {
-		if _, err := file.CacheFullAndWriter(nil, nil); err != nil {
-			return "", "", err
-		}
-	}
-
-	cached := file.GetFile()
-
-	// 优先从 HashInfo 获取，避免重复全量读取文件
-	sha256Hex := file.GetHash().GetHash(utils.SHA256)
-	if len(sha256Hex) == 0 {
-		cached.Seek(0, io.SeekStart)
-		hash := sha256.New()
-		io.Copy(hash, cached)
-		sha256Hex = hex.EncodeToString(hash.Sum(nil))
-	}
-
-	// 提取前 512 字节作为样本
-	cached.Seek(0, io.SeekStart)
-	sampleBuf := make([]byte, fileSampleSize)
-	n, err := io.ReadFull(cached, sampleBuf)
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-		return "", "", err
-	}
-	sampleBase64 := base64.StdEncoding.EncodeToString(sampleBuf[:n])
-
-	return sha256Hex, sampleBase64, nil
-}
-
-var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
-
-func escapeQuotes(s string) string {
-	return quoteEscaper.Replace(s)
 }
