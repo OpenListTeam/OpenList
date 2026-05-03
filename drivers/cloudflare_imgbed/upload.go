@@ -56,7 +56,7 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	}
 
 	// 1. 将参数放入 Query String
-	reqUrl, _ := url.Parse(strings.TrimRight(d.Address, "/") + UploadApi)
+	reqUrl, _ := url.Parse(d.Address + uploadApi)
 	q := reqUrl.Query()
 	if uploadDir != "" {
 		q.Set("uploadFolder", uploadDir)
@@ -127,7 +127,6 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	srcPath = strings.TrimPrefix(srcPath, "/")
 
 	return &model.Object{
-		ID:       srcPath,
 		Path:     srcPath,
 		Name:     fileName,
 		Size:     fileSize,
@@ -166,7 +165,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 	}
 
 	var getUrlResp hfGetUrlResp
-	_, err = d.doRequest(http.MethodPost, HFGetUrlApi, func(req *resty.Request) {
+	_, err = d.doRequest(http.MethodPost, hfGetUrlApi, func(req *resty.Request) {
 		req.SetBody(reqBody)
 		req.SetHeader("Content-Type", "application/json")
 	}, &getUrlResp)
@@ -331,7 +330,7 @@ func (d *CFImgBed) hfCommit(ctx context.Context, getUrlResp hfGetUrlResp, fileNa
 		"channelName": getUrlResp.ChannelName,
 	}
 	var commitResp hfCommitResp
-	_, err := d.doRequest(http.MethodPost, HFCommitApi, func(req *resty.Request) {
+	_, err := d.doRequest(http.MethodPost, hfCommitApi, func(req *resty.Request) {
 		req.SetBody(commitBody)
 	}, &commitResp)
 	if err != nil || !commitResp.Success {
@@ -342,7 +341,6 @@ func (d *CFImgBed) hfCommit(ctx context.Context, getUrlResp hfGetUrlResp, fileNa
 	srcPath = strings.TrimPrefix(srcPath, "/")
 
 	return &model.Object{
-		ID:       srcPath,
 		Path:     srcPath,
 		Name:     fileName,
 		Size:     fileSize,

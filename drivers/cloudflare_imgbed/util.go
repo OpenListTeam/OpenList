@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	ListApi                 = "/api/manage/list"
-	UploadApi               = "/upload"
-	HFGetUrlApi             = "/upload/huggingface/getUploadUrl"
-	HFCommitApi             = "/upload/huggingface/commitUpload"
+	listApi                 = "/api/manage/list"
+	deleteApi               = "/api/manage/delete"
+	uploadApi               = "/upload"
+	hfGetUrlApi             = "/upload/huggingface/getUploadUrl"
+	hfCommitApi             = "/upload/huggingface/commitUpload"
 	hfDirectThreshold int64 = 20 * 1024 * 1024
 	fileSampleSize          = 512 // HF 申请上传地址时需提供文件前 512 字节的 Sample
 )

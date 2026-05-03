@@ -105,20 +105,10 @@ func parseFile(item FileItem) *model.Object {
 	}
 
 	return &model.Object{
-		ID:       item.Name,
 		Path:     item.Name,
 		Name:     name,
 		Size:     size,
 		Modified: modTime,
 		IsFolder: false,
-	}
-}
-
-func parseDir(dirPath string) *model.Object {
-	return &model.Object{
-		ID:       dirPath,
-		Path:     dirPath,
-		Name:     path.Base(dirPath),
-		IsFolder: true,
 	}
 }
