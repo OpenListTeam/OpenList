@@ -229,10 +229,10 @@ func FsCopy(c *gin.Context) {
 				return
 			}
 			if res, _ := fs.Get(c.Request.Context(), stdpath.Join(dstDir, base), &fs.GetArgs{NoLog: true}); res != nil {
-				if !req.SkipExisting {
+				if !req.SkipExisting && !req.Merge {
 					common.ErrorStrResp(c, fmt.Sprintf("file [%s] exists", name), 403)
 					return
-				} else {
+				} else if !req.Merge || !res.IsDir() {
 					continue
 				}
 			}
