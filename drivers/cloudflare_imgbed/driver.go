@@ -22,7 +22,7 @@ type CFImgBed struct {
 	client *resty.Client
 }
 
-func (d *CFImgBed) Config() driver.Config         { return config }
+func (d *CFImgBed) Config() driver.Config          { return config }
 func (d *CFImgBed) GetAddition() driver.Additional { return &d.Addition }
 
 func (d *CFImgBed) Init(ctx context.Context) error {
@@ -52,26 +52,8 @@ func (d *CFImgBed) Init(ctx context.Context) error {
 
 func (d *CFImgBed) Drop(ctx context.Context) error { return nil }
 
-// buildReqPath 拼接存储根路径与业务请求路径，确保生成的路径符合 API 预期
-func buildReqPath(rootPath, dirPath string) string {
-	rootPath = strings.Trim(rootPath, "/")
-	dirPath = strings.Trim(dirPath, "/")
-	if dirPath == "" || dirPath == rootPath {
-		return rootPath
-	}
-	if rootPath == "" {
-		return dirPath
-	}
-	return rootPath + "/" + dirPath
-}
-
 func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	rootPath := strings.Trim(d.GetRootPath(), "/")
-	var dirPath string
-	if dir != nil {
-		dirPath = strings.Trim(dir.GetPath(), "/")
-	}
-	reqPath := buildReqPath(rootPath, dirPath)
+	reqPath := dir.GetPath()
 
 	dirSeen := make(map[string]bool)
 	fileSeen := make(map[string]bool)
@@ -93,18 +75,16 @@ func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 
 		for _, rawDir := range resp.Directories {
 			cleanDir := strings.TrimRight(rawDir, "/")
-			p := stripRootPrefix(cleanDir, rootPath)
-			if !dirSeen[p] {
-				dirSeen[p] = true
-				objs = append(objs, parseDir(p))
+			if !dirSeen[cleanDir] {
+				dirSeen[cleanDir] = true
+				objs = append(objs, parseDir(cleanDir))
 			}
 		}
 
 		for _, item := range resp.Files {
-			p := stripRootPrefix(item.Name, rootPath)
-			if !fileSeen[p] {
-				fileSeen[p] = true
-				objs = append(objs, parseFile(FileItem{Name: p, Metadata: item.Metadata}))
+			if !fileSeen[item.Name] {
+				fileSeen[item.Name] = true
+				objs = append(objs, parseFile(item))
 			}
 		}
 
@@ -118,29 +98,14 @@ func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 }
 
 func (d *CFImgBed) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	rootPath := strings.Trim(d.GetRootPath(), "/")
-	filePath := strings.Trim(file.GetPath(), "/")
-
-	var fullPath string
-	if rootPath != "" && filePath != "" {
-		fullPath = rootPath + "/" + filePath
-	} else if rootPath != "" {
-		fullPath = rootPath
-	} else {
-		fullPath = filePath
-	}
-
+	fullPath := file.GetPath()
 	link := strings.TrimRight(d.Address, "/") + "/file/" + utils.EncodePath(fullPath)
 	return &model.Link{URL: link}, nil
 }
 
 // MakeDir 在图床中通常是虚拟的，此处返回虚拟目录对象以支持上传时的路径展示
 func (d *CFImgBed) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	var parentPath string
-	if parentDir != nil {
-		parentPath = parentDir.GetPath()
-	}
-	fullPath := path.Join(parentPath, dirName)
+	fullPath := path.Join(parentDir.GetPath(), dirName)
 	return &model.Object{
 		ID:       fullPath,
 		Path:     fullPath,

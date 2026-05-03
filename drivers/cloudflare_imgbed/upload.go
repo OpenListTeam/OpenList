@@ -44,7 +44,7 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	fileName := file.GetName()
 	fileSize := file.GetSize()
 	fileMime := file.GetMimetype()
-	uploadDir := getUploadDir(d, dstDir)
+	uploadDir := dstDir.GetPath()
 
 	channelName := d.SmallChannelName
 	if fileSize >= hfDirectThreshold {
@@ -125,11 +125,10 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 
 	srcPath := strings.TrimPrefix(resp[0].Src, "/file/")
 	srcPath = strings.TrimPrefix(srcPath, "/")
-	displayPath := stripRootPrefix(srcPath, strings.Trim(d.GetRootPath(), "/"))
 
 	return &model.Object{
-		ID:       displayPath,
-		Path:     displayPath,
+		ID:       srcPath,
+		Path:     srcPath,
 		Name:     fileName,
 		Size:     fileSize,
 		Modified: file.ModTime(),
@@ -143,7 +142,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 	fileSize := file.GetSize()
 	fileMime := file.GetMimetype()
 	modTime := file.ModTime()
-	uploadDir := getUploadDir(d, dstDir)
+	uploadDir := dstDir.GetPath()
 
 	sha256Hash, fileSample, err := prepareHFUploadData(file)
 	if err != nil {
@@ -199,7 +198,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 		if chunkSize <= 0 {
 			chunkSize = 20 * 1024 * 1024
 		}
-		
+
 		partUrls := make(map[int]string)
 		for k, v := range headers {
 			if len(k) == 5 { // 格式通常为 "00001", "00002"
@@ -303,7 +302,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 		cachedFile := file.GetFile()
 		cachedFile.Seek(0, io.SeekStart)
 		progressReader := &progressReadCloser{ReadCloser: io.NopCloser(cachedFile), total: fileSize, up: up}
-		
+
 		limitedReader := driver.NewLimitedUploadStream(ctx, progressReader)
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPut, href, limitedReader)
 		req.ContentLength = fileSize
@@ -340,11 +339,11 @@ func (d *CFImgBed) hfCommit(ctx context.Context, getUrlResp hfGetUrlResp, fileNa
 	}
 
 	srcPath := strings.TrimPrefix(commitResp.Src, "/file/")
-	displayPath := stripRootPrefix(strings.TrimPrefix(srcPath, "/"), strings.Trim(d.GetRootPath(), "/"))
+	srcPath = strings.TrimPrefix(srcPath, "/")
 
 	return &model.Object{
-		ID:       displayPath,
-		Path:     displayPath,
+		ID:       srcPath,
+		Path:     srcPath,
 		Name:     fileName,
 		Size:     fileSize,
 		Modified: modTime,

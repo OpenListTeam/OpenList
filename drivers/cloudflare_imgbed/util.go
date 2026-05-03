@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path"
 	"strings"
 	"time"
 
@@ -18,12 +17,12 @@ import (
 )
 
 const (
-	ListApi           = "/api/manage/list"
-	UploadApi         = "/upload"
-	HFGetUrlApi       = "/upload/huggingface/getUploadUrl"
-	HFCommitApi       = "/upload/huggingface/commitUpload"
+	ListApi                 = "/api/manage/list"
+	UploadApi               = "/upload"
+	HFGetUrlApi             = "/upload/huggingface/getUploadUrl"
+	HFCommitApi             = "/upload/huggingface/commitUpload"
 	hfDirectThreshold int64 = 20 * 1024 * 1024
-	fileSampleSize    = 512 // HF 申请上传地址时需提供文件前 512 字节的 Sample
+	fileSampleSize          = 512 // HF 申请上传地址时需提供文件前 512 字节的 Sample
 )
 
 // doRequest 通用请求封装，包含重试和 API 错误解析
@@ -102,32 +101,6 @@ func prepareHFUploadData(file model.FileStreamer) (string, string, error) {
 	sampleBase64 := base64.StdEncoding.EncodeToString(sampleBuf[:n])
 
 	return sha256Hex, sampleBase64, nil
-}
-
-func getUploadDir(d *CFImgBed, dstDir model.Obj) string {
-	rootPath := strings.Trim(d.GetRootPath(), "/")
-	var dirPath string
-	if dstDir != nil {
-		dirPath = strings.Trim(dstDir.GetPath(), "/")
-	}
-	if rootPath != "" && dirPath != "" {
-		return path.Join(rootPath, dirPath)
-	}
-	if rootPath != "" {
-		return rootPath
-	}
-	return dirPath
-}
-
-func stripRootPrefix(p, rootPath string) string {
-	if rootPath == "" {
-		return p
-	}
-	prefix := rootPath + "/"
-	if strings.HasPrefix(p, prefix) {
-		return strings.TrimPrefix(p, prefix)
-	}
-	return p
 }
 
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
