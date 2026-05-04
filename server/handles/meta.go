@@ -69,8 +69,8 @@ func UpdateMeta(c *gin.Context) {
 }
 
 func validHide(hide string) (string, error) {
-	rs := strings.Split(hide, "\n")
-	for _, r := range rs {
+	rs := strings.SplitSeq(hide, "\n")
+	for r := range rs {
 		_, err := regexp2.Compile(r, regexp2.None)
 		if err != nil {
 			return r, err

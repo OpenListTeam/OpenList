@@ -45,7 +45,7 @@ func (d *Strm) Init(ctx context.Context) error {
 		return errors.New("SaveStrmLocalPath is required")
 	}
 	d.pathMap = make(map[string][]string)
-	for _, path := range strings.Split(d.Paths, "\n") {
+	for path := range strings.SplitSeq(d.Paths, "\n") {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
@@ -97,8 +97,8 @@ func (d *Strm) Init(ctx context.Context) error {
 	}
 
 	if d.Version != 5 {
-		types := strings.Split("mp4,mkv,flv,avi,wmv,ts,rmvb,webm,mp3,flac,aac,wav,ogg,m4a,wma,alac", ",")
-		for _, ext := range types {
+		types := strings.SplitSeq("mp4,mkv,flv,avi,wmv,ts,rmvb,webm,mp3,flac,aac,wav,ogg,m4a,wma,alac", ",")
+		for ext := range types {
 			if _, ok := d.supportSuffix[ext]; !ok {
 				d.supportSuffix[ext] = struct{}{}
 				supportTypes = append(supportTypes, ext)
@@ -106,8 +106,8 @@ func (d *Strm) Init(ctx context.Context) error {
 		}
 		d.FilterFileTypes = strings.Join(supportTypes, ",")
 
-		types = strings.Split("ass,srt,vtt,sub,strm", ",")
-		for _, ext := range types {
+		types = strings.SplitSeq("ass,srt,vtt,sub,strm", ",")
+		for ext := range types {
 			if _, ok := d.downloadSuffix[ext]; !ok {
 				d.downloadSuffix[ext] = struct{}{}
 				downloadTypes = append(downloadTypes, ext)
@@ -127,7 +127,7 @@ func (d *Strm) Drop(ctx context.Context) error {
 	d.pathMap = nil
 	d.downloadSuffix = nil
 	d.supportSuffix = nil
-	for _, path := range strings.Split(d.Paths, "\n") {
+	for path := range strings.SplitSeq(d.Paths, "\n") {
 		RemoveStrm(utils.FixAndCleanPath(strings.TrimSpace(path)), d)
 	}
 	return nil
