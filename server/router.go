@@ -219,6 +219,7 @@ func _fs(g *gin.RouterGroup) {
 	g.POST("/archive/decompress", handles.FsArchiveDecompress)
 	// Direct upload (client-side upload to storage)
 	g.POST("/get_direct_upload_info", middlewares.FsUp, handles.FsGetDirectUploadInfo)
+	g.POST("/recurse_list", handles.FsRecurseList)
 }
 
 func _task(g *gin.RouterGroup) {
