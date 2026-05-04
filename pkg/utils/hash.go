@@ -9,10 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"hash"
+	"hash/crc32"
+	"hash/crc64"
 	"io"
 	"iter"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/cespare/xxhash/v2"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -90,6 +93,15 @@ var (
 
 	// SHA256 indicates SHA-256 support
 	SHA256 = RegisterHash("sha256", "SHA-256", 64, sha256.New)
+
+	// CRC32 indicates CRC-32 support (IEEE polynomial)
+	CRC32 = RegisterHash("crc32", "CRC-32", 8, func() hash.Hash { return crc32.NewIEEE() })
+
+	// CRC64 indicates CRC-64 support (ECMA polynomial)
+	CRC64 = RegisterHash("crc64", "CRC-64", 16, func() hash.Hash { return crc64.New(crc64.MakeTable(crc64.ECMA)) })
+
+	// XXH64 indicates xxHash64 support
+	XXH64 = RegisterHash("xxh64", "XXH64", 16, func() hash.Hash { return xxhash.New() })
 )
 
 // HashData get hash of one hashType
@@ -242,3 +254,4 @@ func (hi HashInfo) All() iter.Seq2[*HashType, string] {
 		}
 	}
 }
+ 

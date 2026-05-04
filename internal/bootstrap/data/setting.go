@@ -242,6 +242,15 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.StreamMaxClientUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerDownloadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
+
+		// HTTP Server configuration (for large file transfers)
+		{Key: conf.HTTPServerReadTimeout, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP read request timeout (seconds), 0 means no limit. Recommended to set to 0 to support large file uploads."},
+		{Key: conf.HTTPServerWriteTimeout, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP write response timeout (seconds), 0 means no limit. Recommended to set to 0 to support large file downloads."},
+		{Key: conf.HTTPServerIdleTimeout, Value: "120", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP idle connection timeout (seconds). Recommended to set to 120 seconds to allow for brief network fluctuations."},
+		{Key: conf.HTTPServerReadHeaderTimeout, Value: "30", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "HTTP read header timeout (seconds) to prevent slow attacks. Recommended to set to 30 seconds."},
+		{Key: conf.HTTPServerMaxHeaderBytes, Value: "1048576", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Maximum bytes for HTTP header, defaults to 1MB (1048576)."},
+		// Chunked upload configuration (to bypass Cloudflare CDN limits)
+		{Key: conf.ChunkedUploadChunkSize, Value: "95", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PUBLIC, Help: "Chunked upload threshold (MB). Files exceeding this size will be uploaded in chunks. Recommended to set to 95 to bypass Cloudflare's 100MB limit."},
 	}
 	additionalSettingItems := tool.Tools.Items()
 	// 固定顺序
