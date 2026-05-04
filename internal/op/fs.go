@@ -84,8 +84,7 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 				customCachePolicies := storage.GetStorage().CustomCachePolicies
 				if len(customCachePolicies) > 0 {
-					configPolicies := strings.Split(customCachePolicies, "\n")
-					for _, configPolicy := range configPolicies {
+					for configPolicy := range strings.SplitSeq(customCachePolicies, "\n") {
 						pattern, ttlstr, ok := strings.Cut(strings.TrimSpace(configPolicy), ":")
 						if !ok {
 							log.Warnf("Malformed custom cache policy entry: %s in storage %s for path %s. Expected format: pattern:ttl", configPolicy, storage.GetStorage().MountPath, path)

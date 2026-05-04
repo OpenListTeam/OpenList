@@ -226,7 +226,7 @@ func newPortMapper(str string) ftpserver.PasvPortGetter {
 	if str == "" {
 		return nil
 	}
-	pasvPortMappers := strings.Split(strings.Replace(str, "\n", ",", -1), ",")
+	pasvPortMappers := strings.Split(strings.ReplaceAll(str, "\n", ","), ",")
 	groups := make([]group, len(pasvPortMappers))
 	totalLength := 0
 	convertToPorts := func(str string) (int, int, error) {
