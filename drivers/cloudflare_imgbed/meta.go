@@ -6,13 +6,13 @@ import (
 )
 
 type Addition struct {
-	driver.RootPath
-	Address          string `json:"address" type:"text" required:"true" help:"图床后端 API 地址，例如 https://img.example.com"`
-	Token            string `json:"token" type:"text" required:"true" help:"身份认证 Token"`
-	SmallChannelName string `json:"smallChannelName" type:"text" help:"普通文件(通常<20MB)上传使用的渠道名称"`
-	LargeChannelName string `json:"largeChannelName" type:"text" help:"大文件上传使用的渠道名称"`
-	LargeChannelType string `json:"largeChannelType" type:"select" options:",huggingface" help:"大文件渠道的特殊类型（如需直传 HuggingFace，请选 huggingface）"`
-	UploadThread     int    `json:"uploadThread" type:"number" default:"3" help:"HuggingFace 分片直传时的并发线程数"`
+        driver.RootPath
+        Address          string `json:"address" type:"text" required:"true" help:"Backend API address of the image hosting service, e.g., https://img.example.com"`
+        Token            string `json:"token" type:"text" required:"true" help:"Authentication Token"`
+        SmallChannelName string `json:"smallChannelName" type:"text" help:"Channel name for regular files (typically <20MB)"`
+        LargeChannelName string `json:"largeChannelName" type:"text" help:"Channel name for large files"`
+        LargeChannelType string `json:"largeChannelType" type:"select" options:",huggingface" help:"Special type for large file channels (select 'huggingface' for direct upload to HuggingFace)"`
+        UploadThread     int    `json:"uploadThread" type:"number" default:"3" help:"Concurrent thread count for HuggingFace chunked direct upload"`
 }
 
 var config = driver.Config{
