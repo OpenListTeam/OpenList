@@ -42,7 +42,7 @@ jobs:
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Build
-        uses: OpenListTeam/cgo-actions@v1.2.2
+        uses: OpenListTeam/cgo-actions@v1.2.4
         with:
           targets: ${{ matrix.target }}
           flags: ${{ contains(matrix.target, '-musl') && '-ldflags=-linkmode external -extldflags ''-static -fpic''' || '-ldflags=' }}
