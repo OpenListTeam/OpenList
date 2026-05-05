@@ -20,12 +20,12 @@ import (
 func InitDB() {
 	logLevel := logger.Silent
 	if flags.Debug || flags.Dev {
-		logLevel = logger.Info
+		logLevel = logger.Warn // Warn 级别：只输出慢查询和错误，不输出每条 SQL
 	}
 	newLogger := logger.New(
 		stdlog.New(log.StandardLogger().Out, "\r\n", stdlog.LstdFlags),
 		logger.Config{
-			SlowThreshold:             time.Second,
+			SlowThreshold:             200 * time.Millisecond, // 超过 200ms 才记录慢查询
 			LogLevel:                  logLevel,
 			IgnoreRecordNotFoundError: true,
 			Colorful:                  true,
