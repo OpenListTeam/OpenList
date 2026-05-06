@@ -79,6 +79,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/virtual"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/webdav"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/weiyun"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/weiyun_open"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/wopan"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/wps"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/yandex_disk"
