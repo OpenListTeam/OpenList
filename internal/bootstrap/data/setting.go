@@ -34,6 +34,13 @@ func initSettings() {
 	}
 	settingMap := map[string]*model.SettingItem{}
 	for _, v := range settings {
+		if v.Key == "" {
+			err := db.DeleteSettingItemByKey(v.Key)
+			if err != nil {
+				utils.Log.Errorf("failed delete setting with empty key: %+v", err)
+			}
+			continue
+		}
 		if !isActive(v.Key) && v.Flag != model.DEPRECATED {
 			v.Flag = model.DEPRECATED
 			err = op.SaveSettingItem(&v)
