@@ -2,8 +2,9 @@ package pikpak_share
 
 import (
 	"context"
+	"fmt"
 	"net/http"
-	"time"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 
@@ -18,6 +19,8 @@ type PikPakShare struct {
 	Addition
 	*Common
 	PassCodeToken string
+	passCodeMu    sync.RWMutex
+	persistMu     sync.Mutex
 }
 
 func (d *PikPakShare) Config() driver.Config {
@@ -28,53 +31,60 @@ func (d *PikPakShare) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
+func (d *PikPakShare) saveStorage(update func()) {
+	d.persistMu.Lock()
+	defer d.persistMu.Unlock()
+	if update != nil {
+		update()
+	}
+	op.MustSaveDriverStorage(d)
+}
+
+func (d *PikPakShare) SetPassCodeToken(token string) {
+	d.passCodeMu.Lock()
+	defer d.passCodeMu.Unlock()
+	d.PassCodeToken = token
+}
+
+func (d *PikPakShare) GetPassCodeToken() string {
+	d.passCodeMu.RLock()
+	defer d.passCodeMu.RUnlock()
+	return d.PassCodeToken
+}
+
 func (d *PikPakShare) Init(ctx context.Context) error {
 	if d.Common == nil {
 		d.Common = &Common{
-			DeviceID:  utils.GetMD5EncodeStr(d.Addition.ShareId + d.Addition.SharePwd + time.Now().String()),
-			UserAgent: "",
-			RefreshCTokenCk: func(token string) {
-				d.Common.CaptchaToken = token
-				op.MustSaveDriverStorage(d)
-			},
+			captchaStates: make(map[string]captchaState),
+			DeviceID:      genDeviceID(),
+			UserAgent:     "",
 		}
+	}
+	if d.Platform == "web" {
+		d.saveStorage(func() {
+			d.Platform = ""
+		})
+	} else if d.Platform != "" {
+		return fmt.Errorf("legacy pikpak_share %q profile was removed; recreate this storage with the current PikPakShare driver settings", d.Platform)
 	}
 
 	if d.Addition.DeviceID != "" {
 		d.SetDeviceID(d.Addition.DeviceID)
 	} else {
-		d.Addition.DeviceID = d.Common.DeviceID
-		op.MustSaveDriverStorage(d)
+		if d.GetDeviceID() == "" || len(d.GetDeviceID()) != 32 {
+			d.SetDeviceID(genDeviceID())
+		}
+		d.saveStorage(func() {
+			d.Addition.DeviceID = d.GetDeviceID()
+		})
 	}
 
-	if d.Platform == "android" {
-		d.ClientID = AndroidClientID
-		d.ClientSecret = AndroidClientSecret
-		d.ClientVersion = AndroidClientVersion
-		d.PackageName = AndroidPackageName
-		d.Algorithms = AndroidAlgorithms
-		d.UserAgent = BuildCustomUserAgent(d.GetDeviceID(), AndroidClientID, AndroidPackageName, AndroidSdkVersion, AndroidClientVersion, AndroidPackageName, "")
-	} else if d.Platform == "web" {
-		d.ClientID = WebClientID
-		d.ClientSecret = WebClientSecret
-		d.ClientVersion = WebClientVersion
-		d.PackageName = WebPackageName
-		d.Algorithms = WebAlgorithms
-		d.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-	} else if d.Platform == "pc" {
-		d.ClientID = PCClientID
-		d.ClientSecret = PCClientSecret
-		d.ClientVersion = PCClientVersion
-		d.PackageName = PCPackageName
-		d.Algorithms = PCAlgorithms
-		d.UserAgent = "MainWindow Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) PikPak/2.6.11.4955 Chrome/100.0.4896.160 Electron/18.3.15 Safari/537.36"
-	}
-
-	// 获取CaptchaToken
-	err := d.RefreshCaptchaToken(GetAction(http.MethodGet, "https://api-drive.mypikpak.net/drive/v1/share:batch_file_info"), "")
-	if err != nil {
-		return err
-	}
+	d.ClientID = WebClientID
+	d.ClientSecret = WebClientSecret
+	d.ClientVersion = WebClientVersion
+	d.PackageName = WebPackageName
+	d.Algorithms = WebAlgorithms
+	d.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0"
 
 	if d.SharePwd != "" {
 		return d.getSharePassToken()
@@ -102,7 +112,7 @@ func (d *PikPakShare) Link(ctx context.Context, file model.Obj, args model.LinkA
 	query := map[string]string{
 		"share_id":        d.ShareId,
 		"file_id":         file.GetID(),
-		"pass_code_token": d.PassCodeToken,
+		"pass_code_token": d.GetPassCodeToken(),
 	}
 	_, err := d.request("https://api-drive.mypikpak.net/drive/v1/share/file_info", http.MethodGet, func(req *resty.Request) {
 		req.SetQueryParams(query)

@@ -196,6 +196,13 @@ type CaptchaTokenResponse struct {
 	Url          string `json:"url"`
 }
 
+func (c *CaptchaTokenResponse) Expiry() time.Time {
+	if c == nil || c.ExpiresIn <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(time.Duration(c.ExpiresIn) * time.Second)
+}
+
 type AboutResponse struct {
 	Quota struct {
 		Limit         string `json:"limit"`
