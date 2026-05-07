@@ -166,6 +166,7 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_thunder", handles.SetThunder)
 	setting.POST("/set_thunderx", handles.SetThunderX)
 	setting.POST("/set_thunder_browser", handles.SetThunderBrowser)
+	setting.POST("/set_guangyapan", handles.SetGuangYaPan)
 
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
 	_task(g.Group("/task"))
