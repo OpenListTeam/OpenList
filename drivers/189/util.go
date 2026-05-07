@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	sha1Pkg "crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -332,6 +333,10 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 	var byteSize int64
 	md5s := make([]string, 0)
 	md5Sum := md5.New()
+
+	// 额外计算 SHA-1 piece hash 用于生成 torrent
+	pieceSHA1Hashes := make([]byte, 0, int(count)*20)
+
 	for i = 1; i <= count; i++ {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -353,6 +358,11 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 		md5Base64 := base64.StdEncoding.EncodeToString(md5Bytes)
 		md5s = append(md5s, strings.ToUpper(md5Hex))
 		md5Sum.Write(byteData)
+
+		// 计算 SHA-1 piece hash
+		sha1Hash := sha1Pkg.Sum(byteData)
+		pieceSHA1Hashes = append(pieceSHA1Hashes, sha1Hash[:]...)
+
 		var resp UploadUrlsResp
 		res, err = d.uploadRequest("/person/getMultiUploadUrls", map[string]string{
 			"partInfo":     fmt.Sprintf("%s-%s", strconv.FormatInt(i, 10), md5Base64),
@@ -393,7 +403,24 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 		"lazyCheck":    "1",
 		"opertype":     "3",
 	}, nil)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 生成 torrent 文件
+	go func() {
+		fileMD5Upper := strings.ToUpper(fileMd5)
+		torrentData, err := GenerateTorrent(file.GetName(), file.GetSize(), fileMD5Upper, md5s, DEFAULT, pieceSHA1Hashes)
+		if err != nil {
+			log.Warnf("生成 torrent 失败: %v", err)
+			return
+		}
+		infoHash, _ := GetInfoHashHex(torrentData)
+		log.Infof("已生成 torrent: %s.torrent (info_hash: %s, size: %d bytes)",
+			file.GetName(), infoHash, len(torrentData))
+	}()
+
+	return nil
 }
 
 func (d *Cloud189) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {
