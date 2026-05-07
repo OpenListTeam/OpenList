@@ -33,6 +33,8 @@ const (
 	CodeLoginRequired     = http.StatusUnauthorized
 	CodePathNotExist      = 40016 // Path not exist
 	CodeCredentialInvalid = 40020 // Failed to issue token
+	CodeObjectExisted     = 40004 // Object existed
+	// IncorrectSharePassword = 40069 // Incorrect share password
 )
 
 var (
@@ -105,6 +107,9 @@ func (d *CloudreveV4) _request(method string, path string, callback base.ReqCall
 		}
 		if r.Code == CodePathNotExist {
 			return errs.ObjectNotFound
+		}
+		if r.Code == CodeObjectExisted {
+			return errs.ObjectAlreadyExists
 		}
 		return fmt.Errorf("%d: %s", r.Code, r.Msg)
 	}
@@ -277,9 +282,16 @@ func (d *CloudreveV4) parseJWT(token string, jwt any) error {
 	return nil
 }
 
+func (d *CloudreveV4) isShare() bool {
+	return strings.HasSuffix(d.GetRootPath(), "@share")
+}
+
 // check if token is expired
 // https://github.com/cloudreve/frontend/blob/ddfacc1c31c49be03beb71de4cc114c8811038d6/src/session/index.ts#L177-L200
 func (d *CloudreveV4) isTokenExpired() bool {
+	if d.isShare() {
+		return false
+	}
 	if d.RefreshToken == "" {
 		// login again if username and password is set
 		if d.canLogin() {

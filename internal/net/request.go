@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	stdpath "path"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -490,30 +490,27 @@ func (d *downloader) checkTotalBytes(resp *http.Response) error {
 			totalBytes = resp.ContentLength
 		}
 	} else {
-		parts := strings.Split(contentRange, "/")
-
-		total := int64(-1)
 
 		// Checking for whether a numbered total exists
 		// If one does not exist, we will assume the total to be -1, undefined,
 		// and sequentially download each chunk until hitting a 416 error
-		totalStr := parts[len(parts)-1]
+
+		totalStr := stdpath.Base(contentRange)
 		if totalStr != "*" {
-			total, err = strconv.ParseInt(totalStr, 10, 64)
-			if err != nil {
-				err = fmt.Errorf("failed extracting file size")
+			if total, err := strconv.ParseInt(totalStr, 10, 64); err != nil {
+				err = fmt.Errorf("failed extracting file size: %s", totalStr)
+			} else {
+				totalBytes = total
 			}
 		} else {
-			err = fmt.Errorf("file size unknown")
+			err = fmt.Errorf("file size unknown: %s", contentRange)
 		}
 
-		totalBytes = total
 	}
 	if totalBytes != d.params.Size && err == nil {
 		err = fmt.Errorf("expect file size=%d unmatch remote report size=%d, need refresh cache", d.params.Size, totalBytes)
 	}
 	if err != nil {
-		// _ = d.interrupt()
 		d.setErr(err)
 		d.cancel(err)
 	}
