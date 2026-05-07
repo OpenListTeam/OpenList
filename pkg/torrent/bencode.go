@@ -170,7 +170,7 @@ func bencodeDecodeValue(r *bytes.Reader) (interface{}, error) {
 		r.UnreadByte()
 		return bencodeDecodeString(r)
 	default:
-		return nil, fmt.Errorf("bencode: unexpected byte '%c' at position %d", b, int64(len(r.Len())))
+		return nil, fmt.Errorf("bencode: unexpected byte '%c' at position %d", b, int64(r.Len()))
 	}
 }
 
