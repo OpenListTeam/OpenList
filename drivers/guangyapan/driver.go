@@ -180,7 +180,7 @@ func (d *GuangYaPan) List(ctx context.Context, dir model.Obj, args model.ListArg
 			"sortType":  d.SortType,
 			"fileTypes": []int{},
 		}
-		if err := d.postAPI(ctx, "/nd.bizuserres.s/v1/file/get_file_list", body, &resp); err != nil {
+		if err := d.postAPI(ctx, "/userres/v1/file/get_file_list", body, &resp); err != nil {
 			return nil, err
 		}
 		for _, item := range resp.Data.List {
