@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -34,6 +35,7 @@ func (d *WeiYunOpen) Init(ctx context.Context) error {
 	if d.RootDirKey != "" && d.RootPDirKey == "" {
 		return errors.New("root_pdir_key is required when root_dir_key is set")
 	}
+	d.normalizeUploadThread()
 	d.client = newMCPClient(d.Addition)
 	root, err := d.discoverRoot(ctx)
 	if err != nil {
@@ -41,6 +43,12 @@ func (d *WeiYunOpen) Init(ctx context.Context) error {
 	}
 	d.root = root
 	return nil
+}
+
+func (d *WeiYunOpen) normalizeUploadThread() {
+	if d.UploadThread < minUploadThread || d.UploadThread > maxUploadThread {
+		d.UploadThread = defaultUploadThread
+	}
 }
 
 func (d *WeiYunOpen) Drop(ctx context.Context) error {
@@ -122,7 +130,54 @@ func (d *WeiYunOpen) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *WeiYunOpen) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	return nil, errors.New("weiyun official MCP does not support directory creation")
+	folder, ok := parentDir.(*Folder)
+	if !ok {
+		return nil, errs.NotSupport
+	}
+	resp := createDirResponse{}
+	err := d.client.call(ctx, "weiyun.create_dir", createDirArgs{
+		PdirKey: folder.DirKey,
+		DirName: dirName,
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if err = responseError(resp.toolResponse); err != nil {
+		return nil, err
+	}
+	now := jsonInt64(time.Now().UnixMilli())
+	return newFolder(folder.DirKey, dirItem{
+		DirKey:   resp.DirKey,
+		DirName:  resp.DirName,
+		DirCTime: now,
+		DirMTime: now,
+	}), nil
+}
+
+func (d *WeiYunOpen) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	folder, ok := dstDir.(*Folder)
+	if !ok {
+		return nil, errs.NotSupport
+	}
+	switch target := srcObj.(type) {
+	case *File:
+		return d.moveFileResult(ctx, target, folder)
+	case *Folder:
+		return d.moveFolderResult(ctx, target, folder)
+	default:
+		return nil, errs.NotSupport
+	}
+}
+
+func (d *WeiYunOpen) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
+	switch target := srcObj.(type) {
+	case *File:
+		return d.renameFileResult(ctx, target, newName)
+	case *Folder:
+		return d.renameFolderResult(ctx, target, newName)
+	default:
+		return nil, errs.NotSupport
+	}
 }
 
 func (d *WeiYunOpen) discoverRoot(ctx context.Context) (*Folder, error) {
@@ -212,6 +267,105 @@ func (d *WeiYunOpen) removeFolder(ctx context.Context, folder *Folder) error {
 	return responseError(resp.toolResponse)
 }
 
+func (d *WeiYunOpen) moveFileResult(ctx context.Context, file *File, dst *Folder) (model.Obj, error) {
+	if err := d.moveFile(ctx, file, dst); err != nil {
+		return nil, err
+	}
+	moved := *file
+	moved.ParentKey = dst.DirKey
+	return &moved, nil
+}
+
+func (d *WeiYunOpen) moveFolderResult(ctx context.Context, folder *Folder, dst *Folder) (model.Obj, error) {
+	if folder.Root {
+		return nil, errs.NotSupport
+	}
+	if err := d.moveFolder(ctx, folder, dst); err != nil {
+		return nil, err
+	}
+	moved := *folder
+	moved.ParentKey = dst.DirKey
+	return &moved, nil
+}
+
+func (d *WeiYunOpen) renameFileResult(ctx context.Context, file *File, newName string) (model.Obj, error) {
+	if err := d.renameFile(ctx, file, newName); err != nil {
+		return nil, err
+	}
+	renamed := *file
+	renamed.FileName = newName
+	renamed.FileMTime = time.Now().UnixMilli()
+	return &renamed, nil
+}
+
+func (d *WeiYunOpen) renameFolderResult(ctx context.Context, folder *Folder, newName string) (model.Obj, error) {
+	if folder.Root {
+		return nil, errs.NotSupport
+	}
+	if err := d.renameFolder(ctx, folder, newName); err != nil {
+		return nil, err
+	}
+	renamed := *folder
+	renamed.DirName = newName
+	renamed.DirMTime = time.Now().UnixMilli()
+	return &renamed, nil
+}
+
+func (d *WeiYunOpen) moveFile(ctx context.Context, file *File, dst *Folder) error {
+	resp := toolResponse{}
+	err := d.client.call(ctx, "weiyun.move_file", moveFileArgs{
+		FileID:     file.FileID,
+		SrcPdirKey: file.ParentKey,
+		DstPdirKey: dst.DirKey,
+		FileName:   file.FileName,
+	}, &resp)
+	if err != nil {
+		return err
+	}
+	return responseError(resp)
+}
+
+func (d *WeiYunOpen) moveFolder(ctx context.Context, folder *Folder, dst *Folder) error {
+	resp := toolResponse{}
+	err := d.client.call(ctx, "weiyun.move_dir", moveDirArgs{
+		DirKey:     folder.DirKey,
+		SrcPdirKey: folder.ParentKey,
+		DstPdirKey: dst.DirKey,
+		DirName:    folder.DirName,
+	}, &resp)
+	if err != nil {
+		return err
+	}
+	return responseError(resp)
+}
+
+func (d *WeiYunOpen) renameFile(ctx context.Context, file *File, newName string) error {
+	resp := toolResponse{}
+	err := d.client.call(ctx, "weiyun.rename_file", renameFileArgs{
+		FileID:      file.FileID,
+		PdirKey:     file.ParentKey,
+		NewFileName: newName,
+	}, &resp)
+	if err != nil {
+		return err
+	}
+	return responseError(resp)
+}
+
+func (d *WeiYunOpen) renameFolder(ctx context.Context, folder *Folder, newName string) error {
+	resp := toolResponse{}
+	err := d.client.call(ctx, "weiyun.rename_dir", renameDirArgs{
+		DirKey:     folder.DirKey,
+		PdirKey:    folder.ParentKey,
+		NewDirName: newName,
+		SrcDirName: folder.DirName,
+	}, &resp)
+	if err != nil {
+		return err
+	}
+	return responseError(resp)
+}
+
 func responseError(resp toolResponse) error {
 	if resp.Error == "" {
 		return nil
@@ -231,4 +385,6 @@ func findDownloadItem(items []downloadResultItem, fileID string) (*downloadResul
 var _ driver.Driver = (*WeiYunOpen)(nil)
 var _ driver.GetRooter = (*WeiYunOpen)(nil)
 var _ driver.MkdirResult = (*WeiYunOpen)(nil)
+var _ driver.MoveResult = (*WeiYunOpen)(nil)
 var _ driver.Remove = (*WeiYunOpen)(nil)
+var _ driver.RenameResult = (*WeiYunOpen)(nil)

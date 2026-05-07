@@ -8,17 +8,20 @@ import (
 )
 
 const (
-	defaultAPIURL     = "https://www.weiyun.com/api/v3/mcpserver"
-	defaultRootName   = "/"
-	listPageSize      = 50
-	maxUploadRounds   = 200
-	uploadBlockSize   = 512 * 1024
-	checkBlockDivisor = 128
-	cacheProgressEnd  = 10
-	uploadStateDone   = 2
-	emptyFileSHA1     = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-	emptyFileMD5      = "d41d8cd98f00b204e9800998ecf8427e"
-	emptySHA1StateHex = "0123456789abcdeffedcba9876543210f0e1d2c3"
+	defaultAPIURL       = "https://www.weiyun.com/api/v3/mcpserver"
+	defaultRootName     = "/"
+	listPageSize        = 50
+	maxUploadRounds     = 200
+	defaultUploadThread = 4
+	minUploadThread     = 4
+	maxUploadThread     = 32
+	uploadBlockSize     = 512 * 1024
+	checkBlockDivisor   = 128
+	cacheProgressEnd    = 10
+	uploadStateDone     = 2
+	emptyFileSHA1       = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+	emptyFileMD5        = "d41d8cd98f00b204e9800998ecf8427e"
+	emptySHA1StateHex   = "0123456789abcdeffedcba9876543210f0e1d2c3"
 )
 
 const (
@@ -108,6 +111,44 @@ type deleteResponse struct {
 	toolResponse
 	FreedSpace    jsonInt64  `json:"freed_space"`
 	FreedIndexCnt jsonUint32 `json:"freed_index_cnt"`
+}
+
+type createDirArgs struct {
+	PdirKey string `json:"pdir_key,omitempty"`
+	DirName string `json:"dir_name"`
+}
+
+type createDirResponse struct {
+	toolResponse
+	DirKey  string `json:"dir_key"`
+	DirName string `json:"dir_name"`
+}
+
+type moveDirArgs struct {
+	DirKey     string `json:"dir_key"`
+	SrcPdirKey string `json:"src_pdir_key"`
+	DstPdirKey string `json:"dst_pdir_key"`
+	DirName    string `json:"dir_name,omitempty"`
+}
+
+type moveFileArgs struct {
+	FileID     string `json:"file_id"`
+	SrcPdirKey string `json:"src_pdir_key"`
+	DstPdirKey string `json:"dst_pdir_key"`
+	FileName   string `json:"filename,omitempty"`
+}
+
+type renameFileArgs struct {
+	FileID      string `json:"file_id"`
+	PdirKey     string `json:"pdir_key"`
+	NewFileName string `json:"new_filename"`
+}
+
+type renameDirArgs struct {
+	DirKey     string `json:"dir_key"`
+	PdirKey    string `json:"pdir_key"`
+	NewDirName string `json:"new_dir_name"`
+	SrcDirName string `json:"src_dir_name"`
 }
 
 type uploadChannel struct {
