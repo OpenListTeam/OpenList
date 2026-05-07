@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/go-resty/resty/v2"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -62,23 +64,78 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	fileName := t.Info.Name
 	fileSize := t.GetTotalSize()
 
-	// 使用 CAS 信息尝试秒传（旧接口，只需要 fileMD5）
-	uploadInfo, err := y.OldUploadCreate(ctx, dstDir.GetID(), cas.FileMD5, fileName, fmt.Sprint(fileSize), isFamily)
-	if err != nil {
-		return nil, fmt.Errorf("创建上传任务失败: %w", err)
+	// 计算 sliceMd5（与上传时一致的算法）
+	sliceMd5Hex := cas.FileMD5
+	if len(cas.SliceMD5s) > 1 {
+		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(cas.SliceMD5s, "\n")))
 	}
 
-	if uploadInfo.FileDataExists != 1 {
-		return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, size=%d）", cas.FileMD5, fileSize)
+	// 使用新版 initMultiUpload 接口进行秒传（需要 fileMd5 + sliceMd5）
+	fullUrl := "https://upload.cloud.189.cn"
+	if isFamily {
+		fullUrl += "/family"
+	} else {
+		fullUrl += "/person"
+	}
+
+	params := Params{
+		"parentFolderId": dstDir.GetID(),
+		"fileName":       fileName,
+		"fileSize":       fmt.Sprint(fileSize),
+		"fileMd5":        cas.FileMD5,
+		"sliceSize":      fmt.Sprint(cas.SliceSize),
+		"sliceMd5":       sliceMd5Hex,
+	}
+	if isFamily {
+		params.Set("familyId", y.FamilyID)
+	}
+
+	var uploadInfo InitMultiUploadResp
+	_, err = y.request(fullUrl+"/initMultiUpload", "GET", func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, params, &uploadInfo, isFamily)
+	if err != nil {
+		// 新版接口失败，回退到旧版接口尝试
+		oldUploadInfo, oldErr := y.OldUploadCreate(ctx, dstDir.GetID(), cas.FileMD5, fileName, fmt.Sprint(fileSize), isFamily)
+		if oldErr != nil {
+			return nil, fmt.Errorf("创建上传任务失败: %w (initMultiUpload err: %v)", oldErr, err)
+		}
+		if oldUploadInfo.FileDataExists != 1 {
+			return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, size=%d）", cas.FileMD5, fileSize)
+		}
+		return y.OldUploadCommit(ctx, oldUploadInfo.FileCommitUrl, oldUploadInfo.UploadFileId, isFamily, overwrite)
+	}
+
+	if uploadInfo.Data.FileDataExists != 1 {
+		// 新版接口也没匹配到，再尝试旧版
+		oldUploadInfo, oldErr := y.OldUploadCreate(ctx, dstDir.GetID(), cas.FileMD5, fileName, fmt.Sprint(fileSize), isFamily)
+		if oldErr != nil {
+			return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", cas.FileMD5, sliceMd5Hex, fileSize)
+		}
+		if oldUploadInfo.FileDataExists != 1 {
+			return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", cas.FileMD5, sliceMd5Hex, fileSize)
+		}
+		return y.OldUploadCommit(ctx, oldUploadInfo.FileCommitUrl, oldUploadInfo.UploadFileId, isFamily, overwrite)
 	}
 
 	// 秒传成功，提交
-	obj, err := y.OldUploadCommit(ctx, uploadInfo.FileCommitUrl, uploadInfo.UploadFileId, isFamily, overwrite)
+	var resp CommitMultiUploadFileResp
+	commitParams := Params{
+		"uploadFileId": uploadInfo.Data.UploadFileID,
+		"fileMd5":      cas.FileMD5,
+		"sliceMd5":     sliceMd5Hex,
+		"lazyCheck":    "1",
+		"isLog":        "0",
+		"opertype":     IF(overwrite, "3", "1"),
+	}
+	_, err = y.request(fullUrl+"/commitMultiUploadFile", "GET", func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, commitParams, &resp, isFamily)
 	if err != nil {
 		return nil, fmt.Errorf("提交上传失败: %w", err)
 	}
 
-	return obj, nil
+	return resp.toFile(), nil
 }
 
 // ComputeTorrentFromReader 从 io.Reader 计算并生成 torrent 文件
