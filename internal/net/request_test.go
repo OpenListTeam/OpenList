@@ -16,8 +16,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var buf22MB = make([]byte, 1024*1024*22)
-
 func containsString(slice []string, val string) bool {
 	for _, item := range slice {
 		if item == val {
@@ -25,18 +23,6 @@ func containsString(slice []string, val string) bool {
 		}
 	}
 	return false
-}
-
-func dummyHttpRequest(data []byte, p http_range.Range) io.ReadCloser {
-
-	end := p.Start + p.Length - 1
-
-	if end >= int64(len(data)) {
-		end = int64(len(data))
-	}
-
-	bodyBytes := data[p.Start:end]
-	return io.NopCloser(bytes.NewReader(bodyBytes))
 }
 
 func TestDownloadOrder(t *testing.T) {
