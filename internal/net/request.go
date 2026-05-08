@@ -13,9 +13,9 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/mem"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/rclone/rclone/lib/mmap"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/aws/aws-sdk-go/aws/awsutil"
@@ -119,6 +119,8 @@ type downloader struct {
 	maxPos      int64
 	m2          sync.Mutex
 	readingID   int // 正在被读取的id
+
+	mem mem.LinearMemory
 }
 
 type ConcurrencyLimit struct {
@@ -202,6 +204,10 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.pos = d.params.Range.Start
 	d.maxPos = d.params.Range.Start + d.params.Range.Length
 	d.concurrency = d.cfg.Concurrency
+
+	if conf.MmapThreshold > 0 && d.cfg.PartSize >= conf.MmapThreshold {
+		d.mem, _ = mem.NewMemory(0, uint64(d.cfg.PartSize*d.cfg.Concurrency))
+	}
 	_ = d.sendChunkTask(true)
 
 	var rc io.ReadCloser = NewMultiReadCloser(d.bufs[0], d.interrupt, d.finishBuf)
@@ -227,12 +233,26 @@ func (d *downloader) sendChunkTask(newConcurrency bool) error {
 		go d.downloadPart()
 	}
 
-	var buf *Buf
+	var br *Buf
 	if isNewBuf {
-		buf = NewBuf(d.ctx, d.cfg.PartSize)
-		d.bufs = append(d.bufs, buf)
+		br = &Buf{
+			ctx:        d.ctx,
+			size:       d.cfg.PartSize,
+			readSignal: make(chan struct{}, 1),
+		}
+		if d.mem != nil {
+			start := d.nextChunk * d.cfg.PartSize
+			all, _ := d.mem.Reallocate(uint64((start + d.cfg.PartSize)))
+			if all != nil {
+				br.buf = all[start : start+d.cfg.PartSize]
+			}
+		}
+		if br.buf == nil {
+			br.buf = make([]byte, d.cfg.PartSize)
+		}
+		d.bufs = append(d.bufs, br)
 	} else {
-		buf = d.getBuf(d.nextChunk)
+		br = d.getBuf(d.nextChunk)
 	}
 
 	if d.pos < d.maxPos {
@@ -256,7 +276,7 @@ func (d *downloader) sendChunkTask(newConcurrency bool) error {
 				finalSize += firstSize - minSize
 			}
 		}
-		err := buf.Reset(int(finalSize))
+		err := br.Reset(int(finalSize))
 		if err != nil {
 			return err
 		}
@@ -264,7 +284,7 @@ func (d *downloader) sendChunkTask(newConcurrency bool) error {
 			start: d.pos,
 			size:  finalSize,
 			id:    d.nextChunk,
-			buf:   buf,
+			buf:   br,
 
 			newConcurrency: newConcurrency,
 		}
@@ -286,17 +306,23 @@ func (d *downloader) interrupt() error {
 		err := fmt.Errorf("interrupted")
 		d.err = err
 	}
-	close(d.chunkChannel)
 	if d.bufs != nil {
-		d.cancel(err)
 		for _, buf := range d.bufs {
 			buf.Close()
 		}
 		d.bufs = nil
+	}
+	if d.cancel != nil {
+		d.cancel(err)
+		close(d.chunkChannel)
+		if d.mem != nil {
+			d.mem.Free()
+		}
 		if d.concurrency > 0 {
 			d.concurrency = -d.concurrency
 		}
 		log.Debugf("maxConcurrency:%d", d.cfg.Concurrency+d.concurrency)
+		d.cancel = nil
 	}
 	return err
 }
@@ -652,7 +678,6 @@ type Buf struct {
 	offW int
 	rw   sync.Mutex
 	buf  []byte
-	mmap bool
 
 	readSignal  chan struct{}
 	readPending bool
@@ -665,16 +690,8 @@ func NewBuf(ctx context.Context, maxSize int) *Buf {
 		ctx:        ctx,
 		size:       maxSize,
 		readSignal: make(chan struct{}, 1),
+		buf:        make([]byte, maxSize),
 	}
-	if conf.MmapThreshold > 0 && maxSize >= conf.MmapThreshold {
-		m, err := mmap.Alloc(maxSize)
-		if err == nil {
-			br.buf = m
-			br.mmap = true
-			return br
-		}
-	}
-	br.buf = make([]byte, maxSize)
 	return br
 }
 
@@ -772,10 +789,6 @@ func (br *Buf) Close() error {
 	br.rw.Lock()
 	defer br.rw.Unlock()
 	var err error
-	if br.mmap {
-		err = mmap.Free(br.buf)
-		br.mmap = false
-	}
 	br.buf = nil
 	close(br.readSignal)
 	return err
