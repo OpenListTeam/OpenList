@@ -93,3 +93,39 @@ func NewReader(buf ...[]byte) *Reader {
 	}
 	return b
 }
+
+type byteSection struct {
+	buf []byte
+}
+
+func NewByteSection(buf []byte) SizedReadWriterAt {
+	return &byteSection{buf: buf}
+}
+
+func (b *byteSection) Size() int64 {
+	return int64(len(b.buf))
+}
+
+func (b *byteSection) ReadAt(p []byte, off int64) (n int, err error) {
+	if off < 0 || off >= b.Size() {
+		return 0, io.EOF
+	}
+	n = copy(p, b.buf[off:])
+	if n < len(p) {
+		err = io.EOF
+	}
+	return
+}
+
+func (b *byteSection) WriteAt(p []byte, off int64) (n int, err error) {
+	if off < 0 || off >= b.Size() {
+		return 0, io.ErrShortWrite
+	}
+	n = copy(b.buf[off:], p)
+	if n < len(p) {
+		err = io.ErrShortWrite
+	}
+	return
+}
+
+var _ SizedReadWriterAt = (*byteSection)(nil)

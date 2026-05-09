@@ -15,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/mem"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -86,9 +87,6 @@ func (d Downloader) Download(ctx context.Context, p *HttpRequestParams) (readClo
 	if impl.cfg.PartSize == 0 {
 		impl.cfg.PartSize = DefaultDownloadPartSize
 	}
-	if conf.MaxBufferLimit > 0 && impl.cfg.PartSize > conf.MaxBufferLimit {
-		impl.cfg.PartSize = conf.MaxBufferLimit
-	}
 	if impl.cfg.HttpClient == nil {
 		impl.cfg.HttpClient = DefaultHttpRequestFunc
 	}
@@ -109,7 +107,7 @@ type downloader struct {
 	m sync.Mutex
 
 	nextChunk int //next chunk id
-	bufs      []*Buf
+	bufs      []buffer.StreamBuffer
 	written   int64 //total bytes of file downloaded from remote
 	err       error
 
@@ -120,7 +118,7 @@ type downloader struct {
 	m2          sync.Mutex
 	readingID   int // 正在被读取的id
 
-	mem mem.LinearMemory
+	hc *mem.HybridCache
 }
 
 type ConcurrencyLimit struct {
@@ -206,21 +204,23 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.concurrency = d.cfg.Concurrency
 
 	if conf.MmapThreshold > 0 && d.cfg.PartSize >= conf.MmapThreshold {
-		d.mem, d.err = mem.NewGuardedMemory(0, uint64(d.cfg.PartSize*d.cfg.Concurrency))
-		if d.err != nil {
-			d.concurrencyFinish()
-			return nil, d.interrupt()
-		}
+		d.hc, d.err = mem.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.cfg.PartSize*d.cfg.Concurrency))
 	}
-	_ = d.sendChunkTask(true)
+	if d.err == nil {
+		d.err = d.sendChunkTask(true)
+	}
+	if d.err != nil {
+		d.concurrencyFinish()
+		return nil, d.interrupt()
+	}
 
-	var rc io.ReadCloser = NewMultiReadCloser(d.bufs[0], d.interrupt, d.finishBuf)
+	var rc io.ReadCloser = newMultiReadCloser(d.bufs[0], d.interrupt, d.finishBuf)
 
 	// Return error
 	return rc, d.err
 }
 
-func (d *downloader) sendChunkTask(newConcurrency bool) error {
+func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 	d.m.Lock()
 	defer d.m.Unlock()
 	isNewBuf := d.concurrency > 0
@@ -237,24 +237,23 @@ func (d *downloader) sendChunkTask(newConcurrency bool) error {
 		go d.downloadPart()
 	}
 
-	var br *Buf
+	var br buffer.StreamBuffer
 	if isNewBuf {
-		br = &Buf{
-			ctx:        d.ctx,
-			size:       d.cfg.PartSize,
-			readSignal: make(chan struct{}, 1),
-		}
-		if d.mem != nil {
-			start := d.nextChunk * d.cfg.PartSize
-			all, err := d.mem.Reallocate(uint64((start + d.cfg.PartSize)))
-			if err != nil {
-				return err
+		var s buffer.SizedReadWriterAt
+		if d.hc != nil {
+			s = d.hc.New()
+			if s == nil {
+				return fmt.Errorf("failed to create new buffer section")
 			}
-			br.buf = all[start : start+d.cfg.PartSize]
+		} else {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("panic in creating new buffer section: %v", r)
+				}
+			}()
+			s = buffer.NewByteSection(make([]byte, d.cfg.PartSize))
 		}
-		if br.buf == nil {
-			br.buf = make([]byte, d.cfg.PartSize)
-		}
+		br = buffer.NewStreamBuffer(d.ctx, s)
 		d.bufs = append(d.bufs, br)
 	} else {
 		br = d.getBuf(d.nextChunk)
@@ -320,8 +319,8 @@ func (d *downloader) interrupt() error {
 	if d.cancel != nil {
 		d.cancel(err)
 		close(d.chunkChannel)
-		if d.mem != nil {
-			d.mem.Free()
+		if d.hc != nil {
+			d.hc.Close()
 		}
 		if d.concurrency > 0 {
 			d.concurrency = -d.concurrency
@@ -331,10 +330,10 @@ func (d *downloader) interrupt() error {
 	}
 	return err
 }
-func (d *downloader) getBuf(id int) (b *Buf) {
+func (d *downloader) getBuf(id int) (b buffer.StreamBuffer) {
 	return d.bufs[id%len(d.bufs)]
 }
-func (d *downloader) finishBuf(id int) (isLast bool, nextBuf *Buf) {
+func (d *downloader) finishBuf(id int) (isLast bool, nextBuf buffer.StreamBuffer) {
 	id++
 	if id >= d.maxPart {
 		return true, nil
@@ -579,7 +578,7 @@ func (d *downloader) setErr(e error) {
 type chunk struct {
 	start int64
 	size  int64
-	buf   *Buf
+	buf   buffer.StreamBuffer
 	id    int
 
 	newConcurrency bool
@@ -629,172 +628,36 @@ func (e *errNeedRetry) Unwrap() error {
 	return e.err
 }
 
-type MultiReadCloser struct {
-	cfg    *cfg
-	closer closerFunc
-	finish finishBufFUnc
-}
-
-type cfg struct {
+type multiReadCloser struct {
 	rPos   int //current reader position, start from 0
-	curBuf *Buf
+	curBuf buffer.StreamBuffer
+	finish finishBufFUnc
+	utils.CloseFunc
 }
 
-type closerFunc func() error
-type finishBufFUnc func(id int) (isLast bool, buf *Buf)
+type finishBufFUnc func(id int) (isLast bool, buf buffer.StreamBuffer)
 
-// NewMultiReadCloser to save memory, we re-use limited Buf, and feed data to Read()
-func NewMultiReadCloser(buf *Buf, c closerFunc, fb finishBufFUnc) *MultiReadCloser {
-	return &MultiReadCloser{closer: c, finish: fb, cfg: &cfg{curBuf: buf}}
+// newMultiReadCloser to save memory, we re-use limited Buf, and feed data to Read()
+func newMultiReadCloser(buf buffer.StreamBuffer, c utils.CloseFunc, fb finishBufFUnc) *multiReadCloser {
+	return &multiReadCloser{CloseFunc: c, finish: fb, curBuf: buf}
 }
 
-func (mr MultiReadCloser) Read(p []byte) (n int, err error) {
-	if mr.cfg.curBuf == nil {
+func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
+	if mr.curBuf == nil {
 		return 0, io.EOF
 	}
-	n, err = mr.cfg.curBuf.Read(p)
-	//log.Debugf("read_%d read current buffer, n=%d ,err=%+v", mr.cfg.rPos, n, err)
+	n, err = mr.curBuf.Read(p)
+	// log.Debugf("read_%d read current buffer, n=%d ,err=%+v", mr.rPos, n, err)
 	if err == io.EOF {
-		log.Debugf("read_%d finished current buffer", mr.cfg.rPos)
+		log.Debugf("read_%d finished current buffer", mr.rPos)
 
-		isLast, next := mr.finish(mr.cfg.rPos)
+		isLast, next := mr.finish(mr.rPos)
 		if isLast {
 			return n, io.EOF
 		}
-		mr.cfg.curBuf = next
-		mr.cfg.rPos++
+		mr.curBuf = next
+		mr.rPos++
 		return n, nil
-	}
-	if err == context.Canceled {
-		if e := context.Cause(mr.cfg.curBuf.ctx); e != nil {
-			err = e
-		}
 	}
 	return n, err
-}
-func (mr MultiReadCloser) Close() error {
-	return mr.closer()
-}
-
-type Buf struct {
-	size int //expected size
-	ctx  context.Context
-	offR int
-	offW int
-	rw   sync.Mutex
-	buf  []byte
-
-	readSignal  chan struct{}
-	readPending bool
-}
-
-// NewBuf is a buffer that can have 1 read & 1 write at the same time.
-// when read is faster write, immediately feed data to read after written
-func NewBuf(ctx context.Context, maxSize int) *Buf {
-	br := &Buf{
-		ctx:        ctx,
-		size:       maxSize,
-		readSignal: make(chan struct{}, 1),
-		buf:        make([]byte, maxSize),
-	}
-	return br
-}
-
-func (br *Buf) Reset(size int) error {
-	br.rw.Lock()
-	defer br.rw.Unlock()
-	if br.buf == nil {
-		return io.ErrClosedPipe
-	}
-	if size > cap(br.buf) {
-		return fmt.Errorf("reset size %d exceeds max size %d", size, cap(br.buf))
-	}
-	br.size = size
-	br.offR = 0
-	br.offW = 0
-	return nil
-}
-
-func (br *Buf) Read(p []byte) (int, error) {
-	if err := br.ctx.Err(); err != nil {
-		return 0, err
-	}
-	if len(p) == 0 {
-		return 0, nil
-	}
-	if br.offR >= br.size {
-		return 0, io.EOF
-	}
-	for {
-		br.rw.Lock()
-		if br.buf == nil {
-			br.rw.Unlock()
-			return 0, io.ErrClosedPipe
-		}
-
-		if br.offW < br.offR {
-			br.rw.Unlock()
-			return 0, io.ErrUnexpectedEOF
-		}
-		if br.offW == br.offR {
-			br.readPending = true
-			br.rw.Unlock()
-			select {
-			case <-br.ctx.Done():
-				return 0, br.ctx.Err()
-			case _, ok := <-br.readSignal:
-				if !ok {
-					return 0, io.ErrClosedPipe
-				}
-				continue
-			}
-		}
-
-		n := copy(p, br.buf[br.offR:br.offW])
-		br.offR += n
-		br.rw.Unlock()
-		if n < len(p) && br.offR >= br.size {
-			return n, io.EOF
-		}
-		return n, nil
-	}
-}
-
-func (br *Buf) Write(p []byte) (int, error) {
-	if err := br.ctx.Err(); err != nil {
-		return 0, err
-	}
-	if len(p) == 0 {
-		return 0, nil
-	}
-	br.rw.Lock()
-	defer br.rw.Unlock()
-	if br.buf == nil {
-		return 0, io.ErrClosedPipe
-	}
-	if br.offW >= br.size {
-		return 0, io.ErrShortWrite
-	}
-	n := copy(br.buf[br.offW:], p[:min(br.size-br.offW, len(p))])
-	br.offW += n
-	if br.readPending {
-		br.readPending = false
-		select {
-		case br.readSignal <- struct{}{}:
-		default:
-		}
-	}
-	if n < len(p) {
-		return n, io.ErrShortWrite
-	}
-	return n, nil
-}
-
-func (br *Buf) Close() error {
-	br.rw.Lock()
-	defer br.rw.Unlock()
-	var err error
-	br.buf = nil
-	close(br.readSignal)
-	return err
 }
