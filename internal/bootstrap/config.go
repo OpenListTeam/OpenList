@@ -99,36 +99,41 @@ func InitConfig() {
 	if conf.Conf.MaxConcurrency > 0 {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: conf.Conf.MaxConcurrency}
 	}
+
+	memStat, _ := mem.VirtualMemory()
+	if memStat != nil {
+		log.Infof("total memory: %dMB, available: %dMB", memStat.Total>>20, memStat.Available>>20)
+	}
 	if conf.Conf.MinFreeMemory < 1 {
-		m, _ := mem.VirtualMemory()
-		if m != nil {
-			conf.MinFreeMemory = uint64(max(int(float64(m.Total)*0.01), 16*utils.MB))
-			conf.MinFreeMemory -= conf.MinFreeMemory % utils.MB
+		if memStat != nil {
+			t := (memStat.Total >> 20) * 5 / 100
+			conf.MinFreeMemory = max(16, t) << 20
 		} else {
 			conf.MinFreeMemory = 16 * utils.MB
 		}
 	} else {
-		conf.MinFreeMemory = uint64(max(16, conf.Conf.MinFreeMemory) * utils.MB)
+		conf.MinFreeMemory = max(16, uint64(conf.Conf.MinFreeMemory)) << 20
 	}
-	log.Infof("min free memory: %dMB", conf.MinFreeMemory/utils.MB)
+	log.Infof("min free memory: %dMB", conf.MinFreeMemory>>20)
+
 	if conf.Conf.MaxBufferLimit < 0 {
-		m, _ := mem.VirtualMemory()
-		if m != nil {
-			conf.MaxBufferLimit = max(int(float64(m.Total)*0.05), 4*utils.MB)
-			conf.MaxBufferLimit -= conf.MaxBufferLimit % utils.MB
+		if memStat != nil {
+			t := (memStat.Total >> 20) * 5 / 100
+			conf.MaxBufferLimit = max(4, int(t)) << 20
 		} else {
 			conf.MaxBufferLimit = 16 * utils.MB
 		}
 	} else {
-		conf.MaxBufferLimit = conf.Conf.MaxBufferLimit * utils.MB
+		conf.MaxBufferLimit = conf.Conf.MaxBufferLimit << 20
 	}
-	log.Infof("max buffer limit: %dMB", conf.MaxBufferLimit/utils.MB)
+	log.Infof("max buffer limit: %dMB", conf.MaxBufferLimit>>20)
+
 	if conf.Conf.MmapThreshold > 0 {
-		conf.MmapThreshold = conf.Conf.MmapThreshold * utils.MB
+		conf.MmapThreshold = conf.Conf.MmapThreshold << 20
 	} else {
 		conf.MmapThreshold = 0
 	}
-	log.Infof("mmap threshold: %dMB", conf.Conf.MmapThreshold)
+	log.Infof("mmap threshold: %dMB", conf.MmapThreshold>>20)
 
 	if len(conf.Conf.Log.Filter.Filters) == 0 {
 		conf.Conf.Log.Filter.Enable = false
