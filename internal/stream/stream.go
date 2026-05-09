@@ -226,6 +226,9 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 		for cacheSize > 0 {
 			partSize := min(cacheSize, int64(conf.MaxBufferLimit))
 			s := f.hc.NextSectionWithSize(uint64(partSize))
+			if s == nil {
+				return nil, fmt.Errorf("failed to get cache section")
+			}
 			n, err := utils.CopyWithBufferN(buffer.GetSectionWriter(s), f.oriReader, partSize)
 			if n != partSize {
 				f.hc.RollbackSectionWithSize(uint64(partSize - n))

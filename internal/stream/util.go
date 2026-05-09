@@ -8,16 +8,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/mem"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/pool"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/rclone/rclone/lib/mmap"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -174,7 +174,7 @@ func CacheFullAndHash(stream model.FileStreamer, up *model.UpdateProgress, hashT
 	return tmpF, hex.EncodeToString(h.Sum(nil)), nil
 }
 
-type StreamSectionReaderIF interface {
+type StreamSectionReader interface {
 	// 线程不安全
 	GetSectionReader(off, length int64) (io.ReadSeeker, error)
 	FreeSectionReader(sr io.ReadSeeker)
@@ -182,71 +182,36 @@ type StreamSectionReaderIF interface {
 	DiscardSection(off int64, length int64) error
 }
 
-func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *model.UpdateProgress) (StreamSectionReaderIF, error) {
+func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *model.UpdateProgress) (StreamSectionReader, error) {
 	if file.GetFile() != nil {
 		return &cachedSectionReader{file.GetFile()}, nil
 	}
 
 	maxBufferSize = min(maxBufferSize, int(file.GetSize()))
-	if maxBufferSize > conf.MaxBufferLimit {
-		f, err := os.CreateTemp(conf.Conf.TempDir, "file-*")
-		if err != nil {
-			return nil, err
-		}
-
-		if f.Truncate(file.GetSize()) != nil {
-			// fallback to full cache
-			_, _ = f.Close(), os.Remove(f.Name())
-			cache, err := file.CacheFullAndWriter(up, nil)
-			if err != nil {
-				return nil, err
-			}
-			return &cachedSectionReader{cache}, nil
-		}
-
-		ss := &fileSectionReader{file: file, temp: f}
-		ss.bufPool = &pool.Pool[*offsetWriterWithBase]{
-			New: func() *offsetWriterWithBase {
-				base := ss.tempOffset
-				ss.tempOffset += int64(maxBufferSize)
-				return &offsetWriterWithBase{io.NewOffsetWriter(ss.temp, base), base}
-			},
-		}
-		file.Add(utils.CloseFunc(func() error {
-			ss.bufPool.Reset()
-			return errors.Join(ss.temp.Close(), os.Remove(ss.temp.Name()))
-		}))
-		return ss, nil
-	}
-
-	ss := &directSectionReader{file: file}
-	if conf.MmapThreshold > 0 && maxBufferSize >= conf.MmapThreshold {
-		ss.bufPool = &pool.Pool[[]byte]{
-			New: func() []byte {
-				buf, err := mmap.Alloc(maxBufferSize)
-				if err == nil {
-					file.Add(utils.CloseFunc(func() error {
-						return mmap.Free(buf)
-					}))
-				} else {
-					buf = make([]byte, maxBufferSize)
-				}
-				return buf
-			},
-		}
-	} else {
-		ss.bufPool = &pool.Pool[[]byte]{
+	if int64(conf.MmapThreshold) >= file.GetSize() {
+		bufPool := &pool.Pool[[]byte]{
 			New: func() []byte {
 				return make([]byte, maxBufferSize)
 			},
 		}
+		file.Add(bufPool)
+		ss := &byteSectionReader{file: file, bufPool: bufPool}
+		return ss, nil
 	}
 
-	file.Add(utils.CloseFunc(func() error {
-		ss.bufPool.Reset()
-		return nil
-	}))
-	return ss, nil
+	partSize := min(maxBufferSize, conf.MaxBufferLimit)
+	hc, err := mem.NewHybridCache(uint64(partSize), uint64(file.GetSize()))
+	if err != nil {
+		return nil, err
+	}
+	file.Add(hc)
+	bufPool := &pool.Pool[buffer.Section]{
+		New: func() buffer.Section {
+			return hc.NextSection()
+		},
+	}
+	file.Add(bufPool)
+	return &sectionReader{file: file, bufPool: bufPool}, nil
 }
 
 type cachedSectionReader struct {
@@ -261,68 +226,14 @@ func (s *cachedSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker
 }
 func (*cachedSectionReader) FreeSectionReader(sr io.ReadSeeker) {}
 
-type fileSectionReader struct {
-	file       model.FileStreamer
-	fileOffset int64
-	temp       *os.File
-	tempOffset int64
-	bufPool    *pool.Pool[*offsetWriterWithBase]
-}
-
-type offsetWriterWithBase struct {
-	*io.OffsetWriter
-	base int64
-}
-
-// 线程不安全
-func (ss *fileSectionReader) DiscardSection(off int64, length int64) error {
-	if off != ss.fileOffset {
-		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
-	}
-	n, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
-	ss.fileOffset += n
-	if err != nil {
-		return fmt.Errorf("failed to skip data: (expect =%d, actual =%d) %w", length, n, err)
-	}
-	return nil
-}
-
-type fileBufferSectionReader struct {
-	io.ReadSeeker
-	fileBuf *offsetWriterWithBase
-}
-
-// 线程不安全
-func (ss *fileSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
-	if off != ss.fileOffset {
-		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
-	}
-	fileBuf := ss.bufPool.Get()
-	_, _ = fileBuf.Seek(0, io.SeekStart)
-	n, err := utils.CopyWithBufferN(fileBuf, ss.file, length)
-	ss.fileOffset += n
-	if err != nil {
-		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
-	}
-	return &fileBufferSectionReader{io.NewSectionReader(ss.temp, fileBuf.base, length), fileBuf}, nil
-}
-
-func (ss *fileSectionReader) FreeSectionReader(rs io.ReadSeeker) {
-	if sr, ok := rs.(*fileBufferSectionReader); ok {
-		ss.bufPool.Put(sr.fileBuf)
-		sr.fileBuf = nil
-		sr.ReadSeeker = nil
-	}
-}
-
-type directSectionReader struct {
+type byteSectionReader struct {
 	file       model.FileStreamer
 	fileOffset int64
 	bufPool    *pool.Pool[[]byte]
 }
 
 // 线程不安全
-func (ss *directSectionReader) DiscardSection(off int64, length int64) error {
+func (ss *byteSectionReader) DiscardSection(off int64, length int64) error {
 	if off != ss.fileOffset {
 		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
 	}
@@ -334,13 +245,13 @@ func (ss *directSectionReader) DiscardSection(off int64, length int64) error {
 	return nil
 }
 
-type bufferSectionReader struct {
+type byteReadSeeker struct {
 	io.ReadSeeker
 	buf []byte
 }
 
 // 线程不安全
-func (ss *directSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
+func (ss *byteSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
 	if off != ss.fileOffset {
 		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
 	}
@@ -351,12 +262,63 @@ func (ss *directSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 	if int64(n) != length {
 		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
 	}
-	return &bufferSectionReader{bytes.NewReader(buf), buf}, nil
+	return &byteReadSeeker{bytes.NewReader(buf), buf}, nil
 }
-func (ss *directSectionReader) FreeSectionReader(rs io.ReadSeeker) {
-	if sr, ok := rs.(*bufferSectionReader); ok {
+func (ss *byteSectionReader) FreeSectionReader(rs io.ReadSeeker) {
+	if sr, ok := rs.(*byteReadSeeker); ok {
 		ss.bufPool.Put(sr.buf[0:cap(sr.buf)])
 		sr.buf = nil
+		sr.ReadSeeker = nil
+	}
+}
+
+type sectionReader struct {
+	file       model.FileStreamer
+	fileOffset int64
+	bufPool    *pool.Pool[buffer.Section]
+}
+
+// 线程不安全
+func (ss *sectionReader) DiscardSection(off int64, length int64) error {
+	if off != ss.fileOffset {
+		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
+	}
+	n, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
+	ss.fileOffset += n
+	if err != nil {
+		return fmt.Errorf("failed to skip data: (expect =%d, actual =%d) %w", length, n, err)
+	}
+	return nil
+}
+
+type sectionReadSeeker struct {
+	io.ReadSeeker
+	s buffer.Section
+}
+
+// 线程不安全
+func (ss *sectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
+	if off != ss.fileOffset {
+		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
+	}
+	s := ss.bufPool.Get()
+	if s == nil {
+		return nil, fmt.Errorf("failed to get cache section")
+	}
+	dst := buffer.GetSectionWriter(s)
+	_, _ = dst.Seek(0, io.SeekStart)
+	n, err := utils.CopyWithBufferN(dst, ss.file, length)
+	ss.fileOffset += n
+	if err != nil {
+		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
+	}
+	return &sectionReadSeeker{io.NewSectionReader(s, 0, length), s}, nil
+}
+
+func (ss *sectionReader) FreeSectionReader(rs io.ReadSeeker) {
+	if sr, ok := rs.(*sectionReadSeeker); ok {
+		ss.bufPool.Put(sr.s)
+		sr.s = nil
 		sr.ReadSeeker = nil
 	}
 }
