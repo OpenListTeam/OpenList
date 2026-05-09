@@ -3,6 +3,7 @@ package mem
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -51,6 +52,9 @@ func NewGuardedMemory(cap, max uint64) (m LinearMemory, err error) {
 	if err != nil {
 		return nil, err
 	}
+	runtime.SetFinalizer(m, func(m LinearMemory) {
+		m.Free()
+	})
 	if s, ok := m.(interface{ SetGrowCheck(GrowCheck) }); ok {
 		s.SetGrowCheck(MemoryGrowCheck)
 	}
