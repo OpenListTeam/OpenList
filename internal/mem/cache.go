@@ -14,7 +14,7 @@ type fileSection struct {
 	*io.SectionReader
 }
 
-var _ buffer.SizedReadWriterAt = (*fileSection)(nil)
+var _ buffer.Section = (*fileSection)(nil)
 
 // 优先使用内存，失败后才使用文件
 // 线程不安全
@@ -24,29 +24,33 @@ type HybridCache struct {
 	maxSectionSize uint64
 	file           *os.File
 	fileOffset     uint64
-	cache          []buffer.SizedReadWriterAt
+	cache          []buffer.Section
 }
 
-func (hc *HybridCache) New() buffer.SizedReadWriterAt {
+func (hc *HybridCache) NewWithSize(size uint64) buffer.Section {
 	if hc.file != nil {
-		if hc.fileOffset > 0 && hc.file.Truncate(int64(hc.fileOffset+hc.maxSectionSize)) != nil {
+		if hc.fileOffset > 0 && hc.file.Truncate(int64(hc.fileOffset+size)) != nil {
 			return nil
 		}
 		base := hc.fileOffset
-		hc.fileOffset += hc.maxSectionSize
-		fs := &fileSection{io.NewOffsetWriter(hc.file, int64(base)), io.NewSectionReader(hc.file, int64(base), int64(hc.maxSectionSize))}
+		hc.fileOffset += size
+		fs := &fileSection{io.NewOffsetWriter(hc.file, int64(base)), io.NewSectionReader(hc.file, int64(base), int64(size))}
 		return fs
 	}
-	all, err := hc.mem.Reallocate(uint64(hc.memOffset + hc.maxSectionSize))
+	all, err := hc.mem.Reallocate(uint64(hc.memOffset + size))
 	if err == nil {
 		start := hc.memOffset
-		hc.memOffset += hc.maxSectionSize
-		return buffer.NewByteSection(all[start : start+hc.maxSectionSize])
+		hc.memOffset += size
+		return buffer.NewByteSection(all[start : start+size])
 	}
 	if err := hc.initFileCache(); err != nil {
 		return nil
 	}
-	return hc.New()
+	return hc.NewWithSize(size)
+}
+
+func (hc *HybridCache) New() buffer.Section {
+	return hc.NewWithSize(hc.maxSectionSize)
 }
 
 func (hc *HybridCache) initFileCache() error {
@@ -62,7 +66,7 @@ func (hc *HybridCache) initFileCache() error {
 	return nil
 }
 
-func (hc *HybridCache) Get() buffer.SizedReadWriterAt {
+func (hc *HybridCache) Get() buffer.Section {
 	if len(hc.cache) == 0 {
 		return hc.New()
 	}
@@ -71,7 +75,7 @@ func (hc *HybridCache) Get() buffer.SizedReadWriterAt {
 	return item
 }
 
-func (hc *HybridCache) Put(s buffer.SizedReadWriterAt) {
+func (hc *HybridCache) Put(s buffer.Section) {
 	hc.cache = append(hc.cache, s)
 }
 

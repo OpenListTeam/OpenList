@@ -50,26 +50,30 @@ func (m *mmappedMemory) SetGrowCheck(c GrowCheck) {
 func (m *mmappedMemory) Reallocate(size uint64) ([]byte, error) {
 	com := uint64(len(m.buf))
 	res := uint64(cap(m.buf))
-	if com < size && size <= res {
-		// Grow geometrically, round up to the page size.
-		rnd := uint64(unix.Getpagesize() - 1)
-		new := com + com>>3
-		new = min(max(size, new), res)
-		new = (new + rnd) &^ rnd
+	if com < size {
+		if size <= res {
+			// Grow geometrically, round up to the page size.
+			rnd := uint64(unix.Getpagesize() - 1)
+			new := com + com>>3
+			new = min(max(size, new), res)
+			new = (new + rnd) &^ rnd
 
-		if m.growCheck != nil {
-			if err := m.growCheck(new - com); err != nil {
+			if m.growCheck != nil {
+				if err := m.growCheck(new - com); err != nil {
+					return nil, err
+				}
+			}
+
+			// Commit additional memory up to new bytes.
+			err := unix.Mprotect(m.buf[com:new], unix.PROT_READ|unix.PROT_WRITE)
+			if err != nil {
 				return nil, err
 			}
-		}
 
-		// Commit additional memory up to new bytes.
-		err := unix.Mprotect(m.buf[com:new], unix.PROT_READ|unix.PROT_WRITE)
-		if err != nil {
-			return nil, err
+			m.buf = m.buf[:new] // Update committed memory.
+		} else {
+			return nil, ErrNotEnoughMemory
 		}
-
-		m.buf = m.buf[:new] // Update committed memory.
 	}
 	// Limit returned capacity because bytes beyond
 	// len(m.buf) have not yet been committed.

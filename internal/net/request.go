@@ -239,7 +239,7 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 
 	var br buffer.StreamBuffer
 	if isNewBuf {
-		var s buffer.SizedReadWriterAt
+		var s buffer.Section
 		if d.hc != nil {
 			s = d.hc.New()
 			if s == nil {

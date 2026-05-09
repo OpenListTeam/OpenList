@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-type SizedReadWriterAt interface {
+type Section interface {
 	io.ReaderAt
 	io.WriterAt
 	Size() int64
@@ -24,7 +24,7 @@ type streamBuf struct {
 	offR  int
 	offW  int
 	rw    sync.Mutex
-	s     SizedReadWriterAt
+	s     Section
 
 	readSignal  chan struct{}
 	readPending bool
@@ -32,7 +32,7 @@ type streamBuf struct {
 
 // NewStreamBuffer is a buffer that can have 1 read & 1 write at the same time.
 // when read is faster write, immediately feed data to read after written
-func NewStreamBuffer(ctx context.Context, s SizedReadWriterAt) StreamBuffer {
+func NewStreamBuffer(ctx context.Context, s Section) StreamBuffer {
 	br := &streamBuf{
 		ctx:        ctx,
 		limit:      int(s.Size()),

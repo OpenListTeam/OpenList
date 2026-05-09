@@ -98,7 +98,7 @@ type byteSection struct {
 	buf []byte
 }
 
-func NewByteSection(buf []byte) SizedReadWriterAt {
+func NewByteSection(buf []byte) Section {
 	return &byteSection{buf: buf}
 }
 
@@ -128,4 +128,4 @@ func (b *byteSection) WriteAt(p []byte, off int64) (n int, err error) {
 	return
 }
 
-var _ SizedReadWriterAt = (*byteSection)(nil)
+var _ Section = (*byteSection)(nil)
