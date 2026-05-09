@@ -214,29 +214,37 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 			f.Reader = io.MultiReader(f.peek, f.oriReader)
 			f.Add(hc)
 		} else {
-			buf := make([]byte, f.GetSize())
+			br := &buffer.Reader{}
+			f.peek = br
+			f.Reader = io.MultiReader(br, f.oriReader)
+			f.Add(br)
+		}
+	}
+	cacheSize := maxCacheSize - f.peek.Size()
+	if f.hc != nil {
+		cacheSize2 := cacheSize
+		for cacheSize > 0 {
+			partSize := min(cacheSize, int64(conf.MaxBufferLimit))
+			s := f.hc.NextSectionWithSize(uint64(partSize))
+			n, err := utils.CopyWithBufferN(buffer.GetSectionWriter(s), f.oriReader, partSize)
+			if n != partSize {
+				f.hc.RollbackSectionWithSize(uint64(partSize - n))
+				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", cacheSize2, cacheSize2-cacheSize+n, err)
+			}
+			cacheSize -= n
+		}
+	} else {
+		if cacheSize > 0 {
+			buf := make([]byte, cacheSize)
 			n, err := io.ReadFull(f.oriReader, buf)
 			if n != len(buf) {
 				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", len(buf), n, err)
 			}
-			f.peek = bytes.NewReader(buf)
-			f.Reader = f.peek
+			f.peek.(*buffer.Reader).Append(buf)
 		}
 	}
-	if f.hc != nil {
-		cacheSize := maxCacheSize - f.peek.Size()
-		for cacheSize > 0 {
-			partSize := min(cacheSize, int64(conf.MaxBufferLimit))
-			s := f.hc.NewSectionWithSize(uint64(partSize))
-			n, err := utils.CopyWithBufferN(buffer.GetSectionWriter(s), f.oriReader, partSize)
-			if n != partSize {
-				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", maxCacheSize, maxCacheSize-cacheSize+n, err)
-			}
-			cacheSize -= n
-		}
-		if f.peek.Size() >= f.GetSize() {
-			f.Reader = f.peek
-		}
+	if f.peek.Size() >= f.GetSize() {
+		f.Reader = f.peek
 	}
 	return f.peek, nil
 }

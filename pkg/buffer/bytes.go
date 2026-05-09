@@ -84,6 +84,11 @@ func (r *Reader) Reset() {
 	r.offset = 0
 }
 
+func (r *Reader) Close() error {
+	r.Reset()
+	return nil
+}
+
 func NewReader(buf ...[]byte) *Reader {
 	b := &Reader{
 		bufs: make([][]byte, 0, len(buf)),

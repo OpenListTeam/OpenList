@@ -27,15 +27,14 @@ var _ buffer.Section = (*fileSection)(nil)
 // 优先使用内存，失败后才使用文件
 // 线程不安全
 type HybridCache struct {
-	mem            LinearMemory
-	memOffset      uint64
-	maxSectionSize uint64
-	file           *os.File
-	fileOffset     uint64
-	cache          []buffer.Section
+	mem         LinearMemory
+	memOffset   uint64
+	file        *os.File
+	fileOffset  uint64
+	sectionSize uint64
 }
 
-func (hc *HybridCache) NewSectionWithSize(size uint64) buffer.Section {
+func (hc *HybridCache) NextSectionWithSize(size uint64) buffer.Section {
 	if hc.file != nil {
 		if hc.fileOffset > 0 && hc.file.Truncate(int64(hc.fileOffset+size)) != nil {
 			return nil
@@ -54,11 +53,29 @@ func (hc *HybridCache) NewSectionWithSize(size uint64) buffer.Section {
 	if err := hc.initFileCache(); err != nil {
 		return nil
 	}
-	return hc.NewSectionWithSize(size)
+	return hc.NextSectionWithSize(size)
 }
 
-func (hc *HybridCache) NewSection() buffer.Section {
-	return hc.NewSectionWithSize(hc.maxSectionSize)
+func (hc *HybridCache) NextSection() buffer.Section {
+	return hc.NextSectionWithSize(hc.sectionSize)
+}
+
+func (hc *HybridCache) RollbackSectionWithSize(size uint64) {
+	if hc.fileOffset > size {
+		hc.fileOffset -= size
+		return
+	}
+	size -= hc.fileOffset
+	hc.fileOffset = 0
+	if hc.memOffset > size {
+		hc.memOffset -= size
+		return
+	}
+	hc.memOffset = 0
+}
+
+func (hc *HybridCache) RollbackSection() {
+	hc.RollbackSectionWithSize(hc.sectionSize)
 }
 
 func (hc *HybridCache) initFileCache() error {
@@ -66,7 +83,7 @@ func (hc *HybridCache) initFileCache() error {
 	if err != nil {
 		return err
 	}
-	if err := f.Truncate(int64(hc.maxSectionSize)); err != nil {
+	if err := f.Truncate(int64(hc.sectionSize)); err != nil {
 		_, _ = f.Close(), os.Remove(f.Name())
 		return err
 	}
@@ -74,22 +91,9 @@ func (hc *HybridCache) initFileCache() error {
 	return nil
 }
 
-func (hc *HybridCache) Get() buffer.Section {
-	if len(hc.cache) == 0 {
-		return hc.NewSection()
-	}
-	item := hc.cache[len(hc.cache)-1]
-	hc.cache = hc.cache[:len(hc.cache)-1]
-	return item
-}
-
-func (hc *HybridCache) Put(s buffer.Section) {
-	hc.cache = append(hc.cache, s)
-}
-
 func (hc *HybridCache) Close() error {
-	if hc.maxSectionSize > 0 {
-		hc.maxSectionSize = 0
+	if hc.sectionSize > 0 {
+		hc.sectionSize = 0
 		var err error
 		if hc.mem != nil {
 			err = hc.mem.Free()
@@ -106,16 +110,16 @@ func (hc *HybridCache) Close() error {
 
 // 优先使用内存，失败后才使用文件
 // 线程不安全
-func NewHybridCache(maxSectionSize, maxMemorySize uint64) (*HybridCache, error) {
+func NewHybridCache(sectionSize, maxMemorySize uint64) (*HybridCache, error) {
 	var err error
 	if conf.MmapThreshold > 0 {
 		var m LinearMemory
-		m, err = NewGuardedMemory(maxSectionSize, maxMemorySize)
+		m, err = NewGuardedMemory(sectionSize, maxMemorySize)
 		if err == nil {
-			return &HybridCache{mem: m, maxSectionSize: maxSectionSize}, nil
+			return &HybridCache{mem: m, sectionSize: sectionSize}, nil
 		}
 	}
-	hc := &HybridCache{maxSectionSize: maxSectionSize}
+	hc := &HybridCache{sectionSize: sectionSize}
 	if err2 := hc.initFileCache(); err2 != nil {
 		return nil, errors.Join(err, err2)
 	}
