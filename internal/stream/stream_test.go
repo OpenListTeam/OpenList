@@ -7,6 +7,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -23,6 +24,8 @@ func TestFileStream_RangeRead(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
+	conf.MmapThreshold = 10
+	conf.MaxBufferLimit = 15
 	tests := []struct {
 		name string
 		f    *FileStream
@@ -92,6 +95,8 @@ func TestFileStream_With_PreHash(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
+	conf.MmapThreshold = 10
+	conf.MaxBufferLimit = 15
 
 	const hashSize int64 = 20
 	reader, _ := f.RangeRead(http_range.Range{Start: 0, Length: hashSize})

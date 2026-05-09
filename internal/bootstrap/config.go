@@ -106,8 +106,8 @@ func InitConfig() {
 	}
 	if conf.Conf.MinFreeMemory < 1 {
 		if memStat != nil {
-			t := (memStat.Total >> 20) * 5 / 100
-			conf.MinFreeMemory = max(16, t) << 20
+			t := (memStat.Total >> 20) * 10 / 100
+			conf.MinFreeMemory = max(16, min(t, 1024)) << 20
 		} else {
 			conf.MinFreeMemory = 16 * utils.MB
 		}
@@ -118,8 +118,8 @@ func InitConfig() {
 
 	if conf.Conf.MaxBufferLimit < 0 {
 		if memStat != nil {
-			t := (memStat.Total >> 20) * 5 / 100
-			conf.MaxBufferLimit = max(4, int(t)) << 20
+			t := (memStat.Total >> 20) * 1 / 100
+			conf.MaxBufferLimit = max(4, min(int(t), 64)) << 20
 		} else {
 			conf.MaxBufferLimit = 16 * utils.MB
 		}

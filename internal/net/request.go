@@ -241,7 +241,7 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 	if isNewBuf {
 		var s buffer.Section
 		if d.hc != nil {
-			s = d.hc.New()
+			s = d.hc.NewSection()
 			if s == nil {
 				return fmt.Errorf("failed to create new buffer section")
 			}
