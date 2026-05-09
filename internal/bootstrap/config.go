@@ -99,6 +99,18 @@ func InitConfig() {
 	if conf.Conf.MaxConcurrency > 0 {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: conf.Conf.MaxConcurrency}
 	}
+	if conf.Conf.MinFreeMemory < 1 {
+		m, _ := mem.VirtualMemory()
+		if m != nil {
+			conf.MinFreeMemory = uint64(max(int(float64(m.Total)*0.01), 16*utils.MB))
+			conf.MinFreeMemory -= conf.MinFreeMemory % utils.MB
+		} else {
+			conf.MinFreeMemory = 16 * utils.MB
+		}
+	} else {
+		conf.MinFreeMemory = uint64(max(16, conf.Conf.MinFreeMemory) * utils.MB)
+	}
+	log.Infof("min free memory: %dMB", conf.MinFreeMemory/utils.MB)
 	if conf.Conf.MaxBufferLimit < 0 {
 		m, _ := mem.VirtualMemory()
 		if m != nil {

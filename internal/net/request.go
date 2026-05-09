@@ -206,7 +206,11 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.concurrency = d.cfg.Concurrency
 
 	if conf.MmapThreshold > 0 && d.cfg.PartSize >= conf.MmapThreshold {
-		d.mem, _ = mem.NewMemory(0, uint64(d.cfg.PartSize*d.cfg.Concurrency))
+		d.mem, d.err = mem.NewGuardedMemory(0, uint64(d.cfg.PartSize*d.cfg.Concurrency))
+		if d.err != nil {
+			d.concurrencyFinish()
+			return nil, d.interrupt()
+		}
 	}
 	_ = d.sendChunkTask(true)
 
@@ -242,10 +246,11 @@ func (d *downloader) sendChunkTask(newConcurrency bool) error {
 		}
 		if d.mem != nil {
 			start := d.nextChunk * d.cfg.PartSize
-			all, _ := d.mem.Reallocate(uint64((start + d.cfg.PartSize)))
-			if all != nil {
-				br.buf = all[start : start+d.cfg.PartSize]
+			all, err := d.mem.Reallocate(uint64((start + d.cfg.PartSize)))
+			if err != nil {
+				return err
 			}
+			br.buf = all[start : start+d.cfg.PartSize]
 		}
 		if br.buf == nil {
 			br.buf = make([]byte, d.cfg.PartSize)

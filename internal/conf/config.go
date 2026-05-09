@@ -120,6 +120,7 @@ type Config struct {
 	DistDir               string      `json:"dist_dir"`
 	Log                   LogConfig   `json:"log" envPrefix:"LOG_"`
 	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
+	MinFreeMemory         int         `json:"min_free_memoryMB" env:"MIN_FREE_MEMORY_MB"`
 	MaxBufferLimit        int         `json:"max_buffer_limitMB" env:"MAX_BUFFER_LIMIT_MB"`
 	MmapThreshold         int         `json:"mmap_thresholdMB" env:"MMAP_THRESHOLD_MB"`
 	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`

@@ -32,14 +32,19 @@ func NewMemory(cap, max uint64) (LinearMemory, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mmappedMemory{b[:com]}, nil
+	return &mmappedMemory{buf: b[:com]}, nil
 }
 
 // The slice covers the entire mmapped memory:
 //   - len(buf) is the already committed memory,
 //   - cap(buf) is the reserved address space.
 type mmappedMemory struct {
-	buf []byte
+	buf       []byte
+	growCheck GrowCheck
+}
+
+func (m *mmappedMemory) SetGrowCheck(c GrowCheck) {
+	m.growCheck = c
 }
 
 func (m *mmappedMemory) Reallocate(size uint64) ([]byte, error) {
@@ -51,6 +56,12 @@ func (m *mmappedMemory) Reallocate(size uint64) ([]byte, error) {
 		new := com + com>>3
 		new = min(max(size, new), res)
 		new = (new + rnd) &^ rnd
+
+		if m.growCheck != nil {
+			if err := m.growCheck(new - com); err != nil {
+				return nil, err
+			}
+		}
 
 		// Commit additional memory up to new bytes.
 		err := unix.Mprotect(m.buf[com:new], unix.PROT_READ|unix.PROT_WRITE)

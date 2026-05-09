@@ -29,6 +29,8 @@ var (
 	MaxBufferLimit = 16 * 1024 * 1024
 	// 超过该阈值的Buffer将使用 mmap 分配，可主动释放内存
 	MmapThreshold = 4 * 1024 * 1024
+	// 最小空闲内存
+	MinFreeMemory uint64 = 16 * 1024 * 1024
 )
 var (
 	RawIndexHtml string

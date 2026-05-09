@@ -39,8 +39,13 @@ func NewMemory(cap, max uint64) (LinearMemory, error) {
 //   - len(buf) is the already committed memory,
 //   - cap(buf) is the reserved address space.
 type virtualMemory struct {
-	buf  []byte
-	addr uintptr
+	buf       []byte
+	addr      uintptr
+	growCheck GrowCheck
+}
+
+func (m *virtualMemory) SetGrowCheck(c GrowCheck) {
+	m.growCheck = c
 }
 
 func (m *virtualMemory) Reallocate(size uint64) ([]byte, error) {
@@ -52,6 +57,12 @@ func (m *virtualMemory) Reallocate(size uint64) ([]byte, error) {
 		new := com + com>>3
 		new = min(max(size, new), res)
 		new = (new + rnd) &^ rnd
+
+		if m.growCheck != nil {
+			if err := m.growCheck(new - com); err != nil {
+				return nil, err
+			}
+		}
 
 		// Commit additional memory up to new bytes.
 		_, err := windows.VirtualAlloc(m.addr, uintptr(new), windows.MEM_COMMIT, windows.PAGE_READWRITE)

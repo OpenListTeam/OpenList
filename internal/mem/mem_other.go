@@ -3,7 +3,7 @@
 package mem // import "github.com/ncruces/go-sqlite3/internal/alloc"
 
 func NewMemory(cap, max uint64) (LinearMemory, error) {
-	return &sliceMemory{make([]byte, 0, cap)}, nil
+	return &sliceMemory{buf: make([]byte, 0, cap)}, nil
 }
 
 type sliceMemory struct {
