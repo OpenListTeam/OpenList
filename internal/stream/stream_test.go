@@ -1,14 +1,16 @@
-package stream
+package stream_test
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
@@ -18,7 +20,7 @@ func TestFileStream_RangeRead(t *testing.T) {
 		httpRange http_range.Range
 	}
 	buf := []byte("github.com/OpenListTeam/OpenList")
-	f := &FileStream{
+	f := &stream.FileStream{
 		Obj: &model.Object{
 			Size: int64(len(buf)),
 		},
@@ -28,9 +30,9 @@ func TestFileStream_RangeRead(t *testing.T) {
 	conf.MaxBlockLimit = 15
 	tests := []struct {
 		name string
-		f    *FileStream
+		f    *stream.FileStream
 		args args
-		want func(f *FileStream, got io.Reader, err error) error
+		want func(f *stream.FileStream, got io.Reader, err error) error
 	}{
 		{
 			name: "range 11-12",
@@ -38,7 +40,7 @@ func TestFileStream_RangeRead(t *testing.T) {
 			args: args{
 				httpRange: http_range.Range{Start: 11, Length: 12},
 			},
-			want: func(f *FileStream, got io.Reader, err error) error {
+			want: func(f *stream.FileStream, got io.Reader, err error) error {
 				if f.GetFile() != nil {
 					return errors.New("cached")
 				}
@@ -55,7 +57,7 @@ func TestFileStream_RangeRead(t *testing.T) {
 			args: args{
 				httpRange: http_range.Range{Start: 11, Length: 21},
 			},
-			want: func(f *FileStream, got io.Reader, err error) error {
+			want: func(f *stream.FileStream, got io.Reader, err error) error {
 				if f.GetFile() == nil {
 					return errors.New("not cached")
 				}
@@ -89,7 +91,7 @@ func TestFileStream_RangeRead(t *testing.T) {
 
 func TestFileStream_With_PreHash(t *testing.T) {
 	buf := []byte("github.com/OpenListTeam/OpenList")
-	f := &FileStream{
+	f := &stream.FileStream{
 		Obj: &model.Object{
 			Size: int64(len(buf)),
 		},
@@ -104,11 +106,55 @@ func TestFileStream_With_PreHash(t *testing.T) {
 	if preHash == "" {
 		t.Error("preHash is empty")
 	}
-	tmpF, fullHash, _ := CacheFullAndHash(f, nil, utils.SHA1)
+	tmpF, fullHash, _ := stream.CacheFullAndHash(f, nil, utils.SHA1)
 	fmt.Println(fullHash)
 	fileFullHash, _ := utils.HashFile(utils.SHA1, tmpF)
 	fmt.Println(fileFullHash)
 	if fullHash != fileFullHash {
 		t.Errorf("fullHash and fileFullHash should match: fullHash=%s fileFullHash=%s", fullHash, fileFullHash)
+	}
+}
+
+func TestStreamSectionReader(t *testing.T) {
+	buf := make([]byte, 8<<10)
+	for i := range len(buf) {
+		buf[i] = byte(i % 256)
+	}
+	f := &stream.FileStream{
+		Obj: &model.Object{
+			Size: int64(len(buf)),
+		},
+		Reader: io.NopCloser(bytes.NewReader(buf)),
+	}
+	conf.CacheThreshold = 1
+	conf.MaxBlockLimit = 2 << 10
+	partSize := 3 << 10
+	ss, err := stream.NewStreamSectionReader(f, partSize, nil)
+	if err != nil {
+		t.Errorf("NewStreamSectionReader() error = %v", err)
+	}
+	conf.Conf = &conf.Config{}
+	for i := 0; i < len(buf); i += partSize {
+		length := partSize
+		if i+length > len(buf) {
+			length = len(buf) - i
+		}
+		rs, err := ss.GetSectionReader(int64(i), int64(length))
+		if err != nil {
+			t.Errorf("StreamSectionReader.GetSectionReader() error = %v", err)
+		}
+		b1, err := io.ReadAll(rs)
+		if err != nil {
+			t.Errorf("StreamSectionReader.Read() error = %v", err)
+		}
+		rs.Seek(1, io.SeekStart)
+		b2, _ := io.ReadAll(rs)
+		if !bytes.Equal(b1[1:], b2) {
+			t.Errorf("StreamSectionReader.Read() = %s, want %s", b1[1:], b2)
+		}
+		if !bytes.Equal(buf[i:i+length], b1) {
+			t.Errorf("StreamSectionReader.Read() = %s, want %s", b1, buf[i:i+length])
+		}
+		conf.MinFreeMemory = math.MaxUint64
 	}
 }

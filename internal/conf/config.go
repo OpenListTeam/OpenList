@@ -120,9 +120,9 @@ type Config struct {
 	DistDir               string      `json:"dist_dir"`
 	Log                   LogConfig   `json:"log" envPrefix:"LOG_"`
 	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
-	MinFreeMemory         int         `json:"min_free_memoryMB" env:"MIN_FREE_MEMORY_MB"`
-	MaxBlockLimit         int         `json:"max_block_limitMB" env:"MAX_BLOCK_LIMIT_MB"`
-	CacheThreshold        int         `json:"cache_thresholdMB" env:"CACHE_THRESHOLD_MB"`
+	MinFreeMemory         int         `json:"min_free_memory" env:"MIN_FREE_MEMORY"`
+	MaxBlockLimit         int         `json:"max_block_limit" env:"MAX_BLOCK_LIMIT"`
+	CacheThreshold        int         `json:"cache_threshold" env:"CACHE_THRESHOLD"`
 	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`
 	MaxConcurrency        int         `json:"max_concurrency" env:"MAX_CONCURRENCY"`
 	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
