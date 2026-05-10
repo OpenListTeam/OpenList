@@ -30,7 +30,7 @@ func MemoryGrowCheck(growSize uint64) error {
 	memStat := m.(*mem.VirtualMemoryStat)
 	for {
 		available := atomic.LoadUint64(&memStat.Available)
-		if available-growSize < conf.MinFreeMemory {
+		if available < growSize || available-growSize < conf.MinFreeMemory {
 			return ErrNotEnoughMemory
 		}
 		if atomic.CompareAndSwapUint64(&memStat.Available, available, available-growSize) {

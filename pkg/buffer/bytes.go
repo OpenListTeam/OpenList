@@ -112,7 +112,7 @@ func (b *byteSection) Size() int64 {
 }
 
 func (b *byteSection) ReadAt(p []byte, off int64) (n int, err error) {
-	if off < 0 || off >= b.Size() {
+	if len(b.buf) == 0 || off < 0 || off >= b.Size() {
 		return 0, io.EOF
 	}
 	n = copy(p, b.buf[off:])
@@ -123,7 +123,7 @@ func (b *byteSection) ReadAt(p []byte, off int64) (n int, err error) {
 }
 
 func (b *byteSection) WriteAt(p []byte, off int64) (n int, err error) {
-	if off < 0 || off >= b.Size() {
+	if len(b.buf) == 0 || off < 0 || off >= b.Size() {
 		return 0, io.ErrShortWrite
 	}
 	n = copy(b.buf[off:], p)
