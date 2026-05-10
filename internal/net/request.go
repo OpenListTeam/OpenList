@@ -87,6 +87,9 @@ func (d Downloader) Download(ctx context.Context, p *HttpRequestParams) (readClo
 	if impl.cfg.PartSize == 0 {
 		impl.cfg.PartSize = DefaultDownloadPartSize
 	}
+	if impl.cfg.PartSize > int(conf.MaxBlockLimit) {
+		impl.cfg.PartSize = int(conf.MaxBlockLimit)
+	}
 	if impl.cfg.HttpClient == nil {
 		impl.cfg.HttpClient = DefaultHttpRequestFunc
 	}
@@ -203,8 +206,8 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.maxPos = d.params.Range.Start + d.params.Range.Length
 	d.concurrency = d.cfg.Concurrency
 
-	if d.cfg.PartSize >= int(conf.CacheThreshold) {
-		d.hc, d.err = mem.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.cfg.PartSize*d.cfg.Concurrency))
+	if d.params.Range.Length > int64(conf.CacheThreshold) {
+		d.hc, d.err = mem.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.params.Range.Length))
 	}
 	if d.err == nil {
 		d.err = d.sendChunkTask(true)

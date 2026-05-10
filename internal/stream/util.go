@@ -307,6 +307,7 @@ func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 				return nil, fmt.Errorf("failed to get cache section")
 			}
 			n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b2), ss.file, blockSize)
+			ss.fileOffset += n
 			if n != blockSize {
 				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, length-cacheSize+n, err)
 			}
@@ -318,6 +319,7 @@ func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 		)
 	} else {
 		n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), ss.file, length)
+		ss.fileOffset += n
 		if n != length {
 			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
 		}

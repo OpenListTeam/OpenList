@@ -106,7 +106,7 @@ func InitConfig() {
 	}
 	if conf.Conf.MinFreeMemory < 1 {
 		if memStat != nil {
-			t := (memStat.Total >> 20) * 10 / 100
+			t := (memStat.Total >> 20) / 10
 			conf.MinFreeMemory = max(16, min(t, 1024)) << 20
 		} else {
 			conf.MinFreeMemory = 16 * utils.MB
@@ -118,7 +118,7 @@ func InitConfig() {
 
 	if conf.Conf.MaxBlockLimit < 0 {
 		if memStat != nil {
-			t := (memStat.Total >> 20) * 1 / 100
+			t := (memStat.Total >> 20) * 3 / 100
 			conf.MaxBlockLimit = max(4, min(uint64(t), 64)) << 20
 		} else {
 			conf.MaxBlockLimit = 16 * utils.MB
@@ -129,7 +129,7 @@ func InitConfig() {
 	log.Infof("max block limit: %dMB", conf.MaxBlockLimit>>20)
 
 	if conf.Conf.CacheThreshold > 0 {
-		conf.CacheThreshold = uint(conf.Conf.CacheThreshold) << 20
+		conf.CacheThreshold = uint64(conf.Conf.CacheThreshold) << 20
 	} else {
 		conf.CacheThreshold = 0
 	}

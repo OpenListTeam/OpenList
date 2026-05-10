@@ -28,7 +28,7 @@ var (
 	// 单次内存、磁盘缓存的扩容最大限制，超过该阈值将分多次扩充
 	MaxBlockLimit uint64 = 16 * 1024 * 1024
 	// 超过该阈值的Buffer将使用HybridCache，可主动释放内存。
-	CacheThreshold uint = 4 * 1024 * 1024
+	CacheThreshold uint64 = 4 * 1024 * 1024
 	// 最小空闲内存
 	MinFreeMemory uint64 = 16 * 1024 * 1024
 )
