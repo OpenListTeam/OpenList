@@ -7,42 +7,31 @@ import (
 	"sync"
 )
 
-type Section interface {
-	io.ReaderAt
-	io.WriterAt
-	Size() int64
-}
-
-type StreamBuffer interface {
-	io.ReadWriteCloser
-	Reset(size int) error
-}
-
-type streamBuf struct {
+type PipeBuffer struct {
 	limit int //expected size
 	ctx   context.Context
 	offR  int
 	offW  int
 	rw    sync.Mutex
-	s     Section
+	block Block
 
 	readSignal  chan struct{}
 	readPending bool
 }
 
-// NewStreamBuffer is a buffer that can have 1 read & 1 write at the same time.
+// NewPipeBuffer is a buffer that can have 1 read & 1 write at the same time.
 // when read is faster write, immediately feed data to read after written
-func NewStreamBuffer(ctx context.Context, s Section) StreamBuffer {
-	br := &streamBuf{
+func NewPipeBuffer(ctx context.Context, block Block) *PipeBuffer {
+	br := &PipeBuffer{
 		ctx:        ctx,
-		limit:      int(s.Size()),
+		limit:      int(block.Size()),
 		readSignal: make(chan struct{}, 1),
-		s:          s,
+		block:      block,
 	}
 	return br
 }
 
-func (br *streamBuf) Read(p []byte) (int, error) {
+func (br *PipeBuffer) Read(p []byte) (int, error) {
 	if err := br.ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -55,7 +44,7 @@ func (br *streamBuf) Read(p []byte) (int, error) {
 
 	for {
 		br.rw.Lock()
-		if br.s == nil {
+		if br.block == nil {
 			br.rw.Unlock()
 			return 0, io.ErrClosedPipe
 		}
@@ -81,38 +70,49 @@ func (br *streamBuf) Read(p []byte) (int, error) {
 		br.rw.Unlock()
 		return 0, io.ErrUnexpectedEOF
 	}
+
 	off := br.offR
+	block := br.block
 	br.rw.Unlock()
-	n, err := br.s.ReadAt(p[:min(len(p), canRead)], int64(off))
+
+	n, err := block.ReadAt(p[:min(len(p), canRead)], int64(off))
+
 	br.rw.Lock()
 	br.offR += n
 	br.rw.Unlock()
+
 	if n < len(p) && br.offR >= br.limit {
 		return n, io.EOF
 	}
 	return n, err
 }
 
-func (br *streamBuf) Write(p []byte) (int, error) {
+func (br *PipeBuffer) Write(p []byte) (int, error) {
 	if err := br.ctx.Err(); err != nil {
 		return 0, err
 	}
 	if len(p) == 0 {
 		return 0, nil
 	}
+
 	br.rw.Lock()
-	if br.s == nil {
+	if br.block == nil {
 		br.rw.Unlock()
 		return 0, io.ErrClosedPipe
 	}
+
 	canWrite := br.limit - br.offW
 	if canWrite <= 0 {
 		br.rw.Unlock()
 		return 0, io.ErrShortWrite
 	}
+
 	off := br.offW
+	block := br.block
 	br.rw.Unlock()
-	n, err := br.s.WriteAt(p[:min(canWrite, len(p))], int64(off))
+
+	n, err := block.WriteAt(p[:min(canWrite, len(p))], int64(off))
+
 	br.rw.Lock()
 	br.offW += n
 	if br.readPending {
@@ -130,14 +130,14 @@ func (br *streamBuf) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (br *streamBuf) Reset(limit int) error {
+func (br *PipeBuffer) Reset(limit int) error {
 	br.rw.Lock()
 	defer br.rw.Unlock()
-	if br.s == nil {
+	if br.block == nil {
 		return io.ErrClosedPipe
 	}
-	if int64(limit) > br.s.Size() {
-		return fmt.Errorf("reset limit %d exceeds max size %d", limit, br.s.Size())
+	if int64(limit) > br.block.Size() {
+		return fmt.Errorf("reset limit %d exceeds max size %d", limit, br.block.Size())
 	}
 	br.limit = limit
 	br.offR = 0
@@ -145,11 +145,11 @@ func (br *streamBuf) Reset(limit int) error {
 	return nil
 }
 
-func (br *streamBuf) Close() error {
+func (br *PipeBuffer) Close() error {
 	br.rw.Lock()
 	defer br.rw.Unlock()
-	if br.s != nil {
-		br.s = nil
+	if br.block != nil {
+		br.block = nil
 		br.readPending = false
 		close(br.readSignal)
 	}

@@ -107,7 +107,7 @@ type downloader struct {
 	m sync.Mutex
 
 	nextChunk int //next chunk id
-	bufs      []buffer.StreamBuffer
+	bufs      []*buffer.PipeBuffer
 	written   int64 //total bytes of file downloaded from remote
 	err       error
 
@@ -237,12 +237,12 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 		go d.downloadPart()
 	}
 
-	var br buffer.StreamBuffer
+	var br *buffer.PipeBuffer
 	if isNewBuf {
-		var s buffer.Section
+		var b buffer.Block
 		if d.hc != nil {
-			s = d.hc.NextSection()
-			if s == nil {
+			b = d.hc.NextBlock()
+			if b == nil {
 				return fmt.Errorf("failed to create new buffer section")
 			}
 		} else {
@@ -251,9 +251,9 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 					err = fmt.Errorf("panic in creating new buffer section: %v", r)
 				}
 			}()
-			s = buffer.NewByteSection(make([]byte, d.cfg.PartSize))
+			b = buffer.NewByteBlock(make([]byte, d.cfg.PartSize))
 		}
-		br = buffer.NewStreamBuffer(d.ctx, s)
+		br = buffer.NewPipeBuffer(d.ctx, b)
 		d.bufs = append(d.bufs, br)
 	} else {
 		br = d.getBuf(d.nextChunk)
@@ -330,10 +330,10 @@ func (d *downloader) interrupt() error {
 	}
 	return err
 }
-func (d *downloader) getBuf(id int) (b buffer.StreamBuffer) {
+func (d *downloader) getBuf(id int) *buffer.PipeBuffer {
 	return d.bufs[id%len(d.bufs)]
 }
-func (d *downloader) finishBuf(id int) (isLast bool, nextBuf buffer.StreamBuffer) {
+func (d *downloader) finishBuf(id int) (isLast bool, nextBuf *buffer.PipeBuffer) {
 	id++
 	if id >= d.maxPart {
 		return true, nil
@@ -578,7 +578,7 @@ func (d *downloader) setErr(e error) {
 type chunk struct {
 	start int64
 	size  int64
-	buf   buffer.StreamBuffer
+	buf   *buffer.PipeBuffer
 	id    int
 
 	newConcurrency bool
@@ -630,15 +630,15 @@ func (e *errNeedRetry) Unwrap() error {
 
 type multiReadCloser struct {
 	rPos   int //current reader position, start from 0
-	curBuf buffer.StreamBuffer
+	curBuf *buffer.PipeBuffer
 	finish finishBufFUnc
 	utils.CloseFunc
 }
 
-type finishBufFUnc func(id int) (isLast bool, buf buffer.StreamBuffer)
+type finishBufFUnc func(id int) (isLast bool, buf *buffer.PipeBuffer)
 
 // newMultiReadCloser to save memory, we re-use limited Buf, and feed data to Read()
-func newMultiReadCloser(buf buffer.StreamBuffer, c utils.CloseFunc, fb finishBufFUnc) *multiReadCloser {
+func newMultiReadCloser(buf *buffer.PipeBuffer, c utils.CloseFunc, fb finishBufFUnc) *multiReadCloser {
 	return &multiReadCloser{CloseFunc: c, finish: fb, curBuf: buf}
 }
 

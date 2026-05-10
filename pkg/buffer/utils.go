@@ -2,16 +2,20 @@ package buffer
 
 import "io"
 
-func GetSectionWriter(s Section) io.WriteSeeker {
-	if sw, ok := s.(interface{ GetSectionWriter() SectionWriter }); ok {
-		return sw.GetSectionWriter()
+type WriteAtSeekerProvider interface{ GetWriteAtSeeker() WriteAtSeeker }
+
+func WriteAtSeekerOf(b Block) WriteAtSeeker {
+	if p, ok := b.(WriteAtSeekerProvider); ok {
+		return p.GetWriteAtSeeker()
 	}
-	return io.NewOffsetWriter(s, 0)
+	return io.NewOffsetWriter(b, 0)
 }
 
-func GetSectionReader(s Section) io.ReadSeeker {
-	if sr, ok := s.(interface{ GetSectionReader() SectionReader }); ok {
-		return sr.GetSectionReader()
+type ReadAtSeekerProvider interface{ GetReadAtSeeker() ReadAtSeeker }
+
+func ReadAtSeekerOf(b Block) ReadAtSeeker {
+	if p, ok := b.(ReadAtSeekerProvider); ok {
+		return p.GetReadAtSeeker()
 	}
-	return io.NewSectionReader(s, 0, s.Size())
+	return io.NewSectionReader(b, 0, b.Size())
 }

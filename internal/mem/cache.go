@@ -9,58 +9,58 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 )
 
-type fileSection struct {
+type fileBlock struct {
 	*io.OffsetWriter
 	*io.SectionReader
 }
 
-func (fs *fileSection) GetSectionWriter() buffer.SectionWriter {
-	return fs.OffsetWriter
+func (b *fileBlock) GetWriteAtSeeker() buffer.WriteAtSeeker {
+	return b.OffsetWriter
 }
 
-func (fs *fileSection) GetSectionReader() buffer.SectionReader {
-	return fs.SectionReader
+func (b *fileBlock) GetReadAtSeeker() buffer.ReadAtSeeker {
+	return b.SectionReader
 }
 
-var _ buffer.Section = (*fileSection)(nil)
+var _ buffer.Block = (*fileBlock)(nil)
 
-// 优先使用内存，失败后才使用文件
+// 优先使用内存，失败后才使用文件。
 // 线程不安全
 type HybridCache struct {
-	mem         LinearMemory
-	memOffset   uint64
-	file        *os.File
-	fileOffset  uint64
-	sectionSize uint64
+	mem        LinearMemory
+	memOffset  uint64
+	file       *os.File
+	fileOffset uint64
+	blockSize  uint64
 }
 
-func (hc *HybridCache) NextSectionWithSize(size uint64) buffer.Section {
+func (hc *HybridCache) NextBlockWithSize(size uint64) buffer.Block {
 	if hc.file != nil {
 		if hc.fileOffset > 0 && hc.file.Truncate(int64(hc.fileOffset+size)) != nil {
 			return nil
 		}
 		base := hc.fileOffset
 		hc.fileOffset += size
-		fs := &fileSection{io.NewOffsetWriter(hc.file, int64(base)), io.NewSectionReader(hc.file, int64(base), int64(size))}
+		fs := &fileBlock{io.NewOffsetWriter(hc.file, int64(base)), io.NewSectionReader(hc.file, int64(base), int64(size))}
 		return fs
 	}
 	all, err := hc.mem.Reallocate(uint64(hc.memOffset + size))
 	if err == nil {
 		start := hc.memOffset
 		hc.memOffset += size
-		return buffer.NewByteSection(all[start : start+size])
+		return buffer.NewByteBlock(all[start : start+size])
 	}
 	if err := hc.initFileCache(); err != nil {
 		return nil
 	}
-	return hc.NextSectionWithSize(size)
+	return hc.NextBlockWithSize(size)
 }
 
-func (hc *HybridCache) NextSection() buffer.Section {
-	return hc.NextSectionWithSize(hc.sectionSize)
+func (hc *HybridCache) NextBlock() buffer.Block {
+	return hc.NextBlockWithSize(hc.blockSize)
 }
 
-func (hc *HybridCache) RollbackSectionWithSize(size uint64) {
+func (hc *HybridCache) RollbackBlockWithSize(size uint64) {
 	if hc.fileOffset > size {
 		hc.fileOffset -= size
 		return
@@ -74,8 +74,8 @@ func (hc *HybridCache) RollbackSectionWithSize(size uint64) {
 	hc.memOffset = 0
 }
 
-func (hc *HybridCache) RollbackSection() {
-	hc.RollbackSectionWithSize(hc.sectionSize)
+func (hc *HybridCache) RollbackBlock() {
+	hc.RollbackBlockWithSize(hc.blockSize)
 }
 
 func (hc *HybridCache) initFileCache() error {
@@ -83,7 +83,7 @@ func (hc *HybridCache) initFileCache() error {
 	if err != nil {
 		return err
 	}
-	if err := f.Truncate(int64(hc.sectionSize)); err != nil {
+	if err := f.Truncate(int64(hc.blockSize)); err != nil {
 		_, _ = f.Close(), os.Remove(f.Name())
 		return err
 	}
@@ -92,8 +92,8 @@ func (hc *HybridCache) initFileCache() error {
 }
 
 func (hc *HybridCache) Close() error {
-	if hc.sectionSize > 0 {
-		hc.sectionSize = 0
+	if hc.blockSize > 0 {
+		hc.blockSize = 0
 		var err error
 		if hc.mem != nil {
 			err = hc.mem.Free()
@@ -110,16 +110,16 @@ func (hc *HybridCache) Close() error {
 
 // 优先使用内存，失败后才使用文件
 // 线程不安全
-func NewHybridCache(sectionSize, maxMemorySize uint64) (*HybridCache, error) {
+func NewHybridCache(blockSize, maxMemorySize uint64) (*HybridCache, error) {
 	var err error
 	if conf.MmapThreshold > 0 {
 		var m LinearMemory
-		m, err = NewGuardedMemory(sectionSize, maxMemorySize)
+		m, err = NewGuardedMemory(blockSize, maxMemorySize)
 		if err == nil {
-			return &HybridCache{mem: m, sectionSize: sectionSize}, nil
+			return &HybridCache{mem: m, blockSize: blockSize}, nil
 		}
 	}
-	hc := &HybridCache{sectionSize: sectionSize}
+	hc := &HybridCache{blockSize: blockSize}
 	if err2 := hc.initFileCache(); err2 != nil {
 		return nil, errors.Join(err, err2)
 	}

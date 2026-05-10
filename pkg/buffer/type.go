@@ -1,13 +1,17 @@
 package buffer
 
-import "io"
+import (
+	"io"
 
-type SectionWriter interface {
-	io.WriterAt
-	io.WriteSeeker
-}
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+)
 
-type SectionReader interface {
+type Block interface {
 	io.ReaderAt
-	io.ReadSeeker
+	io.WriterAt
+	Size() int64
 }
+
+type WriteAtSeeker = model.FileWriter
+
+type ReadAtSeeker = model.File

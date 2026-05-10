@@ -99,19 +99,19 @@ func NewReader(buf ...[]byte) *Reader {
 	return b
 }
 
-type byteSection struct {
+type byteBlock struct {
 	buf []byte
 }
 
-func NewByteSection(buf []byte) Section {
-	return &byteSection{buf: buf}
+func NewByteBlock(buf []byte) Block {
+	return &byteBlock{buf: buf}
 }
 
-func (b *byteSection) Size() int64 {
+func (b *byteBlock) Size() int64 {
 	return int64(len(b.buf))
 }
 
-func (b *byteSection) ReadAt(p []byte, off int64) (n int, err error) {
+func (b *byteBlock) ReadAt(p []byte, off int64) (n int, err error) {
 	if len(b.buf) == 0 || off < 0 || off >= b.Size() {
 		return 0, io.EOF
 	}
@@ -122,7 +122,7 @@ func (b *byteSection) ReadAt(p []byte, off int64) (n int, err error) {
 	return
 }
 
-func (b *byteSection) WriteAt(p []byte, off int64) (n int, err error) {
+func (b *byteBlock) WriteAt(p []byte, off int64) (n int, err error) {
 	if len(b.buf) == 0 || off < 0 || off >= b.Size() {
 		return 0, io.ErrShortWrite
 	}
@@ -133,4 +133,4 @@ func (b *byteSection) WriteAt(p []byte, off int64) (n int, err error) {
 	return
 }
 
-var _ Section = (*byteSection)(nil)
+var _ Block = (*byteBlock)(nil)
