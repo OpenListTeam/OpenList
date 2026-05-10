@@ -19,3 +19,24 @@ func ReadAtSeekerOf(b Block) ReadAtSeeker {
 	}
 	return io.NewSectionReader(b, 0, b.Size())
 }
+
+type blockAdapter struct {
+	WriteAtSeeker
+	SizedReadAtSeeker
+}
+
+func (b *blockAdapter) GetWriteAtSeeker() WriteAtSeeker {
+	return b.WriteAtSeeker
+}
+
+func (b *blockAdapter) GetReadAtSeeker() ReadAtSeeker {
+	return b.SizedReadAtSeeker
+}
+func NewBlockAdapter(w WriteAtSeeker, r SizedReadAtSeeker) Block {
+	return &blockAdapter{
+		WriteAtSeeker:     w,
+		SizedReadAtSeeker: r,
+	}
+}
+
+var _ Block = (*blockAdapter)(nil)

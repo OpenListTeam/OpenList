@@ -121,8 +121,8 @@ type Config struct {
 	Log                   LogConfig   `json:"log" envPrefix:"LOG_"`
 	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
 	MinFreeMemory         int         `json:"min_free_memoryMB" env:"MIN_FREE_MEMORY_MB"`
-	MaxBufferLimit        int         `json:"max_buffer_limitMB" env:"MAX_BUFFER_LIMIT_MB"`
-	MmapThreshold         int         `json:"mmap_thresholdMB" env:"MMAP_THRESHOLD_MB"`
+	MaxBlockLimit         int         `json:"max_block_limitMB" env:"MAX_BLOCK_LIMIT_MB"`
+	CacheThreshold        int         `json:"cache_thresholdMB" env:"CACHE_THRESHOLD_MB"`
 	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`
 	MaxConcurrency        int         `json:"max_concurrency" env:"MAX_CONCURRENCY"`
 	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
@@ -179,8 +179,8 @@ func DefaultConfig(dataDir string) *Config {
 				},
 			},
 		},
-		MaxBufferLimit:        -1,
-		MmapThreshold:         4,
+		MaxBlockLimit:         -1,
+		CacheThreshold:        4,
 		MaxConnections:        0,
 		MaxConcurrency:        64,
 		TlsInsecureSkipVerify: false,

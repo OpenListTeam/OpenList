@@ -203,9 +203,9 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	if f.peek == nil {
 		f.oriReader = f.Reader
-		if f.GetSize() > int64(conf.MmapThreshold) {
-			partSize := min(f.GetSize(), int64(conf.MaxBufferLimit))
-			hc, err := mem.NewHybridCache(uint64(partSize), uint64(f.GetSize()))
+		if f.GetSize() > int64(conf.CacheThreshold) {
+			blockSize := min(f.GetSize(), int64(conf.MaxBlockLimit))
+			hc, err := mem.NewHybridCache(uint64(blockSize), uint64(f.GetSize()))
 			if err != nil {
 				return nil, err
 			}
@@ -224,14 +224,14 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	if f.hc != nil {
 		cacheSize2 := cacheSize
 		for cacheSize > 0 {
-			partSize := min(cacheSize, int64(conf.MaxBufferLimit))
-			b := f.hc.NextBlockWithSize(uint64(partSize))
+			blockSize := min(cacheSize, int64(conf.MaxBlockLimit))
+			b := f.hc.NextBlockWithSize(uint64(blockSize))
 			if b == nil {
 				return nil, fmt.Errorf("failed to get cache section")
 			}
-			n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), f.oriReader, partSize)
-			if n != partSize {
-				f.hc.RollbackBlockWithSize(uint64(partSize - n))
+			n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), f.oriReader, blockSize)
+			if n != blockSize {
+				f.hc.RollbackBlockWithSize(uint64(blockSize - n))
 				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", cacheSize2, cacheSize2-cacheSize+n, err)
 			}
 			cacheSize -= n

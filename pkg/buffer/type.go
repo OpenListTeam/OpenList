@@ -15,3 +15,8 @@ type Block interface {
 type WriteAtSeeker = model.FileWriter
 
 type ReadAtSeeker = model.File
+
+type SizedReadAtSeeker interface {
+	ReadAtSeeker
+	Size() int64
+}

@@ -188,7 +188,7 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 	}
 
 	maxBufferSize = min(maxBufferSize, int(file.GetSize()))
-	if int64(conf.MmapThreshold) >= file.GetSize() {
+	if file.GetSize() <= int64(conf.CacheThreshold) {
 		bufPool := &pool.Pool[[]byte]{
 			New: func() []byte {
 				return make([]byte, maxBufferSize)
@@ -199,19 +199,13 @@ func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *mode
 		return ss, nil
 	}
 
-	partSize := min(maxBufferSize, conf.MaxBufferLimit)
-	hc, err := mem.NewHybridCache(uint64(partSize), uint64(file.GetSize()))
+	blockSize := min(uint64(maxBufferSize), conf.MaxBlockLimit)
+	hc, err := mem.NewHybridCache(blockSize, uint64(file.GetSize()))
 	if err != nil {
 		return nil, err
 	}
 	file.Add(hc)
-	bufPool := &pool.Pool[buffer.Block]{
-		New: func() buffer.Block {
-			return hc.NextBlock()
-		},
-	}
-	file.Add(bufPool)
-	return &sectionReader{file: file, bufPool: bufPool}, nil
+	return &hybridSectionReader{file: file, hc: hc}, nil
 }
 
 type cachedSectionReader struct {
@@ -272,14 +266,15 @@ func (ss *byteSectionReader) FreeSectionReader(rs io.ReadSeeker) {
 	}
 }
 
-type sectionReader struct {
+type hybridSectionReader struct {
 	file       model.FileStreamer
 	fileOffset int64
-	bufPool    *pool.Pool[buffer.Block]
+	hc         *mem.HybridCache
+	cache      []buffer.Block
 }
 
 // 线程不安全
-func (ss *sectionReader) DiscardSection(off int64, length int64) error {
+func (ss *hybridSectionReader) DiscardSection(off int64, length int64) error {
 	if off != ss.fileOffset {
 		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
 	}
@@ -297,33 +292,58 @@ type blockRefReadSeeker struct {
 }
 
 // 线程不安全
-func (ss *sectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
+func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
 	if off != ss.fileOffset {
 		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
 	}
-	b := ss.bufPool.Get()
+	b := ss.get()
 	if b == nil {
-		return nil, fmt.Errorf("failed to get cache section")
+		bOffset := int64(ss.hc.Size())
+		cacheSize := length
+		for cacheSize > 0 {
+			blockSize := min(cacheSize, int64(conf.MaxBlockLimit))
+			b2 := ss.hc.NextBlockWithSize(uint64(blockSize))
+			if b2 == nil {
+				return nil, fmt.Errorf("failed to get cache section")
+			}
+			n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b2), ss.file, blockSize)
+			if n != blockSize {
+				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, length-cacheSize+n, err)
+			}
+			cacheSize -= n
+		}
+		b = buffer.NewBlockAdapter(
+			io.NewOffsetWriter(ss.hc, bOffset),
+			io.NewSectionReader(ss.hc, bOffset, length),
+		)
+	} else {
+		n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), ss.file, length)
+		if n != length {
+			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
+		}
 	}
-	dst := buffer.WriteAtSeekerOf(b)
-	_, err := dst.Seek(0, io.SeekStart)
-	if err != nil {
-		return nil, fmt.Errorf("failed to seek cache section: %w", err)
-	}
-	n, err := utils.CopyWithBufferN(dst, ss.file, length)
-	ss.fileOffset += n
-	if err != nil {
-		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
-	}
+
 	if length == b.Size() {
 		return &blockRefReadSeeker{buffer.ReadAtSeekerOf(b), b}, nil
 	}
 	return &blockRefReadSeeker{io.NewSectionReader(b, 0, length), b}, nil
 }
 
-func (ss *sectionReader) FreeSectionReader(rs io.ReadSeeker) {
+func (ss *hybridSectionReader) get() buffer.Block {
+	if len(ss.cache) > 0 {
+		b := ss.cache[len(ss.cache)-1]
+		ss.cache = ss.cache[:len(ss.cache)-1]
+		return b
+	}
+	return nil
+}
+func (ss *hybridSectionReader) put(b buffer.Block) {
+	ss.cache = append(ss.cache, b)
+}
+
+func (ss *hybridSectionReader) FreeSectionReader(rs io.ReadSeeker) {
 	if sr, ok := rs.(*blockRefReadSeeker); ok {
-		ss.bufPool.Put(sr.b)
+		ss.put(sr.b)
 		sr.b = nil
 		sr.ReadSeeker = nil
 	}

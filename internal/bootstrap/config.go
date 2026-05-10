@@ -116,24 +116,24 @@ func InitConfig() {
 	}
 	log.Infof("min free memory: %dMB", conf.MinFreeMemory>>20)
 
-	if conf.Conf.MaxBufferLimit < 0 {
+	if conf.Conf.MaxBlockLimit < 0 {
 		if memStat != nil {
 			t := (memStat.Total >> 20) * 1 / 100
-			conf.MaxBufferLimit = max(4, min(int(t), 64)) << 20
+			conf.MaxBlockLimit = max(4, min(uint64(t), 64)) << 20
 		} else {
-			conf.MaxBufferLimit = 16 * utils.MB
+			conf.MaxBlockLimit = 16 * utils.MB
 		}
 	} else {
-		conf.MaxBufferLimit = conf.Conf.MaxBufferLimit << 20
+		conf.MaxBlockLimit = uint64(conf.Conf.MaxBlockLimit) << 20
 	}
-	log.Infof("max buffer limit: %dMB", conf.MaxBufferLimit>>20)
+	log.Infof("max block limit: %dMB", conf.MaxBlockLimit>>20)
 
-	if conf.Conf.MmapThreshold > 0 {
-		conf.MmapThreshold = conf.Conf.MmapThreshold << 20
+	if conf.Conf.CacheThreshold > 0 {
+		conf.CacheThreshold = uint(conf.Conf.CacheThreshold) << 20
 	} else {
-		conf.MmapThreshold = 0
+		conf.CacheThreshold = 0
 	}
-	log.Infof("mmap threshold: %dMB", conf.MmapThreshold>>20)
+	log.Infof("cache threshold: %dMB", conf.CacheThreshold>>20)
 
 	if len(conf.Conf.Log.Filter.Filters) == 0 {
 		conf.Conf.Log.Filter.Enable = false

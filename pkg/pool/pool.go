@@ -17,7 +17,6 @@ func (p *Pool[T]) Get() T {
 
 func (p *Pool[T]) Put(item T) {
 	p.cache = append(p.cache, item)
-
 }
 
 func (p *Pool[T]) Reset() {

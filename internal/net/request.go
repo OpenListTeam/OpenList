@@ -203,7 +203,7 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.maxPos = d.params.Range.Start + d.params.Range.Length
 	d.concurrency = d.cfg.Concurrency
 
-	if d.cfg.PartSize >= conf.MmapThreshold {
+	if d.cfg.PartSize >= int(conf.CacheThreshold) {
 		d.hc, d.err = mem.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.cfg.PartSize*d.cfg.Concurrency))
 	}
 	if d.err == nil {

@@ -9,21 +9,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 )
 
-type fileBlock struct {
-	*io.OffsetWriter
-	*io.SectionReader
-}
-
-func (b *fileBlock) GetWriteAtSeeker() buffer.WriteAtSeeker {
-	return b.OffsetWriter
-}
-
-func (b *fileBlock) GetReadAtSeeker() buffer.ReadAtSeeker {
-	return b.SectionReader
-}
-
-var _ buffer.Block = (*fileBlock)(nil)
-
 // 优先使用内存，失败后才使用文件。
 // 线程不安全
 type HybridCache struct {
@@ -41,7 +26,10 @@ func (hc *HybridCache) NextBlockWithSize(size uint64) buffer.Block {
 		}
 		base := hc.fileOffset
 		hc.fileOffset += size
-		fs := &fileBlock{io.NewOffsetWriter(hc.file, int64(base)), io.NewSectionReader(hc.file, int64(base), int64(size))}
+		fs := buffer.NewBlockAdapter(
+			io.NewOffsetWriter(hc.file, int64(base)),
+			io.NewSectionReader(hc.file, int64(base), int64(size)),
+		)
 		return fs
 	}
 	all, err := hc.mem.Reallocate(uint64(hc.memOffset + size))
@@ -59,6 +47,10 @@ func (hc *HybridCache) NextBlockWithSize(size uint64) buffer.Block {
 func (hc *HybridCache) NextBlock() buffer.Block {
 	return hc.NextBlockWithSize(hc.blockSize)
 }
+
+// func (hc *HybridCache) GetBlockSize() uint64 {
+// 	return hc.blockSize
+// }
 
 func (hc *HybridCache) RollbackBlockWithSize(size uint64) {
 	if hc.fileOffset > size {
@@ -108,11 +100,74 @@ func (hc *HybridCache) Close() error {
 	return nil
 }
 
+func (hc *HybridCache) Size() int64 {
+	return int64(hc.memOffset + hc.fileOffset)
+}
+
+func (hc *HybridCache) ReadAt(p []byte, off int64) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if off < 0 || off >= hc.Size() {
+		return 0, io.EOF
+	}
+	if off < int64(hc.memOffset) {
+		all, err := hc.mem.Reallocate(min(hc.memOffset, uint64(off)+uint64(len(p))))
+		if err != nil {
+			// 不可能失败
+			panic(err)
+		}
+		n = copy(p, all[off:])
+		if n == len(p) {
+			return n, nil
+		}
+		p = p[n:]
+	}
+
+	off += int64(n) - int64(hc.memOffset)
+	canRead := int64(hc.fileOffset) - off
+	if canRead <= 0 {
+		return n, io.EOF
+	}
+	nn, err := hc.file.ReadAt(p[:min(len(p), int(canRead))], off)
+	return n + nn, err
+}
+
+func (hc *HybridCache) WriteAt(p []byte, off int64) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if off < 0 || off >= hc.Size() {
+		return 0, io.ErrShortWrite
+	}
+
+	if off < int64(hc.memOffset) {
+		all, err := hc.mem.Reallocate(min(hc.memOffset, uint64(off)+uint64(len(p))))
+		if err != nil {
+			// 不可能失败
+			panic(err)
+		}
+		n = copy(all[off:], p)
+		if n == len(p) {
+			return n, nil
+		}
+		p = p[n:]
+	}
+
+	off += int64(n) - int64(hc.memOffset)
+	canWrite := int64(hc.fileOffset) - off
+	if canWrite <= 0 {
+		return n, io.ErrShortWrite
+	}
+	nn, err := hc.file.WriteAt(p[:min(len(p), int(canWrite))], off)
+	return n + nn, err
+}
+
 // 优先使用内存，失败后才使用文件
 // 线程不安全
 func NewHybridCache(blockSize, maxMemorySize uint64) (*HybridCache, error) {
 	var err error
-	if conf.MmapThreshold > 0 {
+	if conf.CacheThreshold > 0 {
 		var m LinearMemory
 		m, err = NewGuardedMemory(blockSize, maxMemorySize)
 		if err == nil {
@@ -126,6 +181,8 @@ func NewHybridCache(blockSize, maxMemorySize uint64) (*HybridCache, error) {
 	return hc, nil
 }
 
+var _ buffer.Block = (*HybridCache)(nil)
+
 type HybridCacheReader struct {
 	hc     *HybridCache
 	offset int64
@@ -136,11 +193,11 @@ func NewHybridCacheReader(hc *HybridCache) *HybridCacheReader {
 }
 
 func (hcr *HybridCacheReader) Size() int64 {
-	return int64(hcr.hc.memOffset + hcr.hc.fileOffset)
+	return hcr.hc.Size()
 }
 
 func (hcr *HybridCacheReader) Read(p []byte) (n int, err error) {
-	n, err = hcr.ReadAt(p, hcr.offset)
+	n, err = hcr.hc.ReadAt(p, hcr.offset)
 	if n > 0 {
 		hcr.offset += int64(n)
 	}
@@ -148,25 +205,7 @@ func (hcr *HybridCacheReader) Read(p []byte) (n int, err error) {
 }
 
 func (hcr *HybridCacheReader) ReadAt(p []byte, off int64) (n int, err error) {
-	if off < 0 || off >= hcr.Size() {
-		return 0, io.EOF
-	}
-	if off < int64(hcr.hc.memOffset) {
-		all, err := hcr.hc.mem.Reallocate(min(hcr.hc.memOffset, uint64(off)+uint64(len(p))))
-		if err != nil {
-			// 不可能失败
-			panic(err)
-		}
-		n = copy(p, all[off:])
-		if n == len(p) {
-			return n, nil
-		}
-	}
-	if hcr.hc.file == nil {
-		return n, io.EOF
-	}
-	nn, err := hcr.hc.file.ReadAt(p[n:], off+int64(n)-int64(hcr.hc.memOffset))
-	return n + nn, err
+	return hcr.hc.ReadAt(p, off)
 }
 
 func (hcr *HybridCacheReader) Seek(offset int64, whence int) (int64, error) {
