@@ -298,30 +298,21 @@ func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 	}
 	b := ss.get()
 	if b == nil {
-		bOffset := int64(ss.hc.Size())
-		cacheSize := length
-		for cacheSize > 0 {
-			blockSize := min(cacheSize, int64(conf.MaxBlockLimit))
-			b2 := ss.hc.NextBlockWithSize(uint64(blockSize))
-			if b2 == nil {
-				return nil, fmt.Errorf("failed to get cache section")
-			}
-			n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b2), ss.file, blockSize)
-			ss.fileOffset += n
-			if n != blockSize {
-				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, length-cacheSize+n, err)
-			}
-			cacheSize -= n
+		offset := int64(ss.hc.Size())
+		written, err := ss.hc.ReadFromN(ss.file, length)
+		ss.fileOffset += written
+		if written != length {
+			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, written, err)
 		}
 		b = buffer.NewBlockAdapter(
-			io.NewOffsetWriter(ss.hc, bOffset),
-			io.NewSectionReader(ss.hc, bOffset, length),
+			io.NewOffsetWriter(ss.hc, offset),
+			io.NewSectionReader(ss.hc, offset, length),
 		)
 	} else {
-		n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), ss.file, length)
-		ss.fileOffset += n
-		if n != length {
-			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
+		written, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), ss.file, length)
+		ss.fileOffset += written
+		if written != length {
+			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, written, err)
 		}
 	}
 

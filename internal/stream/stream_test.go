@@ -15,7 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
-func TestFileStream_RangeRead(t *testing.T) {
+func TestRangeRead(t *testing.T) {
 	type args struct {
 		httpRange http_range.Range
 	}
@@ -89,7 +89,7 @@ func TestFileStream_RangeRead(t *testing.T) {
 	}
 }
 
-func TestFileStream_With_PreHash(t *testing.T) {
+func TestPreHash(t *testing.T) {
 	buf := []byte("github.com/OpenListTeam/OpenList")
 	f := &stream.FileStream{
 		Obj: &model.Object{

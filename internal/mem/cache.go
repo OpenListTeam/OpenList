@@ -7,6 +7,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 // 优先使用内存，失败后才使用文件。
@@ -161,6 +162,24 @@ func (hc *HybridCache) WriteAt(p []byte, off int64) (n int, err error) {
 	}
 	nn, err := hc.file.WriteAt(p[:min(len(p), int(canWrite))], off)
 	return n + nn, err
+}
+
+func (hc *HybridCache) ReadFromN(r io.Reader, n int64) (written int64, err error) {
+	limit := n
+	for limit > 0 {
+		blockSize := min(limit, int64(conf.MaxBlockLimit))
+		b := hc.NextBlockWithSize(uint64(blockSize))
+		if b == nil {
+			return written, errors.New("failed to allocate block")
+		}
+		nn, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), r, blockSize)
+		written += nn
+		if nn != blockSize {
+			return written, err
+		}
+		limit -= nn
+	}
+	return written, nil
 }
 
 // 优先使用内存，失败后才使用文件

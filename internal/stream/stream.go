@@ -221,30 +221,22 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 		}
 	}
 	cacheSize := maxCacheSize - f.peek.Size()
+	if cacheSize <= 0 {
+		return f.peek, nil
+	}
 	if f.hc != nil {
-		cacheSize2 := cacheSize
-		for cacheSize > 0 {
-			blockSize := min(cacheSize, int64(conf.MaxBlockLimit))
-			b := f.hc.NextBlockWithSize(uint64(blockSize))
-			if b == nil {
-				return nil, fmt.Errorf("failed to get cache section")
-			}
-			n, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), f.oriReader, blockSize)
-			if n != blockSize {
-				f.hc.RollbackBlockWithSize(uint64(blockSize - n))
-				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", cacheSize2, cacheSize2-cacheSize+n, err)
-			}
-			cacheSize -= n
+		written, err := f.hc.ReadFromN(f.oriReader, cacheSize)
+		if written != cacheSize {
+			f.hc.RollbackBlockWithSize(uint64(cacheSize - written))
+			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", cacheSize, written, err)
 		}
 	} else {
-		if cacheSize > 0 {
-			buf := make([]byte, cacheSize)
-			n, err := io.ReadFull(f.oriReader, buf)
-			if n != len(buf) {
-				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", len(buf), n, err)
-			}
-			f.peek.(*buffer.Reader).Append(buf)
+		buf := make([]byte, cacheSize)
+		n, err := io.ReadFull(f.oriReader, buf)
+		if n != len(buf) {
+			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", len(buf), n, err)
 		}
+		f.peek.(*buffer.Reader).Append(buf)
 	}
 	if f.peek.Size() >= f.GetSize() {
 		f.Reader = f.peek
