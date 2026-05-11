@@ -319,7 +319,10 @@ func (d *downloader) interrupt() error {
 		}
 		d.bufs = nil
 	}
-	if d.cancel != nil {
+	select {
+	case <-d.chunkChannel:
+		return err
+	default:
 		d.cancel(err)
 		close(d.chunkChannel)
 		if d.hc != nil {
@@ -329,7 +332,6 @@ func (d *downloader) interrupt() error {
 			d.concurrency = -d.concurrency
 		}
 		log.Debugf("maxConcurrency:%d", d.cfg.Concurrency+d.concurrency)
-		d.cancel = nil
 	}
 	return err
 }
