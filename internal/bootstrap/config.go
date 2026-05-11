@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -96,8 +97,10 @@ func InitConfig() {
 		confFromEnv()
 	}
 
-	if conf.Conf.MaxConcurrency > 0 {
-		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: conf.Conf.MaxConcurrency}
+	if conf.Conf.MaxConcurrency > math.MaxUint32 {
+		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Available: math.MaxUint32}
+	} else if conf.Conf.MaxConcurrency > 0 {
+		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Available: uint32(conf.Conf.MaxConcurrency)}
 	}
 
 	memStat, _ := mem.VirtualMemory()

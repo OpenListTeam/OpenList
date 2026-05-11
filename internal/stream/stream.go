@@ -31,12 +31,7 @@ type FileStream struct {
 	size      int64
 	oriReader io.Reader // the original reader, used for caching
 	hc        *mem.HybridCache
-	peek      peek
-}
-
-type peek interface {
-	model.File
-	Size() int64
+	peek      buffer.SizedReadAtSeeker
 }
 
 func (f *FileStream) GetSize() int64 {
@@ -233,10 +228,12 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 	} else {
 		buf := make([]byte, cacheSize)
 		n, err := io.ReadFull(f.oriReader, buf)
+		if n > 0 {
+			f.peek.(*buffer.Reader).Append(buf[:n])
+		}
 		if n != len(buf) {
 			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", len(buf), n, err)
 		}
-		f.peek.(*buffer.Reader).Append(buf)
 	}
 	if f.peek.Size() >= f.GetSize() {
 		f.Reader = f.peek
