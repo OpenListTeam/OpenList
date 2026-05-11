@@ -220,7 +220,7 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 		return f.peek, nil
 	}
 	if f.hc != nil {
-		written, err := f.hc.ReadFromN(f.oriReader, cacheSize)
+		written, err := f.hc.CopyFromN(f.oriReader, cacheSize)
 		if written != cacheSize {
 			f.hc.RollbackBlockWithSize(uint64(cacheSize - written))
 			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", cacheSize, written, err)

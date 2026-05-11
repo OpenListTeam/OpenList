@@ -52,13 +52,14 @@ func NewGuardedMemory(cap, max uint64) (m LinearMemory, err error) {
 	if err != nil {
 		return nil, err
 	}
-	runtime.SetFinalizer(m, func(m LinearMemory) {
-		m.Free()
-	})
 	if s, ok := m.(interface{ SetGrowCheck(GrowCheck) }); ok {
 		s.SetGrowCheck(MemoryGrowCheck)
 	}
-	return &guardedMemory{m}, nil
+	gm := &guardedMemory{m}
+	runtime.SetFinalizer(gm, func(gm *guardedMemory) {
+		gm.Free()
+	})
+	return gm, nil
 }
 
 type guardedMemory struct {

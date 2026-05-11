@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
@@ -85,20 +86,16 @@ func (hc *HybridCache) initFileCache() error {
 }
 
 func (hc *HybridCache) Close() error {
-	if hc.blockSize > 0 {
-		hc.blockSize = 0
-		var err error
-		if hc.mem != nil {
-			err = hc.mem.Free()
-			hc.mem = nil
-		}
-		if hc.file != nil {
-			err = errors.Join(err, hc.file.Close(), os.Remove(hc.file.Name()))
-			hc.file = nil
-		}
-		return err
+	var err error
+	if hc.mem != nil {
+		err = hc.mem.Free()
+		hc.mem = nil
 	}
-	return nil
+	if hc.file != nil {
+		err = errors.Join(err, hc.file.Close(), os.Remove(hc.file.Name()))
+		hc.file = nil
+	}
+	return err
 }
 
 func (hc *HybridCache) Size() int64 {
@@ -164,7 +161,7 @@ func (hc *HybridCache) WriteAt(p []byte, off int64) (n int, err error) {
 	return n + nn, err
 }
 
-func (hc *HybridCache) ReadFromN(r io.Reader, n int64) (written int64, err error) {
+func (hc *HybridCache) CopyFromN(src io.Reader, n int64) (written int64, err error) {
 	limit := n
 	for limit > 0 {
 		blockSize := min(limit, int64(conf.MaxBlockLimit))
@@ -172,7 +169,7 @@ func (hc *HybridCache) ReadFromN(r io.Reader, n int64) (written int64, err error
 		if b == nil {
 			return written, errors.New("failed to allocate block")
 		}
-		nn, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), r, blockSize)
+		nn, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), src, blockSize)
 		written += nn
 		if nn != blockSize {
 			return written, err
@@ -186,17 +183,26 @@ func (hc *HybridCache) ReadFromN(r io.Reader, n int64) (written int64, err error
 // 线程不安全
 func NewHybridCache(blockSize, maxMemorySize uint64) (*HybridCache, error) {
 	var err error
-	if conf.CacheThreshold > 0 {
+	var hc *HybridCache
+	if conf.CacheThreshold > 0 && maxMemorySize >= blockSize {
 		var m LinearMemory
 		m, err = NewGuardedMemory(blockSize, maxMemorySize)
 		if err == nil {
-			return &HybridCache{mem: m, blockSize: blockSize}, nil
+			hc = &HybridCache{mem: m, blockSize: blockSize}
 		}
 	}
-	hc := &HybridCache{blockSize: blockSize}
-	if err2 := hc.initFileCache(); err2 != nil {
-		return nil, errors.Join(err, err2)
+	if hc == nil {
+		hc = &HybridCache{blockSize: blockSize}
+		if err2 := hc.initFileCache(); err2 != nil {
+			return nil, errors.Join(err, err2)
+		}
 	}
+	runtime.SetFinalizer(hc, func(hc *HybridCache) {
+		if hc.file != nil {
+			_, _ = hc.file.Close(), os.Remove(hc.file.Name())
+			hc.file = nil
+		}
+	})
 	return hc, nil
 }
 

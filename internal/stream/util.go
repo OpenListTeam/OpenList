@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -177,6 +178,7 @@ func CacheFullAndHash(stream model.FileStreamer, up *model.UpdateProgress, hashT
 type StreamSectionReader interface {
 	// 线程不安全
 	GetSectionReader(off, length int64) (io.ReadSeeker, error)
+	// 线程安全
 	FreeSectionReader(sr io.ReadSeeker)
 	// 线程不安全
 	DiscardSection(off int64, length int64) error
@@ -270,6 +272,7 @@ type hybridSectionReader struct {
 	file       model.FileStreamer
 	fileOffset int64
 	hc         *mem.HybridCache
+	mu         sync.Mutex
 	cache      []buffer.Block
 }
 
@@ -299,7 +302,7 @@ func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 	b := ss.get()
 	if b == nil {
 		offset := int64(ss.hc.Size())
-		written, err := ss.hc.ReadFromN(ss.file, length)
+		written, err := ss.hc.CopyFromN(ss.file, length)
 		ss.fileOffset += written
 		if written != length {
 			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, written, err)
@@ -309,7 +312,11 @@ func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 			io.NewSectionReader(ss.hc, offset, length),
 		)
 	} else {
-		written, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), ss.file, length)
+		ws := buffer.WriteAtSeekerOf(b)
+		if _, err := ws.Seek(0, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("failed to reset cached block writer: %w", err)
+		}
+		written, err := utils.CopyWithBufferN(ws, ss.file, length)
 		ss.fileOffset += written
 		if written != length {
 			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, written, err)
@@ -323,6 +330,8 @@ func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 }
 
 func (ss *hybridSectionReader) get() buffer.Block {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
 	if len(ss.cache) > 0 {
 		b := ss.cache[len(ss.cache)-1]
 		ss.cache = ss.cache[:len(ss.cache)-1]
@@ -331,6 +340,8 @@ func (ss *hybridSectionReader) get() buffer.Block {
 	return nil
 }
 func (ss *hybridSectionReader) put(b buffer.Block) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
 	ss.cache = append(ss.cache, b)
 }
 

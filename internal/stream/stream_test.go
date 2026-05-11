@@ -26,6 +26,12 @@ func TestRangeRead(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
+	prevCacheThreshold := conf.CacheThreshold
+	prevMaxBlockLimit := conf.MaxBlockLimit
+	t.Cleanup(func() {
+		conf.CacheThreshold = prevCacheThreshold
+		conf.MaxBlockLimit = prevMaxBlockLimit
+	})
 	conf.CacheThreshold = 10
 	conf.MaxBlockLimit = 15
 	tests := []struct {
@@ -97,6 +103,12 @@ func TestPreHash(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
+	prevCacheThreshold := conf.CacheThreshold
+	prevMaxBlockLimit := conf.MaxBlockLimit
+	t.Cleanup(func() {
+		conf.CacheThreshold = prevCacheThreshold
+		conf.MaxBlockLimit = prevMaxBlockLimit
+	})
 	conf.CacheThreshold = 10
 	conf.MaxBlockLimit = 15
 
@@ -126,14 +138,22 @@ func TestStreamSectionReader(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
+	prevCacheThreshold := conf.CacheThreshold
+	prevMaxBlockLimit := conf.MaxBlockLimit
+	prevConf := conf.Conf
+	t.Cleanup(func() {
+		conf.CacheThreshold = prevCacheThreshold
+		conf.MaxBlockLimit = prevMaxBlockLimit
+		conf.Conf = prevConf
+	})
 	conf.CacheThreshold = 1
 	conf.MaxBlockLimit = 2 << 10
 	partSize := 3 << 10
+	conf.Conf = &conf.Config{}
 	ss, err := stream.NewStreamSectionReader(f, partSize, nil)
 	if err != nil {
 		t.Errorf("NewStreamSectionReader() error = %v", err)
 	}
-	conf.Conf = &conf.Config{}
 	for i := 0; i < len(buf); i += partSize {
 		length := partSize
 		if i+length > len(buf) {
@@ -155,6 +175,12 @@ func TestStreamSectionReader(t *testing.T) {
 		if !bytes.Equal(buf[i:i+length], b1) {
 			t.Errorf("StreamSectionReader.Read() = %s, want %s", b1, buf[i:i+length])
 		}
-		conf.MinFreeMemory = math.MaxUint64
+		if i == 0 {
+			prevMinFreeMemory := conf.MinFreeMemory
+			conf.MinFreeMemory = math.MaxUint64 // 强制使用文件缓存
+			t.Cleanup(func() {
+				conf.MinFreeMemory = prevMinFreeMemory
+			})
+		}
 	}
 }

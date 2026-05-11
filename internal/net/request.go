@@ -227,9 +227,12 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 			if err := d.cfg.ConcurrencyLimit.Acquire(); err != nil {
 				return err
 			}
+			defer func() {
+				if err != nil {
+					d.cfg.ConcurrencyLimit.Release()
+				}
+			}()
 		}
-		d.concurrency--
-		go d.downloadPart()
 	}
 
 	var br *buffer.PipeBuffer
@@ -278,6 +281,10 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 		err := br.Reset(int(finalSize))
 		if err != nil {
 			return err
+		}
+		if newConcurrency {
+			go d.downloadPart()
+			d.concurrency--
 		}
 		ch := chunk{
 			start: d.pos,
@@ -438,7 +445,7 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 			case http.StatusServiceUnavailable:
 			case http.StatusGatewayTimeout:
 			}
-			if d.delay(time.Millisecond * time.Duration(rand.Uint32N(300)+200)) {
+			if !d.delay(time.Millisecond * time.Duration(rand.Uint32N(300)+200)) {
 				return 0, errCancelConcurrency
 			}
 			return 0, &errNeedRetry{err}
@@ -457,15 +464,15 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 		}
 		if isCancelConcurrency {
 			d.concurrency--
-			d.chunkCh <- *ch
 			d.m.Unlock()
+			d.chunkCh <- *ch
 			return 0, errCancelConcurrency
 		}
 		d.m.Unlock()
 		if int64(ch.id) != atomic.LoadInt64(&d.readingID) { //正在被读取的优先重试
 			d.m2.Lock()
 			defer d.m2.Unlock()
-			if d.delay(time.Millisecond * time.Duration(rand.Uint32N(300)+200)) {
+			if !d.delay(time.Millisecond * time.Duration(rand.Uint32N(300)+200)) {
 				return 0, errCancelConcurrency
 			}
 		}

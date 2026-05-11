@@ -70,6 +70,9 @@ func TestDownloadOrder(t *testing.T) {
 	if e, a := expectRngs, *ranges; len(e) != len(a) {
 		t.Errorf("expect %v ranges, got %v", e, a)
 	}
+	if err := readCloser.Close(); err != nil {
+		t.Errorf("expect no error on close, got %v", err)
+	}
 }
 func init() {
 	Formatter := new(logrus.TextFormatter)
@@ -121,6 +124,9 @@ func TestDownloadSingle(t *testing.T) {
 	}
 	if e, a := expectRngs, *ranges; len(e) != len(a) {
 		t.Errorf("expect %v ranges, got %v", e, a)
+	}
+	if err := readCloser.Close(); err != nil {
+		t.Errorf("expect no error on close, got %v", err)
 	}
 }
 

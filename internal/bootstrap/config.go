@@ -97,8 +97,8 @@ func InitConfig() {
 		confFromEnv()
 	}
 
-	if conf.Conf.MaxConcurrency > math.MaxUint32 {
-		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Available: math.MaxUint32}
+	if conf.Conf.MaxConcurrency > math.MaxInt32 {
+		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Available: math.MaxInt32}
 	} else if conf.Conf.MaxConcurrency > 0 {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Available: uint32(conf.Conf.MaxConcurrency)}
 	}
@@ -119,7 +119,7 @@ func InitConfig() {
 	}
 	log.Infof("min free memory: %dMB", conf.MinFreeMemory>>20)
 
-	if conf.Conf.MaxBlockLimit < 0 {
+	if conf.Conf.MaxBlockLimit < 1 {
 		if memStat != nil {
 			t := (memStat.Total >> 20) * 3 / 100
 			conf.MaxBlockLimit = max(4, min(uint64(t), 64)) << 20
