@@ -210,7 +210,7 @@ func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
 				return nil, err
 			}
 			f.hc = hc
-			f.peek = mem.NewHybridCacheReader(hc)
+			f.peek = buffer.NewDynamicReadAtSeeker(hc)
 			f.Reader = io.MultiReader(f.peek, f.oriReader)
 			f.Add(hc)
 		} else {
