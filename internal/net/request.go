@@ -87,7 +87,7 @@ func (d Downloader) Download(ctx context.Context, p *HttpRequestParams) (readClo
 	if impl.cfg.PartSize == 0 {
 		impl.cfg.PartSize = DefaultDownloadPartSize
 	}
-	if impl.cfg.PartSize > int(conf.MaxBlockLimit) {
+	if conf.CacheThreshold > 0 && impl.cfg.PartSize > int(conf.MaxBlockLimit) {
 		impl.cfg.PartSize = int(conf.MaxBlockLimit)
 	}
 	if impl.cfg.HttpClient == nil {
