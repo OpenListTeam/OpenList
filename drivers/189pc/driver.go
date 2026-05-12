@@ -411,6 +411,17 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 		if stream.GetSize() == 0 {
 			return y.FastUpload(ctx, dstDir, stream, up, isFamily, overwrite)
 		}
+		// 尝试秒传：如果已有MD5则用RapidUpload，否则走FastUpload（会计算MD5并尝试秒传）
+		if !stream.IsForceStreamUpload() {
+			fileMd5 := stream.GetHash().GetHash(utils.MD5)
+			if len(fileMd5) >= utils.MD5.Width {
+				if newObj, err := y.RapidUpload(ctx, dstDir, stream, isFamily, overwrite); err == nil {
+					return newObj, nil
+				}
+			} else {
+				return y.FastUpload(ctx, dstDir, stream, up, isFamily, overwrite)
+			}
+		}
 		fallthrough
 	default:
 		return y.StreamUpload(ctx, dstDir, stream, up, isFamily, overwrite)
