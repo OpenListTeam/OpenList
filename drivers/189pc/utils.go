@@ -859,7 +859,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 				return
 			}
 			infoHash, _ := GetInfoHashHex(torrentData)
-			torrentName := capturedFileName + ".torrent"
+			torrentName := capturedFileName + ".cas.torrent"
 			utils.Log.Infof("已生成 torrent: %s (info_hash: %s, size: %d bytes)",
 				torrentName, infoHash, len(torrentData))
 
@@ -879,6 +879,7 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 				utils.Log.Warnf("上传 torrent 文件失败: %v", uploadErr)
 			} else {
 				utils.Log.Infof("torrent 文件已上传: %s", torrentName)
+				op.Cache.DeleteDirectory(y, capturedDstDir.GetPath())
 			}
 		}()
 	}
