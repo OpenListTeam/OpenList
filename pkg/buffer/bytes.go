@@ -30,6 +30,9 @@ func (r *Reader) Read(p []byte) (int, error) {
 }
 
 func (r *Reader) ReadAt(p []byte, off int64) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	if off < 0 || off >= r.size {
 		return 0, io.EOF
 	}

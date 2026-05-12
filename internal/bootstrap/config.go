@@ -107,7 +107,7 @@ func InitConfig() {
 	if memStat != nil {
 		log.Infof("total memory: %dMB, available: %dMB", memStat.Total>>20, memStat.Available>>20)
 	}
-	if conf.Conf.MinFreeMemory < 1 {
+	if conf.Conf.MinFreeMemory < 16 {
 		if memStat != nil {
 			t := (memStat.Total >> 20) / 10
 			conf.MinFreeMemory = max(16, min(t, 1024)) << 20
@@ -115,11 +115,11 @@ func InitConfig() {
 			conf.MinFreeMemory = 16 * utils.MB
 		}
 	} else {
-		conf.MinFreeMemory = max(16, uint64(conf.Conf.MinFreeMemory)) << 20
+		conf.MinFreeMemory = uint64(conf.Conf.MinFreeMemory) << 20
 	}
 	log.Infof("min free memory: %dMB", conf.MinFreeMemory>>20)
 
-	if conf.Conf.MaxBlockLimit < 1 {
+	if conf.Conf.MaxBlockLimit < 4 {
 		if memStat != nil {
 			t := (memStat.Total >> 20) * 3 / 100
 			conf.MaxBlockLimit = max(4, min(uint64(t), 64)) << 20

@@ -3,9 +3,9 @@ package mem
 import (
 	"errors"
 	"io"
-	"os"
 	"runtime"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -16,15 +16,16 @@ import (
 type HybridCache struct {
 	mem        LinearMemory
 	memOffset  uint64
-	file       *os.File
+	file       cache.FileCache
 	fileOffset uint64
 	blockSize  uint64
 }
 
-func (hc *HybridCache) NextBlockWithSize(size uint64) buffer.Block {
+func (hc *HybridCache) NextBlockWithSize(size uint64) (buffer.Block, error) {
+retry:
 	if hc.file != nil {
-		if hc.fileOffset > 0 && hc.file.Truncate(int64(hc.fileOffset+size)) != nil {
-			return nil
+		if err := hc.file.Truncate(int64(hc.fileOffset + size)); err != nil {
+			return nil, err
 		}
 		base := hc.fileOffset
 		hc.fileOffset += size
@@ -32,36 +33,32 @@ func (hc *HybridCache) NextBlockWithSize(size uint64) buffer.Block {
 			io.NewOffsetWriter(hc.file, int64(base)),
 			io.NewSectionReader(hc.file, int64(base), int64(size)),
 		)
-		return fs
+		return fs, nil
 	}
-	all, err := hc.mem.Reallocate(uint64(hc.memOffset + size))
+	all, err := hc.mem.Reallocate(hc.memOffset + size)
 	if err == nil {
 		start := hc.memOffset
 		hc.memOffset += size
-		return buffer.NewByteBlock(all[start : start+size])
+		return buffer.NewByteBlock(all[start : start+size]), nil
 	}
 	if err := hc.initFileCache(); err != nil {
-		return nil
+		return nil, err
 	}
-	return hc.NextBlockWithSize(size)
+	goto retry
 }
 
-func (hc *HybridCache) NextBlock() buffer.Block {
+func (hc *HybridCache) NextBlock() (buffer.Block, error) {
 	return hc.NextBlockWithSize(hc.blockSize)
 }
 
-// func (hc *HybridCache) GetBlockSize() uint64 {
-// 	return hc.blockSize
-// }
-
 func (hc *HybridCache) RollbackBlockWithSize(size uint64) {
-	if hc.fileOffset > size {
+	if hc.fileOffset >= size {
 		hc.fileOffset -= size
 		return
 	}
 	size -= hc.fileOffset
 	hc.fileOffset = 0
-	if hc.memOffset > size {
+	if hc.memOffset >= size {
 		hc.memOffset -= size
 		return
 	}
@@ -73,15 +70,11 @@ func (hc *HybridCache) RollbackBlock() {
 }
 
 func (hc *HybridCache) initFileCache() error {
-	f, err := os.CreateTemp(conf.Conf.TempDir, "file-*")
+	file, err := cache.NewFileCache(int64(hc.blockSize))
 	if err != nil {
 		return err
 	}
-	if err := f.Truncate(int64(hc.blockSize)); err != nil {
-		_, _ = f.Close(), os.Remove(f.Name())
-		return err
-	}
-	hc.file = f
+	hc.file = file
 	return nil
 }
 
@@ -92,7 +85,7 @@ func (hc *HybridCache) Close() error {
 		hc.mem = nil
 	}
 	if hc.file != nil {
-		err = errors.Join(err, hc.file.Close(), os.Remove(hc.file.Name()))
+		err = errors.Join(err, hc.file.Close())
 		hc.file = nil
 	}
 	return err
@@ -164,10 +157,13 @@ func (hc *HybridCache) WriteAt(p []byte, off int64) (n int, err error) {
 func (hc *HybridCache) CopyFromN(src io.Reader, n int64) (written int64, err error) {
 	limit := n
 	for limit > 0 {
-		blockSize := min(limit, int64(conf.MaxBlockLimit))
-		b := hc.NextBlockWithSize(uint64(blockSize))
-		if b == nil {
-			return written, errors.New("failed to allocate block")
+		blockSize := limit
+		if hc.file == nil && blockSize > int64(conf.MaxBlockLimit) {
+			blockSize = int64(conf.MaxBlockLimit)
+		}
+		b, err := hc.NextBlockWithSize(uint64(blockSize))
+		if err != nil {
+			return written, err
 		}
 		nn, err := utils.CopyWithBufferN(buffer.WriteAtSeekerOf(b), src, blockSize)
 		written += nn
@@ -199,7 +195,7 @@ func NewHybridCache(blockSize, maxMemorySize uint64) (*HybridCache, error) {
 	}
 	runtime.SetFinalizer(hc, func(hc *HybridCache) {
 		if hc.file != nil {
-			_, _ = hc.file.Close(), os.Remove(hc.file.Name())
+			_ = hc.file.Close()
 			hc.file = nil
 		}
 	})
