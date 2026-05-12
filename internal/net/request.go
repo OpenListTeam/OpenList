@@ -324,16 +324,21 @@ func (d *downloader) interrupt() error {
 		_ = d.hc.Close()
 		d.hc = nil
 	}
-	if d.concurrency > 0 {
-		d.concurrency = -d.concurrency
+	if d.maxPos != 0 {
+		d.maxPos = 0
+		close(d.chunkCh)
+		if d.concurrency > 0 {
+			d.concurrency = -d.concurrency
+		}
+		log.Debugf("maxConcurrency:%d", d.cfg.Concurrency+d.concurrency)
 	}
-	log.Debugf("maxConcurrency:%d", d.cfg.Concurrency+d.concurrency)
 	return err
 }
 func (d *downloader) popBuf(id int) *buffer.PipeBuffer {
 	br := d.bufMap[id]
 	if br != nil {
 		delete(d.bufMap, id)
+		d.bufMap[-1] = br // -1 保存最后一次取出的buf用来关闭
 	}
 	return br
 }

@@ -75,6 +75,41 @@ func TestDownloadOrder(t *testing.T) {
 	}
 }
 
+func TestDownloadInterrupt(t *testing.T) {
+	buff := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	buff = append(buff, buff...)
+	downloader, _, _ := newDownloadRangeClient(buff)
+	con, partSize := 6, 3
+	d := NewDownloader(func(d *Downloader) {
+		d.Concurrency = con
+		d.PartSize = partSize
+		d.HttpClient = downloader.HttpRequest
+		d.ConcurrencyLimit = &ConcurrencyLimit{
+			Limit: 5,
+		}
+	})
+
+	var start, length int64 = 0, int64(len(buff))
+	req := &HttpRequestParams{
+		Range: http_range.Range{Start: start, Length: length},
+		Size:  int64(len(buff)),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	readCloser, err := d.Download(ctx, req)
+
+	if err != nil {
+		t.Fatalf("expect no error, got %v", err)
+	}
+	_, err = io.CopyN(io.Discard, readCloser, 8)
+	if err != nil {
+		t.Fatalf("expect no error, got %v", err)
+	}
+	cancel()
+	if err := readCloser.Close(); err != nil {
+		t.Errorf("expect no error on close, got %v", err)
+	}
+}
+
 func TestHighConcurrency(t *testing.T) {
 	buff := make([]byte, 8<<10)
 	for i := range len(buff) {
