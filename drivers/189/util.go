@@ -311,48 +311,102 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 	}
 	d.sessionKey = sessionKey
 	const DEFAULT int64 = 10485760
-	count := int64(math.Ceil(float64(file.GetSize()) / float64(DEFAULT)))
+	fileSize := file.GetSize()
+	count := int64(math.Ceil(float64(fileSize) / float64(DEFAULT)))
 
-	res, err := d.uploadRequest("/person/initMultiUpload", map[string]string{
+	// 先计算文件完整MD5和分片MD5，用于秒传判断
+	fileMd5Hex := file.GetHash().GetHash(utils.MD5)
+	sliceMd5Hex := ""
+	md5s := make([]string, 0)
+
+	if len(fileMd5Hex) < utils.MD5.Width {
+		// 没有MD5，先缓存流并同时计算文件MD5
+		fileMd5Hash := md5.New()
+		cache, err := file.CacheFullAndWriter(nil, fileMd5Hash)
+		if err != nil {
+			return err
+		}
+		fileMd5Hex = hex.EncodeToString(fileMd5Hash.Sum(nil))
+
+		// 从缓存文件中分片读取计算分片MD5
+		sliceMd5Hash := md5.New()
+		for i := int64(1); i <= count; i++ {
+			byteSize := DEFAULT
+			if i == count {
+				byteSize = fileSize - (i-1)*DEFAULT
+			}
+			buf := make([]byte, byteSize)
+			n, err := io.ReadFull(cache, buf)
+			if err != nil {
+				return err
+			}
+			buf = buf[:n]
+			sliceMd5Hash.Reset()
+			sliceMd5Hash.Write(buf)
+			md5s = append(md5s, strings.ToUpper(hex.EncodeToString(sliceMd5Hash.Sum(nil))))
+		}
+		// seek回起始位置，供后续上传使用
+		if _, err := cache.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+	}
+
+	// 计算sliceMd5
+	if fileSize > DEFAULT {
+		sliceMd5Hex = utils.GetMD5EncodeStr(strings.Join(md5s, "\n"))
+	} else {
+		sliceMd5Hex = fileMd5Hex
+	}
+
+	// 带fileMd5调用initMultiUpload，支持秒传
+	initParams := map[string]string{
 		"parentFolderId": dstDir.GetID(),
 		"fileName":       encode(file.GetName()),
-		"fileSize":       strconv.FormatInt(file.GetSize(), 10),
+		"fileSize":       strconv.FormatInt(fileSize, 10),
 		"sliceSize":      strconv.FormatInt(DEFAULT, 10),
-		"lazyCheck":      "1",
-	}, nil)
+		"fileMd5":        fileMd5Hex,
+		"sliceMd5":       sliceMd5Hex,
+	}
+
+	res, err := d.uploadRequest("/person/initMultiUpload", initParams, nil)
 	if err != nil {
 		return err
 	}
 	uploadFileId := jsoniter.Get(res, "data", "uploadFileId").ToString()
-	//_, err = d.uploadRequest("/person/getUploadedPartsInfo", map[string]string{
-	//	"uploadFileId": uploadFileId,
-	//}, nil)
+	fileDataExists := jsoniter.Get(res, "data", "fileDataExists").ToInt()
+
+	// 秒传成功，直接提交
+	if fileDataExists == 1 {
+		_, err = d.uploadRequest("/person/commitMultiUploadFile", map[string]string{
+			"uploadFileId": uploadFileId,
+			"fileMd5":      fileMd5Hex,
+			"sliceMd5":     sliceMd5Hex,
+			"lazyCheck":    "1",
+			"opertype":     "3",
+		}, nil)
+		return err
+	}
+
+	// 非秒传，需要上传分片
 	var finish int64 = 0
 	var i int64
 	var byteSize int64
-	md5s := make([]string, 0)
-	md5Sum := md5.New()
 	for i = 1; i <= count; i++ {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
 		}
-		byteSize = file.GetSize() - finish
+		byteSize = fileSize - finish
 		if DEFAULT < byteSize {
 			byteSize = DEFAULT
 		}
-		// log.Debugf("%d,%d", byteSize, finish)
 		byteData := make([]byte, byteSize)
 		n, err := io.ReadFull(file, byteData)
-		// log.Debug(err, n)
 		if err != nil {
 			return err
 		}
 		finish += int64(n)
 		md5Bytes := getMd5(byteData)
-		md5Hex := hex.EncodeToString(md5Bytes)
 		md5Base64 := base64.StdEncoding.EncodeToString(md5Bytes)
-		md5s = append(md5s, strings.ToUpper(md5Hex))
-		md5Sum.Write(byteData)
 		var resp UploadUrlsResp
 		res, err = d.uploadRequest("/person/getMultiUploadUrls", map[string]string{
 			"partInfo":     fmt.Sprintf("%s-%s", strconv.FormatInt(i, 10), md5Base64),
@@ -381,15 +435,10 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 		_ = r.Body.Close()
 		up(float64(i) * 100 / float64(count))
 	}
-	fileMd5 := hex.EncodeToString(md5Sum.Sum(nil))
-	sliceMd5 := fileMd5
-	if file.GetSize() > DEFAULT {
-		sliceMd5 = utils.GetMD5EncodeStr(strings.Join(md5s, "\n"))
-	}
 	res, err = d.uploadRequest("/person/commitMultiUploadFile", map[string]string{
 		"uploadFileId": uploadFileId,
-		"fileMd5":      fileMd5,
-		"sliceMd5":     sliceMd5,
+		"fileMd5":      fileMd5Hex,
+		"sliceMd5":     sliceMd5Hex,
 		"lazyCheck":    "1",
 		"opertype":     "3",
 	}, nil)
