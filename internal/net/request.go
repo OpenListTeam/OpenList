@@ -300,12 +300,14 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 // when the final reader Close, we interrupt
 func (d *downloader) interrupt() error {
 	err := context.Cause(d.ctx)
-	if err == nil && atomic.LoadInt64(&d.written) != d.params.Range.Length {
-		err = fmt.Errorf("interrupted")
-		d.cancel(err)
+	if err == nil {
+		if atomic.LoadInt64(&d.written) != d.params.Range.Length {
+			err = fmt.Errorf("interrupted")
+		}
 	} else if errors.Is(err, context.Canceled) {
 		err = nil
 	}
+	d.cancel(err)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.bufMap != nil {
@@ -314,19 +316,14 @@ func (d *downloader) interrupt() error {
 		}
 		d.bufMap = nil
 	}
-	select {
-	case <-d.chunkCh:
-		return err
-	default:
-		close(d.chunkCh)
-		if d.hc != nil {
-			d.hc.Close()
-		}
-		if d.concurrency > 0 {
-			d.concurrency = -d.concurrency
-		}
-		log.Debugf("maxConcurrency:%d", d.cfg.Concurrency+d.concurrency)
+	if d.hc != nil {
+		_ = d.hc.Close()
+		d.hc = nil
 	}
+	if d.concurrency > 0 {
+		d.concurrency = -d.concurrency
+	}
+	log.Debugf("maxConcurrency:%d", d.cfg.Concurrency+d.concurrency)
 	return err
 }
 func (d *downloader) popBuf(id int) *buffer.PipeBuffer {
