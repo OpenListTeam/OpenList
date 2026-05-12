@@ -293,8 +293,12 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 	}
 	d.pos += finalSize
 	d.nextChunk++
-	d.chunkCh <- ch
-	return nil
+	select {
+	case <-d.ctx.Done():
+		return context.Cause(d.ctx)
+	case d.chunkCh <- ch:
+		return nil
+	}
 }
 
 // when the final reader Close, we interrupt
@@ -473,8 +477,12 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 		if isCancelConcurrency {
 			d.concurrency--
 			d.mu.Unlock()
-			d.chunkCh <- *ch
-			return 0, errCancelConcurrency
+			select {
+			case <-d.ctx.Done():
+				return 0, errCancelConcurrency
+			case d.chunkCh <- *ch:
+				return 0, errCancelConcurrency
+			}
 		}
 		d.mu.Unlock()
 		if int64(ch.id) != atomic.LoadInt64(&d.readingID) { //正在被读取的优先重试
