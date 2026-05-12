@@ -303,6 +303,8 @@ func (d *downloader) interrupt() error {
 	if err == nil && atomic.LoadInt64(&d.written) != d.params.Range.Length {
 		err = fmt.Errorf("interrupted")
 		d.cancel(err)
+	} else if errors.Is(err, context.Canceled) {
+		err = nil
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
