@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"github.com/go-resty/resty/v2"
@@ -64,13 +65,30 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	fileName := t.Info.Name
 	fileSize := t.GetTotalSize()
 
+	// 统一 MD5 为大写（与正常上传保持一致，天翼云盘要求大写）
+	fileMD5Upper := strings.ToUpper(cas.FileMD5)
+
+	// 根据文件大小动态计算分片大小（与正常上传保持一致）
+	sliceSize := partSize(fileSize)
+
 	// 计算 sliceMd5（与上传时一致的算法）
-	sliceMd5Hex := cas.FileMD5
+	sliceMd5Hex := fileMD5Upper
 	if len(cas.SliceMD5s) > 1 {
-		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(cas.SliceMD5s, "\n")))
+		// 分片 MD5 也需要统一大写后再拼接计算
+		upperSliceMD5s := make([]string, len(cas.SliceMD5s))
+		for i, s := range cas.SliceMD5s {
+			upperSliceMD5s[i] = strings.ToUpper(s)
+		}
+		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(upperSliceMD5s, "\n")))
 	}
 
-	// 使用新版 initMultiUpload 接口进行秒传（需要 fileMd5 + sliceMd5）
+	// 打印快速上传信息
+	fmt.Printf("[RapidUpload] 文件名: %s, 文件大小: %d\n", fileName, fileSize)
+	fmt.Printf("[RapidUpload] FileMD5: %s\n", fileMD5Upper)
+	fmt.Printf("[RapidUpload] SliceMD5: %s\n", sliceMd5Hex)
+	fmt.Printf("[RapidUpload] SliceSize: %d\n", sliceSize)
+
+	// 使用与 Web 端一致的三步秒传流程
 	fullUrl := "https://upload.cloud.189.cn"
 	if isFamily {
 		fullUrl += "/family"
@@ -78,62 +96,78 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		fullUrl += "/person"
 	}
 
-	params := Params{
+	// Step 1: initMultiUpload（不传 fileMd5/sliceMd5，只传 lazyCheck）
+	initParams := Params{
 		"parentFolderId": dstDir.GetID(),
-		"fileName":       fileName,
+		"fileName":       url.QueryEscape(fileName),
 		"fileSize":       fmt.Sprint(fileSize),
-		"fileMd5":        cas.FileMD5,
-		"sliceSize":      fmt.Sprint(cas.SliceSize),
-		"sliceMd5":       sliceMd5Hex,
+		"sliceSize":      fmt.Sprint(sliceSize),
+		"lazyCheck":      "1",
 	}
 	if isFamily {
-		params.Set("familyId", y.FamilyID)
+		initParams.Set("familyId", y.FamilyID)
 	}
+
+	fmt.Printf("[RapidUpload] Step1 initMultiUpload 请求参数: %+v\n", initParams)
 
 	var uploadInfo InitMultiUploadResp
 	_, err = y.request(fullUrl+"/initMultiUpload", "GET", func(req *resty.Request) {
 		req.SetContext(ctx)
-	}, params, &uploadInfo, isFamily)
+	}, initParams, &uploadInfo, isFamily)
 	if err != nil {
-		// 新版接口失败，回退到旧版接口尝试
-		oldUploadInfo, oldErr := y.OldUploadCreate(ctx, dstDir.GetID(), cas.FileMD5, fileName, fmt.Sprint(fileSize), isFamily)
-		if oldErr != nil {
-			return nil, fmt.Errorf("创建上传任务失败: %w (initMultiUpload err: %v)", oldErr, err)
-		}
-		if oldUploadInfo.FileDataExists != 1 {
-			return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, size=%d）", cas.FileMD5, fileSize)
-		}
-		return y.OldUploadCommit(ctx, oldUploadInfo.FileCommitUrl, oldUploadInfo.UploadFileId, isFamily, overwrite)
+		return nil, fmt.Errorf("initMultiUpload 失败: %w", err)
+	}
+	fmt.Printf("[RapidUpload] Step1 initMultiUpload 响应: fileDataExists=%d, uploadFileId=%s\n",
+		uploadInfo.Data.FileDataExists, uploadInfo.Data.UploadFileID)
+
+	uploadFileId := uploadInfo.Data.UploadFileID
+
+	// Step 2: checkTransSecond（用 fileMd5 + sliceMd5 + uploadFileId 检查秒传）
+	checkParams := Params{
+		"fileMd5":      fileMD5Upper,
+		"sliceMd5":     sliceMd5Hex,
+		"uploadFileId": uploadFileId,
+	}
+	fmt.Printf("[RapidUpload] Step2 checkTransSecond 请求参数: %+v\n", checkParams)
+
+	var checkResp struct {
+		Data struct {
+			FileDataExists int `json:"fileDataExists"`
+		} `json:"data"`
+	}
+	_, err = y.request(fullUrl+"/checkTransSecond", "GET", func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, checkParams, &checkResp, isFamily)
+	if err != nil {
+		fmt.Printf("[RapidUpload] Step2 checkTransSecond 失败: %v\n", err)
+		return nil, fmt.Errorf("秒传检查失败: %w", err)
+	}
+	fmt.Printf("[RapidUpload] Step2 checkTransSecond 响应: fileDataExists=%d\n", checkResp.Data.FileDataExists)
+
+	if checkResp.Data.FileDataExists != 1 {
+		return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", fileMD5Upper, sliceMd5Hex, fileSize)
 	}
 
-	if uploadInfo.Data.FileDataExists != 1 {
-		// 新版接口也没匹配到，再尝试旧版
-		oldUploadInfo, oldErr := y.OldUploadCreate(ctx, dstDir.GetID(), cas.FileMD5, fileName, fmt.Sprint(fileSize), isFamily)
-		if oldErr != nil {
-			return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", cas.FileMD5, sliceMd5Hex, fileSize)
-		}
-		if oldUploadInfo.FileDataExists != 1 {
-			return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", cas.FileMD5, sliceMd5Hex, fileSize)
-		}
-		return y.OldUploadCommit(ctx, oldUploadInfo.FileCommitUrl, oldUploadInfo.UploadFileId, isFamily, overwrite)
-	}
-
-	// 秒传成功，提交
+	// Step 3: commitMultiUploadFile（传 fileMd5 + sliceMd5）
+	fmt.Printf("[RapidUpload] Step3 文件已存在云端，开始提交 commitMultiUploadFile\n")
 	var resp CommitMultiUploadFileResp
 	commitParams := Params{
-		"uploadFileId": uploadInfo.Data.UploadFileID,
-		"fileMd5":      cas.FileMD5,
+		"uploadFileId": uploadFileId,
+		"fileMd5":      fileMD5Upper,
 		"sliceMd5":     sliceMd5Hex,
 		"lazyCheck":    "1",
-		"isLog":        "0",
 		"opertype":     IF(overwrite, "3", "1"),
 	}
+	fmt.Printf("[RapidUpload] Step3 commitMultiUploadFile 请求参数: %+v\n", commitParams)
 	_, err = y.request(fullUrl+"/commitMultiUploadFile", "GET", func(req *resty.Request) {
 		req.SetContext(ctx)
 	}, commitParams, &resp, isFamily)
 	if err != nil {
+		fmt.Printf("[RapidUpload] Step3 commitMultiUploadFile 失败: %v\n", err)
 		return nil, fmt.Errorf("提交上传失败: %w", err)
 	}
+	fmt.Printf("[RapidUpload] Step3 commitMultiUploadFile 成功: fileName=%s, fileSize=%d\n",
+		resp.File.FileName, resp.File.FileSize)
 
 	return resp.toFile(), nil
 }
