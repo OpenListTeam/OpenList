@@ -71,12 +71,9 @@ func TestCDNURLDropsMountPathFromBaseURL(t *testing.T) {
 }
 
 func TestCDNObjectPathKeepsRootFolderPath(t *testing.T) {
-	driver := &BunnyStorage{
-		Storage: model.Storage{MountPath: "/BS"},
-		Addition: Addition{
-			RootFolderPath: "/library",
-		},
-	}
+	driver := &BunnyStorage{}
+	driver.MountPath = "/BS"
+	driver.RootFolderPath = "/library"
 	if got, want := driver.cdnObjectPath("/BS/Video"), "/library/Video"; got != want {
 		t.Fatalf("cdn object path = %q, want %q", got, want)
 	}

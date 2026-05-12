@@ -6,7 +6,7 @@ import (
 )
 
 type Addition struct {
-	RootFolderPath    string `json:"root_folder_path" default:"/" required:"true"`
+	driver.RootPath
 	StorageZoneName   string `json:"storage_zone_name" required:"true"`
 	AccessKey         string `json:"access_key" required:"true"`
 	Endpoint          string `json:"endpoint" required:"true" default:"storage.bunnycdn.com"`
@@ -16,14 +16,6 @@ type Addition struct {
 	CDNTokenIncludeIP bool   `json:"cdn_token_include_ip" default:"false"`
 	SignURLExpire     int    `json:"sign_url_expire" type:"number" default:"4"`
 	Placeholder       string `json:"placeholder" default:".openlist"`
-}
-
-func (a Addition) GetRootPath() string {
-	return a.RootFolderPath
-}
-
-func (a *Addition) SetRootPath(path string) {
-	a.RootFolderPath = path
 }
 
 var config = driver.Config{

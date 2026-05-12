@@ -14,7 +14,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -206,15 +205,6 @@ func (d *BunnyStorage) putReader(ctx context.Context, path string, body any, siz
 
 func (d *BunnyStorage) Get(ctx context.Context, path string) (model.Obj, error) {
 	fullPath := stdpath.Join(d.GetRootPath(), path)
-	if cleanObjectPath(fullPath) == "/" {
-		return &model.Object{
-			Path:     d.GetRootPath(),
-			Name:     op.RootName,
-			Modified: d.Modified,
-			IsFolder: true,
-			Mask:     model.Locked,
-		}, nil
-	}
 	parentPath, name := stdpath.Split(fullPath)
 	parentPath = strings.TrimSuffix(parentPath, "/")
 	if parentPath == "" {
