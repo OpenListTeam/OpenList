@@ -411,14 +411,16 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 		if stream.GetSize() == 0 {
 			return y.FastUpload(ctx, dstDir, stream, up, isFamily, overwrite)
 		}
-		// 尝试秒传：如果已有MD5则用RapidUpload，否则走FastUpload（会计算MD5并尝试秒传）
+		// 尝试秒传：如果已有MD5且启用了RapidUpload则用RapidUpload，否则走FastUpload（会计算MD5并尝试秒传）
 		if !stream.IsForceStreamUpload() {
 			fileMd5 := stream.GetHash().GetHash(utils.MD5)
-			if len(fileMd5) >= utils.MD5.Width {
+			if len(fileMd5) >= utils.MD5.Width && y.Addition.RapidUpload {
+				// 源文件已有MD5且启用了RapidUpload配置，尝试快速秒传
 				if newObj, err := y.RapidUpload(ctx, dstDir, stream, isFamily, overwrite); err == nil {
 					return newObj, nil
 				}
-			} else {
+			} else if len(fileMd5) < utils.MD5.Width {
+				// 源文件无MD5（如从本地复制），走FastUpload计算MD5并尝试秒传
 				return y.FastUpload(ctx, dstDir, stream, up, isFamily, overwrite)
 			}
 		}

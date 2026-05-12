@@ -320,31 +320,28 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 	md5s := make([]string, 0)
 
 	if len(fileMd5Hex) < utils.MD5.Width {
-		// 没有MD5，先缓存流并同时计算文件MD5
+		// 没有MD5，先缓存流并同时计算文件MD5和分片MD5
 		fileMd5Hash := md5.New()
-		cache, err := file.CacheFullAndWriter(nil, fileMd5Hash)
+		sliceMd5Hash := md5.New()
+		var finish int64
+		cache, err := file.CacheFullAndWriter(nil, io.MultiWriter(fileMd5Hash, &sliceHashWriter{
+			hash:      sliceMd5Hash,
+			md5s:      &md5s,
+			sliceSize: DEFAULT,
+			finish:    &finish,
+			fileSize:  fileSize,
+			up:        up,
+			ctx:       ctx,
+		}))
 		if err != nil {
 			return err
 		}
-		fileMd5Hex = hex.EncodeToString(fileMd5Hash.Sum(nil))
-
-		// 从缓存文件中分片读取计算分片MD5
-		sliceMd5Hash := md5.New()
-		for i := int64(1); i <= count; i++ {
-			byteSize := DEFAULT
-			if i == count {
-				byteSize = fileSize - (i-1)*DEFAULT
-			}
-			buf := make([]byte, byteSize)
-			n, err := io.ReadFull(cache, buf)
-			if err != nil {
-				return err
-			}
-			buf = buf[:n]
-			sliceMd5Hash.Reset()
-			sliceMd5Hash.Write(buf)
+		// 处理最后一个分片的MD5
+		if finish%DEFAULT != 0 || finish == 0 {
 			md5s = append(md5s, strings.ToUpper(hex.EncodeToString(sliceMd5Hash.Sum(nil))))
 		}
+		fileMd5Hex = hex.EncodeToString(fileMd5Hash.Sum(nil))
+
 		// seek回起始位置，供后续上传使用
 		if _, err := cache.Seek(0, io.SeekStart); err != nil {
 			return err
@@ -352,7 +349,7 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 	}
 
 	// 计算sliceMd5
-	if fileSize > DEFAULT {
+	if fileSize > DEFAULT && len(md5s) > 0 {
 		sliceMd5Hex = utils.GetMD5EncodeStr(strings.Join(md5s, "\n"))
 	} else {
 		sliceMd5Hex = fileMd5Hex
@@ -433,7 +430,7 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 		}
 		log.Debugf("%+v %+v", r, r.Request.Header)
 		_ = r.Body.Close()
-		up(float64(i) * 100 / float64(count))
+		up(50 + float64(i)*50/float64(count))
 	}
 	res, err = d.uploadRequest("/person/commitMultiUploadFile", map[string]string{
 		"uploadFileId": uploadFileId,
@@ -454,4 +451,53 @@ func (d *Cloud189) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// sliceHashWriter 在写入过程中按分片大小自动切分并计算每个分片的MD5，
+// 同时支持进度回调和取消检查。
+type sliceHashWriter struct {
+	hash      io.Writer // 当前分片的MD5 hash
+	md5s      *[]string // 收集每个分片的MD5十六进制字符串
+	sliceSize int64     // 分片大小
+	finish    *int64    // 已写入的总字节数
+	fileSize  int64     // 文件总大小
+	up        driver.UpdateProgress
+	ctx       context.Context
+}
+
+func (w *sliceHashWriter) Write(p []byte) (int, error) {
+	if utils.IsCanceled(w.ctx) {
+		return 0, w.ctx.Err()
+	}
+	total := len(p)
+	written := 0
+	for written < total {
+		// 当前分片还能写入的字节数
+		sliceRemain := w.sliceSize - (*w.finish % w.sliceSize)
+		toWrite := int64(total - written)
+		if toWrite > sliceRemain {
+			toWrite = sliceRemain
+		}
+		n, err := w.hash.Write(p[written : written+int(toWrite)])
+		if err != nil {
+			return written, err
+		}
+		written += n
+		*w.finish += int64(n)
+
+		// 当前分片写满，记录MD5并重置
+		if *w.finish%w.sliceSize == 0 {
+			if h, ok := w.hash.(interface{ Sum([]byte) []byte }); ok {
+				*w.md5s = append(*w.md5s, strings.ToUpper(hex.EncodeToString(h.Sum(nil))))
+			}
+			if resetter, ok := w.hash.(interface{ Reset() }); ok {
+				resetter.Reset()
+			}
+		}
+	}
+	// 报告进度（缓存阶段占50%）
+	if w.fileSize > 0 && w.up != nil {
+		w.up(float64(*w.finish) / float64(w.fileSize) * 50)
+	}
+	return total, nil
 }
