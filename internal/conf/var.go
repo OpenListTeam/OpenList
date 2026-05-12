@@ -25,7 +25,7 @@ var FilenameCharMap = make(map[string]string)
 var PrivacyReg []*regexp.Regexp
 
 var (
-	// 限制单次内存、磁盘缓存的扩容大小，超过该阈值将分多次扩容。
+	// 限制单次内存的扩容大小，超过该阈值将分多次扩容。
 	// CacheThreshold大于0时，也限制 Downloader 的PartSize
 	MaxBlockLimit uint64 = 16 * 1024 * 1024
 	// 大于该阈值的数据流将使用HybridCache，可主动释放内存。

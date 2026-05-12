@@ -1,6 +1,7 @@
 package cache_test
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -93,7 +94,7 @@ func TestMultiFileCache(t *testing.T) {
 		}
 		want := []byte{0, 0, 'a', 'b', 'c', 0, 0, '1', '2', '3'}
 		want = append(want, make([]byte, 10)...)
-		if !reflect.DeepEqual(b, want) {
+		if !bytes.Equal(b, want) {
 			t.Fatalf("unexpected content: got %v want %v", b, want)
 		}
 	})

@@ -14,7 +14,7 @@ import (
 var ErrNotEnoughMemory = errors.New("not enough memory")
 
 func MemoryGrowCheck(growSize uint64) error {
-	m, err, _ := singleflight.AnyGroup.Do("SafeMemory.GrowLimit", func() (any, error) {
+	m, err, _ := singleflight.AnyGroup.Do("MemoryGrowCheck", func() (any, error) {
 		m, err := mem.VirtualMemory()
 		if err != nil {
 			return nil, err

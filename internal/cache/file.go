@@ -179,9 +179,6 @@ func NewFileCache(blockSize int64) (FileCache, error) {
 	if err == nil {
 		return &singleFileCache{File: f, size: blockSize}, nil
 	}
-	// _, _ = f.Close(), os.Remove(f.Name())
-	// return nil, err
-
 	return &MultiFileCache{
 		blocks: []*fileBlock{{file: f, size: blockSize}},
 		size:   blockSize,

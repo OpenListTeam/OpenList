@@ -116,7 +116,6 @@ type downloader struct {
 	written   int64 //total bytes of file downloaded from remote
 
 	concurrency int //剩余的并发数，递减。到0时停止并发
-	maxPart     int //有多少个分片
 	pos         int64
 	maxPos      int64
 	delayMu     sync.Mutex
@@ -128,7 +127,7 @@ type downloader struct {
 type ConcurrencyLimit struct {
 	mu sync.Mutex
 
-	Available uint32
+	Limit uint32
 }
 
 var ErrExceedMaxConcurrency = HttpStatusCodeError(http.StatusTooManyRequests)
@@ -139,10 +138,10 @@ func (l *ConcurrencyLimit) Acquire() error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.Available == 0 {
+	if l.Limit == 0 {
 		return ErrExceedMaxConcurrency
 	}
-	l.Available--
+	l.Limit--
 	return nil
 }
 func (l *ConcurrencyLimit) Release() {
@@ -150,7 +149,7 @@ func (l *ConcurrencyLimit) Release() {
 		return
 	}
 	l.mu.Lock()
-	l.Available++
+	l.Limit++
 	l.mu.Unlock()
 }
 
@@ -194,7 +193,6 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	// workers
 	d.chunkCh = make(chan chunk, d.cfg.Concurrency)
 
-	d.maxPart = maxPart
 	d.pos = d.params.Range.Start
 	d.maxPos = d.params.Range.Start + d.params.Range.Length
 	d.concurrency = d.cfg.Concurrency
@@ -215,7 +213,7 @@ func (d *downloader) download() (io.ReadCloser, error) {
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return &multiReadCloser{d: d, curBuf: d.popBuf(0)}, nil
+	return &multiReadCloser{d: d, curBuf: d.popBuf(0), maxPos: maxPart}, nil
 }
 
 func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
@@ -251,7 +249,7 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 		} else {
 			defer func() {
 				if r := recover(); r != nil {
-					err = fmt.Errorf("panic in creating new buffer section: %v", r)
+					err = fmt.Errorf("panic in creating new byte block: %v", r)
 				}
 			}()
 			b = buffer.NewByteBlock(make([]byte, d.cfg.PartSize))
@@ -337,12 +335,8 @@ func (d *downloader) popBuf(id int) *buffer.PipeBuffer {
 	return br
 }
 
-func (d *downloader) finishBuf(id int, prev *buffer.PipeBuffer) (isLast bool, next *buffer.PipeBuffer) {
-	id++
-	if id >= d.maxPart {
-		return true, nil
-	}
-	atomic.StoreInt64(&d.readingID, int64(id))
+func (d *downloader) finishBuf(nextId int, prev *buffer.PipeBuffer) (next *buffer.PipeBuffer) {
+	atomic.StoreInt64(&d.readingID, int64(nextId))
 
 	d.mu.Lock()
 	shouldSendTask := d.bufMap[d.nextChunk] == nil
@@ -359,7 +353,7 @@ func (d *downloader) finishBuf(id int, prev *buffer.PipeBuffer) (isLast bool, ne
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return false, d.popBuf(id)
+	return d.popBuf(nextId)
 }
 
 // downloadPart is an individual goroutine worker reading from the ch channel
@@ -618,7 +612,8 @@ func (e *errNeedRetry) Unwrap() error {
 }
 
 type multiReadCloser struct {
-	rPos   int //current reader position, start from 0
+	pos    int //current reader position, start from 0
+	maxPos int
 	curBuf *buffer.PipeBuffer
 	d      *downloader
 }
@@ -630,14 +625,13 @@ func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
 	n, err = mr.curBuf.Read(p)
 	// log.Debugf("read_%d read current buffer, n=%d ,err=%+v", mr.rPos, n, err)
 	if err == io.EOF {
-		log.Debugf("read_%d finished current buffer", mr.rPos)
+		log.Debugf("read_%d finished current buffer", mr.pos)
 
-		isLast, next := mr.d.finishBuf(mr.rPos, mr.curBuf)
-		if isLast {
+		mr.pos++
+		if mr.pos >= mr.maxPos {
 			return n, io.EOF
 		}
-		mr.curBuf = next
-		mr.rPos++
+		mr.curBuf = mr.d.finishBuf(mr.pos, mr.curBuf)
 		return n, nil
 	}
 	return n, err

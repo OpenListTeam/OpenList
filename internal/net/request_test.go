@@ -87,7 +87,7 @@ func TestHighConcurrency(t *testing.T) {
 		d.PartSize = partSize
 		d.HttpClient = downloader.HttpRequest
 		d.ConcurrencyLimit = &ConcurrencyLimit{
-			Available: 32,
+			Limit: 32,
 		}
 	})
 
