@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/sirupsen/logrus"
@@ -117,12 +118,13 @@ func TestHighConcurrency(t *testing.T) {
 	}
 	downloader, invocations, _ := newDownloadRangeClient(buff)
 	con, partSize := 64, 100
+	concurrencyLimit := uint32(32)
 	d := NewDownloader(func(d *Downloader) {
 		d.Concurrency = con
 		d.PartSize = partSize
 		d.HttpClient = downloader.HttpRequest
 		d.ConcurrencyLimit = &ConcurrencyLimit{
-			Limit: 32,
+			Limit: concurrencyLimit,
 		}
 	})
 
@@ -154,6 +156,13 @@ func TestHighConcurrency(t *testing.T) {
 	if err := readCloser.Close(); err != nil {
 		t.Errorf("expect no error on close, got %v", err)
 	}
+	for range 100 {
+		time.Sleep(10 * time.Millisecond)
+		if d.ConcurrencyLimit.Limit == concurrencyLimit {
+			return
+		}
+	}
+	t.Errorf("expect concurrency limit to be %v, got %v", concurrencyLimit, d.ConcurrencyLimit.Limit)
 }
 
 func init() {
