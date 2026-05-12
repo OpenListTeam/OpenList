@@ -1,6 +1,6 @@
 //go:build unix
 
-package mem // import "github.com/ncruces/go-sqlite3/internal/alloc"
+package mem
 
 import (
 	"math"

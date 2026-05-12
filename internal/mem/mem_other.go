@@ -1,6 +1,6 @@
 //go:build !unix && !windows
 
-package mem // import "github.com/ncruces/go-sqlite3/internal/alloc"
+package mem
 
 func NewMemory(cap, max uint64) (LinearMemory, error) {
 	return &sliceMemory{buf: make([]byte, 0, cap)}, nil

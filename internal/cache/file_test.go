@@ -21,7 +21,7 @@ func TestFile(t *testing.T) {
 	defer f.Close()
 	t.Run("ReadAt", func(t *testing.T) {
 		_, err := f.ReadAt(make([]byte, 1), 20)
-		if err == nil && errors.Is(err, io.EOF) {
+		if err != nil && !errors.Is(err, io.EOF) {
 			t.Error(err)
 		}
 	})
@@ -62,7 +62,7 @@ func TestMultiFileCache(t *testing.T) {
 	defer f.Close()
 	t.Run("ReadAt", func(t *testing.T) {
 		_, err := f.ReadAt(make([]byte, 1), 20)
-		if err == nil && errors.Is(err, io.EOF) {
+		if err != nil && !errors.Is(err, io.EOF) {
 			t.Error(err)
 		}
 	})

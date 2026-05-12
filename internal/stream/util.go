@@ -324,7 +324,11 @@ func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 	}
 
 	if length == b.Size() {
-		return &blockRefReadSeeker{buffer.ReadAtSeekerOf(b), b}, nil
+		rs := buffer.ReadAtSeekerOf(b)
+		if _, err := rs.Seek(0, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("failed to reset cached block reader: %w", err)
+		}
+		return &blockRefReadSeeker{rs, b}, nil
 	}
 	return &blockRefReadSeeker{io.NewSectionReader(b, 0, length), b}, nil
 }
