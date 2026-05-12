@@ -53,8 +53,8 @@ func TestDownloadOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expect no error, got %v", err)
 	}
-	if exp, a := int(length), len(resultBuf); exp != a {
-		t.Errorf("expect  buffer length=%d, got %d", exp, a)
+	if exp, a := buff[start:start+length2], resultBuf; !bytes.Equal(exp, a) {
+		t.Errorf("expect buffer %v, got %v", exp, a)
 	}
 	chunkSize := int(length+int64(partSize)-1) / partSize
 	if e, a := chunkSize, *invocations; e != a {
@@ -74,6 +74,53 @@ func TestDownloadOrder(t *testing.T) {
 		t.Errorf("expect no error on close, got %v", err)
 	}
 }
+
+func TestHighConcurrency(t *testing.T) {
+	buff := make([]byte, 8<<10)
+	for i := range len(buff) {
+		buff[i] = byte(i % 256)
+	}
+	downloader, invocations, _ := newDownloadRangeClient(buff)
+	con, partSize := 64, 100
+	d := NewDownloader(func(d *Downloader) {
+		d.Concurrency = con
+		d.PartSize = partSize
+		d.HttpClient = downloader.HttpRequest
+		d.ConcurrencyLimit = &ConcurrencyLimit{
+			Available: 32,
+		}
+	})
+
+	var start, length int64 = 2, 7 << 10
+	length2 := length
+	if length2 == -1 {
+		length2 = int64(len(buff)) - start
+	}
+	req := &HttpRequestParams{
+		Range: http_range.Range{Start: start, Length: length},
+		Size:  int64(len(buff)),
+	}
+	readCloser, err := d.Download(context.Background(), req)
+
+	if err != nil {
+		t.Fatalf("expect no error, got %v", err)
+	}
+	resultBuf, err := io.ReadAll(readCloser)
+	if err != nil {
+		t.Fatalf("expect no error, got %v", err)
+	}
+	if !bytes.Equal(buff[start:start+length2], resultBuf) {
+		t.Error("expect buffer content matches, but got mismatch")
+	}
+	chunkSize := int(length+int64(partSize)-1) / partSize
+	if e, a := chunkSize, *invocations; e != a {
+		t.Errorf("expect %v API calls, got %v", e, a)
+	}
+	if err := readCloser.Close(); err != nil {
+		t.Errorf("expect no error on close, got %v", err)
+	}
+}
+
 func init() {
 	Formatter := new(logrus.TextFormatter)
 	Formatter.TimestampFormat = "2006-01-02T15:04:05.999999999"

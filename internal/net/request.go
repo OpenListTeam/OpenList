@@ -109,17 +109,17 @@ type downloader struct {
 	chunkCh chan chunk         //chunk chanel
 
 	//wg sync.WaitGroup
-	m sync.Mutex
+	mu sync.Mutex
 
 	nextChunk int //next chunk id
-	bufs      []*buffer.PipeBuffer
+	bufMap    map[int]*buffer.PipeBuffer
 	written   int64 //total bytes of file downloaded from remote
 
 	concurrency int //剩余的并发数，递减。到0时停止并发
 	maxPart     int //有多少个分片
 	pos         int64
 	maxPos      int64
-	m2          sync.Mutex
+	delayMu     sync.Mutex
 	readingID   int64 // 正在被读取的id
 
 	hc *mem.HybridCache
@@ -177,8 +177,8 @@ func (d *downloader) download() (io.ReadCloser, error) {
 		}
 		closeFunc := resp.Body.Close
 		resp.Body = utils.NewReadCloser(resp.Body, func() error {
-			d.m.Lock()
-			defer d.m.Unlock()
+			d.mu.Lock()
+			defer d.mu.Unlock()
 			var err error
 			if closeFunc != nil {
 				d.cfg.ConcurrencyLimit.Release()
@@ -204,6 +204,7 @@ func (d *downloader) download() (io.ReadCloser, error) {
 		d.hc, err = mem.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.params.Range.Length))
 	}
 	if err == nil {
+		d.bufMap = make(map[int]*buffer.PipeBuffer, d.cfg.Concurrency)
 		err = d.sendChunkTask(true)
 	}
 	if err != nil {
@@ -212,13 +213,17 @@ func (d *downloader) download() (io.ReadCloser, error) {
 		return nil, d.interrupt()
 	}
 
-	return newMultiReadCloser(d.bufs[0], d.interrupt, d.finishBuf), nil
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return &multiReadCloser{d: d, curBuf: d.popBuf(0)}, nil
 }
 
 func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
-	d.m.Lock()
-	defer d.m.Unlock()
-	isNewBuf := d.concurrency > 0
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.pos >= d.maxPos {
+		return nil
+	}
 	if newConcurrency {
 		if d.concurrency <= 0 {
 			return nil
@@ -235,8 +240,8 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 		}
 	}
 
-	var br *buffer.PipeBuffer
-	if isNewBuf {
+	br := d.bufMap[d.nextChunk]
+	if br == nil {
 		var b buffer.Block
 		if d.hc != nil {
 			b, err = d.hc.NextBlock()
@@ -252,53 +257,45 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 			b = buffer.NewByteBlock(make([]byte, d.cfg.PartSize))
 		}
 		br = buffer.NewPipeBuffer(d.ctx, b)
-		d.bufs = append(d.bufs, br)
-	} else {
-		br = d.getBuf(d.nextChunk)
+		d.bufMap[d.nextChunk] = br
 	}
 
-	if d.pos < d.maxPos {
-		finalSize := int64(d.cfg.PartSize)
-		switch d.nextChunk {
-		case 0:
-			// 最小分片在前面有助视频播放？
-			firstSize := d.params.Range.Length % finalSize
-			if firstSize > 0 {
-				minSize := finalSize / 2
-				if firstSize < minSize { // 最小分片太小就调整到一半
-					finalSize = minSize
-				} else {
-					finalSize = firstSize
-				}
-			}
-		case 1:
-			firstSize := d.params.Range.Length % finalSize
+	finalSize := int64(d.cfg.PartSize)
+	switch d.nextChunk {
+	case 0:
+		// 最小分片在前面有助视频播放？
+		firstSize := d.params.Range.Length % finalSize
+		if firstSize > 0 {
 			minSize := finalSize / 2
-			if firstSize > 0 && firstSize < minSize {
-				finalSize += firstSize - minSize
-			}
+			// 最小分片太小就调整到一半
+			finalSize = max(firstSize, minSize)
 		}
-		err := br.Reset(int(finalSize))
-		if err != nil {
-			return err
+	case 1:
+		firstSize := d.params.Range.Length % finalSize
+		minSize := finalSize / 2
+		if firstSize > 0 && firstSize < minSize {
+			finalSize += firstSize - minSize
 		}
-		if newConcurrency {
-			go d.downloadPart()
-			d.concurrency--
-		}
-		ch := chunk{
-			start: d.pos,
-			size:  finalSize,
-			id:    d.nextChunk,
-			buf:   br,
-
-			newConcurrency: newConcurrency,
-		}
-		d.pos += finalSize
-		d.nextChunk++
-		d.chunkCh <- ch
-		return nil
 	}
+	err = br.Reset(int(finalSize))
+	if err != nil {
+		return err // 分片算法错误或者下载中断
+	}
+	if newConcurrency {
+		go d.downloadPart()
+		d.concurrency--
+	}
+	ch := chunk{
+		start: d.pos,
+		size:  finalSize,
+		id:    d.nextChunk,
+		buf:   br,
+
+		newConcurrency: newConcurrency,
+	}
+	d.pos += finalSize
+	d.nextChunk++
+	d.chunkCh <- ch
 	return nil
 }
 
@@ -309,13 +306,13 @@ func (d *downloader) interrupt() error {
 		err = fmt.Errorf("interrupted")
 		d.cancel(err)
 	}
-	d.m.Lock()
-	defer d.m.Unlock()
-	if d.bufs != nil {
-		for _, buf := range d.bufs {
-			buf.Close()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.bufMap != nil {
+		for _, buf := range d.bufMap {
+			_ = buf.Close()
 		}
-		d.bufs = nil
+		d.bufMap = nil
 	}
 	select {
 	case <-d.chunkCh:
@@ -332,19 +329,37 @@ func (d *downloader) interrupt() error {
 	}
 	return err
 }
-func (d *downloader) getBuf(id int) *buffer.PipeBuffer {
-	return d.bufs[id%len(d.bufs)]
+func (d *downloader) popBuf(id int) *buffer.PipeBuffer {
+	br := d.bufMap[id]
+	if br != nil {
+		delete(d.bufMap, id)
+	}
+	return br
 }
-func (d *downloader) finishBuf(id int) (isLast bool, nextBuf *buffer.PipeBuffer) {
+
+func (d *downloader) finishBuf(id int, prev *buffer.PipeBuffer) (isLast bool, next *buffer.PipeBuffer) {
 	id++
 	if id >= d.maxPart {
 		return true, nil
 	}
-
-	_ = d.sendChunkTask(false)
-
 	atomic.StoreInt64(&d.readingID, int64(id))
-	return false, d.getBuf(id)
+
+	d.mu.Lock()
+	shouldSendTask := d.bufMap[d.nextChunk] == nil
+	if shouldSendTask {
+		d.bufMap[d.nextChunk] = prev
+	}
+	d.mu.Unlock()
+
+	if shouldSendTask {
+		_ = d.sendChunkTask(false)
+	} else {
+		_ = prev.Close()
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return false, d.popBuf(id)
 }
 
 // downloadPart is an individual goroutine worker reading from the ch channel
@@ -455,7 +470,7 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 		// 后续分片下载出错都当超载处理
 		log.Debugf("err chunk_%d, try downloading:%v", ch.id, err)
 
-		d.m.Lock()
+		d.mu.Lock()
 		isCancelConcurrency := ch.newConcurrency
 		if d.concurrency > 0 { // 取消剩余的并发任务
 			// 用于计算实际的并发数
@@ -464,14 +479,14 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 		}
 		if isCancelConcurrency {
 			d.concurrency--
-			d.m.Unlock()
+			d.mu.Unlock()
 			d.chunkCh <- *ch
 			return 0, errCancelConcurrency
 		}
-		d.m.Unlock()
+		d.mu.Unlock()
 		if int64(ch.id) != atomic.LoadInt64(&d.readingID) { //正在被读取的优先重试
-			d.m2.Lock()
-			defer d.m2.Unlock()
+			d.delayMu.Lock()
+			defer d.delayMu.Unlock()
 			if !d.delay(time.Millisecond * time.Duration(rand.Uint32N(300)+200)) {
 				return 0, errCancelConcurrency
 			}
@@ -605,15 +620,7 @@ func (e *errNeedRetry) Unwrap() error {
 type multiReadCloser struct {
 	rPos   int //current reader position, start from 0
 	curBuf *buffer.PipeBuffer
-	finish finishBufFunc
-	utils.CloseFunc
-}
-
-type finishBufFunc func(id int) (isLast bool, buf *buffer.PipeBuffer)
-
-// newMultiReadCloser to save memory, we re-use limited Buf, and feed data to Read()
-func newMultiReadCloser(buf *buffer.PipeBuffer, c utils.CloseFunc, fb finishBufFunc) *multiReadCloser {
-	return &multiReadCloser{CloseFunc: c, finish: fb, curBuf: buf}
+	d      *downloader
 }
 
 func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
@@ -625,7 +632,7 @@ func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
 	if err == io.EOF {
 		log.Debugf("read_%d finished current buffer", mr.rPos)
 
-		isLast, next := mr.finish(mr.rPos)
+		isLast, next := mr.d.finishBuf(mr.rPos, mr.curBuf)
 		if isLast {
 			return n, io.EOF
 		}
@@ -634,4 +641,8 @@ func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
 		return n, nil
 	}
 	return n, err
+}
+
+func (mr *multiReadCloser) Close() error {
+	return mr.d.interrupt()
 }
