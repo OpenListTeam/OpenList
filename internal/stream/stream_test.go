@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -177,7 +176,7 @@ func TestStreamSectionReader(t *testing.T) {
 		}
 		if i == 0 {
 			prevMinFreeMemory := conf.MinFreeMemory
-			conf.MinFreeMemory = math.MaxUint64 // 强制使用文件缓存
+			conf.MinFreeMemory = 0 // 强制使用文件缓存
 			t.Cleanup(func() {
 				conf.MinFreeMemory = prevMinFreeMemory
 			})

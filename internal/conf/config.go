@@ -179,7 +179,6 @@ func DefaultConfig(dataDir string) *Config {
 				},
 			},
 		},
-		MaxBlockLimit:         -1,
 		CacheThreshold:        4,
 		MaxConnections:        0,
 		MaxConcurrency:        64,

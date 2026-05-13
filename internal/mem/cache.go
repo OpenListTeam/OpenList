@@ -180,7 +180,7 @@ func (hc *HybridCache) CopyFromN(src io.Reader, n int64) (written int64, err err
 func NewHybridCache(blockSize, maxMemorySize uint64) (*HybridCache, error) {
 	var err error
 	var hc *HybridCache
-	if conf.CacheThreshold > 0 && maxMemorySize >= blockSize {
+	if conf.MinFreeMemory > 0 && maxMemorySize >= blockSize {
 		var m LinearMemory
 		m, err = NewGuardedMemory(blockSize, maxMemorySize)
 		if err == nil {
