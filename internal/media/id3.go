@@ -18,6 +18,7 @@ type MusicTag struct {
 	Genre       string // TCON
 	CoverData   []byte // 封面图片原始字节（APIC / PICTURE）
 	CoverMIME   string // 封面图片 MIME 类型（如 image/jpeg）
+	Lyrics      string // 歌词内容（LRC 文本或纯文本）：来自 USLT / SYLT / Vorbis LYRICS
 }
 
 // ParseID3v2 从 io.Reader 中解析 ID3v2 标签（只读取文件头部，不需要 Seek）
@@ -112,9 +113,166 @@ func ParseID3v2(r io.Reader) (*MusicTag, error) {
 		if frameID == "APIC" && tag.CoverData == nil && len(frameData) > 1 {
 			tag.CoverData, tag.CoverMIME = parseAPICFrame(frameData)
 		}
+
+		// 解析 USLT 帧（非同步歌词）
+		// 格式：编码字节(1) + 语言(3字节 ASCII) + 描述字符串(null 结尾) + 歌词文本
+		if frameID == "USLT" && tag.Lyrics == "" && len(frameData) > 5 {
+			tag.Lyrics = parseUSLTFrame(frameData)
+		}
+
+		// 解析 SYLT 帧（同步歌词，二进制时间戳格式），仅在没有 USLT 时尝试转 LRC
+		if frameID == "SYLT" && tag.Lyrics == "" && len(frameData) > 6 {
+			if lrc := parseSYLTFrame(frameData); lrc != "" {
+				tag.Lyrics = lrc
+			}
+		}
 	}
 
 	return tag, nil
+}
+
+// parseUSLTFrame 解析 ID3v2 USLT 帧（非同步歌词）
+// 格式：编码字节(1) + 语言(3字节 ASCII) + 描述字符串(null 结尾) + 歌词文本
+func parseUSLTFrame(data []byte) string {
+	if len(data) < 5 {
+		return ""
+	}
+	encoding := data[0]
+	// 跳过编码(1) + 语言(3) = 4 字节
+	pos := 4
+
+	// 跳过描述字符串
+	if encoding == 0x01 || encoding == 0x02 {
+		// UTF-16：找 \x00\x00 结尾
+		for pos+1 < len(data) {
+			if data[pos] == 0 && data[pos+1] == 0 {
+				pos += 2
+				break
+			}
+			pos += 2
+		}
+	} else {
+		// ISO-8859-1 / UTF-8：找单个 \x00 结尾
+		for pos < len(data) {
+			if data[pos] == 0 {
+				pos++
+				break
+			}
+			pos++
+		}
+	}
+
+	if pos >= len(data) {
+		return ""
+	}
+
+	// 剩余字节就是歌词文本，按编码解码（复用 decodeID3Text 但需要把 encoding 字节加回头部）
+	lyricsRaw := make([]byte, 1+len(data)-pos)
+	lyricsRaw[0] = encoding
+	copy(lyricsRaw[1:], data[pos:])
+	return strings.TrimSpace(decodeID3Text(lyricsRaw))
+}
+
+// parseSYLTFrame 解析 ID3v2 SYLT 帧（同步歌词），转换为 LRC 格式
+// 格式：编码(1) + 语言(3) + 时间戳格式(1) + 内容类型(1) + 描述(null 结尾) + 多组 (歌词文本 + null + 4字节时间戳)
+// 时间戳格式：1=MPEG帧数（不支持），2=毫秒
+func parseSYLTFrame(data []byte) string {
+	if len(data) < 6 {
+		return ""
+	}
+	encoding := data[0]
+	timestampFormat := data[4] // 1=MPEG帧, 2=ms
+	if timestampFormat != 2 {
+		return "" // 只支持毫秒时间戳
+	}
+	pos := 6 // 跳过 encoding(1) + lang(3) + timestamp_fmt(1) + content_type(1)
+
+	// 跳过描述字符串
+	if encoding == 0x01 || encoding == 0x02 {
+		for pos+1 < len(data) {
+			if data[pos] == 0 && data[pos+1] == 0 {
+				pos += 2
+				break
+			}
+			pos += 2
+		}
+	} else {
+		for pos < len(data) {
+			if data[pos] == 0 {
+				pos++
+				break
+			}
+			pos++
+		}
+	}
+
+	var sb strings.Builder
+	wide := encoding == 0x01 || encoding == 0x02
+	for pos < len(data) {
+		// 找文本终止符
+		textStart := pos
+		textEnd := -1
+		if wide {
+			for i := pos; i+1 < len(data); i += 2 {
+				if data[i] == 0 && data[i+1] == 0 {
+					textEnd = i
+					break
+				}
+			}
+		} else {
+			for i := pos; i < len(data); i++ {
+				if data[i] == 0 {
+					textEnd = i
+					break
+				}
+			}
+		}
+		if textEnd < 0 {
+			break
+		}
+		// 解码歌词文本
+		lineRaw := make([]byte, 1+textEnd-textStart)
+		lineRaw[0] = encoding
+		copy(lineRaw[1:], data[textStart:textEnd])
+		lineText := decodeID3Text(lineRaw)
+
+		// 跳过文本终止符
+		if wide {
+			pos = textEnd + 2
+		} else {
+			pos = textEnd + 1
+		}
+		// 4 字节时间戳（毫秒）
+		if pos+4 > len(data) {
+			break
+		}
+		ms := int(binary.BigEndian.Uint32(data[pos : pos+4]))
+		pos += 4
+
+		minutes := ms / 60000
+		seconds := (ms % 60000) / 1000
+		cs := (ms % 1000) / 10
+		// LRC 标准格式 [mm:ss.xx]
+		sb.WriteString("[")
+		if minutes < 10 {
+			sb.WriteString("0")
+		}
+		sb.WriteString(strconv.Itoa(minutes))
+		sb.WriteString(":")
+		if seconds < 10 {
+			sb.WriteString("0")
+		}
+		sb.WriteString(strconv.Itoa(seconds))
+		sb.WriteString(".")
+		if cs < 10 {
+			sb.WriteString("0")
+		}
+		sb.WriteString(strconv.Itoa(cs))
+		sb.WriteString("]")
+		sb.WriteString(lineText)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // parseAPICFrame 解析 ID3v2 APIC 帧，返回图片字节和 MIME 类型
@@ -493,6 +651,11 @@ func parseVorbisCommentData(data []byte) *MusicTag {
 			}
 		case "GENRE":
 			tag.Genre = value
+		case "LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS", "SYNCEDLYRICS", "SYNCED LYRICS":
+			// FLAC/Vorbis 内嵌歌词字段（不同打标软件使用不同 key，全部兼容）
+			if tag.Lyrics == "" {
+				tag.Lyrics = value
+			}
 		}
 	}
 

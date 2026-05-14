@@ -89,14 +89,15 @@ func (s *DoubanScraper) ScrapeBook(item *model.MediaItem) error {
 		return fmt.Errorf("豆瓣获取书籍详情失败: %w", err)
 	}
 
-	// 填充字段
-	if bookDetail.Title != "" {
+	// 填充字段（仅填空字段，已有值不覆盖）
+	if item.ScrapedName == "" && bookDetail.Title != "" {
 		item.ScrapedName = bookDetail.Title
 	}
-	item.Plot = bookDetail.Description
-	// 仅在豆瓣返回了有效封面图片URL时才覆盖本地封面
-	// 下载封面图片并根据 ThumbnailMode 存储，避免豆瓣防盗链导致前端无法显示
-	if bookDetail.Cover != "" {
+	if item.Plot == "" {
+		item.Plot = bookDetail.Description
+	}
+	// 仅在豆瓣返回了有效封面图片URL且当前 item 还没有封面时才下载/覆盖
+	if item.Cover == "" && bookDetail.Cover != "" {
 		if cover := s.downloadAndStoreCover(item.FolderPath, bookDetail.Cover); cover != "" {
 			item.Cover = cover
 		} else {
@@ -104,17 +105,27 @@ func (s *DoubanScraper) ScrapeBook(item *model.MediaItem) error {
 			item.Cover = bookDetail.Cover
 		}
 	}
-	item.Rating = bookDetail.Rating
-	item.ReleaseDate = bookDetail.PublishedDate
-	item.Publisher = bookDetail.Publisher
-	item.ISBN = bookDetail.ISBN
-	item.ExternalID = "douban:" + bookDetail.ID
+	if item.Rating == 0 {
+		item.Rating = bookDetail.Rating
+	}
+	if item.ReleaseDate == "" {
+		item.ReleaseDate = bookDetail.PublishedDate
+	}
+	if item.Publisher == "" {
+		item.Publisher = bookDetail.Publisher
+	}
+	if item.ISBN == "" {
+		item.ISBN = bookDetail.ISBN
+	}
+	if item.ExternalID == "" {
+		item.ExternalID = "douban:" + bookDetail.ID
+	}
 
-	if len(bookDetail.Authors) > 0 {
+	if item.Authors == "" && len(bookDetail.Authors) > 0 {
 		authorsJSON, _ := json.Marshal(bookDetail.Authors)
 		item.Authors = string(authorsJSON)
 	}
-	if len(bookDetail.Tags) > 0 {
+	if item.Genre == "" && len(bookDetail.Tags) > 0 {
 		item.Genre = strings.Join(bookDetail.Tags, ",")
 	}
 

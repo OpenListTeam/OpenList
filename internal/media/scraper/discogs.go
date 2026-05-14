@@ -269,9 +269,15 @@ func (s *DiscogsScraper) ScrapeMusic(item *model.MediaItem) error {
 		}
 	}
 
-	item.Rating = detail.Community.Rating.Average
-	item.Plot = detail.Notes
-	item.ExternalID = fmt.Sprintf("discogs:%d", detail.ID)
+	if item.Rating == 0 {
+		item.Rating = detail.Community.Rating.Average
+	}
+	if item.Plot == "" {
+		item.Plot = detail.Notes
+	}
+	if item.ExternalID == "" {
+		item.ExternalID = fmt.Sprintf("discogs:%d", detail.ID)
+	}
 
 	// 封面（存储 URL，前端直接展示）
 	if item.Cover == "" {

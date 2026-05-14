@@ -257,6 +257,7 @@ func ClearMediaScrapedData(mediaType model.MediaType) (int64, error) {
 		"album_artist": "",
 		"publisher":    "",
 		"isbn":         "",
+		"lyrics":       "",
 		"scraped_at":   nil,
 	}
 	result := tx.Updates(updates)

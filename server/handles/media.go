@@ -513,6 +513,12 @@ func StartMediaScrape(c *gin.Context) {
 					s := scraper.NewTMDBScraper(tmdbKey, tmdbAPIURL)
 					scrapeErr = s.ScrapeVideo(item)
 				case model.MediaTypeMusic:
+					// 音乐：刮削前先用文件本身的 ID3/Vorbis tag + .lrc 做本地兜底，
+					// 仅填空字段；这样用户清空刮削后重新刮削也能恢复封面/歌词等。
+					localCtx, localCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					media.FillMusicFromLocal(localCtx, item)
+					localCancel()
+
 					s := scraper.NewDiscogsScraper(discogsToken, discogsAPIURL)
 					scrapeErr = s.ScrapeMusic(item)
 				case model.MediaTypeBook:
@@ -563,6 +569,12 @@ func StartMediaScrape(c *gin.Context) {
 
 				if scrapeErr != nil {
 					log.Warnf("刮削失败 [%s] %s: %v", req.MediaType, item.FolderPath, scrapeErr)
+					// 即使远端刮削失败，只要本地兜底已经写入了任意有效字段，
+					// 也保存一次（不标记 ScrapedAt，便于下次还能重试），
+					// 避免 cover/lyrics 等被丢弃。
+					if hasAnyScrapedField(item) {
+						saveCh <- item
+					}
 					continue
 				}
 				now := time.Now()
@@ -589,6 +601,26 @@ func StartMediaScrape(c *gin.Context) {
 
 	_ = cfg
 	common.SuccessResp(c)
+}
+
+// hasAnyScrapedField 判断 item 是否已经有任意一个有意义的刮削字段被填充
+// 用于：远端刮削失败但本地兜底已经写入了内容时，仍然落库保留这些信息
+func hasAnyScrapedField(item *model.MediaItem) bool {
+	if item == nil {
+		return false
+	}
+	return item.Cover != "" ||
+		item.Lyrics != "" ||
+		item.Description != "" ||
+		item.Plot != "" ||
+		item.Genre != "" ||
+		item.Authors != "" ||
+		item.AlbumArtist != "" ||
+		item.ReleaseDate != "" ||
+		item.Rating > 0 ||
+		item.Publisher != "" ||
+		item.ISBN != "" ||
+		item.ExternalID != ""
 }
 
 // ==================== 公开API（前端媒体库浏览） ====================

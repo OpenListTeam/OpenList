@@ -369,6 +369,9 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 				episodesJSON = string(b)
 			}
 
+			// 加载歌词：同目录同名 .lrc 优先，其次内嵌歌词
+			lyrics := loadLyricsForMusic(ctx, firstFile, tag)
+
 			item := &model.MediaItem{
 				MediaType:   sp.MediaType,
 				ScanPathID:  sp.ID,
@@ -382,6 +385,7 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 				ReleaseDate: releaseDate,
 				Genre:       genre,
 				Authors:     authors,
+				Lyrics:      lyrics,
 				Episodes:    episodesJSON,
 			}
 
@@ -445,6 +449,9 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 				}
 			}
 
+			// 加载歌词：同目录同名 .lrc 优先，其次内嵌歌词
+			lyrics := loadLyricsForMusic(ctx, target, tag)
+
 			item := &model.MediaItem{
 				MediaType:   sp.MediaType,
 				ScanPathID:  sp.ID,
@@ -461,6 +468,7 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 				Genre:       genre,
 				Authors:     authors,
 				TrackNumber: trackNumber,
+				Lyrics:      lyrics,
 			}
 
 			if err := db.CreateOrUpdateMediaItem(item); err != nil {
@@ -474,6 +482,44 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 		p.mu.Unlock()
 	}
 	return nil
+}
+
+// loadLyricsForMusic 为音乐文件加载歌词：
+//   1) 优先读取同目录同名 .lrc 文件（如 song.mp3 → song.lrc）
+//   2) 如果不存在，使用 tag 中的内嵌歌词（USLT / Vorbis LYRICS）
+//
+// musicVfsPath 为音乐文件的 VFS 全路径；tag 可为 nil
+func loadLyricsForMusic(ctx context.Context, musicVfsPath string, tag *MusicTag) string {
+	// 尝试同目录同名 .lrc
+	ext := stdpath.Ext(musicVfsPath)
+	if ext != "" {
+		lrcPath := strings.TrimSuffix(musicVfsPath, ext) + ".lrc"
+		lrcCtx, lrcCancel := context.WithTimeout(ctx, 8*time.Second)
+		reader := FetchFileReader(lrcCtx, lrcPath)
+		if reader != nil {
+			// 限制读取上限 1MB，避免异常文件压垮内存
+			data, err := io.ReadAll(io.LimitReader(reader, 1024*1024))
+			_ = reader.Close()
+			lrcCancel()
+			if err == nil && len(data) > 0 {
+				// 去掉可能的 UTF-8 BOM
+				if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+					data = data[3:]
+				}
+				s := strings.TrimSpace(string(data))
+				if s != "" {
+					return s
+				}
+			}
+		} else {
+			lrcCancel()
+		}
+	}
+	// 回退到内嵌歌词
+	if tag != nil && tag.Lyrics != "" {
+		return tag.Lyrics
+	}
+	return ""
 }
 
 // FetchFileReader 通过 VFS 路径获取文件内容流（用于刮削器读取文件内容）

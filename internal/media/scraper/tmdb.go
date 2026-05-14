@@ -594,44 +594,60 @@ func (s *TMDBScraper) ScrapeVideo(item *model.MediaItem) error {
 		return fmt.Errorf("TMDB详情解析失败: %w", err)
 	}
 
-	// 填充字段
+	// 填充字段（仅填空字段，已有值不覆盖；ScrapedAt 由调用方统一设置）
 	title := detail.Title
 	if title == "" {
 		title = first.Name
 	}
-	item.ScrapedName = title
-	item.Plot = detail.Overview
-	item.Rating = detail.VoteAverage
-	item.ExternalID = fmt.Sprintf("tmdb:%d", detail.ID)
-	item.VideoType = mediaType
+	if item.ScrapedName == "" {
+		item.ScrapedName = title
+	}
+	if item.Plot == "" {
+		item.Plot = detail.Overview
+	}
+	if item.Rating == 0 {
+		item.Rating = detail.VoteAverage
+	}
+	if item.ExternalID == "" {
+		item.ExternalID = fmt.Sprintf("tmdb:%d", detail.ID)
+	}
+	if item.VideoType == "" {
+		item.VideoType = mediaType
+	}
 
 	releaseDate := detail.ReleaseDate
 	if releaseDate == "" {
 		releaseDate = first.FirstAirDate
 	}
-	item.ReleaseDate = releaseDate
+	if item.ReleaseDate == "" {
+		item.ReleaseDate = releaseDate
+	}
 
-	if detail.PosterPath != "" {
+	if item.Cover == "" && detail.PosterPath != "" {
 		item.Cover = tmdbImageBase + detail.PosterPath
 	}
 
 	// 类型
-	genres := make([]string, 0, len(detail.Genres))
-	for _, g := range detail.Genres {
-		genres = append(genres, g.Name)
+	if item.Genre == "" {
+		genres := make([]string, 0, len(detail.Genres))
+		for _, g := range detail.Genres {
+			genres = append(genres, g.Name)
+		}
+		item.Genre = strings.Join(genres, ",")
 	}
-	item.Genre = strings.Join(genres, ",")
 
 	// 演员（取前10个）
-	actors := make([]string, 0)
-	for i, cast := range detail.Credits.Cast {
-		if i >= 10 {
-			break
+	if item.Authors == "" {
+		actors := make([]string, 0)
+		for i, cast := range detail.Credits.Cast {
+			if i >= 10 {
+				break
+			}
+			actors = append(actors, cast.Name)
 		}
-		actors = append(actors, cast.Name)
+		authorsJSON, _ := json.Marshal(actors)
+		item.Authors = string(authorsJSON)
 	}
-	authorsJSON, _ := json.Marshal(actors)
-	item.Authors = string(authorsJSON)
 
 	now := time.Now()
 	item.ScrapedAt = &now
