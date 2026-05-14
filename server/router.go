@@ -203,6 +203,9 @@ func admin(g *gin.RouterGroup) {
 	mediaAdmin.POST("/scan_paths/update", handles.UpdateMediaScanPath)
 	mediaAdmin.POST("/scan_paths/delete", handles.DeleteMediaScanPath)
 	mediaAdmin.POST("/scan_paths/clear", handles.ClearMediaScanPathDB)
+	// 导入 / 导出
+	mediaAdmin.GET("/export", handles.ExportMediaDB)
+	mediaAdmin.POST("/import", handles.ImportMediaDB)
 }
 
 func fsAndShare(g *gin.RouterGroup) {

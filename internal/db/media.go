@@ -3,6 +3,7 @@ package db
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"gorm.io/gorm"
@@ -386,4 +387,124 @@ func GetUnscrappedItems(mediaType model.MediaType, limit int) ([]model.MediaItem
 		Limit(limit).
 		Find(&items).Error
 	return items, err
+}
+
+// ==================== 导入/导出 ====================
+
+// ListAllMediaItems 列出指定媒体类型下的所有条目（不分页，用于导出）
+// mediaType 为空时返回全部类型的所有条目
+func ListAllMediaItems(mediaType model.MediaType) ([]model.MediaItem, error) {
+	var items []model.MediaItem
+	tx := db.Model(&model.MediaItem{})
+	if mediaType != "" {
+		tx = tx.Where("media_type = ?", mediaType)
+	}
+	err := tx.Order("id asc").Find(&items).Error
+	return items, err
+}
+
+// ListMediaItemsByScanPath 列出指定扫描路径下的所有条目（不分页，用于导出）
+func ListMediaItemsByScanPath(scanPathID uint) ([]model.MediaItem, error) {
+	var items []model.MediaItem
+	err := db.Where("scan_path_id = ?", scanPathID).Order("id asc").Find(&items).Error
+	return items, err
+}
+
+// ListAllMediaScanPaths 列出所有扫描路径（不区分类型，用于全量导出）
+func ListAllMediaScanPaths() ([]model.MediaScanPath, error) {
+	var paths []model.MediaScanPath
+	err := db.Order("id asc").Find(&paths).Error
+	return paths, err
+}
+
+// ImportMediaItems 批量导入媒体条目
+// 策略：按 (folder_path, file_name, album_name) 唯一键 upsert：
+//   - 已存在则覆盖刮削字段（导入是用户主动行为，覆盖优先于保留）
+//   - 不存在则新建
+//
+// 注意：导入数据中的 ID/CreatedAt/UpdatedAt 会被忽略，由数据库重新分配，
+// 避免和现有记录的主键冲突。
+func ImportMediaItems(items []model.MediaItem, scanPathIDOverride *uint) (created, updated int, err error) {
+	for i := range items {
+		it := items[i]
+		// 清空主键和时间戳，让数据库重新生成
+		it.ID = 0
+		it.CreatedAt = time.Time{}
+		it.UpdatedAt = time.Time{}
+		it.DeletedAt = gorm.DeletedAt{}
+		// 如果指定了覆盖的 scan_path_id（按扫描路径导入场景），则强制覆盖
+		if scanPathIDOverride != nil {
+			it.ScanPathID = *scanPathIDOverride
+		}
+
+		var existing model.MediaItem
+		result := db.Unscoped().Where(
+			"folder_path = ? AND file_name = ? AND album_name = ?",
+			it.FolderPath, it.FileName, it.AlbumName,
+		).First(&existing)
+		if result.Error == gorm.ErrRecordNotFound {
+			if e := db.Create(&it).Error; e != nil {
+				return created, updated, e
+			}
+			created++
+			continue
+		}
+		if result.Error != nil {
+			return created, updated, result.Error
+		}
+		// 覆盖更新
+		it.ID = existing.ID
+		it.CreatedAt = existing.CreatedAt
+		it.DeletedAt = gorm.DeletedAt{}
+		if e := db.Unscoped().Save(&it).Error; e != nil {
+			return created, updated, e
+		}
+		updated++
+	}
+	return created, updated, nil
+}
+
+// ImportMediaScanPaths 批量导入扫描路径
+// 策略：按 (media_type, path) 唯一对去重：
+//   - 已存在则更新名称/标签等可编辑字段
+//   - 不存在则新建并返回新ID
+//
+// 返回值 idMap：导入数据中的原始ID -> 数据库实际ID 的映射，
+// 供随后的 MediaItem 导入用于把 scan_path_id 重新指向新ID。
+func ImportMediaScanPaths(paths []model.MediaScanPath) (idMap map[uint]uint, created, updated int, err error) {
+	idMap = make(map[uint]uint, len(paths))
+	for i := range paths {
+		p := paths[i]
+		originalID := p.ID
+		p.ID = 0
+		p.CreatedAt = time.Time{}
+		p.UpdatedAt = time.Time{}
+		p.DeletedAt = gorm.DeletedAt{}
+
+		var existing model.MediaScanPath
+		result := db.Where("media_type = ? AND path = ?", p.MediaType, p.Path).First(&existing)
+		if result.Error == gorm.ErrRecordNotFound {
+			if e := db.Create(&p).Error; e != nil {
+				return idMap, created, updated, e
+			}
+			idMap[originalID] = p.ID
+			created++
+			continue
+		}
+		if result.Error != nil {
+			return idMap, created, updated, result.Error
+		}
+		// 已存在：更新可编辑字段
+		existing.Name = p.Name
+		existing.PathMerge = p.PathMerge
+		existing.TypeTag = p.TypeTag
+		existing.ContentTags = p.ContentTags
+		existing.EnableScrape = p.EnableScrape
+		if e := db.Save(&existing).Error; e != nil {
+			return idMap, created, updated, e
+		}
+		idMap[originalID] = existing.ID
+		updated++
+	}
+	return idMap, created, updated, nil
 }

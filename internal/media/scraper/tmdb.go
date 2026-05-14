@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
@@ -18,6 +19,52 @@ var yearRegexp = regexp.MustCompile(`\b((?:19|20)\d{2})\b`)
 
 // chineseRegexp 匹配包含中文字符的片段
 var chineseRegexp = regexp.MustCompile(`[\p{Han}]`)
+
+// 噪声词正则：发布组、编码、分辨率、音轨等无意义片段
+// 清洗中文标题尾部常见的污染词
+var noiseTokenRegexp = regexp.MustCompile(`(?i)(双语字幕|中字|国英|国粤|粤语|国语|英语|日语|韩语|HDTV|HR-HDTV|BluRay|BDRip|WEB-?DL|HDRip|DVDRip|REMUX|x264|x265|h264|h265|HEVC|AVC|AAC|AC3|DTS|FLAC|10bit|8bit|HDR|SDR|4K|2160P|1080P|720P|480P|完整版|未删减版)`)
+
+// 中文数字到阿拉伯数字的简单映射，用于「钢铁侠三」=>「钢铁侠3」类的归一化
+var cnNumMap = map[string]string{
+	"〇": "0", "零": "0", "一": "1", "二": "2", "三": "3", "四": "4",
+	"五": "5", "六": "6", "七": "7", "八": "8", "九": "9", "十": "10",
+}
+
+// normalizeTitle 对标题做模糊匹配前的归一化处理
+// - 去除括号及其中内容
+// - 去除版本/编码等噪声词
+// - 合并多余空白
+func normalizeTitle(s string) string {
+	if s == "" {
+		return s
+	}
+	// 去掉中英文括号包裹的内容
+	bracketRe := regexp.MustCompile(`[\(（\[【][^\)）\]】]*[\)）\]】]`)
+	s = bracketRe.ReplaceAllString(s, " ")
+	// 去掉常见噪声词
+	s = noiseTokenRegexp.ReplaceAllString(s, " ")
+	// 替换分隔符为空格
+	s = strings.NewReplacer(".", " ", "_", " ", "-", " ", "+", " ").Replace(s)
+	// 合并多余空白
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+// cnNumToArabic 将标题中的中文数字归一化为阿拉伯数字（仅做轻量处理）
+func cnNumToArabic(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if v, ok := cnNumMap[string(r)]; ok {
+			b.WriteString(v)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // parsedVideoTitle 解析后的视频标题信息
 type parsedVideoTitle struct {
@@ -165,12 +212,31 @@ type tmdbMovieDetail struct {
 }
 
 // doTMDBSearch 执行一次TMDB搜索请求
-func (s *TMDBScraper) doTMDBSearch(query, year string) (*tmdbSearchResult, error) {
-	searchURL := fmt.Sprintf("%s/search/multi?api_key=%s&query=%s&language=zh-CN&search_type=ngram",
-		s.BaseURL, s.APIKey, url.QueryEscape(query))
-	if year != "" {
-		searchURL += "&year=" + year
+// endpoint 取值：multi / movie / tv
+// language 取值：zh-CN / en-US / 空（不传 language，TMDB 会按用户语言或英文）
+// 注意：search_type=ngram 是已废弃参数，不再使用；TMDB 默认即支持 substring 匹配
+func (s *TMDBScraper) doTMDBSearch(endpoint, query, year, language string) (*tmdbSearchResult, error) {
+	if endpoint == "" {
+		endpoint = "multi"
 	}
+	params := url.Values{}
+	params.Set("api_key", s.APIKey)
+	params.Set("query", query)
+	params.Set("include_adult", "true")
+	if language != "" {
+		params.Set("language", language)
+	}
+	if year != "" {
+		// movie 用 year / primary_release_year，tv 用 first_air_date_year
+		switch endpoint {
+		case "tv":
+			params.Set("first_air_date_year", year)
+		default:
+			params.Set("year", year)
+		}
+	}
+
+	searchURL := fmt.Sprintf("%s/search/%s?%s", s.BaseURL, endpoint, params.Encode())
 
 	resp, err := s.client.Get(searchURL)
 	if err != nil {
@@ -189,46 +255,117 @@ func (s *TMDBScraper) doTMDBSearch(query, year string) (*tmdbSearchResult, error
 		return nil, fmt.Errorf("TMDB搜索结果解析失败(status=%d, url=%s): %w, body=%s",
 			resp.StatusCode, searchURL, err, snippet)
 	}
+	// /search/multi 返回的结果带 media_type，/search/movie /search/tv 不带，需要补齐
+	if endpoint == "movie" || endpoint == "tv" {
+		for i := range result.Results {
+			if result.Results[i].MediaType == "" {
+				result.Results[i].MediaType = endpoint
+			}
+		}
+	}
 	return &result, nil
 }
 
-// searchWithFallback 带降级重试的TMDB搜索
-// 策略：
-//  1. 有中文标题时，先用中文标题 + 年份搜索，再用中文标题不带年份搜索
-//  2. 有英文标题时，用英文标题 + 年份搜索，再用英文标题不带年份搜索
-//  3. 全部搜索失败才返回错误
-func (s *TMDBScraper) searchWithFallback(parsed parsedVideoTitle) (*tmdbSearchResult, error) {
-	type searchAttempt struct {
-		query string
-		year  string
+// searchAttempt 单次搜索尝试参数
+type searchAttempt struct {
+	endpoint string // multi / movie / tv
+	query    string
+	year     string
+	language string
+}
+
+// buildTitleCandidates 根据原始标题构造一组候选搜索词（按优先级返回）
+// 候选包含：原始 -> 归一化 -> 阿拉伯数字归一化 -> 拆分子词
+func buildTitleCandidates(title string) []string {
+	if title == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
 	}
 
+	add(title)
+	norm := normalizeTitle(title)
+	add(norm)
+	add(cnNumToArabic(norm))
+
+	// 若中文标题里夹杂了空格分隔的多个词，把每个非短词单独作为候选
+	for _, w := range strings.Fields(norm) {
+		if utf8.RuneCountInString(w) >= 2 {
+			add(w)
+		}
+	}
+	return out
+}
+
+// searchWithFallback 带降级重试的TMDB搜索
+// 策略（按优先级，命中即停止）：
+//  1. 中文标题候选 × {带年份, 不带年份} × {movie, tv, multi} × language=zh-CN
+//  2. 英文标题候选 × {带年份, 不带年份} × {movie, tv, multi} × language=en-US
+//  3. 中文标题候选 × multi × 不指定 language（最后兜底）
+func (s *TMDBScraper) searchWithFallback(parsed parsedVideoTitle) (*tmdbSearchResult, error) {
 	var attempts []searchAttempt
 
-	// 中文标题优先
-	if parsed.ChineseTitle != "" {
-		if parsed.Year != "" {
-			attempts = append(attempts, searchAttempt{parsed.ChineseTitle, parsed.Year})
+	addGroup := func(title, lang string) {
+		if title == "" {
+			return
 		}
-		attempts = append(attempts, searchAttempt{parsed.ChineseTitle, ""})
+		cands := buildTitleCandidates(title)
+		// 同一个候选词，先尝试 movie + 年份，再 tv + 年份，再 movie 无年份，再 tv 无年份，最后 multi
+		for _, q := range cands {
+			if parsed.Year != "" {
+				attempts = append(attempts,
+					searchAttempt{"movie", q, parsed.Year, lang},
+					searchAttempt{"tv", q, parsed.Year, lang},
+				)
+			}
+			attempts = append(attempts,
+				searchAttempt{"movie", q, "", lang},
+				searchAttempt{"tv", q, "", lang},
+				searchAttempt{"multi", q, "", lang},
+			)
+		}
 	}
 
-	// 英文标题兜底
-	if parsed.EnglishTitle != "" {
-		if parsed.Year != "" {
-			attempts = append(attempts, searchAttempt{parsed.EnglishTitle, parsed.Year})
+	// 中文标题优先（zh-CN）
+	addGroup(parsed.ChineseTitle, "zh-CN")
+	// 英文标题兜底（en-US）
+	addGroup(parsed.EnglishTitle, "en-US")
+	// 最后再用中文标题不指定语言搜一次（兜底，TMDB 多语言别名匹配可能命中）
+	if parsed.ChineseTitle != "" {
+		for _, q := range buildTitleCandidates(parsed.ChineseTitle) {
+			attempts = append(attempts, searchAttempt{"multi", q, "", ""})
 		}
-		attempts = append(attempts, searchAttempt{parsed.EnglishTitle, ""})
 	}
 
 	if len(attempts) == 0 {
 		return nil, fmt.Errorf("无法从文件名中提取有效标题")
 	}
 
+	// 去重，避免重复请求
+	type key struct{ ep, q, y, l string }
+	done := make(map[key]bool)
+
+	var lastErr error
 	for _, attempt := range attempts {
-		result, err := s.doTMDBSearch(attempt.query, attempt.year)
+		k := key{attempt.endpoint, attempt.query, attempt.year, attempt.language}
+		if done[k] {
+			continue
+		}
+		done[k] = true
+
+		result, err := s.doTMDBSearch(attempt.endpoint, attempt.query, attempt.year, attempt.language)
 		if err != nil {
-			return nil, err
+			// 网络/解析错误不立即终止，记录后继续尝试下一个候选
+			lastErr = err
+			continue
 		}
 		if len(result.Results) > 0 {
 			return result, nil
@@ -239,6 +376,9 @@ func (s *TMDBScraper) searchWithFallback(parsed parsedVideoTitle) (*tmdbSearchRe
 	titleInfo := parsed.ChineseTitle
 	if titleInfo == "" {
 		titleInfo = parsed.EnglishTitle
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("TMDB未找到匹配结果: %s (last err: %v)", titleInfo, lastErr)
 	}
 	return nil, fmt.Errorf("TMDB未找到匹配结果: %s", titleInfo)
 }

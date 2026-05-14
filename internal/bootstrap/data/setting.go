@@ -250,7 +250,8 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.MediaDiscogsAPIURL, Value: "api.discogs.com", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE},
 		{Key: conf.MediaStoreThumbnail, Value: "false", Type: conf.TypeBool, Group: model.MEDIA, Flag: model.PRIVATE},
 		{Key: conf.MediaThumbnailMode, Value: "base64", Type: conf.TypeSelect, Options: "base64,local", Group: model.MEDIA, Flag: model.PRIVATE},
-		{Key: conf.MediaThumbnailPath, Value: "/.thumbnail", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE},
+		{Key: conf.MediaThumbnailPath, Value: "/imgs", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE},
+		{Key: conf.MediaScrapeConcurrency, Value: "5", Type: conf.TypeNumber, Group: model.MEDIA, Flag: model.PRIVATE},
 	}
 	additionalSettingItems := tool.Tools.Items()
 	// 固定顺序

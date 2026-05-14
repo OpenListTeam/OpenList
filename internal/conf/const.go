@@ -170,6 +170,7 @@ const (
 	MediaThumbnailMode    = "media_thumbnail_mode"
 	MediaThumbnailPath    = "media_thumbnail_path"
 	MediaStoreThumbnail   = "media_store_thumbnail"
+	MediaScrapeConcurrency = "media_scrape_concurrency"
 )
 
 const (

@@ -2,7 +2,10 @@ package handles
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -15,6 +18,10 @@ import (
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 )
+
+// scrapeConcurrency 刮削并发度（默认 5）
+// 走 setting 读取，未配置时使用 5；远端 API 调用密集型任务，并发 5 在限流与吞吐间较平衡。
+const defaultScrapeConcurrency = 5
 
 // ==================== 配置管理 ====================
 
@@ -376,7 +383,7 @@ func StartMediaScrape(c *gin.Context) {
 	discogsToken := setting.GetStr(conf.MediaDiscogsToken)
 	discogsAPIURL := setting.GetStr(conf.MediaDiscogsAPIURL, "https://api.discogs.com")
 	thumbnailMode := setting.GetStr(conf.MediaThumbnailMode, "base64")
-	thumbnailPath := setting.GetStr(conf.MediaThumbnailPath, "/.thumbnail")
+	thumbnailPath := setting.GetStr(conf.MediaThumbnailPath, "/imgs")
 	storeThumbnail := setting.GetBool(conf.MediaStoreThumbnail)
 
 	go func() {
@@ -396,76 +403,116 @@ func StartMediaScrape(c *gin.Context) {
 			}
 		}
 
-		for i := range items {
-			item := &items[i]
-			var scrapeErr error
+		// 读取并发度（默认5），并启动 worker pool
+		concurrency := setting.GetInt(conf.MediaScrapeConcurrency, defaultScrapeConcurrency)
+		if concurrency <= 0 {
+			concurrency = defaultScrapeConcurrency
+		}
+		if concurrency > len(items) && len(items) > 0 {
+			concurrency = len(items)
+		}
 
-			switch req.MediaType {
-			case model.MediaTypeVideo:
-				s := scraper.NewTMDBScraper(tmdbKey, tmdbAPIURL)
-				scrapeErr = s.ScrapeVideo(item)
-			case model.MediaTypeMusic:
-				s := scraper.NewDiscogsScraper(discogsToken, discogsAPIURL)
-				scrapeErr = s.ScrapeMusic(item)
-			case model.MediaTypeBook:
-				doubanScraper := scraper.NewDoubanScraperWithConfig(
-					thumbnailMode,
-					thumbnailPath,
-				)
-				doubanErr := doubanScraper.ScrapeBook(item)
-				if doubanErr != nil {
-					log.Debugf("豆瓣刮削失败 [%s/%s]: %v，将尝试本地提取封面", item.FolderPath, item.FileName, doubanErr)
+		var wg sync.WaitGroup
+		jobs := make(chan int, len(items))
+		// 落库串行化：所有 worker 把刮削成功的 item 推到 saveCh，由单协程负责落库，
+		// 这样既能并发抓 API、又避免多 goroutine 同时写 sqlite/mysql 引发锁竞争。
+		saveCh := make(chan *model.MediaItem, concurrency*2)
+		var saveWg sync.WaitGroup
+
+		// 单写入协程：刮一个写一个
+		saveWg.Add(1)
+		go func() {
+			defer saveWg.Done()
+			for it := range saveCh {
+				if err := db.UpdateMediaItem(it); err != nil {
+					log.Warnf("保存刮削结果失败 [id=%d, %s/%s]: %v", it.ID, it.FolderPath, it.FileName, err)
 				}
+			}
+		}()
 
-				if item.Cover == "" {
-					bookCtx, bookCancel := context.WithTimeout(context.Background(), 60*time.Second)
-					// 书籍文件路径 = folder_path + "/" + file_name
-					bookFilePath := item.FolderPath + "/" + item.FileName
-					bookReader := media.FetchFileReader(bookCtx, bookFilePath)
-					if bookReader != nil {
-						localScraper := scraper.NewBookLocalScraperWithConfig(
-							thumbnailMode,
-							thumbnailPath,
-						)
-						if localCover := localScraper.ExtractLocalCover(item.FileName, bookFilePath, bookReader); localCover != "" {
-							item.Cover = localCover
-						}
-						_ = bookReader.Close()
+		worker := func() {
+			defer wg.Done()
+			for idx := range jobs {
+				item := &items[idx]
+				var scrapeErr error
+
+				switch req.MediaType {
+				case model.MediaTypeVideo:
+					s := scraper.NewTMDBScraper(tmdbKey, tmdbAPIURL)
+					scrapeErr = s.ScrapeVideo(item)
+				case model.MediaTypeMusic:
+					s := scraper.NewDiscogsScraper(discogsToken, discogsAPIURL)
+					scrapeErr = s.ScrapeMusic(item)
+				case model.MediaTypeBook:
+					doubanScraper := scraper.NewDoubanScraperWithConfig(
+						thumbnailMode,
+						thumbnailPath,
+					)
+					doubanErr := doubanScraper.ScrapeBook(item)
+					if doubanErr != nil {
+						log.Debugf("豆瓣刮削失败 [%s/%s]: %v，将尝试本地提取封面", item.FolderPath, item.FileName, doubanErr)
 					}
-					bookCancel()
+
+					if item.Cover == "" {
+						bookCtx, bookCancel := context.WithTimeout(context.Background(), 60*time.Second)
+						bookFilePath := item.FolderPath + "/" + item.FileName
+						bookReader := media.FetchFileReader(bookCtx, bookFilePath)
+						if bookReader != nil {
+							localScraper := scraper.NewBookLocalScraperWithConfig(
+								thumbnailMode,
+								thumbnailPath,
+							)
+							if localCover := localScraper.ExtractLocalCover(item.FileName, bookFilePath, bookReader); localCover != "" {
+								item.Cover = localCover
+							}
+							_ = bookReader.Close()
+						}
+						bookCancel()
+					}
+
+					if doubanErr != nil && item.Cover == "" {
+						scrapeErr = doubanErr
+					}
+				case model.MediaTypeImage:
+					imgCtx, imgCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					imgFilePath := item.FolderPath + "/" + item.FileName
+					imgReader := media.FetchFileReader(imgCtx, imgFilePath)
+					s := scraper.NewImageScraperWithConfig(
+						storeThumbnail,
+						thumbnailMode,
+						thumbnailPath,
+					)
+					scrapeErr = s.ScrapeImage(item, imgReader)
+					if imgReader != nil {
+						_ = imgReader.Close()
+					}
+					imgCancel()
 				}
 
-				if doubanErr != nil && item.Cover == "" {
-					scrapeErr = doubanErr
+				if scrapeErr != nil {
+					log.Warnf("刮削失败 [%s] %s: %v", req.MediaType, item.FolderPath, scrapeErr)
+					continue
 				}
-			case model.MediaTypeImage:
-				imgCtx, imgCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				// 图片文件路径 = folder_path + "/" + file_name
-				imgFilePath := item.FolderPath + "/" + item.FileName
-				imgReader := media.FetchFileReader(imgCtx, imgFilePath)
-				s := scraper.NewImageScraperWithConfig(
-					storeThumbnail,
-					thumbnailMode,
-					thumbnailPath,
-				)
-				scrapeErr = s.ScrapeImage(item, imgReader)
-				if imgReader != nil {
-					_ = imgReader.Close()
-				}
-				imgCancel()
-			}
-
-			if scrapeErr != nil {
-				log.Warnf("刮削失败 [%s] %s: %v", req.MediaType, item.FolderPath, scrapeErr)
-				continue
-			}
-			now := time.Now()
-			item.ScrapedAt = &now
-			if err := db.UpdateMediaItem(item); err != nil {
-				log.Warnf("保存刮削结果失败 [id=%d, %s/%s]: %v", item.ID, item.FolderPath, item.FileName, err)
+				now := time.Now()
+				item.ScrapedAt = &now
+				saveCh <- item
 			}
 		}
-		log.Infof("刮削完成 [%s]，共处理 %d 条", req.MediaType, len(items))
+
+		for i := 0; i < concurrency; i++ {
+			wg.Add(1)
+			go worker()
+		}
+
+		for i := range items {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
+		close(saveCh)
+		saveWg.Wait()
+
+		log.Infof("刮削完成 [%s]，共处理 %d 条（并发=%d）", req.MediaType, len(items), concurrency)
 	}()
 
 	_ = cfg
@@ -605,4 +652,199 @@ func PublicListScanPaths(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c, paths)
+}
+
+// ==================== 导入 / 导出 ====================
+
+// MediaExportData 导出数据结构
+// 包含版本号便于后续兼容性升级；导出粒度由 scope 字段说明：
+//   - "all"        ：所有类型的全部数据
+//   - "media_type" ：单个媒体类型（video/music/image/book）的全部数据
+//   - "scan_path"  ：单个扫描路径下的数据（仅 1 个路径 + 该路径下的条目）
+type MediaExportData struct {
+	Version   int                    `json:"version"`
+	ExportAt  time.Time              `json:"export_at"`
+	Scope     string                 `json:"scope"`
+	MediaType model.MediaType        `json:"media_type,omitempty"`
+	ScanPaths []model.MediaScanPath  `json:"scan_paths"`
+	Items     []model.MediaItem      `json:"items"`
+}
+
+const mediaExportVersion = 1
+
+// ExportMediaDB 导出媒体数据
+// query: media_type（可选，为空表示全部类型）, scan_path_id（可选，单路径导出）
+// 返回 JSON 文件下载流
+func ExportMediaDB(c *gin.Context) {
+	mediaType := model.MediaType(c.Query("media_type"))
+	scanPathIDStr := c.Query("scan_path_id")
+
+	export := MediaExportData{
+		Version:  mediaExportVersion,
+		ExportAt: time.Now(),
+	}
+
+	if scanPathIDStr != "" {
+		// 按扫描路径导出
+		id, err := strconv.ParseUint(scanPathIDStr, 10, 64)
+		if err != nil {
+			common.ErrorStrResp(c, "无效的 scan_path_id", 400)
+			return
+		}
+		sp, err := db.GetMediaScanPath(uint(id))
+		if err != nil {
+			common.ErrorResp(c, err, 404)
+			return
+		}
+		items, err := db.ListMediaItemsByScanPath(uint(id))
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		export.Scope = "scan_path"
+		export.MediaType = sp.MediaType
+		export.ScanPaths = []model.MediaScanPath{*sp}
+		export.Items = items
+	} else if mediaType != "" {
+		// 按媒体类型导出
+		paths, err := db.ListMediaScanPaths(mediaType)
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		items, err := db.ListAllMediaItems(mediaType)
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		export.Scope = "media_type"
+		export.MediaType = mediaType
+		export.ScanPaths = paths
+		export.Items = items
+	} else {
+		// 全部导出
+		paths, err := db.ListAllMediaScanPaths()
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		items, err := db.ListAllMediaItems("")
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		export.Scope = "all"
+		export.ScanPaths = paths
+		export.Items = items
+	}
+
+	// 直接以 JSON 流下载
+	filename := buildExportFilename(export)
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(c.Writer).Encode(export); err != nil {
+		log.Errorf("导出媒体数据失败: %v", err)
+	}
+}
+
+// buildExportFilename 根据导出范围生成下载文件名
+func buildExportFilename(d MediaExportData) string {
+	ts := d.ExportAt.Format("20060102_150405")
+	switch d.Scope {
+	case "scan_path":
+		spName := ""
+		if len(d.ScanPaths) > 0 {
+			spName = d.ScanPaths[0].Name
+			if spName == "" {
+				spName = d.ScanPaths[0].Path
+			}
+		}
+		// 去掉路径中的斜杠等字符，避免文件名非法
+		safe := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(spName)
+		return "media_export_" + string(d.MediaType) + "_" + safe + "_" + ts + ".json"
+	case "media_type":
+		return "media_export_" + string(d.MediaType) + "_" + ts + ".json"
+	default:
+		return "media_export_all_" + ts + ".json"
+	}
+}
+
+// ImportMediaDB 导入媒体数据
+// 支持两种调用方式：
+//  1. multipart/form-data：file 字段携带导出生成的 JSON 文件
+//  2. application/json：直接 POST 整个 MediaExportData 结构
+//
+// 可选 query 参数 scan_path_id：当导入"scan_path"范围数据时，
+// 把所有条目重定向到该扫描路径ID（覆盖文件中原有的 scan_path_id）。
+func ImportMediaDB(c *gin.Context) {
+	var data MediaExportData
+
+	contentType := c.GetHeader("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		fileHeader, err := c.FormFile("file")
+		if err != nil {
+			common.ErrorStrResp(c, "缺少 file 文件参数", 400)
+			return
+		}
+		f, err := fileHeader.Open()
+		if err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+		defer f.Close()
+		if err := json.NewDecoder(f).Decode(&data); err != nil {
+			common.ErrorStrResp(c, "导入文件解析失败: "+err.Error(), 400)
+			return
+		}
+	} else {
+		if err := c.ShouldBindJSON(&data); err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+	}
+
+	if data.Version <= 0 || data.Version > mediaExportVersion {
+		common.ErrorStrResp(c, "不支持的导入文件版本", 400)
+		return
+	}
+
+	// 1) 先导入扫描路径，建立 oldID -> newID 的映射
+	idMap, spCreated, spUpdated, err := db.ImportMediaScanPaths(data.ScanPaths)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+
+	// 2) 再导入条目，根据 idMap 把 scan_path_id 重定向到新ID
+	// 修正每个条目的 scan_path_id：
+	//   - 如果 query 指定了 scan_path_id，全部覆盖为该值（按扫描路径重定向导入）
+	//   - 否则按 idMap 自动重定向；找不到映射的保留原值（通常发生在该路径未一并导入时）
+	scanPathIDStr := c.Query("scan_path_id")
+	var override *uint
+	if scanPathIDStr != "" {
+		if id, err := strconv.ParseUint(scanPathIDStr, 10, 64); err == nil {
+			v := uint(id)
+			override = &v
+		}
+	}
+	if override == nil {
+		for i := range data.Items {
+			if newID, ok := idMap[data.Items[i].ScanPathID]; ok {
+				data.Items[i].ScanPathID = newID
+			}
+		}
+	}
+
+	itemCreated, itemUpdated, err := db.ImportMediaItems(data.Items, override)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+
+	common.SuccessResp(c, gin.H{
+		"scan_paths_created": spCreated,
+		"scan_paths_updated": spUpdated,
+		"items_created":      itemCreated,
+		"items_updated":      itemUpdated,
+	})
 }
