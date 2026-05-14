@@ -133,6 +133,15 @@ func UpdateSharing(sharing *model.Sharing, skipMarshal ...bool) (err error) {
 	return db.UpdateSharing(sharing.SharingDB)
 }
 
+func UpdateSharingId(sharing *model.Sharing, newId string) error {
+	sharingCache.Del(sharing.ID)
+	if err := db.UpdateSharingId(sharing.ID, newId); err != nil {
+		return err
+	}
+	sharing.ID = newId
+	return nil
+}
+
 func DeleteSharing(sid string) error {
 	sharingCache.Del(sid)
 	return db.DeleteSharingById(sid)

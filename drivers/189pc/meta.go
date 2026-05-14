@@ -10,6 +10,7 @@ type Addition struct {
 	Username     string `json:"username" required:"true"`
 	Password     string `json:"password" required:"true"`
 	VCode        string `json:"validate_code"`
+	AccessToken  string `json:"access_token" required:"false"`
 	RefreshToken string `json:"refresh_token" help:"To switch accounts, please clear this field"`
 	driver.RootID
 	OrderBy        string `json:"order_by" type:"select" options:"filename,filesize,lastOpTime" default:"filename"`
