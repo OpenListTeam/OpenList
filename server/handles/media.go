@@ -462,7 +462,7 @@ func StartMediaScrape(c *gin.Context) {
 			now := time.Now()
 			item.ScrapedAt = &now
 			if err := db.UpdateMediaItem(item); err != nil {
-				log.Warnf("保存刮削结果失败 [%s]: %v", item.FolderPath, err)
+				log.Warnf("保存刮削结果失败 [id=%d, %s/%s]: %v", item.ID, item.FolderPath, item.FileName, err)
 			}
 		}
 		log.Infof("刮削完成 [%s]，共处理 %d 条", req.MediaType, len(items))

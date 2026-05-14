@@ -174,9 +174,13 @@ func GetMediaItemByFolderPath(folderPath string) (*model.MediaItem, error) {
 
 // CreateOrUpdateMediaItem 创建或更新媒体条目（按 folder_path + file_name + album_name 组合唯一）
 // 更新时保留已有的刮削数据，避免重新扫描时把已刮削的字段清空
+//
+// 注意：使用 Unscoped() 查询是为了把软删除残留记录也包含进来，
+// 否则唯一索引 idx_media_folder_file_album 会与软删除行冲突，
+// 导致新建条目时报 UNIQUE constraint failed。
 func CreateOrUpdateMediaItem(item *model.MediaItem) error {
 	var existing model.MediaItem
-	result := db.Where("folder_path = ? AND file_name = ? AND album_name = ?", item.FolderPath, item.FileName, item.AlbumName).First(&existing)
+	result := db.Unscoped().Where("folder_path = ? AND file_name = ? AND album_name = ?", item.FolderPath, item.FileName, item.AlbumName).First(&existing)
 	if result.Error == gorm.ErrRecordNotFound {
 		return db.Create(item).Error
 	}
@@ -185,6 +189,8 @@ func CreateOrUpdateMediaItem(item *model.MediaItem) error {
 	}
 	item.ID = existing.ID
 	item.CreatedAt = existing.CreatedAt
+	// 复用已有记录时清除软删除标记，确保该条目“恢复”为正常记录
+	item.DeletedAt = gorm.DeletedAt{}
 	// 如果已有刮削数据，保留刮削字段，防止重新扫描时覆盖刮削结果
 	if existing.ScrapedAt != nil {
 		item.ScrapedAt = existing.ScrapedAt
@@ -204,12 +210,13 @@ func CreateOrUpdateMediaItem(item *model.MediaItem) error {
 		item.ISBN = existing.ISBN
 		item.ExternalID = existing.ExternalID
 	}
-	return db.Save(item).Error
+	return db.Unscoped().Save(item).Error
 }
 
-// UpdateMediaItem 更新媒体条目（仅更新可编辑字段）
+// UpdateMediaItem 更新媒体条目
+// 使用 Unscoped 确保即使存在软删除标记也能正确更新（避免命中唯一索引但行不可见的诡异情况）。
 func UpdateMediaItem(item *model.MediaItem) error {
-	return db.Save(item).Error
+	return db.Unscoped().Save(item).Error
 }
 
 // DeleteMediaItem 硬删除媒体条目（真正从数据库删除）

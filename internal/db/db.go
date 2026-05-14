@@ -29,8 +29,13 @@ func migrateMediaItems() {
 	if !db.Migrator().HasTable("x_media_items") {
 		return
 	}
-	// 已迁移到新组合索引，跳过
+	// 已迁移到新组合索引
 	if db.Migrator().HasIndex("x_media_items", "idx_media_folder_file_album") {
+		// 清理掉之前软删除留下的脏数据，避免与组合唯一索引冲突
+		// （唯一索引在物理层不区分软删除，残留行会导致后续插入/更新报 UNIQUE constraint failed）
+		if err := db.Exec("DELETE FROM x_media_items WHERE deleted_at IS NOT NULL").Error; err != nil {
+			log.Warnf("media_items: 清理软删除残留数据失败: %v", err)
+		}
 		return
 	}
 	// 旧表存在但没有新组合索引，说明是旧版本数据，需要清空后重建
