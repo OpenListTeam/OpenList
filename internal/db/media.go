@@ -235,6 +235,55 @@ func ClearMediaItemsByScanPath(scanPathID uint) error {
 	return db.Unscoped().Where("scan_path_id = ?", scanPathID).Delete(&model.MediaItem{}).Error
 }
 
+// ClearMediaScrapedData 清空指定类型的所有刮削数据（保留扫描出的文件记录本身）
+// 仅清空刮削结果相关字段，不删除条目，便于重新刮削。
+// mediaType 为空时表示对所有类型生效。
+func ClearMediaScrapedData(mediaType model.MediaType) (int64, error) {
+	tx := db.Unscoped().Model(&model.MediaItem{})
+	if mediaType != "" {
+		tx = tx.Where("media_type = ?", mediaType)
+	}
+	updates := map[string]interface{}{
+		"scraped_name": "",
+		"description":  "",
+		"cover":        "",
+		"release_date": "",
+		"rating":       0,
+		"genre":        "",
+		"authors":      "",
+		"plot":         "",
+		"reviews":      "",
+		"external_id":  "",
+		"album_artist": "",
+		"publisher":    "",
+		"isbn":         "",
+		"scraped_at":   nil,
+	}
+	result := tx.Updates(updates)
+	return result.RowsAffected, result.Error
+}
+
+// ListAllValidMediaItemsForCheck 列出指定类型下所有未删除的媒体条目（仅取必要字段，用于失效检查）
+// mediaType 为空时返回所有类型条目。
+func ListAllValidMediaItemsForCheck(mediaType model.MediaType) ([]model.MediaItem, error) {
+	var items []model.MediaItem
+	tx := db.Model(&model.MediaItem{}).
+		Select("id, media_type, scan_path_id, file_name, folder_path, is_folder")
+	if mediaType != "" {
+		tx = tx.Where("media_type = ?", mediaType)
+	}
+	err := tx.Find(&items).Error
+	return items, err
+}
+
+// DeleteMediaItemsByIDs 按ID列表硬删除媒体条目
+func DeleteMediaItemsByIDs(ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return db.Unscoped().Where("id IN ?", ids).Delete(&model.MediaItem{}).Error
+}
+
 // ListAlbums 列出所有专辑（音乐专用）
 func ListAlbums(q MediaItemQuery) ([]AlbumInfo, int64, error) {
 	type albumRow struct {

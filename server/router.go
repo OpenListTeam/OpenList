@@ -197,6 +197,8 @@ func admin(g *gin.RouterGroup) {
 	mediaAdmin.GET("/scan/progress", handles.GetMediaScanProgress)
 	mediaAdmin.POST("/scrape/start", handles.StartMediaScrape)
 	mediaAdmin.POST("/clear", handles.ClearMediaDB)
+	mediaAdmin.POST("/clear_scrape", handles.ClearMediaScrape)
+	mediaAdmin.POST("/delete_invalid", handles.DeleteInvalidMedia)
 	// 扫描路径管理
 	mediaAdmin.GET("/scan_paths", handles.ListMediaScanPaths)
 	mediaAdmin.POST("/scan_paths/create", handles.CreateMediaScanPath)

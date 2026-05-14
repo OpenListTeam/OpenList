@@ -8,8 +8,11 @@ import (
 	"sync"
 	"time"
 
+	stdpath "path"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/media/scraper"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -304,6 +307,75 @@ func ClearMediaDB(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c)
+}
+
+// ClearMediaScrape 清空刮削数据（保留扫描记录，但清空所有刮削结果字段）
+// 参数：media_type 可选，留空表示所有类型；item_id 暂不支持（统一为类型/全部）
+func ClearMediaScrape(c *gin.Context) {
+	mediaType := model.MediaType(c.Query("media_type"))
+	affected, err := db.ClearMediaScrapedData(mediaType)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	// 同步清掉对应媒体配置中的最近刮削时间
+	if mediaType != "" {
+		if cfg, e := db.GetMediaConfig(mediaType); e == nil && cfg != nil {
+			cfg.LastScrapeAt = nil
+			_ = db.SaveMediaConfig(cfg)
+		}
+	} else {
+		if cfgs, e := db.GetAllMediaConfigs(); e == nil {
+			for i := range cfgs {
+				cfgs[i].LastScrapeAt = nil
+				_ = db.SaveMediaConfig(&cfgs[i])
+			}
+		}
+	}
+	common.SuccessResp(c, gin.H{"affected": affected})
+}
+
+// DeleteInvalidMedia 删除已失效的媒体条目（即对应文件 / 文件夹在存储中已不存在）
+// 参数：media_type 可选，留空表示扫描所有类型
+// 返回：检测总数、被删除条目数
+func DeleteInvalidMedia(c *gin.Context) {
+	mediaType := model.MediaType(c.Query("media_type"))
+
+	items, err := db.ListAllValidMediaItemsForCheck(mediaType)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	var invalidIDs []uint
+	for i := range items {
+		it := &items[i]
+		// 拼接文件 / 文件夹的完整 VFS 路径
+		// - 文件夹模式 (is_folder=true): folder_path 即文件夹自身（扫描根 + 文件夹名 视情况而定）；这里直接使用 folder_path/file_name
+		// - 普通文件: folder_path 是所在目录，file_name 是文件名
+		fullPath := stdpath.Join(it.FolderPath, it.FileName)
+		if fullPath == "" || fullPath == "/" {
+			continue
+		}
+		if _, gerr := fs.Get(ctx, fullPath, &fs.GetArgs{NoLog: true}); gerr != nil {
+			invalidIDs = append(invalidIDs, it.ID)
+		}
+	}
+
+	if len(invalidIDs) > 0 {
+		if err := db.DeleteMediaItemsByIDs(invalidIDs); err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+	}
+	log.Infof("删除已失效媒体条目：检测 %d 条，删除 %d 条 (media_type=%q)", len(items), len(invalidIDs), mediaType)
+	common.SuccessResp(c, gin.H{
+		"checked": len(items),
+		"deleted": len(invalidIDs),
+	})
 }
 
 // ==================== 扫描与刮削 ====================
