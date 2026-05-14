@@ -11,9 +11,12 @@ import (
 	"path/filepath"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/pkg/errors"
 )
 
 // slashClean is equivalent to but slightly more efficient than
@@ -26,6 +29,7 @@ func slashClean(name string) string {
 }
 
 // moveFiles moves files and/or directories from src to dst.
+// Individual item permission checks are skipped for performance reasons.
 //
 // See section 9.9.4 for when various HTTP status codes apply.
 func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int, err error) {
@@ -38,6 +42,17 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 		return http.StatusForbidden, nil
 	}
 	if srcName != dstName && !user.CanRename() {
+		return http.StatusForbidden, nil
+	}
+	srcMeta, err := op.GetNearestMeta(srcDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	dstMeta, err := op.GetNearestMeta(dstDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
 	if srcDir == dstDir {
@@ -59,10 +74,30 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 }
 
 // copyFiles copies files and/or directories from src to dst.
+// Individual item permission checks are skipped for performance reasons.
 //
 // See section 9.8.5 for when various HTTP status codes apply.
 func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int, err error) {
+	srcDir := path.Dir(src)
 	dstDir := path.Dir(dst)
+	user := ctx.Value(conf.UserKey).(*model.User)
+	if !user.CanCopy() {
+		return http.StatusForbidden, nil
+	}
+	srcMeta, err := op.GetNearestMeta(srcDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !common.CanRead(user, srcMeta, srcDir) {
+		return http.StatusForbidden, nil
+	}
+	dstMeta, err := op.GetNearestMeta(dstDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return http.StatusInternalServerError, err
+	}
+	if !common.CanWrite(user, dstMeta, dstDir) {
+		return http.StatusForbidden, nil
+	}
 	_, err = fs.Copy(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
 	if err != nil {
 		return http.StatusInternalServerError, err
