@@ -22,16 +22,25 @@ type DiscogsScraper struct {
 }
 
 // NewDiscogsScraper 创建Discogs刮削器
-// baseURL 为可自定义的 Discogs API 服务地址，为空时使用默认 https://api.discogs.com
+//
+// 用户只需填写「域名 + API 前缀」，例如：
+//  1. 留空：使用默认 https://api.discogs.com
+//  2. 官方：api.discogs.com                  -> https://api.discogs.com
+//  3. 反代：example.edgeone.run/api/discogs  -> https://example.edgeone.run/api/discogs
+//  4. 反代：example.edgeone.run/api/discogs/ -> https://example.edgeone.run/api/discogs（自动去尾斜杠）
+//
+// 后续会基于 BaseURL 直接拼接 /database/search、/releases/{id} 等具体路径。
 func NewDiscogsScraper(token string, baseURL string) *DiscogsScraper {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
 		base = discogsDefaultBaseURL
 	}
-	// 若用户填入的地址未带协议头，则自动补全为 https://
+	// 协议头容错：用户没填 http/https 时自动补 https://
 	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
 		base = "https://" + base
 	}
+	// 再次去掉末尾多余的 /，避免后续拼接出 //database/search 这类双斜杠
+	base = strings.TrimRight(base, "/")
 	return &DiscogsScraper{
 		Token:   token,
 		BaseURL: base,
