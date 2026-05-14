@@ -128,24 +128,24 @@ func Pluralize(count int, singular, plural string) string {
 	return plural
 }
 
-type ctx struct {
+type requestContext struct {
 	context.Context
 }
 
 // GinAppendValues 向当前请求上下文追加键值，提供类似 gin.Context Set/Get 的可变语义。
 // 同一请求内，已持有的上下文引用会同步看到后续更新。
 func GinAppendValues(c *gin.Context, keyAndValue ...any) {
-	reqCtx := c.Request.Context()
-	if v, ok := reqCtx.(*ctx); ok {
-		v.Context = ContentWithValue(v.Context, keyAndValue...)
+	ctx := c.Request.Context()
+	if r, ok := ctx.(*requestContext); ok {
+		r.Context = ContentWithValues(r.Context, keyAndValue...)
 		return
 	}
 	c.Request = c.Request.WithContext(
-		&ctx{ContentWithValue(reqCtx, keyAndValue...)},
+		&requestContext{ContentWithValues(ctx, keyAndValue...)},
 	)
 }
 
-func ContentWithValue(ctx context.Context, keyAndValue ...any) context.Context {
+func ContentWithValues(ctx context.Context, keyAndValue ...any) context.Context {
 	if len(keyAndValue) < 1 || len(keyAndValue)%2 != 0 {
 		panic("keyAndValue must be an even number of arguments (key, value, ...)")
 	}
