@@ -99,15 +99,28 @@ type TMDBScraper struct {
 }
 
 // NewTMDBScraper 创建TMDB刮削器
-// baseURL 为可自定义的 TMDB API 服务地址（不含版本路径），为空时使用默认 https://api.themoviedb.org
+// baseURL 为可自定义的 TMDB API 服务地址，为空时使用默认 https://api.themoviedb.org/3
+//
+// 支持的填写形式：
+//  1. 留空：使用默认 https://api.themoviedb.org/3
+//  2. 官方主域名（不带路径）：如 api.themoviedb.org / https://api.themoviedb.org，自动补全协议和 /3 版本路径
+//  3. 反代/自定义完整路径：如 https://eo-tmd.example.com/api/tmdb/3，会原样使用，不再追加 /3
 func NewTMDBScraper(apiKey string, baseURL string) *TMDBScraper {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
 		base = tmdbDefaultBaseURL
 	}
-	// 若用户填入的地址未带 /3 版本路径，则自动追加
-	if !strings.HasSuffix(base, "/3") {
-		base = base + "/3"
+	// 若用户填入的地址未带协议头，则自动补全为 https://
+	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		base = "https://" + base
+	}
+	// 仅当用户填写的是「裸主机名（不含自定义路径）」时，才自动追加 /3 版本路径
+	// 反代地址通常带有自定义前缀（如 /api/tmdb/3），不应再追加，否则会导致 404
+	if u, err := url.Parse(base); err == nil {
+		// Path 为空或仅根路径 "/" 时，认为用户没有填写自定义路径，自动补 /3
+		if u.Path == "" || u.Path == "/" {
+			base = strings.TrimRight(base, "/") + "/3"
+		}
 	}
 	return &TMDBScraper{
 		APIKey:  apiKey,
@@ -168,7 +181,13 @@ func (s *TMDBScraper) doTMDBSearch(query, year string) (*tmdbSearchResult, error
 	body, _ := io.ReadAll(resp.Body)
 	var result tmdbSearchResult
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("TMDB搜索结果解析失败: %w", err)
+		// 附带响应状态码和响应体片段，便于排查 API 地址错误、被代理拦截等问题
+		snippet := string(body)
+		if len(snippet) > 200 {
+			snippet = snippet[:200]
+		}
+		return nil, fmt.Errorf("TMDB搜索结果解析失败(status=%d, url=%s): %w, body=%s",
+			resp.StatusCode, searchURL, err, snippet)
 	}
 	return &result, nil
 }

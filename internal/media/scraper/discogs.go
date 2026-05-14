@@ -28,6 +28,10 @@ func NewDiscogsScraper(token string, baseURL string) *DiscogsScraper {
 	if base == "" {
 		base = discogsDefaultBaseURL
 	}
+	// 若用户填入的地址未带协议头，则自动补全为 https://
+	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		base = "https://" + base
+	}
 	return &DiscogsScraper{
 		Token:   token,
 		BaseURL: base,
