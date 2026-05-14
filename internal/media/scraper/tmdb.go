@@ -88,20 +88,31 @@ func parseVideoFileName(fileName string) parsedVideoTitle {
 	return result
 }
 
-const tmdbBaseURL = "https://api.themoviedb.org/3"
+const tmdbDefaultBaseURL = "https://api.themoviedb.org"
 const tmdbImageBase = "https://image.tmdb.org/t/p/w500"
 
 // TMDBScraper TMDB视频刮削器
 type TMDBScraper struct {
-	APIKey string
-	client *http.Client
+	APIKey  string
+	BaseURL string // 含 /3 版本路径的最终请求地址，例如 https://api.themoviedb.org/3
+	client  *http.Client
 }
 
 // NewTMDBScraper 创建TMDB刮削器
-func NewTMDBScraper(apiKey string) *TMDBScraper {
+// baseURL 为可自定义的 TMDB API 服务地址（不含版本路径），为空时使用默认 https://api.themoviedb.org
+func NewTMDBScraper(apiKey string, baseURL string) *TMDBScraper {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = tmdbDefaultBaseURL
+	}
+	// 若用户填入的地址未带 /3 版本路径，则自动追加
+	if !strings.HasSuffix(base, "/3") {
+		base = base + "/3"
+	}
 	return &TMDBScraper{
-		APIKey: apiKey,
-		client: &http.Client{Timeout: 15 * time.Second},
+		APIKey:  apiKey,
+		BaseURL: base,
+		client:  &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -143,7 +154,7 @@ type tmdbMovieDetail struct {
 // doTMDBSearch 执行一次TMDB搜索请求
 func (s *TMDBScraper) doTMDBSearch(query, year string) (*tmdbSearchResult, error) {
 	searchURL := fmt.Sprintf("%s/search/multi?api_key=%s&query=%s&language=zh-CN&search_type=ngram",
-		tmdbBaseURL, s.APIKey, url.QueryEscape(query))
+		s.BaseURL, s.APIKey, url.QueryEscape(query))
 	if year != "" {
 		searchURL += "&year=" + year
 	}
@@ -237,7 +248,7 @@ func (s *TMDBScraper) ScrapeVideo(item *model.MediaItem) error {
 
 	// 获取详情
 	detailURL := fmt.Sprintf("%s/%s/%d?api_key=%s&language=zh-CN&append_to_response=credits",
-		tmdbBaseURL, mediaType, first.ID, s.APIKey)
+		s.BaseURL, mediaType, first.ID, s.APIKey)
 
 	detailResp, err := s.client.Get(detailURL)
 	if err != nil {

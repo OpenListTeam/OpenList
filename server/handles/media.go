@@ -372,7 +372,9 @@ func StartMediaScrape(c *gin.Context) {
 
 	// 从系统设置中读取刮削配置
 	tmdbKey := setting.GetStr(conf.MediaTMDBKey)
+	tmdbAPIURL := setting.GetStr(conf.MediaTMDBAPIURL, "https://api.themoviedb.org")
 	discogsToken := setting.GetStr(conf.MediaDiscogsToken)
+	discogsAPIURL := setting.GetStr(conf.MediaDiscogsAPIURL, "https://api.discogs.com")
 	thumbnailMode := setting.GetStr(conf.MediaThumbnailMode, "base64")
 	thumbnailPath := setting.GetStr(conf.MediaThumbnailPath, "/.thumbnail")
 	storeThumbnail := setting.GetBool(conf.MediaStoreThumbnail)
@@ -400,10 +402,10 @@ func StartMediaScrape(c *gin.Context) {
 
 			switch req.MediaType {
 			case model.MediaTypeVideo:
-				s := scraper.NewTMDBScraper(tmdbKey)
+				s := scraper.NewTMDBScraper(tmdbKey, tmdbAPIURL)
 				scrapeErr = s.ScrapeVideo(item)
 			case model.MediaTypeMusic:
-				s := scraper.NewDiscogsScraper(discogsToken)
+				s := scraper.NewDiscogsScraper(discogsToken, discogsAPIURL)
 				scrapeErr = s.ScrapeMusic(item)
 			case model.MediaTypeBook:
 				doubanScraper := scraper.NewDoubanScraperWithConfig(

@@ -164,7 +164,9 @@ const (
 
 	// media
 	MediaTMDBKey          = "media_tmdb_key"
+	MediaTMDBAPIURL       = "media_tmdb_api_url"
 	MediaDiscogsToken     = "media_discogs_token"
+	MediaDiscogsAPIURL    = "media_discogs_api_url"
 	MediaThumbnailMode    = "media_thumbnail_mode"
 	MediaThumbnailPath    = "media_thumbnail_path"
 	MediaStoreThumbnail   = "media_store_thumbnail"

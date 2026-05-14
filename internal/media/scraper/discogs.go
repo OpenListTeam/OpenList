@@ -12,19 +12,26 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
-const discogsBaseURL = "https://api.discogs.com"
+const discogsDefaultBaseURL = "https://api.discogs.com"
 
 // DiscogsScraper Discogs音乐刮削器
 type DiscogsScraper struct {
-	Token  string
-	client *http.Client
+	Token   string
+	BaseURL string // 可自定义的 Discogs API 地址
+	client  *http.Client
 }
 
 // NewDiscogsScraper 创建Discogs刮削器
-func NewDiscogsScraper(token string) *DiscogsScraper {
+// baseURL 为可自定义的 Discogs API 服务地址，为空时使用默认 https://api.discogs.com
+func NewDiscogsScraper(token string, baseURL string) *DiscogsScraper {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = discogsDefaultBaseURL
+	}
 	return &DiscogsScraper{
-		Token:  token,
-		client: &http.Client{Timeout: 15 * time.Second},
+		Token:   token,
+		BaseURL: base,
+		client:  &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -121,7 +128,7 @@ func parseMusicFileName(fileName string) []string {
 // doDiscogsSearch 执行单次Discogs搜索
 func (s *DiscogsScraper) doDiscogsSearch(query string) (*discogsSearchResult, error) {
 	searchURL := fmt.Sprintf("%s/database/search?q=%s&type=release&token=%s",
-		discogsBaseURL, url.QueryEscape(query), s.Token)
+		s.BaseURL, url.QueryEscape(query), s.Token)
 
 	req, _ := http.NewRequest("GET", searchURL, nil)
 	req.Header.Set("User-Agent", "OpenList/4.0 +https://github.com/OpenListTeam/OpenList")
@@ -214,7 +221,7 @@ func (s *DiscogsScraper) ScrapeMusic(item *model.MediaItem) error {
 	first := searchResult.Results[0]
 
 	// 获取详情
-	detailURL := fmt.Sprintf("%s/releases/%d?token=%s", discogsBaseURL, first.ID, s.Token)
+	detailURL := fmt.Sprintf("%s/releases/%d?token=%s", s.BaseURL, first.ID, s.Token)
 	detailReq, _ := http.NewRequest("GET", detailURL, nil)
 	detailReq.Header.Set("User-Agent", "OpenList/4.0 +https://github.com/OpenListTeam/OpenList")
 

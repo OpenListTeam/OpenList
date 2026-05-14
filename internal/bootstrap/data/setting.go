@@ -245,7 +245,9 @@ func InitialSettings() []model.SettingItem {
 
 		// media settings
 		{Key: conf.MediaTMDBKey, Value: "", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE},
+		{Key: conf.MediaTMDBAPIURL, Value: "https://api.themoviedb.org", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE},
 		{Key: conf.MediaDiscogsToken, Value: "", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE},
+		{Key: conf.MediaDiscogsAPIURL, Value: "https://api.discogs.com", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE},
 		{Key: conf.MediaStoreThumbnail, Value: "false", Type: conf.TypeBool, Group: model.MEDIA, Flag: model.PRIVATE},
 		{Key: conf.MediaThumbnailMode, Value: "base64", Type: conf.TypeSelect, Options: "base64,local", Group: model.MEDIA, Flag: model.PRIVATE},
 		{Key: conf.MediaThumbnailPath, Value: "/.thumbnail", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE},
