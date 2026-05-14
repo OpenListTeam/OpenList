@@ -412,6 +412,8 @@ type UpdateSharingReq struct {
 	Remark      string     `json:"remark"`
 	Readme      string     `json:"readme"`
 	Header      string     `json:"header"`
+	Domain      string     `json:"domain"`
+	WebHosting  bool       `json:"web_hosting"`
 	model.Sort
 	CreatorName string `json:"creator"`
 	Accessed    int    `json:"accessed"`
@@ -470,6 +472,8 @@ func UpdateSharing(c *gin.Context) {
 	s.Header = req.Header
 	s.Readme = req.Readme
 	s.Remark = req.Remark
+	s.Domain = req.Domain
+	s.WebHosting = req.WebHosting
 	s.Creator = user
 	if err = op.UpdateSharing(s); err != nil {
 		common.ErrorResp(c, err, 500)
@@ -528,6 +532,8 @@ func CreateSharing(c *gin.Context) {
 			Remark:      req.Remark,
 			Readme:      req.Readme,
 			Header:      req.Header,
+			Domain:      req.Domain,
+			WebHosting:  req.WebHosting,
 		},
 		Files:   req.Files,
 		Creator: user,

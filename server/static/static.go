@@ -220,19 +220,19 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 	// virtualHostHandler 处理虚拟主机 Web 托管，以及默认的前端 SPA 路由
 	virtualHostHandler := func(c *gin.Context) {
-		// 直接从 Host 头解析域名，检查是否匹配虚拟主机的 Web 托管请求
+		// 直接从 Host 头解析域名，检查是否匹配 sharing 中的虚拟主机记录
 		rawHost := c.Request.Host
 		domain := stripHostPort(rawHost)
 		utils.Log.Debugf("[VirtualHost] handler triggered: method=%s path=%s host=%q domain=%q",
 			c.Request.Method, c.Request.URL.Path, rawHost, domain)
 		if domain != "" {
-			vhost, err := op.GetVirtualHostByDomain(domain)
+			sharing, err := op.GetSharingByDomain(domain)
 			if err != nil {
-				utils.Log.Debugf("[VirtualHost] domain=%q not found in db: %v", domain, err)
-			} else {
-				utils.Log.Debugf("[VirtualHost] domain=%q matched vhost: id=%d enabled=%v web_hosting=%v path=%q",
-					domain, vhost.ID, vhost.Enabled, vhost.WebHosting, vhost.Path)
-				if vhost.Enabled && vhost.WebHosting {
+				utils.Log.Debugf("[VirtualHost] domain=%q not matched any sharing: %v", domain, err)
+			} else if sharing != nil && len(sharing.Files) > 0 {
+				utils.Log.Debugf("[VirtualHost] domain=%q matched sharing: id=%s web_hosting=%v root=%q",
+					domain, sharing.ID, sharing.WebHosting, sharing.Files[0])
+				if sharing.WebHosting {
 					// Web 托管模式：直接返回文件内容
 					// 注入 guest 用户到 context，供 internalfs.Get/Link 权限检查使用
 					guest, guestErr := op.GetGuest()
@@ -242,10 +242,10 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 						return
 					}
 					common.GinWithValue(c, conf.UserKey, guest)
-					if handleWebHosting(c, vhost) {
+					if handleWebHosting(c, sharing) {
 						return
 					}
-				} else if vhost.Enabled && !vhost.WebHosting {
+				} else {
 					// 路径重映射模式（伪静态）：直接返回正常的 SPA 页面
 					// 地址栏保持不变，面包屑显示用户访问的路径
 					// 实际的路径映射由后端 API（fs/list、fs/get）在处理请求时完成
@@ -283,22 +283,27 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	noRoute(virtualHostHandler)
 }
 
-// handleWebHosting 处理虚拟主机的 Web 托管请求
-// 直接将 HTML 文件内容返回给客户端，而不是走前端 SPA 路由
+// handleWebHosting 处理虚拟主机（sharing）的 Web 托管请求
+// 直接将文件内容返回给客户端，而不是走前端 SPA 路由
 // 返回 true 表示已处理，false 表示未处理（继续走默认逻辑）
-func handleWebHosting(c *gin.Context, vhost *model.VirtualHost) bool {
+func handleWebHosting(c *gin.Context, sharing *model.Sharing) bool {
 	if c.Request.Method != "GET" && c.Request.Method != "HEAD" {
 		utils.Log.Debugf("[VirtualHost] skip: method=%s not allowed for web hosting", c.Request.Method)
 		return false
 	}
+	if len(sharing.Files) == 0 {
+		utils.Log.Debugf("[VirtualHost] skip: sharing has no files")
+		return false
+	}
+	root := sharing.Files[0]
 
 	reqPath := c.Request.URL.Path
-	// Map request path into the vhost root and verify it does not escape via traversal.
+	// Map request path into the sharing root and verify it does not escape via traversal.
 	// stdpath.Join calls Clean internally, which collapses ".." segments, so we only need
-	// to confirm the result still lives under vhost.Path.
-	filePath := stdpath.Join(vhost.Path, reqPath)
-	if !strings.HasPrefix(filePath, strings.TrimRight(vhost.Path, "/")+"/") && filePath != vhost.Path {
-		utils.Log.Warnf("[VirtualHost] path traversal rejected: vhost=%q reqPath=%q", vhost.Path, reqPath)
+	// to confirm the result still lives under root.
+	filePath := stdpath.Join(root, reqPath)
+	if !strings.HasPrefix(filePath, strings.TrimRight(root, "/")+"/") && filePath != root {
+		utils.Log.Warnf("[VirtualHost] path traversal rejected: root=%q reqPath=%q", root, reqPath)
 		c.Status(http.StatusBadRequest)
 		return false
 	}
@@ -326,7 +331,7 @@ func handleWebHosting(c *gin.Context, vhost *model.VirtualHost) bool {
 
 	// 尝试 <path>.html（SPA 友好路由）
 	if stdpath.Ext(reqPath) == "" && reqPath != "/" {
-		htmlPath := stdpath.Join(vhost.Path, reqPath+".html")
+		htmlPath := stdpath.Join(root, reqPath+".html")
 		obj, err = internalfs.Get(c.Request.Context(), htmlPath, &internalfs.GetArgs{NoLog: true})
 		if err == nil && !obj.IsDir() {
 			utils.Log.Debugf("[VirtualHost] serving .html fallback: %q", htmlPath)

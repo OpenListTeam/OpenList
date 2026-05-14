@@ -449,10 +449,10 @@ func applyVhostPathMapping(c *gin.Context, reqPath string) string {
 	return mapped
 }
 
-// applyVhostPathMappingWithPrefix 根据请求的 Host 头匹配虚拟主机规则，
-// 将请求路径映射到虚拟主机配置的实际路径，同时返回 vhost.Path 前缀（用于生成下载链接时去掉前缀）。
-// 例如：vhost.Path="/123pan/Downloads"，reqPath="/"，则返回 ("/123pan/Downloads", "/123pan/Downloads")
-// 例如：vhost.Path="/123pan/Downloads"，reqPath="/subdir"，则返回 ("/123pan/Downloads/subdir", "/123pan/Downloads")
+// applyVhostPathMappingWithPrefix 根据请求的 Host 头匹配 sharing 中带 Domain 的虚拟主机记录，
+// 将请求路径映射到 sharing.Files[0] 之下，同时返回该路径前缀（用于生成下载链接时去掉前缀）。
+// 例如：sharing.Files[0]="/123pan/Downloads"，reqPath="/"，则返回 ("/123pan/Downloads", "/123pan/Downloads")
+// 例如：sharing.Files[0]="/123pan/Downloads"，reqPath="/subdir"，则返回 ("/123pan/Downloads/subdir", "/123pan/Downloads")
 // 如果没有匹配的虚拟主机规则，则返回 (原始路径, "")
 func applyVhostPathMappingWithPrefix(c *gin.Context, reqPath string) (string, string) {
 	rawHost := c.Request.Host
@@ -460,24 +460,28 @@ func applyVhostPathMappingWithPrefix(c *gin.Context, reqPath string) (string, st
 	if domain == "" {
 		return reqPath, ""
 	}
-	vhost, err := op.GetVirtualHostByDomain(domain)
-	if err != nil || vhost == nil {
+	sharing, err := op.GetSharingByDomain(domain)
+	if err != nil || sharing == nil {
 		return reqPath, ""
 	}
-	if !vhost.Enabled || vhost.WebHosting {
-		// 未启用，或者是 Web 托管模式（Web 托管不做路径重映射）
+	if sharing.WebHosting {
+		// Web 托管模式不做 API 路径重映射
 		return reqPath, ""
 	}
-	// Map request path into the vhost root and verify it does not escape via traversal.
+	if len(sharing.Files) == 0 {
+		return reqPath, ""
+	}
+	root := sharing.Files[0]
+	// Map request path into the sharing root and verify it does not escape via traversal.
 	// stdpath.Join calls Clean internally, which collapses ".." segments, so we only need
-	// to confirm the result still lives under vhost.Path.
-	mapped := stdpath.Join(vhost.Path, reqPath)
-	if !strings.HasPrefix(mapped, strings.TrimRight(vhost.Path, "/")+"/") && mapped != vhost.Path {
+	// to confirm the result still lives under root.
+	mapped := stdpath.Join(root, reqPath)
+	if !strings.HasPrefix(mapped, strings.TrimRight(root, "/")+"/") && mapped != root {
 		utils.Log.Warnf("[VirtualHost] path traversal rejected for API remapping: domain=%q reqPath=%q", domain, reqPath)
 		return reqPath, ""
 	}
 	utils.Log.Debugf("[VirtualHost] API path remapping: domain=%q reqPath=%q -> mappedPath=%q", domain, reqPath, mapped)
-	return mapped, vhost.Path
+	return mapped, root
 }
 
 // stripVhostPrefix 从 gin context 中取出 vhost 路径前缀，并从 path 中去掉该前缀。

@@ -26,25 +26,29 @@ func PathParse(c *gin.Context) {
 	c.Next()
 }
 
-// applyDownVhostPathMapping 根据请求的 Host 头匹配虚拟主机规则，
-// 将下载/预览路由的路径映射到虚拟主机配置的实际路径。
-// 仅在虚拟主机启用且非 Web 托管模式时生效。
+// applyDownVhostPathMapping 根据请求的 Host 头匹配 sharing 中带 Domain 的虚拟主机记录，
+// 将下载/预览路由的路径映射到虚拟主机配置的实际路径（取 sharing.Files[0]）。
+// 仅在 sharing 有效（未禁用、未过期、Files 非空）且非 Web 托管模式时生效。
 func applyDownVhostPathMapping(c *gin.Context, reqPath string) string {
 	rawHost := c.Request.Host
 	domain := stripDownHostPort(rawHost)
 	if domain == "" {
 		return reqPath
 	}
-	vhost, err := op.GetVirtualHostByDomain(domain)
-	if err != nil || vhost == nil {
+	sharing, err := op.GetSharingByDomain(domain)
+	if err != nil || sharing == nil {
 		return reqPath
 	}
-	if !vhost.Enabled || vhost.WebHosting {
-		// 未启用，或者是 Web 托管模式（Web 托管不做路径重映射）
+	if sharing.WebHosting {
+		// Web 托管模式不做下载路径重映射
 		return reqPath
 	}
-	// 路径重映射：将 reqPath 拼接到 vhost.Path 后面
-	mapped := stdpath.Join(vhost.Path, reqPath)
+	if len(sharing.Files) == 0 {
+		return reqPath
+	}
+	root := sharing.Files[0]
+	// 路径重映射：将 reqPath 拼接到 root 后面
+	mapped := stdpath.Join(root, reqPath)
 	utils.Log.Debugf("[VirtualHost] down path remapping: domain=%q reqPath=%q -> mappedPath=%q", domain, reqPath, mapped)
 	return mapped
 }
