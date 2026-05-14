@@ -262,9 +262,9 @@ func doScanPath(sp *model.MediaScanPath, p *ScanProgress) error {
 // doScanMusicByAlbum 音乐扫描
 // 存储规则：
 //   - 普通文件（is_folder=false）：
-//     folder_path=文件所在目录，file_name=音乐文件名，episodes=空
+//     folder_path=文件所在真实目录，file_name=音乐文件名，episodes=空
 //   - 合并文件夹（is_folder=true）：
-//     folder_path=扫描根路径(sp.Path)，file_name=文件夹名，
+//     folder_path=文件夹所在真实父目录，file_name=文件夹名，
 //     episodes=文件夹内所有音乐文件列表，封面/标签取第一首
 func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaScanPath, p *ScanProgress) error {
 	for _, target := range targets {
@@ -375,8 +375,8 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 			item := &model.MediaItem{
 				MediaType:   sp.MediaType,
 				ScanPathID:  sp.ID,
-				FileName:    name,     // 文件夹名
-				FolderPath:  sp.Path,  // 扫描根路径
+				FileName:    name,                 // 文件夹名
+				FolderPath:  stdpath.Dir(target),  // 文件夹所在的真实父目录
 				IsFolder:    true,
 				AlbumName:   albumName,
 				AlbumArtist: albumArtist,
@@ -578,7 +578,7 @@ func walkVFS(ctx context.Context, dirPath string, mediaType model.MediaType, tar
 
 // buildMediaItemFromVFS 根据 VFS 路径构建 MediaItem（非音乐类型使用）
 // 存储规则：
-//   - folder_path：恒定为扫描根路径 sp.Path
+//   - folder_path：文件/文件夹所在的真实父目录（VFS 父路径），用于前端按 folder_path + file_name 反查真实文件
 //   - file_name：文件夹就是文件夹名，文件就是文件名
 //   - episodes：文件夹时存里面每个文件的信息，文件时为空
 func buildMediaItemFromVFS(ctx context.Context, vfsPath string, sp *model.MediaScanPath) (*model.MediaItem, error) {
@@ -593,8 +593,8 @@ func buildMediaItemFromVFS(ctx context.Context, vfsPath string, sp *model.MediaS
 	item := &model.MediaItem{
 		MediaType:  sp.MediaType,
 		ScanPathID: sp.ID,
-		FileName:   name,                          // 文件夹名 或 文件名
-		FolderPath: sp.Path,                       // 恒定为扫描根路径
+		FileName:   name,                 // 文件夹名 或 文件名
+		FolderPath: stdpath.Dir(vfsPath), // 真实父目录
 		IsFolder:   obj.IsDir(),
 		ScrapedName: strings.TrimSuffix(name, stdpath.Ext(name)), // 去掉扩展名作为默认名称
 	}
