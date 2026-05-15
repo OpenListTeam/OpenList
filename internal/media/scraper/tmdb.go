@@ -68,27 +68,149 @@ func cnNumToArabic(s string) string {
 }
 
 // parsedVideoTitle 解析后的视频标题信息
+//
+// 解析时除了主中文标题/英文标题之外，可能还会从文件名中识别到其他中文片段
+// （比如同时存在「[钢铁侠]」和「Iron Man」，或多段中文），这些都作为兜底候选保留。
+// 主中文/英文标题用于「常规」搜索路径；额外候选会在主候选搜不到时再尝试。
 type parsedVideoTitle struct {
-	EnglishTitle string // 英文标题（第一个中文片段之前、年份之前的部分）
-	ChineseTitle string // 中文标题（第一个含中文的片段）
-	Year         string // 年份
+	EnglishTitle       string   // 英文标题（第一个中文片段之前、年份之前的部分）
+	ChineseTitle       string   // 中文标题（最优中文片段）
+	ExtraChineseTitles []string // 其他中文片段，作为兜底候选（如方括号外又出现的中文标题、副标题等）
+	Year               string   // 年份
+}
+
+// leadingSerialSpaceRe 匹配开头是 "数字 + 空格"（如 "01 [钢铁侠]"、"19 [复仇者联盟3：无限战争]"）
+// 数字 + 空格 几乎可以确定是序号（合法片名极少以"数字 + 空格"开头）
+// 只匹配 1-3 位数字，避免把年份(2008) 或 4 位以上数字当成序号
+var leadingSerialSpaceRe = regexp.MustCompile(`^\s*\d{1,3}\s+`)
+
+// leadingSerialDotChineseRe 匹配开头是 "数字 + 点/-/_/、 + 中文" 的形式
+// 这种形式既可能是"序号 + 中文片名"，也可能是"数字片名 + 中文别名"，比如：
+//
+//	"169.谍影重重3"           -> 序号 + 中文片名
+//	"1.漫威短片.47号物品"     -> 序号 + 中文片名
+//	"300.斯巴达勇士..."        -> 数字片名 + 中文别名（300 是片名核心）
+//	"36总局" 这种中文里就含数字的也算
+//
+// 启发式判定：
+//   - 1-2 位数字（1-99）：序号概率高，删掉数字
+//   - 3 位数字（100-999）：片名概率高，保留数字
+//   - 4 位以上：在外层正则就被 \d{1,3} 排除
+var leadingSerialDotChineseRe = regexp.MustCompile(`^\s*(\d{1,3})\s*[.\-_、]\s*(\p{Han})`)
+
+// stripLeadingSerial 去除文件名开头的序号前缀，返回剥离后的文件名
+//
+// 处理两种序号情况：
+//  1. "数字 + 空格"：如 "01 [钢铁侠]Iron.Man..." -> "[钢铁侠]Iron.Man..."
+//  2. "1-2 位数字 + 点/-/_/、 + 中文"：如 "1.漫威短片..." -> "漫威短片..."、"169.谍影重重3" -> "谍影重重3"
+//
+// 不视为序号（保留原样）：
+//   - "30.Days.Of.Night..."（数字 + 点 + 英文，数字是片名一部分）
+//   - "300.Rise.Of.An.Empire..."（同上）
+//   - "300.斯巴达勇士..."（3 位数字 + 点 + 中文，可能是片名 "300"）
+//   - "3096.Days.2013..."（4 位数字直接被排除）
+//
+// 被剥离的序号本身不是片名关键词，不需要回填。
+func stripLeadingSerial(s string) string {
+	// 1) "数字 + 空格"：稳定删除（序号信号最强）
+	if loc := leadingSerialSpaceRe.FindStringIndex(s); loc != nil && loc[0] == 0 {
+		return strings.TrimSpace(s[loc[1]:])
+	}
+	// 2) "1-2 位数字 + 分隔符 + 中文"：视为序号删除；3 位数字保守保留
+	if m := leadingSerialDotChineseRe.FindStringSubmatchIndex(s); m != nil && m[0] == 0 {
+		// m[2]:m[3] 是数字捕获组的索引；m[4]:m[5] 是中文字符
+		numStr := s[m[2]:m[3]]
+		// 3 位数字保守保留（避免删除 "300.斯巴达勇士" 中的 "300"）
+		if len(numStr) >= 3 {
+			return s
+		}
+		// 1-2 位数字视为序号删除，从中文字符位置开始保留
+		return strings.TrimSpace(s[m[4]:])
+	}
+	return s
+}
+
+// noiseTokenWholeRe 判断一个完整片段是否为“纯噪声词”（完全匹配，不包含其他字符）
+// 覆盖常见发布组/字幕组/编码/音轨/分辨率/语言标记等。被识别为噪声的片段不会进入 EnglishTitle。
+// 例："HR-HDTV"、"AC3"、"x264"、"X264"、"1024x576"、"2160p"、"BOBO"(发布组) 等
+var noiseTokenWholeRe = regexp.MustCompile(`(?i)^(?:` +
+	// 字幕/语言标记
+	`双语字幕|中字|国英|国粤|粤语|国语|英语|日语|韩语|国英双轨|国粤英双轨|中英双字|` +
+	`English|Chinese|Cantonese|Mandarin|Japanese|Korean|CHS|CHT|ENG|JPN|KOR|CHS-ENG|CHS-JPN|CHT-ENG|` +
+	// 片源/容器
+	`HDTV|HR-HDTV|HR\.HDTV|BluRay|Blu-Ray|BDRip|BDMV|WEB-?DL|WEBRip|HDRip|DVDRip|DVD|REMUX|UHD|RAW|TS|TC|CAM|HC|TVRip|` +
+	// 视频编码
+	`x264|x265|h264|h265|HEVC|AVC|XviD|DivX|VP9|AV1|10bit|8bit|HDR10\+?|HDR|SDR|DV|DolbyVision|` +
+	// 音频编码
+	`AAC|AAC2\.0|AC3|EAC3|DD5\.1|DD7\.1|DD\+|DDP|DTS|DTS-HD|DTS-X|DTSX|DTSHD|FLAC|MP3|TrueHD|Atmos|MA|` +
+	// 分辨率 / 画质
+	`4K|2K|8K|2160p|2160P|1080p|1080P|720p|720P|480p|480P|\d{3,4}[xX×]\d{3,4}|` +
+	// 中文描述词
+	`完整版|未删减版|院线版|导演剪辑版|加长版|年度佳作|` +
+	// 常见发布组名（可能不完全，但覆盖示例中出现过的）
+	`BOBO|SWTYBLZ|CMCT|HDS|FRDS|MNHD|WiKi|TLF|RARBG|YIFY|YTS|EVO|SPARKS` +
+	`)$`)
+
+// isNoiseToken 判断一个片段是否是完全的噪声词。
+// 同时覆盖一些“数字.数字”组合被 "." 拆出后的碎片，如“5”、“1”、“7”（来自 5.1/7.1 音轨拆分）
+func isNoiseToken(p string) bool {
+	if p == "" {
+		return true
+	}
+	// 微小碎片（单个或两个数字）但不是年份，一般是被"."拆分开的 5.1/7.1/2.0 碎片。
+	// 为避免误伤「4 Months 3 Weeks And 2 Days」这种中间字随意出现的数字，不在这里过滤，
+	// 仅依靠 noiseTokenWholeRe 覆盖。
+	return noiseTokenWholeRe.MatchString(p)
+}
+
+// extractBracketChinese 从原始文件名中提取出方括号/中文括号里的中文片段
+//
+//	"01 [钢铁侠]Iron.Man.2008..."          -> ["钢铁侠"]
+//	"19 [复仇者联盟3：无限战争]Avengers..." -> ["复仇者联盟3：无限战争"]
+//	"[Pixar][玩具总动员]Toy.Story.1995..."  -> ["玩具总动员"]
+//
+// 仅返回包含中文的括号内容，避免把发布组、字幕组等英文括号信息当成标题。
+func extractBracketChinese(fileName string) []string {
+	bracketRe := regexp.MustCompile(`[\(（\[【]([^\)）\]】]*)[\)）\]】]`)
+	matches := bracketRe.FindAllStringSubmatch(fileName, -1)
+	var out []string
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		inner := strings.TrimSpace(m[1])
+		if inner == "" {
+			continue
+		}
+		// 必须包含中文字符才视为中文标题候选
+		if chineseRegexp.MatchString(inner) {
+			out = append(out, inner)
+		}
+	}
+	return out
 }
 
 // parseVideoFileName 从视频文件名中提取标题和年份
 // 规则：
+//   - 自动去除文件名开头的序号（如 "01 "、"1."、"169."），避免污染英文标题
+//   - 优先把方括号 [中文] 内的中文片段作为中文标题候选
 //   - 文件名中允许使用 . / 空格 / _ / 的分隔多个字段
-//   - 第一个含中文的片段即为中文标题
+//   - 第一个含中文的片段即为中文标题（若上一步括号内未找到中文）
 //   - 中文标题之前的非中文、非年份片段拼接为英文标题
 //   - 第一个 1900-2099 之间的 4 位数字识别为年份
 //
 // 例如：
 //
-//	"Inception.2010.盗梦空间.双语字幕.HR-HDTV.AC3.1024X576.X264-"  -> {English:"Inception", Chinese:"盗梦空间", Year:"2010"}
-//	"Iron.Man.3.2013.钢铁侠3.国英音轨.双语字幕.HR-HDTV.AC3.x264-"   -> {English:"Iron Man 3", Chinese:"钢铁侠3", Year:"2013"}
-//	"The.Dark.Knight.2008.1080p.BluRay"                            -> {English:"The Dark Knight", Chinese:"", Year:"2008"}
-//	"盗梦空间.2010.1080p.BluRay"                                    -> {English:"", Chinese:"盗梦空间", Year:"2010"}
-//	"钢铁侠3 (2013).mkv"                                            -> {English:"", Chinese:"钢铁侠3", Year:"2013"}
-//	"群星-演唱会现场.mp4"                                            -> {English:"", Chinese:"群星", Year:""}
+//	"Inception.2010.盗梦空间.双语字幕.HR-HDTV.AC3.1024X576.X264-"      -> {English:"Inception", Chinese:"盗梦空间", Year:"2010"}
+//	"Iron.Man.3.2013.钢铁侠3.国英音轨.双语字幕.HR-HDTV.AC3.x264-"        -> {English:"Iron Man 3", Chinese:"钢铁侠3", Year:"2013"}
+//	"The.Dark.Knight.2008.1080p.BluRay"                                  -> {English:"The Dark Knight", Chinese:"", Year:"2008"}
+//	"盗梦空间.2010.1080p.BluRay"                                          -> {English:"", Chinese:"盗梦空间", Year:"2010"}
+//	"钢铁侠3 (2013).mkv"                                                  -> {English:"", Chinese:"钢铁侠3", Year:"2013"}
+//	"群星-演唱会现场.mp4"                                                  -> {English:"", Chinese:"群星", Year:""}
+//	"01 [钢铁侠]Iron.Man.2008.2160p.HDR.BluRay..."                        -> {English:"Iron Man", Chinese:"钢铁侠", Year:"2008"}
+//	"19 [复仇者联盟3：无限战争]Avengers.Infinity.War.2018.2160p..."       -> {English:"Avengers Infinity War", Chinese:"复仇者联盟3：无限战争", Year:"2018"}
+//	"169.谍影重重3"                                                       -> {English:"", Chinese:"谍影重重3", Year:""}
+//	"1.漫威短片.47号物品"                                                  -> {English:"", Chinese:"漫威短片", Year:""}（额外候选含 "47号物品"）
 func parseVideoFileName(fileName string) parsedVideoTitle {
 	// 去掉扩展名（.mkv .mp4 .avi 等，扩展名长度 <= 5）
 	if idx := strings.LastIndex(fileName, "."); idx > 0 {
@@ -98,11 +220,18 @@ func parseVideoFileName(fileName string) parsedVideoTitle {
 		}
 	}
 
-	// 去除中英文括号包裹的内容（先把里面的年份提出来，避免「钢铁侠3 (2013)」这类丢失年份）
-	// 括号内若有 4 位年份，先把年份替换到外面
+	// 1) 先把开头的序号 "01 "、"1."、"169." 去掉，避免它们污染英文标题
+	//    仅在能明确判定为序号的场景才剥离，避免误伤 "30.Days..."、"300.斯巴达勇士" 这类数字作为片名一部分的情况
+	fileName = stripLeadingSerial(fileName)
+
+	// 2) 在剥离括号之前，先尝试从方括号 [中文] 中抽取中文标题候选
+	//    很多发布组习惯是 "01 [中文标题]English.Title.Year..."，这里要保留 "中文标题"
+	bracketChinese := extractBracketChinese(fileName)
+
+	// 3) 提取括号中的年份（如 "钢铁侠3 (2013).mkv"），把年份替换到括号外
 	bracketYearRe := regexp.MustCompile(`[\(（\[【]\s*((?:19|20)\d{2})\s*[\)）\]】]`)
 	fileName = bracketYearRe.ReplaceAllString(fileName, " $1 ")
-	// 再把剩余括号块替换成空格
+	// 4) 再把剩余括号块替换成空格（其中的中文标题已在第 2 步保存到 bracketChinese）
 	bracketRe := regexp.MustCompile(`[\(（\[【][^\)）\]】]*[\)）\]】]`)
 	fileName = bracketRe.ReplaceAllString(fileName, " ")
 
@@ -124,8 +253,17 @@ func parseVideoFileName(fileName string) parsedVideoTitle {
 
 	var result parsedVideoTitle
 	var englishParts []string
-	foundChinese := false
+	var chineseParts []string // 收集所有中文片段，便于兜底
 	foundYear := false
+	foundChinese := false // 一旦出现中文片段，后面的非中文片段都不再加入英文标题
+
+	// pureNoise 判断字符串经过噪声词清洗后是否为空（即整体都是噪声词）
+	// 用于过滤掉"双语字幕"、"国英音轨" 这种纯噪声片段，避免被当成中文标题
+	pureNoise := func(s string) bool {
+		cleaned := noiseTokenRegexp.ReplaceAllString(s, "")
+		cleaned = strings.TrimSpace(cleaned)
+		return cleaned == ""
+	}
 
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
@@ -133,15 +271,13 @@ func parseVideoFileName(fileName string) parsedVideoTitle {
 			continue
 		}
 
-		// 已找到中文标题后，后面都是参数，跳过
-		if foundChinese {
-			continue
-		}
-
 		// 检测是否含中文
 		if chineseRegexp.MatchString(p) {
-			// 第一个中文片段即为中文标题
-			result.ChineseTitle = p
+			// 整体被识别为噪声词的中文片段（如 "双语字幕"、"国英音轨"）直接跳过
+			if pureNoise(p) {
+				continue
+			}
+			chineseParts = append(chineseParts, p)
 			foundChinese = true
 			continue
 		}
@@ -154,20 +290,76 @@ func parseVideoFileName(fileName string) parsedVideoTitle {
 			continue
 		}
 
-		// 年份之前的非中文片段加入英文标题
-		if !foundYear {
-			englishParts = append(englishParts, p)
+		// 后续非中文片段加入英文标题的判定：
+		//   - 必须在年份出现之前（年份后的 ASCII 全是发布信息噪声）
+		//   - 必须在中文出现之前（中文后的 ASCII 也是发布信息噪声，避免 "斯巴达勇士 HR HDTV AC3 X264" 这种污染）
+		//   - 不能是完全的噪声词（如 HR-HDTV、AC3、x264、分辨率）
+		if foundYear || foundChinese {
+			continue
 		}
-		// 年份之后、中文之前的片段（如果有）忽略，通常是噪音
+		if isNoiseToken(p) {
+			continue
+		}
+		englishParts = append(englishParts, p)
 	}
 
 	result.EnglishTitle = strings.Join(englishParts, " ")
+
+	// 选定中文标题：
+	//   - 优先使用方括号内的中文（最可靠的发布组标记）
+	//   - 否则使用解析出的中文片段中第一个
+	//   - 同时把所有中文候选去重保留到 ExtraChineseTitles 里，留作兜底
+	allChinese := append([]string{}, bracketChinese...)
+	allChinese = append(allChinese, chineseParts...)
+	allChinese = dedupStrings(allChinese)
+
+	if len(allChinese) > 0 {
+		result.ChineseTitle = allChinese[0]
+		if len(allChinese) > 1 {
+			result.ExtraChineseTitles = allChinese[1:]
+		}
+	}
+
+	// 当解析出多个连续中文片段时，它们很可能是「主标题.副标题」结构（如 "300勇士.帝国崛起"
+	// 实际是「300勇士：帝国崛起」），把合并后的候选也加入 ExtraChineseTitles 用于兜底搜索。
+	if len(chineseParts) > 1 {
+		merged := strings.Join(chineseParts, "：")
+		// 避免与已有候选重复
+		exists := merged == result.ChineseTitle
+		for _, t := range result.ExtraChineseTitles {
+			if t == merged {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			result.ExtraChineseTitles = append(result.ExtraChineseTitles, merged)
+		}
+	}
 
 	// 对中文标题做尾部噪声清洗（去除「钢铁侠3 国英音轨」末尾的污染词，但保留主标题）
 	if result.ChineseTitle != "" {
 		result.ChineseTitle = stripTrailingNoise(result.ChineseTitle)
 	}
+	for i, t := range result.ExtraChineseTitles {
+		result.ExtraChineseTitles[i] = stripTrailingNoise(t)
+	}
 	return result
+}
+
+// dedupStrings 去除字符串切片中的空白与重复项，保留首次出现顺序
+func dedupStrings(in []string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // stripTrailingNoise 去除中文标题中嵌入的噪声词，保留主标题部分
@@ -355,6 +547,10 @@ type searchAttempt struct {
 	language string
 }
 
+// subtitleSepRe 副标题分隔符：「：」「:」「-」前后空白
+// 用于把「复仇者联盟3：无限战争」拆成「复仇者联盟3」和「无限战争」
+var subtitleSepRe = regexp.MustCompile(`\s*[：:\-—]\s*`)
+
 // buildTitleCandidates 根据原始标题构造一组候选搜索词（按优先级返回）
 // 候选生成策略，从精确到模糊：
 //  1. 原始标题（保留所有信息）
@@ -363,6 +559,7 @@ type searchAttempt struct {
 //  4. 阿拉伯数字 -> 中文数字（钢铁侠3 -> 钢铁侠三，少数 TMDB 别名用中文数字）
 //  5. 去除尾部数字/罗马数字（钢铁侠3 -> 钢铁侠，盗梦空间2 -> 盗梦空间）
 //  6. 拆分多个词，每个非短词作为独立候选
+//  7. 副标题拆分（「复仇者联盟3：无限战争」 -> 「复仇者联盟3」、「无限战争」）
 func buildTitleCandidates(title string) []string {
 	if title == "" {
 		return nil
@@ -381,6 +578,17 @@ func buildTitleCandidates(title string) []string {
 	add(title)
 	norm := normalizeTitle(title)
 	add(norm)
+
+	// 副标题拆分：以「：」「:」「-」分隔后得到多个候选
+	// 例：「复仇者联盟3：无限战争」-> 主标题 "复仇者联盟3"、副标题 "无限战争"
+	//     「美国队长2：冬日战士」  -> 主标题 "美国队长2"、副标题 "冬日战士"
+	//     「雷神2：黑暗世界」      -> 主标题 "雷神2"、副标题 "黑暗世界"
+	subtitleParts := subtitleSepRe.Split(title, -1)
+	if len(subtitleParts) > 1 {
+		for _, p := range subtitleParts {
+			add(p)
+		}
+	}
 
 	// 中文数字 <-> 阿拉伯数字 双向归一化
 	arabic := cnNumToArabic(norm)
@@ -409,6 +617,34 @@ func buildTitleCandidates(title string) []string {
 			add(w)
 		}
 	}
+
+	// 数字 + 中文 / 中文 + 数字 的组合标题，把中文部分单独提取作为候选
+	// 例：「300勇士」     -> 候选包含 "勇士"
+	//     「3096天」      -> 候选包含 "天"（虽然过短）
+	//     「36总局」      -> 候选包含 "总局"
+	//     「47号物品」    -> 候选包含 "号物品" 较弱，跳过
+	// 同时把开头数字单独作为候选，匹配「300」「3096」这类纯数字片名
+	digitChineseRe := regexp.MustCompile(`^(\d+)([\p{Han}].*)$`)
+	chineseDigitRe := regexp.MustCompile(`^([\p{Han}].*?)(\d+)$`)
+	for _, s := range []string{title, norm} {
+		if m := digitChineseRe.FindStringSubmatch(s); m != nil {
+			// 数字部分（如 "300"）
+			add(m[1])
+			// 中文部分（如 "勇士"），仅当中文长度 >= 2 才有用
+			if utf8.RuneCountInString(m[2]) >= 2 {
+				add(m[2])
+			}
+		}
+		if m := chineseDigitRe.FindStringSubmatch(s); m != nil {
+			// 中文部分（去掉尾部数字）
+			if utf8.RuneCountInString(m[1]) >= 2 {
+				add(m[1])
+			}
+			// 数字部分单独作为候选
+			add(m[2])
+		}
+	}
+
 	return out
 }
 
@@ -457,8 +693,8 @@ func arabicToCnNum(s string) string {
 //   - multi 兜底覆盖电影/电视剧之外的边角情况
 func (s *TMDBScraper) searchWithFallback(parsed parsedVideoTitle) (*tmdbSearchResult, error) {
 	// 入口日志：输出解析出的标题和年份，方便排查"为什么没搜到"
-	log.Infof("[TMDB] 开始搜索 chinese=%q english=%q year=%q",
-		parsed.ChineseTitle, parsed.EnglishTitle, parsed.Year)
+	log.Infof("[TMDB] 开始搜索 chinese=%q english=%q year=%q extras=%v",
+		parsed.ChineseTitle, parsed.EnglishTitle, parsed.Year, parsed.ExtraChineseTitles)
 
 	var attempts []searchAttempt
 
@@ -491,13 +727,20 @@ func (s *TMDBScraper) searchWithFallback(parsed parsedVideoTitle) (*tmdbSearchRe
 
 	// 中文标题优先（zh-CN）
 	addGroup(parsed.ChineseTitle, "zh-CN")
+	// 额外的中文候选（如解析出多个中文片段，或方括号内中文标题之外又出现了其他中文）
+	for _, t := range parsed.ExtraChineseTitles {
+		addGroup(t, "zh-CN")
+	}
 	// 英文标题兜底（en-US）
 	addGroup(parsed.EnglishTitle, "en-US")
 
 	// 最后一轮：不指定 language，对中文标题做多语言别名兜底
 	// 这能匹配上 TMDB 中只在原始语言下注册了别名的作品
-	if parsed.ChineseTitle != "" {
-		for _, q := range buildTitleCandidates(parsed.ChineseTitle) {
+	noLangFallback := func(title string) {
+		if title == "" {
+			return
+		}
+		for _, q := range buildTitleCandidates(title) {
 			attempts = append(attempts,
 				searchAttempt{"movie", q, "", ""},
 				searchAttempt{"tv", q, "", ""},
@@ -505,15 +748,11 @@ func (s *TMDBScraper) searchWithFallback(parsed parsedVideoTitle) (*tmdbSearchRe
 			)
 		}
 	}
-	if parsed.EnglishTitle != "" {
-		for _, q := range buildTitleCandidates(parsed.EnglishTitle) {
-			attempts = append(attempts,
-				searchAttempt{"movie", q, "", ""},
-				searchAttempt{"tv", q, "", ""},
-				searchAttempt{"multi", q, "", ""},
-			)
-		}
+	noLangFallback(parsed.ChineseTitle)
+	for _, t := range parsed.ExtraChineseTitles {
+		noLangFallback(t)
 	}
+	noLangFallback(parsed.EnglishTitle)
 
 	if len(attempts) == 0 {
 		return nil, fmt.Errorf("无法从文件名中提取有效标题")
@@ -561,8 +800,8 @@ func (s *TMDBScraper) ScrapeVideo(item *model.MediaItem) error {
 
 	// 始终从文件名中解析出标题和年份（ScrapedName 是刮削结果字段，不作为搜索输入）
 	parsed := parseVideoFileName(item.FileName)
-	log.Infof("[TMDB] 开始刮削 file=%q parsed={chinese=%q english=%q year=%q} baseURL=%s",
-		item.FileName, parsed.ChineseTitle, parsed.EnglishTitle, parsed.Year, s.BaseURL)
+	log.Infof("[TMDB] 开始刮削 file=%q parsed={chinese=%q english=%q year=%q extras=%v} baseURL=%s",
+		item.FileName, parsed.ChineseTitle, parsed.EnglishTitle, parsed.Year, parsed.ExtraChineseTitles, s.BaseURL)
 
 	// 搜索策略：中文标题优先，英文标题兜底，都搜不到才失败
 	searchResult, err := s.searchWithFallback(parsed)
