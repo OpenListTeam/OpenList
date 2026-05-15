@@ -5,12 +5,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/transcode"
@@ -65,10 +68,21 @@ func TranscodePlay(c *gin.Context) {
 	mgr := transcode.Default()
 	mgr.Start()
 
-	// 构造源签名 URL（让 Worker 通过 /d/ 直接下载）
+	// 【内存优化】优先尝试解析为本地文件路径，让 ffmpeg 直接读取本地文件，
+	// 完全绕过 HTTP /d 代理路径——避免 net.Downloader 给每个 range 请求分配
+	// 高达 MaxBufferLimit (默认系统内存 5%) 的大缓冲。这是降低 Go 进程内存
+	// 占用最有效的方法。如果不是本地驱动则退回到 HTTP 签名 URL。
 	apiURL := common.GetApiUrlFromRequest(c.Request)
-	signedPath := sign.Sign(req.Path)
-	sourceURL := fmt.Sprintf("%s/d%s?sign=%s", apiURL, encodePath(req.Path), signedPath)
+	var sourceURL string
+	if localFile, ok := resolveLocalFilePath(req.Path); ok {
+		// ffmpeg 接受本地路径作为输入，无需 file:// 前缀
+		sourceURL = localFile
+		fmt.Printf("[transcode] using local file path for ffmpeg: %s\n", localFile)
+	} else {
+		// 远程驱动：构造签名 HTTP URL
+		signedPath := sign.Sign(req.Path)
+		sourceURL = fmt.Sprintf("%s/d%s?sign=%s", apiURL, encodePath(req.Path), signedPath)
+	}
 
 	// 创建 Job
 	job := transcode.NewJob()
@@ -108,6 +122,37 @@ func encodePath(p string) string {
 		parts[i] = url.PathEscape(s)
 	}
 	return strings.Join(parts, "/")
+}
+
+// resolveLocalFilePath 尝试把 OpenList 路径解析为宿主机文件系统的实际路径。
+// 仅对本地驱动 (Local) 有效，其他驱动（云盘等）返回 false。
+//
+// 这是内存优化的关键路径：本地文件场景下让 ffmpeg 直接读文件，可以完全绕过
+// HTTP /d 代理路径上的 net.Downloader 大块缓冲（默认每个 range 请求最高
+// 占用 MaxBufferLimit = 系统内存 5%，多 chunk 并发 + 多 range 累计可达数 GB）。
+func resolveLocalFilePath(rawPath string) (string, bool) {
+	storage, actualPath, err := op.GetStorageAndActualPath(rawPath)
+	if err != nil || storage == nil {
+		return "", false
+	}
+	if storage.Config().Name != "Local" {
+		return "", false
+	}
+	rooter, ok := storage.(driver.IRootPath)
+	if !ok {
+		return "", false
+	}
+	root := rooter.GetRootPath()
+	if root == "" {
+		return "", false
+	}
+	full := filepath.Join(root, actualPath)
+	// 只接受真实存在的文件，避免传给 ffmpeg 一个无效路径
+	fi, err := os.Stat(full)
+	if err != nil || fi.IsDir() {
+		return "", false
+	}
+	return full, true
 }
 
 // ============================================================

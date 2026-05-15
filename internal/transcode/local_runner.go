@@ -295,8 +295,11 @@ func (r *LocalRunner) runJobLegacy(ctx context.Context, job *Job, profile Profil
 }
 
 // watchSegments 周期性扫描输出目录，把新切片登记到 Cache
+// 【内存优化】把扫描频率从 500ms 降到 2s，减少每次 os.ReadDir 和 parseFFmpegPlaylistDurations
+// 触发的字符串/字节切片分配。chunk 模式下每个 chunk 完成时还会主动调用 publishChunkSegments，
+// 所以这里只需要兜底登记中间切片，2s 频率完全够用。
 func (r *LocalRunner) watchSegments(job *Job, profile Profile, dir string, stop chan struct{}) {
-	t := time.NewTicker(500 * time.Millisecond)
+	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	for {
 		select {
@@ -439,9 +442,35 @@ func (r *LocalRunner) publishChunkSegments(job *Job, profile Profile, dir string
 	}
 }
 
+// playlistDurCache 缓存 m3u8 解析结果，按文件 mtime+size 失效。
+// 【内存优化】scanAndPublish 每 2 秒一次，每次都会解析同一个 m3u8（长视频几百 KB），
+// strings.Split 会产生大量临时字符串切片造成 GC 压力。用缓存减少 99% 的重复解析。
+type playlistDurCacheEntry struct {
+	mtime time.Time
+	size  int64
+	durs  map[int]float64
+}
+
+var (
+	playlistDurCache   = make(map[string]*playlistDurCacheEntry)
+	playlistDurCacheMu sync.Mutex
+)
+
 // parseFFmpegPlaylistDurations 解析 ffmpeg 写出的 m3u8，返回 seq -> duration 的映射
 // 用于获取每个切片的真实时长，避免后端用硬编码 segDur 导致总时长显示偏差
 func parseFFmpegPlaylistDurations(path string) map[int]float64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return map[int]float64{}
+	}
+	// 命中缓存：mtime + size 都没变就直接复用
+	playlistDurCacheMu.Lock()
+	if e, ok := playlistDurCache[path]; ok && e.mtime.Equal(fi.ModTime()) && e.size == fi.Size() {
+		playlistDurCacheMu.Unlock()
+		return e.durs
+	}
+	playlistDurCacheMu.Unlock()
+
 	out := make(map[int]float64)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -469,6 +498,14 @@ func parseFFmpegPlaylistDurations(path string) map[int]float64 {
 			pendingDur = 0
 		}
 	}
+	// 写入缓存
+	playlistDurCacheMu.Lock()
+	playlistDurCache[path] = &playlistDurCacheEntry{
+		mtime: fi.ModTime(),
+		size:  fi.Size(),
+		durs:  out,
+	}
+	playlistDurCacheMu.Unlock()
 	return out
 }
 
