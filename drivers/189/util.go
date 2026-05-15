@@ -311,48 +311,99 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 	}
 	d.sessionKey = sessionKey
 	const DEFAULT int64 = 10485760
-	count := int64(math.Ceil(float64(file.GetSize()) / float64(DEFAULT)))
+	fileSize := file.GetSize()
+	count := int64(math.Ceil(float64(fileSize) / float64(DEFAULT)))
 
-	res, err := d.uploadRequest("/person/initMultiUpload", map[string]string{
+	// 先计算文件完整MD5和分片MD5，用于秒传判断
+	fileMd5Hex := file.GetHash().GetHash(utils.MD5)
+	sliceMd5Hex := ""
+	md5s := make([]string, 0)
+
+	if len(fileMd5Hex) < utils.MD5.Width {
+		// 没有MD5，先缓存流并同时计算文件MD5和分片MD5
+		fileMd5Hash := md5.New()
+		sliceMd5Hash := md5.New()
+		var finish int64
+		cache, err := file.CacheFullAndWriter(nil, io.MultiWriter(fileMd5Hash, &sliceHashWriter{
+			hash:      sliceMd5Hash,
+			md5s:      &md5s,
+			sliceSize: DEFAULT,
+			finish:    &finish,
+			fileSize:  fileSize,
+			up:        up,
+			ctx:       ctx,
+		}))
+		if err != nil {
+			return err
+		}
+		// 处理最后一个分片的MD5
+		if finish%DEFAULT != 0 || finish == 0 {
+			md5s = append(md5s, strings.ToUpper(hex.EncodeToString(sliceMd5Hash.Sum(nil))))
+		}
+		fileMd5Hex = hex.EncodeToString(fileMd5Hash.Sum(nil))
+
+		// seek回起始位置，供后续上传使用
+		if _, err := cache.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+	}
+
+	// 计算sliceMd5
+	if fileSize > DEFAULT && len(md5s) > 0 {
+		sliceMd5Hex = utils.GetMD5EncodeStr(strings.Join(md5s, "\n"))
+	} else {
+		sliceMd5Hex = fileMd5Hex
+	}
+
+	// 带fileMd5调用initMultiUpload，支持秒传
+	initParams := map[string]string{
 		"parentFolderId": dstDir.GetID(),
 		"fileName":       encode(file.GetName()),
-		"fileSize":       strconv.FormatInt(file.GetSize(), 10),
+		"fileSize":       strconv.FormatInt(fileSize, 10),
 		"sliceSize":      strconv.FormatInt(DEFAULT, 10),
-		"lazyCheck":      "1",
-	}, nil)
+		"fileMd5":        fileMd5Hex,
+		"sliceMd5":       sliceMd5Hex,
+	}
+
+	res, err := d.uploadRequest("/person/initMultiUpload", initParams, nil)
 	if err != nil {
 		return err
 	}
 	uploadFileId := jsoniter.Get(res, "data", "uploadFileId").ToString()
-	//_, err = d.uploadRequest("/person/getUploadedPartsInfo", map[string]string{
-	//	"uploadFileId": uploadFileId,
-	//}, nil)
+	fileDataExists := jsoniter.Get(res, "data", "fileDataExists").ToInt()
+
+	// 秒传成功，直接提交
+	if fileDataExists == 1 {
+		_, err = d.uploadRequest("/person/commitMultiUploadFile", map[string]string{
+			"uploadFileId": uploadFileId,
+			"fileMd5":      fileMd5Hex,
+			"sliceMd5":     sliceMd5Hex,
+			"lazyCheck":    "1",
+			"opertype":     "3",
+		}, nil)
+		return err
+	}
+
+	// 非秒传，需要上传分片
 	var finish int64 = 0
 	var i int64
 	var byteSize int64
-	md5s := make([]string, 0)
-	md5Sum := md5.New()
 	for i = 1; i <= count; i++ {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
 		}
-		byteSize = file.GetSize() - finish
+		byteSize = fileSize - finish
 		if DEFAULT < byteSize {
 			byteSize = DEFAULT
 		}
-		// log.Debugf("%d,%d", byteSize, finish)
 		byteData := make([]byte, byteSize)
 		n, err := io.ReadFull(file, byteData)
-		// log.Debug(err, n)
 		if err != nil {
 			return err
 		}
 		finish += int64(n)
 		md5Bytes := getMd5(byteData)
-		md5Hex := hex.EncodeToString(md5Bytes)
 		md5Base64 := base64.StdEncoding.EncodeToString(md5Bytes)
-		md5s = append(md5s, strings.ToUpper(md5Hex))
-		md5Sum.Write(byteData)
 		var resp UploadUrlsResp
 		res, err = d.uploadRequest("/person/getMultiUploadUrls", map[string]string{
 			"partInfo":     fmt.Sprintf("%s-%s", strconv.FormatInt(i, 10), md5Base64),
@@ -379,17 +430,12 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 		}
 		log.Debugf("%+v %+v", r, r.Request.Header)
 		_ = r.Body.Close()
-		up(float64(i) * 100 / float64(count))
-	}
-	fileMd5 := hex.EncodeToString(md5Sum.Sum(nil))
-	sliceMd5 := fileMd5
-	if file.GetSize() > DEFAULT {
-		sliceMd5 = utils.GetMD5EncodeStr(strings.Join(md5s, "\n"))
+		up(50 + float64(i)*50/float64(count))
 	}
 	res, err = d.uploadRequest("/person/commitMultiUploadFile", map[string]string{
 		"uploadFileId": uploadFileId,
-		"fileMd5":      fileMd5,
-		"sliceMd5":     sliceMd5,
+		"fileMd5":      fileMd5Hex,
+		"sliceMd5":     sliceMd5Hex,
 		"lazyCheck":    "1",
 		"opertype":     "3",
 	}, nil)
@@ -405,4 +451,53 @@ func (d *Cloud189) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// sliceHashWriter 在写入过程中按分片大小自动切分并计算每个分片的MD5，
+// 同时支持进度回调和取消检查。
+type sliceHashWriter struct {
+	hash      io.Writer // 当前分片的MD5 hash
+	md5s      *[]string // 收集每个分片的MD5十六进制字符串
+	sliceSize int64     // 分片大小
+	finish    *int64    // 已写入的总字节数
+	fileSize  int64     // 文件总大小
+	up        driver.UpdateProgress
+	ctx       context.Context
+}
+
+func (w *sliceHashWriter) Write(p []byte) (int, error) {
+	if utils.IsCanceled(w.ctx) {
+		return 0, w.ctx.Err()
+	}
+	total := len(p)
+	written := 0
+	for written < total {
+		// 当前分片还能写入的字节数
+		sliceRemain := w.sliceSize - (*w.finish % w.sliceSize)
+		toWrite := int64(total - written)
+		if toWrite > sliceRemain {
+			toWrite = sliceRemain
+		}
+		n, err := w.hash.Write(p[written : written+int(toWrite)])
+		if err != nil {
+			return written, err
+		}
+		written += n
+		*w.finish += int64(n)
+
+		// 当前分片写满，记录MD5并重置
+		if *w.finish%w.sliceSize == 0 {
+			if h, ok := w.hash.(interface{ Sum([]byte) []byte }); ok {
+				*w.md5s = append(*w.md5s, strings.ToUpper(hex.EncodeToString(h.Sum(nil))))
+			}
+			if resetter, ok := w.hash.(interface{ Reset() }); ok {
+				resetter.Reset()
+			}
+		}
+	}
+	// 报告进度（缓存阶段占50%）
+	if w.fileSize > 0 && w.up != nil {
+		w.up(float64(*w.finish) / float64(w.fileSize) * 50)
+	}
+	return total, nil
 }
