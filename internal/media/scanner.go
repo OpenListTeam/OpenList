@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"mime"
-	"net/http"
 	stdpath "path"
 	"regexp"
 	"strings"
@@ -19,7 +18,9 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 // 支持的文件扩展名
@@ -375,8 +376,8 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 			item := &model.MediaItem{
 				MediaType:   sp.MediaType,
 				ScanPathID:  sp.ID,
-				FileName:    name,                 // 文件夹名
-				FolderPath:  stdpath.Dir(target),  // 文件夹所在的真实父目录
+				FileName:    name,                // 文件夹名
+				FolderPath:  stdpath.Dir(target), // 文件夹所在的真实父目录
 				IsFolder:    true,
 				AlbumName:   albumName,
 				AlbumArtist: albumArtist,
@@ -485,8 +486,8 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 }
 
 // loadLyricsForMusic 为音乐文件加载歌词：
-//   1) 优先读取同目录同名 .lrc 文件（如 song.mp3 → song.lrc）
-//   2) 如果不存在，使用 tag 中的内嵌歌词（USLT / Vorbis LYRICS）
+//  1. 优先读取同目录同名 .lrc 文件（如 song.mp3 → song.lrc）
+//  2. 如果不存在，使用 tag 中的内嵌歌词（USLT / Vorbis LYRICS）
 //
 // musicVfsPath 为音乐文件的 VFS 全路径；tag 可为 nil
 func loadLyricsForMusic(ctx context.Context, musicVfsPath string, tag *MusicTag) string {
@@ -526,34 +527,26 @@ func loadLyricsForMusic(ctx context.Context, musicVfsPath string, tag *MusicTag)
 // 优先使用 RangeReader 直接读取（本地存储无需 HTTP），失败时回退到 HTTP URL
 // 返回 nil 表示无法获取（不影响主流程）
 func FetchFileReader(ctx context.Context, vfsPath string) io.ReadCloser {
-	link, _, err := fs.Link(ctx, vfsPath, model.LinkArgs{})
+	link, file, err := fs.Link(ctx, vfsPath, model.LinkArgs{})
 	if err != nil || link == nil {
 		return nil
 	}
-	// 优先使用 RangeReader（本地存储直接读取，无需 HTTP 请求）
-	if link.RangeReader != nil {
-		rc, err := link.RangeReader.RangeRead(ctx, http_range.Range{Start: 0, Length: -1})
-		if err == nil && rc != nil {
-			return rc
-		}
+	size := link.ContentLength
+	if size <= 0 {
+		size = file.GetSize()
 	}
-	// 回退：通过 HTTP URL 读取（远程存储）
-	if link.URL == "" {
-		return nil
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link.URL, nil)
+	rr, err := stream.GetRangeReaderFromLink(size, link)
 	if err != nil {
+		_ = link.Close()
 		return nil
 	}
-	resp, err := http.DefaultClient.Do(req)
+	rc, err := rr.RangeRead(ctx, http_range.Range{Length: size})
 	if err != nil {
+		_ = link.Close()
 		return nil
 	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		_ = resp.Body.Close()
-		return nil
-	}
-	return resp.Body
+	link.SyncClosers.Add(rc)
+	return utils.ReadCloser{Reader: rc, Closer: link}
 }
 
 // walkVFS 递归遍历 VFS 路径，收集匹配的媒体文件路径（每个目录都刷新缓存）
@@ -591,11 +584,11 @@ func buildMediaItemFromVFS(ctx context.Context, vfsPath string, sp *model.MediaS
 	ext := strings.ToLower(stdpath.Ext(name))
 
 	item := &model.MediaItem{
-		MediaType:  sp.MediaType,
-		ScanPathID: sp.ID,
-		FileName:   name,                 // 文件夹名 或 文件名
-		FolderPath: stdpath.Dir(vfsPath), // 真实父目录
-		IsFolder:   obj.IsDir(),
+		MediaType:   sp.MediaType,
+		ScanPathID:  sp.ID,
+		FileName:    name,                 // 文件夹名 或 文件名
+		FolderPath:  stdpath.Dir(vfsPath), // 真实父目录
+		IsFolder:    obj.IsDir(),
 		ScrapedName: strings.TrimSuffix(name, stdpath.Ext(name)), // 去掉扩展名作为默认名称
 	}
 
