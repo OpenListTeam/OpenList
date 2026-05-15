@@ -26,7 +26,7 @@ var chineseRegexp = regexp.MustCompile(`[\p{Han}]`)
 // 噪声词正则：发布组、编码、分辨率、音轨等无意义片段
 // 清洗中文标题尾部常见的污染词
 // 注意：这里只用于「子串匹配」清洗，不要求整段命中
-var noiseTokenRegexp = regexp.MustCompile(`(?i)(双语字幕|双语|中字|中英字幕|中英双字|中英双语|国英双语|国英双轨|国粤双语|粤语中字|国语中字|英语中字|日语中字|韩语中字|国英|国粤|粤语|国语|英语|日语|韩语|内封字幕|外挂字幕|HDTV|HR-HDTV|BluRay|BDRip|WEB-?DL|HDRip|DVDRip|REMUX|x264|x265|h264|h265|HEVC|AVC|AAC|AC3|DTS|FLAC|10bit|8bit|HDR|SDR|4K|2160P|1080P|720P|480P|完整版|未删减版|加长版|导演剪辑版|蓝光版|高清版)`)
+var noiseTokenRegexp = regexp.MustCompile(`(?i)(双语字幕|双语|中字|中英字幕|中英双字|中英双语|国英双语|国英双轨|国粤双语|粤语中字|国语中字|英语中字|日语中字|韩语中字|国英|国粤|粤语|国语|英语|日语|韩语|内封字幕|外挂字幕|HDTV|HR-HDTV|BluRay|BDRip|WEB-?DL|HDRip|DVDRip|REMUX|x264|x265|h264|h265|HEVC|AVC|AAC|AC3|DTS|FLAC|10bit|8bit|HDR|SDR|4K|2160P|1080P|720P|480P|完整版|未删减版|加长版|导演剪辑版|蓝光版|高清版|正版上译公映|正版上译|上译公映|公映译制|译制公映|公映版|上译版|京译版|长译版|国配版|台配版|港配版|国语配音|粤语配音|国粤配音|原声版|原盘|配音版|译制版)`)
 
 // chineseReleaseGroupRe 中文字幕组/压制组/影视站名的整段匹配正则
 // 这些词出现在文件名中通常是发布信息，绝不应该被当成片名候选
@@ -42,7 +42,7 @@ var chineseReleaseGroupRe = regexp.MustCompile(`^(?:` +
 
 // chineseGarbageContainsRe 包含即视为发布组信息的中文片段（用于片段中嵌有这些字眼时整体丢弃）
 // 例：「人人影视」、「天天美剧」即使附带其他字符，整段都不太可能是片名
-var chineseGarbageContainsRe = regexp.MustCompile(`人人影视|人人字幕|YYeTs|字幕组|压制组|发布组`)
+var chineseGarbageContainsRe = regexp.MustCompile(`人人影视|人人字幕|YYeTs|字幕组|压制组|发布组|正版上译|上译公映|公映译制|译制公映|公映版|上译版|国配版|台配版|港配版|配音版|译制版`)
 
 // 中文数字到阿拉伯数字的简单映射，用于「钢铁侠三」=>「钢铁侠3」类的归一化
 var cnNumMap = map[string]string{
@@ -361,8 +361,14 @@ func parseVideoFileName(fileName string) parsedVideoTitle {
 
 	// 当解析出多个连续中文片段时，它们很可能是「主标题.副标题」结构（如 "300勇士.帝国崛起"
 	// 实际是「300勇士：帝国崛起」），把合并后的候选也加入 ExtraChineseTitles 用于兜底搜索。
+	// 注意：合并最多保留前两段（主标题 + 副标题），避免「主标题：副标题：发布版本」这类
+	// 把发布信息（正版上译公映等）当成第二副标题的脏候选；电影/剧名极少有真正的三段式官方片名。
 	if len(chineseParts) > 1 {
-		merged := strings.Join(chineseParts, "：")
+		mergeParts := chineseParts
+		if len(mergeParts) > 2 {
+			mergeParts = mergeParts[:2]
+		}
+		merged := strings.Join(mergeParts, "：")
 		// 避免与已有候选重复
 		exists := merged == result.ChineseTitle
 		for _, t := range result.ExtraChineseTitles {
