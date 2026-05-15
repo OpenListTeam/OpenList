@@ -429,6 +429,26 @@ func GetMediaScanProgress(c *gin.Context) {
 	common.SuccessResp(c, progress)
 }
 
+// MediaScrapeStatsResp 刮削统计响应
+// 包含 TMDB 视频刮削的累计指标，用于运维观测与命中率评估
+type MediaScrapeStatsResp struct {
+	TMDB scraper.TMDBStats `json:"tmdb"`
+}
+
+// GetMediaScrapeStats 获取刮削统计（进程级累计值，重启清零）
+// 返回字段：
+//   - total_scraped         : 累计触发刮削次数
+//   - hit_count             : 命中（含强命中）次数
+//   - low_confidence_count  : 仅低置信度兜底命中次数
+//   - no_match_count        : 完全未命中次数
+//   - total_attempts        : 累计 TMDB 搜索请求次数
+//   - total_search_millis   : 累计搜索耗时（毫秒）
+func GetMediaScrapeStats(c *gin.Context) {
+	common.SuccessResp(c, MediaScrapeStatsResp{
+		TMDB: scraper.GetTMDBStats(),
+	})
+}
+
 // ScrapeMediaReq 刮削请求
 type ScrapeMediaReq struct {
 	MediaType model.MediaType `json:"media_type" binding:"required"`

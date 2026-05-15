@@ -209,6 +209,7 @@ func admin(g *gin.RouterGroup) {
 	mediaAdmin.POST("/scan/start", handles.StartMediaScan)
 	mediaAdmin.GET("/scan/progress", handles.GetMediaScanProgress)
 	mediaAdmin.POST("/scrape/start", handles.StartMediaScrape)
+	mediaAdmin.GET("/scrape/stats", handles.GetMediaScrapeStats)
 	mediaAdmin.POST("/clear", handles.ClearMediaDB)
 	mediaAdmin.POST("/clear_scrape", handles.ClearMediaScrape)
 	mediaAdmin.POST("/delete_invalid", handles.DeleteInvalidMedia)
