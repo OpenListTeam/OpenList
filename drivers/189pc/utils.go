@@ -357,6 +357,7 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 		err = fmt.Errorf(tokenInfo.ResMessage)
 		return err
 	}
+	y.Addition.AccessToken = tokenInfo.AccessToken
 	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
 	op.MustSaveDriverStorage(y)
@@ -415,6 +416,7 @@ func (y *Cloud189PC) loginByQRCode() error {
 		if tokenInfo.ResCode != 0 {
 			return fmt.Errorf(tokenInfo.ResMessage)
 		}
+		y.Addition.AccessToken = tokenInfo.AccessToken
 		y.Addition.RefreshToken = tokenInfo.RefreshToken
 		y.tokenInfo = &tokenInfo
 		op.MustSaveDriverStorage(y)
@@ -662,6 +664,7 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 		return y.login()
 	}
 
+	y.Addition.AccessToken = tokenInfo.AccessToken
 	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
 	op.MustSaveDriverStorage(y)

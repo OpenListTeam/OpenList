@@ -87,7 +87,12 @@ func (y *Cloud189PC) Init(ctx context.Context) (err error) {
 		}
 
 		// 先尝试用Token刷新，之后尝试登陆
-		if y.Addition.RefreshToken != "" {
+		if y.Addition.AccessToken != "" {
+			y.tokenInfo = &AppSessionResp{AccessToken: y.Addition.AccessToken, RefreshToken: y.Addition.RefreshToken}
+			if err = y.refreshSession(); err != nil {
+				return err
+			}
+		} else if y.Addition.RefreshToken != "" {
 			y.tokenInfo = &AppSessionResp{RefreshToken: y.Addition.RefreshToken}
 			if err = y.refreshToken(); err != nil {
 				return err
@@ -410,6 +415,19 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	case "stream":
 		if stream.GetSize() == 0 {
 			return y.FastUpload(ctx, dstDir, stream, up, isFamily, overwrite)
+		}
+		// 尝试秒传：如果已有MD5且启用了RapidUpload则用RapidUpload，否则走FastUpload（会计算MD5并尝试秒传）
+		if !stream.IsForceStreamUpload() {
+			fileMd5 := stream.GetHash().GetHash(utils.MD5)
+			if len(fileMd5) >= utils.MD5.Width && y.Addition.RapidUpload {
+				// 源文件已有MD5且启用了RapidUpload配置，尝试快速秒传
+				if newObj, err := y.RapidUpload(ctx, dstDir, stream, isFamily, overwrite); err == nil {
+					return newObj, nil
+				}
+			} else if len(fileMd5) < utils.MD5.Width {
+				// 源文件无MD5（如从本地复制），走FastUpload计算MD5并尝试秒传
+				return y.FastUpload(ctx, dstDir, stream, up, isFamily, overwrite)
+			}
 		}
 		fallthrough
 	default:

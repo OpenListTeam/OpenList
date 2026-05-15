@@ -30,29 +30,25 @@ func (r *Reader) Read(p []byte) (int, error) {
 }
 
 func (r *Reader) ReadAt(p []byte, off int64) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	if off < 0 || off >= r.size {
 		return 0, io.EOF
 	}
 
 	n := 0
-	readFrom := false
 	for _, buf := range r.bufs {
-		if readFrom {
-			nn := copy(p[n:], buf)
-			n += nn
-			if n == len(p) {
-				return n, nil
-			}
-		} else if newOff := off - int64(len(buf)); newOff >= 0 {
-			off = newOff
-		} else {
-			nn := copy(p, buf[off:])
-			if nn == len(p) {
-				return nn, nil
-			}
-			n += nn
-			readFrom = true
+		if off >= int64(len(buf)) {
+			off -= int64(len(buf))
+			continue
 		}
+		nn := copy(p[n:], buf[off:])
+		n += nn
+		if n == len(p) {
+			return n, nil
+		}
+		off = 0
 	}
 
 	return n, io.EOF
@@ -84,6 +80,11 @@ func (r *Reader) Reset() {
 	r.offset = 0
 }
 
+func (r *Reader) Close() error {
+	r.Reset()
+	return nil
+}
+
 func NewReader(buf ...[]byte) *Reader {
 	b := &Reader{
 		bufs: make([][]byte, 0, len(buf)),
@@ -93,3 +94,39 @@ func NewReader(buf ...[]byte) *Reader {
 	}
 	return b
 }
+
+type byteBlock struct {
+	buf []byte
+}
+
+func NewByteBlock(buf []byte) Block {
+	return &byteBlock{buf: buf}
+}
+
+func (b *byteBlock) Size() int64 {
+	return int64(len(b.buf))
+}
+
+func (b *byteBlock) ReadAt(p []byte, off int64) (n int, err error) {
+	if len(b.buf) == 0 || off < 0 || off >= b.Size() {
+		return 0, io.EOF
+	}
+	n = copy(p, b.buf[off:])
+	if n < len(p) {
+		err = io.EOF
+	}
+	return
+}
+
+func (b *byteBlock) WriteAt(p []byte, off int64) (n int, err error) {
+	if len(b.buf) == 0 || off < 0 || off >= b.Size() {
+		return 0, io.ErrShortWrite
+	}
+	n = copy(b.buf[off:], p)
+	if n < len(p) {
+		err = io.ErrShortWrite
+	}
+	return
+}
+
+var _ Block = (*byteBlock)(nil)

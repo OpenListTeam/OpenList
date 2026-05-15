@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestReader_ReadAt(t *testing.T) {
+func TestReadAt(t *testing.T) {
 	type args struct {
 		p   []byte
 		off int64
@@ -17,10 +17,10 @@ func TestReader_ReadAt(t *testing.T) {
 	bs.Append([]byte("Team/"))
 	bs.Append([]byte("OpenList"))
 	tests := []struct {
-		name string
-		b    *Reader
-		args args
-		want func(a args, n int, err error) error
+		name  string
+		b     *Reader
+		args  args
+		check func(a args, n int, err error) error
 	}{
 		{
 			name: "readAt len 10 offset 0",
@@ -29,7 +29,7 @@ func TestReader_ReadAt(t *testing.T) {
 				p:   make([]byte, 10),
 				off: 0,
 			},
-			want: func(a args, n int, err error) error {
+			check: func(a args, n int, err error) error {
 				if n != len(a.p) {
 					return errors.New("read length not match")
 				}
@@ -49,7 +49,7 @@ func TestReader_ReadAt(t *testing.T) {
 				p:   make([]byte, 12),
 				off: 11,
 			},
-			want: func(a args, n int, err error) error {
+			check: func(a args, n int, err error) error {
 				if n != len(a.p) {
 					return errors.New("read length not match")
 				}
@@ -69,7 +69,7 @@ func TestReader_ReadAt(t *testing.T) {
 				p:   make([]byte, 50),
 				off: 24,
 			},
-			want: func(a args, n int, err error) error {
+			check: func(a args, n int, err error) error {
 				if n != int(bs.Size()-a.off) {
 					return errors.New("read length not match")
 				}
@@ -86,7 +86,7 @@ func TestReader_ReadAt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := tt.b.ReadAt(tt.args.p, tt.args.off)
-			if err := tt.want(tt.args, got, err); err != nil {
+			if err := tt.check(tt.args, got, err); err != nil {
 				t.Errorf("Bytes.ReadAt() error = %v", err)
 			}
 		})
