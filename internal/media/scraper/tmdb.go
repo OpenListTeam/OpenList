@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	stdpath "path"
 	"regexp"
 	"sort"
 	"strings"
@@ -1377,8 +1378,15 @@ func (s *TMDBScraper) ScrapeVideo(item *model.MediaItem) error {
 	if title == "" {
 		title = first.Name
 	}
-	if item.ScrapedName == "" {
-		item.ScrapedName = title
+	// ScrapedName 处理：
+	//   - 扫描阶段会把「去扩展名的文件名」作为默认占位写入 ScrapedName，
+	//     这种占位值应该被刮削得到的真实标题覆盖；
+	//   - 用户手动编辑过的 ScrapedName 不会等于该占位值，保留不覆盖。
+	if title != "" {
+		defaultName := strings.TrimSuffix(item.FileName, stdpath.Ext(item.FileName))
+		if item.ScrapedName == "" || item.ScrapedName == defaultName {
+			item.ScrapedName = title
+		}
 	}
 	if item.Plot == "" {
 		item.Plot = detail.Overview
