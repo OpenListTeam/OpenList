@@ -18,6 +18,20 @@ import (
 	"github.com/pkg/errors"
 )
 
+// maxTorrentBase64Len is the max allowed Base64-encoded torrent size (~10MB decoded)
+const maxTorrentBase64Len = 14 * 1024 * 1024
+
+// maxTorrentGenFileSize is the max file size allowed for synchronous torrent generation (1GB)
+const maxTorrentGenFileSize = 1 * 1024 * 1024 * 1024
+
+// validateParsedTorrent checks that basic torrent invariants hold.
+func validateParsedTorrent(t *torrent.Torrent) error {
+	if len(t.Info.Pieces)%20 != 0 {
+		return fmt.Errorf("torrent pieces 数据无效：长度必须为 20 的整数倍")
+	}
+	return nil
+}
+
 // ParseTorrentReq 解析 torrent 文件请求
 type ParseTorrentReq struct {
 	// TorrentData Base64 编码的 torrent 文件内容
@@ -66,6 +80,12 @@ func ParseTorrent(c *gin.Context) {
 		return
 	}
 
+	// 限制 Base64 输入大小（最大 ~10MB decoded）
+	if len(req.TorrentData) > maxTorrentBase64Len {
+		common.ErrorResp(c, fmt.Errorf("torrent 数据过大（最大 10MB）"), 400)
+		return
+	}
+
 	// Base64 解码
 	torrentData, err := base64.StdEncoding.DecodeString(req.TorrentData)
 	if err != nil {
@@ -77,6 +97,10 @@ func ParseTorrent(c *gin.Context) {
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
 		common.ErrorResp(c, fmt.Errorf("解析 torrent 失败: %w", err), 400)
+		return
+	}
+	if err := validateParsedTorrent(t); err != nil {
+		common.ErrorResp(c, err, 400)
 		return
 	}
 
@@ -185,6 +209,10 @@ func TorrentRapidUpload(c *gin.Context) {
 		common.ErrorResp(c, fmt.Errorf("获取目标目录失败: %w", err), 500)
 		return
 	}
+	if !dstDir.IsDir() {
+		common.ErrorResp(c, errs.NotFolder, 400)
+		return
+	}
 
 	// 检查是否是天翼云 PC 驱动
 	cloud189PC, ok := storage.(*_189pc.Cloud189PC)
@@ -196,7 +224,7 @@ func TorrentRapidUpload(c *gin.Context) {
 	// 尝试秒传
 	obj, err := cloud189PC.RapidUploadFromTorrent(c.Request.Context(), dstDir, torrentData, true)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("秒传失败: %w", err), 500)
+		common.ErrorResp(c, fmt.Errorf("秒传失败: %w", err), 400)
 		return
 	}
 
@@ -238,6 +266,10 @@ func UploadTorrentAndParse(c *gin.Context) {
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
 		common.ErrorResp(c, fmt.Errorf("解析 torrent 失败: %w", err), 400)
+		return
+	}
+	if err := validateParsedTorrent(t); err != nil {
+		common.ErrorResp(c, err, 400)
 		return
 	}
 
@@ -308,11 +340,30 @@ func GenerateTorrentForPath(c *gin.Context) {
 		return
 	}
 
+	// 检查读取权限
+	meta, err := op.GetNearestMeta(reqPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanRead(user, meta, reqPath) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
+
 	// 获取存储和文件信息
 	storage, actualPath, err := op.GetStorageAndActualPath(reqPath)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
+	}
+
+	// with_cas 仅支持天翼云PC驱动
+	if req.WithCAS {
+		if _, is189pc := storage.(*_189pc.Cloud189PC); !is189pc {
+			common.ErrorResp(c, fmt.Errorf("CAS 秒传扩展仅支持天翼云PC驱动"), 400)
+			return
+		}
 	}
 
 	// 获取文件对象
@@ -323,6 +374,12 @@ func GenerateTorrentForPath(c *gin.Context) {
 	}
 	if obj.IsDir() {
 		common.ErrorResp(c, fmt.Errorf("不支持为目录生成 torrent"), 400)
+		return
+	}
+
+	// 限制可生成 torrent 的文件大小
+	if obj.GetSize() > maxTorrentGenFileSize {
+		common.ErrorResp(c, fmt.Errorf("文件过大，无法生成 torrent（最大 1GB）"), 400)
 		return
 	}
 

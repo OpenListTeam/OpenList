@@ -206,7 +206,10 @@ func bencodeDecodeString(r *bytes.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bencode: invalid string length: %v", err)
 	}
-	data := make([]byte, length)
+	if length < 0 || length > 100*1024*1024 {
+		return nil, fmt.Errorf("bencode: string length out of bounds: %d", length)
+	}
+	data := make([]byte, int(length))
 	_, err = io.ReadFull(r, data)
 	if err != nil {
 		return nil, err

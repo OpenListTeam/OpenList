@@ -68,11 +68,18 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	// 统一 MD5 为大写（与正常上传保持一致，天翼云盘要求大写）
 	fileMD5Upper := strings.ToUpper(cas.FileMD5)
 
-	// 根据文件大小动态计算分片大小（与正常上传保持一致）
-	sliceSize := partSize(fileSize)
+	// 优先使用 torrent 中嵌入的分片大小，与生成时保持一致
+	sliceSize := cas.SliceSize
+	if sliceSize <= 0 {
+		sliceSize = partSize(fileSize)
+	}
 
 	// 计算 sliceMd5（与上传时一致的算法）
-	sliceMd5Hex := fileMD5Upper
+	// 优先使用 torrent 中已有的 SliceMD5；仅当有多分片列表时才重新计算
+	sliceMd5Hex := strings.ToUpper(cas.SliceMD5)
+	if sliceMd5Hex == "" {
+		sliceMd5Hex = fileMD5Upper
+	}
 	if len(cas.SliceMD5s) > 1 {
 		// 分片 MD5 也需要统一大写后再拼接计算
 		upperSliceMD5s := make([]string, len(cas.SliceMD5s))
@@ -132,7 +139,7 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		req.SetContext(ctx)
 	}, checkParams, &checkResp, isFamily)
 	if err != nil {
-		fmt.Printf("[RapidUpload] Step2 checkTransSecond 失败: %v\n", err)
+		utils.Log.Errorf("[RapidUpload] checkTransSecond 失败: uploadFileId=%s, err=%v", uploadFileId, err)
 		return nil, fmt.Errorf("秒传检查失败: %w", err)
 	}
 
@@ -156,7 +163,7 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		req.SetContext(ctx)
 	}, commitParams, &resp, isFamily)
 	if err != nil {
-		fmt.Printf("[RapidUpload] Step3 commitMultiUploadFile 失败: %v\n", err)
+		utils.Log.Errorf("[RapidUpload] commitMultiUploadFile 失败: uploadFileId=%s, err=%v", uploadFileId, err)
 		return nil, fmt.Errorf("提交上传失败: %w", err)
 	}
 

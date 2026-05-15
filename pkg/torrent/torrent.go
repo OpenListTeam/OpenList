@@ -435,5 +435,5 @@ func BuildCASInfoFromMD5s(fileMD5 string, sliceMD5s []string, sliceSize int64) *
 func GetMD5Str(data string) string {
 	h := md5.New()
 	h.Write([]byte(data))
-	return hex.EncodeToString(h.Sum(nil))
+	return strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
 }

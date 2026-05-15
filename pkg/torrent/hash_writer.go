@@ -42,6 +42,12 @@ type HashWriter struct {
 // sliceSize: CAS 分片大小（通常 10MB）
 // pieceSize: BT piece 大小（设为与 sliceSize 相同以保持对齐）
 func NewHashWriter(sliceSize, pieceSize int64) *HashWriter {
+	if sliceSize <= 0 {
+		sliceSize = DefaultPieceSize
+	}
+	if pieceSize <= 0 {
+		pieceSize = DefaultPieceSize
+	}
 	return &HashWriter{
 		fileMD5:   md5.New(),
 		sliceMD5:  md5.New(),
