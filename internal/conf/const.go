@@ -195,6 +195,11 @@ const (
 	TranscodeJobTimeoutMin      = "transcode_job_timeout_min"      // 单个任务超时分钟
 	TranscodeLocalConcurrency   = "transcode_local_concurrency"    // 本地内置 worker 并发数(run_mode=local/hybrid 时生效)
 	TranscodeIdleTimeoutSec     = "transcode_idle_timeout_sec"     // 播放端无请求多少秒后自动停止转码（默认90秒）
+	// === 智能 chunk 调度相关 ===
+	TranscodeChunkDurationSec    = "transcode_chunk_duration_sec"    // 每个 chunk 时长(秒)，将整个视频分成多个 chunk 按需转码（默认60秒）
+	TranscodeMaxChunkConcurrency = "transcode_max_chunk_concurrency" // 单个 Job 最多同时运行的 chunk 数（默认2）
+	TranscodeChunkIdleSec        = "transcode_chunk_idle_sec"        // chunk 多久没被访问就 kill ffmpeg 释放资源（默认60秒）
+	TranscodeChunkPrefetch       = "transcode_chunk_prefetch"        // 当前 chunk 转码进度过半时，是否预启动下一个 chunk（默认true）
 )
 
 const (

@@ -174,24 +174,23 @@ func (r *LocalRunner) runJob(job *Job) {
 		return
 	}
 	outDir := jc.BaseDir
-	playlistPath := filepath.Join(outDir, "playlist.m3u8")
-	segPattern := filepath.Join(outDir, "seg-%d.ts")
 
-	args := buildFFmpegArgs(job, profile, segPattern, playlistPath)
-	ffmpegPath := setting.GetStr(conf.TranscodeFFmpegPath, "ffmpeg")
-
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
-	// 【内存泄漏修复】限制 stderr 捕获量，避免 ffmpeg 输出大量 warning 导致内存暴涨
-	stderr := &limitedBuffer{maxSize: 64 * 1024} // 最多 64KB
-	cmd.Stderr = stderr
-
-	startedAt := time.Now()
-	if err := cmd.Start(); err != nil {
-		_ = r.mgr.Scheduler.Finish(&FinishRequest{JobID: job.ID, Status: JobFailed, Error: err.Error()})
+	// 【智能调度】如果探测到了视频总时长，启用 chunk 模式（按需分段并发转码）
+	// 否则回退到旧的"一次性整段"模式（兼容 ffprobe 失败的场景）
+	if job.Probe.Duration > 0 && r.mgr.Chunks != nil {
+		r.runJobByChunks(ctx, job, profile, outDir)
 		return
 	}
 
-	// 监控目录中新生成的切片
+	// === 旧路径：一次性整段转码 ===
+	r.runJobLegacy(ctx, job, profile, outDir)
+}
+
+// runJobByChunks 智能 chunk 调度模式：按需启动 ffmpeg 进程，支持随机访问
+func (r *LocalRunner) runJobByChunks(ctx context.Context, job *Job, profile Profile, outDir string) {
+	startedAt := time.Now()
+
+	// 启动 watchSegments：周期扫描目录把切片登记到 cache
 	stopWatcher := make(chan struct{})
 	var watcherWG sync.WaitGroup
 	watcherWG.Add(1)
@@ -200,14 +199,77 @@ func (r *LocalRunner) runJob(job *Job) {
 		r.watchSegments(job, profile, outDir, stopWatcher)
 	}()
 
-	err = cmd.Wait()
+	// 创建 chunk session（会立刻启动 chunk-0 + 后台维护协程）
+	session, err := r.mgr.Chunks.StartSession(job, profile, outDir)
+	if err != nil {
+		close(stopWatcher)
+		watcherWG.Wait()
+		_ = r.mgr.Scheduler.Finish(&FinishRequest{JobID: job.ID, Status: JobFailed, Error: err.Error()})
+		return
+	}
+
+	// 阻塞等待全部 chunk 完成 / 任务被取消
+	select {
+	case <-session.WaitDone():
+		// 所有 chunk 都 Done，正常完成
+	case <-ctx.Done():
+		// 外部取消：通知 chunk session 杀掉所有 ffmpeg
+		r.mgr.Chunks.CancelSession(job.ID, profile.Name)
+	}
+
 	close(stopWatcher)
 	watcherWG.Wait()
-	// 处理 m3u8 末尾，扫一次确保最后一片登记
+	r.scanAndPublish(job, profile, outDir, true)
+
+	if ctx.Err() != nil {
+		utils.Log.Infof("[transcode] job %s chunk session cancelled", job.ID)
+		_ = r.mgr.Scheduler.Finish(&FinishRequest{
+			JobID:  job.ID,
+			Status: JobCancelled,
+			Error:  "cancelled: " + ctx.Err().Error(),
+		})
+		return
+	}
+	utils.Log.Infof("[transcode] job %s completed in %.1fs (chunk mode)", job.ID, time.Since(startedAt).Seconds())
+	_ = r.mgr.Scheduler.Finish(&FinishRequest{
+		JobID:  job.ID,
+		Status: JobFinished,
+		Stats:  JobStats{Elapsed: time.Since(startedAt).Seconds()},
+	})
+}
+
+// runJobLegacy 旧路径：一次性整段转码（不知道总时长时回退使用）
+func (r *LocalRunner) runJobLegacy(ctx context.Context, job *Job, profile Profile, outDir string) {
+	playlistPath := filepath.Join(outDir, "playlist.m3u8")
+	segPattern := filepath.Join(outDir, "seg-%d.ts")
+
+	args := buildFFmpegArgs(job, profile, segPattern, playlistPath)
+	ffmpegPath := setting.GetStr(conf.TranscodeFFmpegPath, "ffmpeg")
+
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	stderr := &limitedBuffer{maxSize: 64 * 1024}
+	cmd.Stderr = stderr
+
+	startedAt := time.Now()
+	if err := cmd.Start(); err != nil {
+		_ = r.mgr.Scheduler.Finish(&FinishRequest{JobID: job.ID, Status: JobFailed, Error: err.Error()})
+		return
+	}
+
+	stopWatcher := make(chan struct{})
+	var watcherWG sync.WaitGroup
+	watcherWG.Add(1)
+	go func() {
+		defer watcherWG.Done()
+		r.watchSegments(job, profile, outDir, stopWatcher)
+	}()
+
+	err := cmd.Wait()
+	close(stopWatcher)
+	watcherWG.Wait()
 	r.scanAndPublish(job, profile, outDir, true)
 
 	if err != nil {
-		// 区分是被外部取消还是 FFmpeg 自身失败
 		if ctx.Err() != nil {
 			utils.Log.Infof("[transcode] job %s ffmpeg killed (context cancelled)", job.ID)
 			_ = r.mgr.Scheduler.Finish(&FinishRequest{
@@ -224,7 +286,7 @@ func (r *LocalRunner) runJob(job *Job) {
 		}
 		return
 	}
-	utils.Log.Infof("[transcode] job %s completed in %.1fs", job.ID, time.Since(startedAt).Seconds())
+	utils.Log.Infof("[transcode] job %s completed in %.1fs (legacy mode)", job.ID, time.Since(startedAt).Seconds())
 	_ = r.mgr.Scheduler.Finish(&FinishRequest{
 		JobID:  job.ID,
 		Status: JobFinished,
@@ -331,6 +393,52 @@ func (r *LocalRunner) scanAndPublish(job *Job, profile Profile, dir string, fina
 	}
 }
 
+// publishChunkSegments 把 [startSeq, endSeq) 范围内已经写完的切片登记到 cache。
+// 与 scanAndPublish 不同，这个方法专门用于"某个 chunk 的 ffmpeg 已经退出"的场景，
+// 此时该范围的所有 .ts 文件都是完整的，不能再丢掉最大序号的那片（避免边界切片永远丢失）。
+func (r *LocalRunner) publishChunkSegments(job *Job, profile Profile, dir string, startSeq, endSeq int) {
+	jc, err := r.mgr.Cache.getOrCreate(job.ID, profile.Name)
+	if err != nil {
+		return
+	}
+	defaultDur := float64(setting.GetInt(conf.TranscodeSegmentDuration, 6))
+	registered := 0
+	for seq := startSeq; seq < endSeq; seq++ {
+		jc.mu.RLock()
+		_, exists := jc.segments[seq]
+		jc.mu.RUnlock()
+		if exists {
+			continue
+		}
+		fpath := filepath.Join(dir, fmt.Sprintf("seg-%d.ts", seq))
+		fi, err := os.Stat(fpath)
+		if err != nil || fi.IsDir() || fi.Size() == 0 {
+			continue
+		}
+		jc.mu.Lock()
+		jc.segments[seq] = &SegmentInfo{Seq: seq, Duration: defaultDur, Size: fi.Size(), Path: fpath}
+		var toClose []chan struct{}
+		for sk, chs := range jc.waiters {
+			if sk <= seq {
+				toClose = append(toClose, chs...)
+				delete(jc.waiters, sk)
+			}
+		}
+		jc.mu.Unlock()
+		for _, ch := range toClose {
+			close(ch)
+		}
+		if seq == 0 {
+			job.MarkReady()
+		}
+		registered++
+	}
+	if registered > 0 {
+		utils.Log.Infof("[transcode][chunk] published %d segments [%d, %d) for job=%s",
+			registered, startSeq, endSeq, job.ID)
+	}
+}
+
 // parseFFmpegPlaylistDurations 解析 ffmpeg 写出的 m3u8，返回 seq -> duration 的映射
 // 用于获取每个切片的真实时长，避免后端用硬编码 segDur 导致总时长显示偏差
 func parseFFmpegPlaylistDurations(path string) map[int]float64 {
@@ -364,8 +472,25 @@ func parseFFmpegPlaylistDurations(path string) map[int]float64 {
 	return out
 }
 
-// buildFFmpegArgs 构造 ffmpeg 命令行
+// buildFFmpegArgs 构造 ffmpeg 命令行（一次性整段转码，兼容旧路径）
+// 当 Probe.Duration 不可用时，LocalRunner.runJob 会回退到这条路径。
 func buildFFmpegArgs(job *Job, profile Profile, segPattern, playlistPath string) []string {
+	segDur := setting.GetInt(conf.TranscodeSegmentDuration, 6)
+	// startTime=0, duration=0(=不限) 表示整段转码；startSeq=0
+	return buildFFmpegArgsCommon(job, profile, segDur, 0, 0, 0, segPattern, playlistPath)
+}
+
+// buildFFmpegChunkArgs 构造 chunk 模式的 ffmpeg 命令行
+// startTime: 起始时间（秒）；duration: 持续时长（秒，0=不限）；startSeq: 切片起始编号
+// chunk 模式与一次性整段共用底层参数构造，差异仅在 -ss/-t/-start_number。
+func buildFFmpegChunkArgs(job *Job, profile Profile, segDur int, startTime, duration float64, startSeq int, segPattern, playlistPath string) []string {
+	return buildFFmpegArgsCommon(job, profile, segDur, startTime, duration, startSeq, segPattern, playlistPath)
+}
+
+// buildFFmpegArgsCommon 通用 ffmpeg 命令行构造
+// 当 startTime > 0 或 duration > 0 时，启用"chunk 模式"：使用 -ss / -t / -start_number 限定范围
+// 关键：-ss 必须放在 -i 之前（input seek，快），且需配合 force_key_frames 让 chunk 起始处生成 IDR 帧
+func buildFFmpegArgsCommon(job *Job, profile Profile, segDur int, startTime, duration float64, startSeq int, segPattern, playlistPath string) []string {
 	hw := strings.ToLower(profile.HWAccel)
 	args := []string{"-y", "-loglevel", "warning"}
 
@@ -385,8 +510,20 @@ func buildFFmpegArgs(job *Job, profile Profile, segPattern, playlistPath string)
 		args = append(args, "-hwaccel", "auto")
 	}
 
+	// 【chunk 模式】input seek：放在 -i 之前，速度快，会按关键帧对齐
+	// 注意 -ss 在 -i 之前是 input seek（用容器索引快速跳转），但落点是关键帧；
+	// 我们通过 force_key_frames 保证每个 chunk 边界都有关键帧，所以这里精度足够。
+	if startTime > 0.001 {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", startTime))
+	}
+
 	// 输入
 	args = append(args, "-i", job.SourceURL)
+
+	// 【chunk 模式】限定时长（output side 更精确）
+	if duration > 0.001 {
+		args = append(args, "-t", fmt.Sprintf("%.3f", duration))
+	}
 
 	// 视频编码器
 	vcodec := pickEncoder(profile.VideoCodec, hw)
@@ -432,7 +569,9 @@ func buildFFmpegArgs(job *Job, profile Profile, segPattern, playlistPath string)
 	args = append(args, "-ac", "2", "-ar", "48000")
 
 	// HLS 输出
-	segDur := setting.GetInt(conf.TranscodeSegmentDuration, 6)
+	if segDur <= 0 {
+		segDur = setting.GetInt(conf.TranscodeSegmentDuration, 6)
+	}
 	// 【关键】强制关键帧对齐切片边界，确保每个切片以 IDR 帧开始可独立解码。
 	// 没有这些参数时，第一个切片可能不含 IDR 帧，导致 HLS.js bufferAppendError。
 	// fps 假设 25 (帧率未知时的保守值)，gop = segDur * fps；force_key_frames 让
@@ -444,14 +583,25 @@ func buildFFmpegArgs(job *Job, profile Profile, segPattern, playlistPath string)
 		"-sc_threshold", "0",
 		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segDur),
 	)
+	// 【chunk 模式 - 关键修复】input seek 后 ffmpeg 会把第一帧 PTS 重置为 0，
+	// 这会导致 chunk-30 的切片在播放器看来是 PTS=0~60s（而不是 1800~1860s），
+	// 进而触发 HLS.js bufferAppendError 或时间轴错位。
+	// 解决方法：用 -output_ts_offset 让生成的切片时间戳偏移到原始位置。
+	if startTime > 0.001 {
+		args = append(args, "-output_ts_offset", fmt.Sprintf("%.3f", startTime))
+	}
 	args = append(args,
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(segDur),
 		"-hls_playlist_type", "vod",
 		"-hls_segment_filename", segPattern,
 		"-hls_flags", "independent_segments+temp_file",
-		playlistPath,
 	)
+	// 【chunk 模式】指定起始切片编号，让全局切片编号连续
+	if startSeq > 0 {
+		args = append(args, "-start_number", strconv.Itoa(startSeq))
+	}
+	args = append(args, playlistPath)
 	return args
 }
 

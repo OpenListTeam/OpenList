@@ -210,14 +210,24 @@ func TCSegment(c *gin.Context) {
 		return
 	}
 	cache := transcode.Default().Cache
+	// 【智能调度】触发对应 chunk 的 ffmpeg 启动（如已运行则只更新 LastAccess）
+	// 这是用户拖动进度条到任意位置时能快速响应的关键
+	mgr := transcode.Default()
+	if mgr.Chunks != nil {
+		chunkIdx := mgr.Chunks.EnsureChunkRunningForSeg(jobID, profile, seq)
+		fmt.Printf("[tc-segment] req seq=%d chunk=%d job=%s\n", seq, chunkIdx, jobID)
+	}
 	info, err := cache.GetSegment(jobID, profile, seq)
 	if err != nil {
 		// 等待
+		waitStart := time.Now()
 		info, err = cache.WaitForSegment(jobID, profile, seq, 60*time.Second)
 		if err != nil {
+			fmt.Printf("[tc-segment] req seq=%d FAILED after %.1fs: %v\n", seq, time.Since(waitStart).Seconds(), err)
 			c.String(http.StatusNotFound, "segment not available: "+err.Error())
 			return
 		}
+		fmt.Printf("[tc-segment] req seq=%d ready after %.1fs\n", seq, time.Since(waitStart).Seconds())
 	}
 	job.Touch()
 	// 切片内容不可变，设置强缓存避免浏览器/HLS.js 反复请求同一切片

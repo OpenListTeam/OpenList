@@ -305,6 +305,16 @@ videotoolbox = macOS 硬件加速`},
 			Help: `单个转码任务超时分钟数，超时自动失败`},
 		{Key: conf.TranscodeLocalConcurrency, Value: "1", Type: conf.TypeNumber, Group: model.TRANSCODE, Flag: model.PRIVATE,
 			Help: `本机内置 worker 同时执行的转码任务数(local/hybrid 模式生效)`},
+		{Key: conf.TranscodeIdleTimeoutSec, Value: "90", Type: conf.TypeNumber, Group: model.TRANSCODE, Flag: model.PRIVATE,
+			Help: `播放端无请求多少秒后自动停止转码（默认90秒，0=禁用）`},
+		{Key: conf.TranscodeChunkDurationSec, Value: "60", Type: conf.TypeNumber, Group: model.TRANSCODE, Flag: model.PRIVATE,
+			Help: `每个 chunk 时长(秒)，越大每段缓冲越长但 ffmpeg 进程切换越少（默认60秒）`},
+		{Key: conf.TranscodeMaxChunkConcurrency, Value: "2", Type: conf.TypeNumber, Group: model.TRANSCODE, Flag: model.PRIVATE,
+			Help: `单个视频任务最多同时运行的 chunk 数（默认2，越大并发越高但 CPU/GPU 占用越多）`},
+		{Key: conf.TranscodeChunkIdleSec, Value: "60", Type: conf.TypeNumber, Group: model.TRANSCODE, Flag: model.PRIVATE,
+			Help: `chunk 多久没被访问就 kill ffmpeg 释放资源（默认60秒）`},
+		{Key: conf.TranscodeChunkPrefetch, Value: "true", Type: conf.TypeBool, Group: model.TRANSCODE, Flag: model.PRIVATE,
+			Help: `当前 chunk 转码进度过半时，是否预启动下一个 chunk（默认开启，可让顺序播放无缝衔接）`},
 	}
 	additionalSettingItems := tool.Tools.Items()
 	// 固定顺序

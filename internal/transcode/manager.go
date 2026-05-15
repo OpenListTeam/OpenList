@@ -14,6 +14,7 @@ type Manager struct {
 	Registry  *WorkerRegistry
 	Scheduler *Scheduler
 	Cache     *Cache
+	Chunks    *ChunkManager // 智能 chunk 调度器（按需启动 ffmpeg，支持随机访问）
 
 	localRunner *LocalRunner
 
@@ -41,12 +42,14 @@ func newManager() *Manager {
 	cacheMaxGB := int64(setting.GetInt(conf.TranscodeCacheMaxGB, 20))
 	cache := NewCache(cachePath, cacheMaxGB)
 	_ = cache.Init()
-	return &Manager{
+	m := &Manager{
 		Registry:  reg,
 		Scheduler: sch,
 		Cache:     cache,
 		stopCh:    make(chan struct{}),
 	}
+	m.Chunks = NewChunkManager(m)
+	return m
 }
 
 // Start 启动后台维护协程：心跳清理 + 缓存 LRU + 完成任务清理
@@ -64,6 +67,9 @@ func (m *Manager) Start() {
 // Stop 停止 Manager
 func (m *Manager) Stop() {
 	close(m.stopCh)
+	if m.Chunks != nil {
+		m.Chunks.Stop()
+	}
 	if m.localRunner != nil {
 		m.localRunner.Stop()
 	}
@@ -120,6 +126,10 @@ func (m *Manager) sweepIdleJobs() {
 		if idle > timeout {
 			utils.Log.Infof("[transcode] job %s idle for %.0fs (threshold %ds), auto-cancelling",
 				j.ID, idle.Seconds(), idleTimeoutSec)
+			// 先取消所有 chunk ffmpeg，再调度器层面取消，最后清理缓存
+			if m.Chunks != nil {
+				m.Chunks.CancelAllForJob(j.ID)
+			}
 			m.Scheduler.Cancel(j.ID)
 			// 清理缓存文件释放磁盘空间
 			m.Cache.Cleanup(j.ID)
@@ -136,6 +146,10 @@ func (m *Manager) startLocalWorker() {
 	m.localRunner = r
 	// 注入取消回调：Scheduler.Cancel 时直接 kill 本地 FFmpeg 进程
 	m.Scheduler.SetOnCancel(func(jobID string) {
+		// 先清理 chunk session（kill 所有 chunk ffmpeg）
+		if m.Chunks != nil {
+			m.Chunks.CancelAllForJob(jobID)
+		}
 		if m.localRunner != nil {
 			m.localRunner.CancelJob(jobID)
 		}
