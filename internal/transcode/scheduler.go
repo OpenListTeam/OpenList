@@ -265,6 +265,61 @@ func (s *Scheduler) ListJobs() []*Job {
 	return out
 }
 
+// Reactivate 把一个已 Cancelled / Failed / Finished 的 job 重新激活回 Pending 状态，
+// 让 worker 能再次领取并跑转码。用于"播放端重新请求时按需重启转码"的场景。
+//
+// 设计点：
+//  1. 复用原 jobID 和 callback_token，前端持有的 master.m3u8 中的 URL 不需要变更
+//  2. 重置 readyCh / Status / WorkerID 等运行时字段，但保留 Path / SourceURL / Profiles / Probe
+//  3. 重新加入 pending 队列并唤醒等待的 worker
+//
+// 返回被激活的 Job；如果 job 不存在返回 nil 和 false。
+func (s *Scheduler) Reactivate(jobID string) (*Job, bool) {
+	s.mu.Lock()
+	j, ok := s.jobs[jobID]
+	if !ok {
+		s.mu.Unlock()
+		return nil, false
+	}
+	j.mu.Lock()
+	// 只有终止态才需要重新激活；Running/Ready 直接返回即可
+	switch j.Status {
+	case JobPending, JobRunning, JobReady:
+		j.mu.Unlock()
+		s.mu.Unlock()
+		return j, true
+	}
+	// 重置运行时状态
+	j.Status = JobPending
+	j.WorkerID = ""
+	j.Error = ""
+	j.FinishedAt = time.Time{}
+	j.LastAccessAt = time.Now()
+	// 重置 readyCh：原 channel 已 closed，需要全新一份给后续 WaitReady
+	j.readyCh = make(chan struct{})
+	j.readyOnce = sync.Once{}
+	j.mu.Unlock()
+
+	// 重新入 pending 队列（先确认不在队列中以免重复）
+	inQueue := false
+	for _, pj := range s.pending {
+		if pj.ID == jobID {
+			inQueue = true
+			break
+		}
+	}
+	if !inQueue {
+		s.pending = append(s.pending, j)
+	}
+	// 唤醒等待的 worker
+	for _, ch := range s.waiters {
+		close(ch)
+	}
+	s.waiters = nil
+	s.mu.Unlock()
+	return j, true
+}
+
 // PurgeBefore 删除 finishedAt 早于某时刻的任务，避免 jobs map 无限增长
 // 返回被清理的 job ID 列表，调用方需联动清理 Cache
 func (s *Scheduler) PurgeBefore(t time.Time) []string {

@@ -147,7 +147,8 @@ func TCPlaylist(c *gin.Context) {
 	jobID := c.Param("job")
 	token := c.Param("token")
 	profile := c.Param("profile")
-	job, ok := transcode.Default().Scheduler.Get(jobID)
+	mgr := transcode.Default()
+	job, ok := mgr.Scheduler.Get(jobID)
 	if !ok {
 		c.String(http.StatusNotFound, "job not found")
 		return
@@ -155,6 +156,13 @@ func TCPlaylist(c *gin.Context) {
 	if job.CallbackToken != token {
 		c.String(http.StatusForbidden, "bad token")
 		return
+	}
+	// 【关键】如果 job 之前因 idle 被 cancel，这里重新激活：复用 jobID/token 重新入队
+	// 让 worker 再次启动 ffmpeg 转码，避免播放器看到 404 后无法恢复
+	if st := job.GetStatus(); st == transcode.JobCancelled || st == transcode.JobFinished || st == transcode.JobFailed {
+		if _, ok := mgr.Scheduler.Reactivate(jobID); ok {
+			fmt.Printf("[transcode] reactivate job %s on playlist request (was %s)\n", jobID, st)
+		}
 	}
 	job.Touch()
 	// 等首切片
@@ -193,7 +201,8 @@ func TCSegment(c *gin.Context) {
 	token := c.Param("token")
 	profile := c.Param("profile")
 	segName := c.Param("seg")
-	job, ok := transcode.Default().Scheduler.Get(jobID)
+	mgr := transcode.Default()
+	job, ok := mgr.Scheduler.Get(jobID)
 	if !ok {
 		c.String(http.StatusNotFound, "job not found")
 		return
@@ -202,6 +211,13 @@ func TCSegment(c *gin.Context) {
 		c.String(http.StatusForbidden, "bad token")
 		return
 	}
+	// 【关键】job 之前因 idle 被 cancel 时，复用同一 jobID/token 重新入队启动转码。
+	// 这样浏览器持有的旧 master.m3u8 + 切片 URL 仍然有效，暂停再继续也不会 404。
+	if st := job.GetStatus(); st == transcode.JobCancelled || st == transcode.JobFinished || st == transcode.JobFailed {
+		if _, ok := mgr.Scheduler.Reactivate(jobID); ok {
+			fmt.Printf("[transcode] reactivate job %s on segment request (was %s)\n", jobID, st)
+		}
+	}
 	// seg-N.ts
 	name := strings.TrimSuffix(strings.TrimPrefix(segName, "seg-"), ".ts")
 	seq, err := strconv.Atoi(name)
@@ -209,10 +225,9 @@ func TCSegment(c *gin.Context) {
 		c.String(http.StatusBadRequest, "bad segment name")
 		return
 	}
-	cache := transcode.Default().Cache
+	cache := mgr.Cache
 	// 【智能调度】触发对应 chunk 的 ffmpeg 启动（如已运行则只更新 LastAccess）
 	// 这是用户拖动进度条到任意位置时能快速响应的关键
-	mgr := transcode.Default()
 	if mgr.Chunks != nil {
 		chunkIdx := mgr.Chunks.EnsureChunkRunningForSeg(jobID, profile, seq)
 		fmt.Printf("[tc-segment] req seq=%d chunk=%d job=%s\n", seq, chunkIdx, jobID)

@@ -111,6 +111,9 @@ func (m *Manager) maintenance() {
 }
 
 // sweepIdleJobs 扫描所有活跃任务，超过空闲超时时间无播放端请求则自动取消并 kill FFmpeg
+// 注意：这里只 cancel job + kill ffmpeg 释放 CPU，**不删除已转好的切片缓存**。
+// 当用户继续播放时，TCSegment / TCPlaylist 会通过 Scheduler.Reactivate 复用同一 jobID/token
+// 重新启动转码；已存在的切片可以直接命中，不需要再次转码。
 func (m *Manager) sweepIdleJobs() {
 	idleTimeoutSec := setting.GetInt(conf.TranscodeIdleTimeoutSec, 90)
 	if idleTimeoutSec <= 0 {
@@ -124,15 +127,16 @@ func (m *Manager) sweepIdleJobs() {
 		lastAccess := j.GetLastAccess()
 		idle := now.Sub(lastAccess)
 		if idle > timeout {
-			utils.Log.Infof("[transcode] job %s idle for %.0fs (threshold %ds), auto-cancelling",
+			utils.Log.Infof("[transcode] job %s idle for %.0fs (threshold %ds), pausing ffmpeg (cache kept for resume)",
 				j.ID, idle.Seconds(), idleTimeoutSec)
-			// 先取消所有 chunk ffmpeg，再调度器层面取消，最后清理缓存
+			// 先取消所有 chunk ffmpeg，再调度器层面取消
 			if m.Chunks != nil {
 				m.Chunks.CancelAllForJob(j.ID)
 			}
 			m.Scheduler.Cancel(j.ID)
-			// 清理缓存文件释放磁盘空间
-			m.Cache.Cleanup(j.ID)
+			// 【重要】不再调用 m.Cache.Cleanup —— 已转好的切片必须保留，
+			// 这样浏览器恢复播放时旧的 seg-N.ts 仍然能命中，避免 404 和重新转码。
+			// 真正的磁盘清理由更长周期的 PurgeBefore + Cache.EnforceLRU 负责。
 		}
 	}
 }
