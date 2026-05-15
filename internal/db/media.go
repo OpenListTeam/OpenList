@@ -428,14 +428,17 @@ func ListFolderPaths(mediaType model.MediaType) ([]string, error) {
 
 // GetUnscrappedItems 获取未刮削或刮削不完整的媒体条目
 // 只要 scraped_at 为空，或 cover/scraped_name/description 任一为空，就需要重新刮削
+// limit <= 0 表示不限制数量，返回所有未刮削条目
 func GetUnscrappedItems(mediaType model.MediaType, limit int) ([]model.MediaItem, error) {
 	var items []model.MediaItem
-	err := db.Where(
+	tx := db.Where(
 		"media_type = ? AND (scraped_at IS NULL OR cover = '' OR cover IS NULL OR scraped_name = '' OR scraped_name IS NULL OR description = '' OR description IS NULL)",
 		mediaType,
-	).
-		Limit(limit).
-		Find(&items).Error
+	)
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+	err := tx.Find(&items).Error
 	return items, err
 }
 

@@ -488,7 +488,8 @@ func StartMediaScrape(c *gin.Context) {
 				items = []model.MediaItem{*item}
 			}
 		} else {
-			items, err = db.GetUnscrappedItems(req.MediaType, 100)
+			// limit 传 -1，GORM 不会拼接 LIMIT 子句，从而一次性取出全部未刮削条目
+			items, err = db.GetUnscrappedItems(req.MediaType, -1)
 			if err != nil {
 				log.Errorf("获取未刮削条目失败: %v", err)
 				return
