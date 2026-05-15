@@ -24,7 +24,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 				c.Abort()
 				return
 			}
-			common.GinWithValue(c, conf.UserKey, admin)
+			common.GinAppendValues(c, conf.UserKey, admin)
 			log.Debugf("use admin token: %+v", admin)
 			c.Next()
 			return
@@ -41,7 +41,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 				c.Abort()
 				return
 			}
-			common.GinWithValue(c, conf.UserKey, guest)
+			common.GinAppendValues(c, conf.UserKey, guest)
 			log.Debugf("use empty token: %+v", guest)
 			c.Next()
 			return
@@ -69,7 +69,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 			c.Abort()
 			return
 		}
-		common.GinWithValue(c, conf.UserKey, user)
+		common.GinAppendValues(c, conf.UserKey, user)
 		log.Debugf("use login token: %+v", user)
 		c.Next()
 	}
@@ -84,7 +84,7 @@ func Authn(c *gin.Context) {
 			c.Abort()
 			return
 		}
-		common.GinWithValue(c, conf.UserKey, admin)
+		common.GinAppendValues(c, conf.UserKey, admin)
 		log.Debugf("use admin token: %+v", admin)
 		c.Next()
 		return
@@ -96,7 +96,7 @@ func Authn(c *gin.Context) {
 			c.Abort()
 			return
 		}
-		common.GinWithValue(c, conf.UserKey, guest)
+		common.GinAppendValues(c, conf.UserKey, guest)
 		log.Debugf("use empty token: %+v", guest)
 		c.Next()
 		return
@@ -124,7 +124,7 @@ func Authn(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	common.GinWithValue(c, conf.UserKey, user)
+	common.GinAppendValues(c, conf.UserKey, user)
 	log.Debugf("use login token: %+v", user)
 	c.Next()
 }
