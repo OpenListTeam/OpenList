@@ -181,6 +181,9 @@ func parseBunnyTime(value string, fallback time.Time) time.Time {
 	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
 		return t
 	}
+	if t, err := time.Parse("2006-01-02T15:04:05.999999999", value); err == nil {
+		return t
+	}
 	if t, err := time.Parse("2006-01-02T15:04:05", value); err == nil {
 		return t
 	}

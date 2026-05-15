@@ -174,6 +174,15 @@ func TestSignCDNURLUsesDecodedPathForSHA256(t *testing.T) {
 	}
 }
 
+func TestParseBunnyTimeSupportsFractionalSecondsWithoutTimezone(t *testing.T) {
+	fallback := time.Unix(1, 0)
+	got := parseBunnyTime("2023-03-21T13:38:31.693", fallback)
+	want := time.Date(2023, 3, 21, 13, 38, 31, 693000000, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("parsed time = %s, want %s", got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+}
+
 func TestConfigProxyMode(t *testing.T) {
 	registeredConfig := (&BunnyStorage{}).Config()
 	if registeredConfig.OnlyProxy {
