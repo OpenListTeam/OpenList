@@ -14,6 +14,7 @@ const (
 	FTP
 	TRAFFIC
 	MEDIA
+	TRANSCODE
 )
 
 const (

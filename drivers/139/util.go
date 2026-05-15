@@ -655,10 +655,12 @@ func (d *Yun139) personalGetLink(fileId string) (string, error) {
 	}
 	cdnUrl := jsoniter.Get(res, "data", "cdnUrl").ToString()
 	if cdnUrl != "" {
-		return cdnUrl, nil
-	} else {
-		return jsoniter.Get(res, "data", "url").ToString(), nil
+		cdnSwitch := jsoniter.Get(res, "data", "cdnSwitch").ToBool()
+		if cdnSwitch {
+			return cdnUrl, nil
+		}
 	}
+	return jsoniter.Get(res, "data", "url").ToString(), nil
 }
 
 func (d *Yun139) getAuthorization() string {

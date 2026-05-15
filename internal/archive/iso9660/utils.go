@@ -29,8 +29,8 @@ func getObj(img *iso9660.Image, path string) (*iso9660.File, error) {
 	if path == "/" {
 		return obj, nil
 	}
-	paths := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	for _, p := range paths {
+	paths := strings.SplitSeq(strings.TrimPrefix(path, "/"), "/")
+	for p := range paths {
 		if !obj.IsDir() {
 			return nil, errs.ObjectNotFound
 		}

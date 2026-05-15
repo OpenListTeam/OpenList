@@ -1,5 +1,5 @@
 <div align="center">
-  <img style="width: 128px; height: 128px;" src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" alt="logo" />
+  <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
 
   <p><em>OpenList は、信頼ベースの攻撃からオープンソースを守るために構築された、レジリエントで長期ガバナンス、コミュニティ主導の AList フォークです。</em></p>
 
