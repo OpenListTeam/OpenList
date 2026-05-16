@@ -59,7 +59,7 @@ func TestMultiFileCache(t *testing.T) {
 		conf.Conf = prevConf
 	})
 	conf.Conf = &conf.Config{}
-	f := hybrid_cache.MultiFileCache{}
+	f := hybrid_cache.MultiFileStore{}
 	defer f.Close()
 	t.Run("ReadAt", func(t *testing.T) {
 		_, err := f.ReadAt(make([]byte, 1), 20)
