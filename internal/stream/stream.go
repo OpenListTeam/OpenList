@@ -214,7 +214,7 @@ func (f *FileStream) ensureCache(size int64) (model.File, error) {
 	}
 	written, err := f.hc.CopyFromN(f.oriReader, size)
 	if written != size {
-		f.hc.RollbackBlockWithSize(uint64(size - written))
+		f.hc.RewindBySize(uint64(size - written))
 		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", size, written, err)
 	}
 	if f.peek.Size() >= f.GetSize() {

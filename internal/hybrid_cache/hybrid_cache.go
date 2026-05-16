@@ -22,8 +22,8 @@ type HybridCache struct {
 
 // HybridCache本身是一个大的Block，支持分块成多个小的Block
 
-// 获取一个新的Block，支持读写，大小为size
-func (hc *HybridCache) NextBlockWithSize(size uint64) (buffer.Block, error) {
+// 分配一个新的Block，支持读写，大小为size
+func (hc *HybridCache) AllocBlock(size uint64) (buffer.Block, error) {
 retry:
 	if hc.backingStore != nil {
 		if err := hc.backingStore.GrowTo(int64(hc.backingOffset + size)); err != nil {
@@ -49,7 +49,7 @@ retry:
 	goto retry
 }
 
-func (hc *HybridCache) nextWriterWithSize(size uint64) (buffer.WriteAtSeeker, error) {
+func (hc *HybridCache) allocWriteAtSeeker(size uint64) (buffer.WriteAtSeeker, error) {
 retry:
 	if hc.backingStore != nil {
 		if err := hc.backingStore.GrowTo(int64(hc.backingOffset + size)); err != nil {
@@ -72,10 +72,10 @@ retry:
 }
 
 func (hc *HybridCache) NextBlock() (buffer.Block, error) {
-	return hc.NextBlockWithSize(hc.blockSize)
+	return hc.AllocBlock(hc.blockSize)
 }
 
-func (hc *HybridCache) RollbackBlockWithSize(size uint64) {
+func (hc *HybridCache) RewindBySize(size uint64) {
 	if hc.backingOffset >= size {
 		hc.backingOffset -= size
 		return
@@ -90,8 +90,8 @@ func (hc *HybridCache) RollbackBlockWithSize(size uint64) {
 	hc.memoryOffset = 0
 }
 
-func (hc *HybridCache) RollbackBlock() {
-	hc.RollbackBlockWithSize(hc.blockSize)
+func (hc *HybridCache) RewindOneBlock() {
+	hc.RewindBySize(hc.blockSize)
 }
 
 func (hc *HybridCache) initFileCache() error {
@@ -189,7 +189,7 @@ func (hc *HybridCache) CopyFromN(src io.Reader, n int64) (written int64, err err
 		if hc.backingStore == nil && blockSize > int64(conf.MaxBlockLimit) {
 			blockSize = int64(conf.MaxBlockLimit)
 		}
-		b, err := hc.nextWriterWithSize(uint64(blockSize))
+		b, err := hc.allocWriteAtSeeker(uint64(blockSize))
 		if err != nil {
 			return written, err
 		}
