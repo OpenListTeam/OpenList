@@ -204,25 +204,23 @@ func (hc *HybridCache) CopyFromN(src io.Reader, n int64) (written int64, err err
 }
 
 // HybridCache 线程不安全，单线程使用，或者外部加锁保护
-func NewHybridCache(blockSize, maxMemorySize uint64) (*HybridCache, error) {
-	// 策略1: 小缓存，Go自动管理
-	if maxMemorySize <= conf.AutoMemoryLimit {
-		return &HybridCache{backingStore: &BufferStore{}, blockSize: blockSize}, nil
-	}
+func NewHybridCache(blockSize, maxMemorySize uint64) (hc *HybridCache, err error) {
+	if conf.MinFreeMemory > 0 {
+		// 策略1: Go自动内存管理
+		if maxMemorySize <= conf.AutoMemoryLimit {
+			return &HybridCache{backingStore: &BufferStore{}, blockSize: blockSize}, nil
+		}
 
-	var err error
-	var hc *HybridCache
-
-	// 策略2: 中等缓存，手动内存管理
-	if conf.MinFreeMemory > 0 && maxMemorySize >= blockSize {
-		var m mem.LinearMemory
-		// 手动管理内存，Uinx Mmap 或者 Windows VirtualAlloc
-		if m, err = mem.NewGuardedMemory(blockSize, maxMemorySize); err == nil {
-			hc = &HybridCache{memoryStore: m, blockSize: blockSize}
+		// 策略2: 手动内存管理
+		if maxMemorySize >= blockSize {
+			var m mem.LinearMemory
+			// 手动管理内存，Uinx Mmap 或者 Windows VirtualAlloc
+			if m, err = mem.NewGuardedMemory(blockSize, maxMemorySize); err == nil {
+				hc = &HybridCache{memoryStore: m, blockSize: blockSize}
+			}
 		}
 	}
-
-	// 策略3: 大缓存，文件后备
+	// 策略3: 文件后备
 	if hc == nil {
 		hc = &HybridCache{blockSize: blockSize}
 		// 文件
