@@ -1,4 +1,4 @@
-package cache
+package hybrid_cache
 
 import (
 	"errors"
@@ -6,14 +6,7 @@ import (
 	"os"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 )
-
-type FileCache interface {
-	buffer.Block
-	io.Closer
-	Truncate(size int64) error
-}
 
 type singleFileCache struct {
 	*os.File
@@ -24,7 +17,7 @@ func (s *singleFileCache) Size() int64 {
 	return s.size
 }
 
-func (s *singleFileCache) Truncate(size int64) error {
+func (s *singleFileCache) GrowTo(size int64) error {
 	if size <= s.size {
 		return nil
 	}
@@ -69,7 +62,7 @@ func (m *MultiFileCache) Close() error {
 	return errors.Join(errs...)
 }
 
-func (m *MultiFileCache) Truncate(size int64) error {
+func (m *MultiFileCache) GrowTo(size int64) error {
 	if size <= m.size {
 		return nil
 	}
@@ -170,7 +163,7 @@ func (m *MultiFileCache) WriteAt(p []byte, off int64) (n int, err error) {
 	return n, io.ErrShortWrite
 }
 
-func NewFileCache(blockSize int64) (FileCache, error) {
+func NewFileStore(blockSize int64) (BackingStore, error) {
 	f, err := os.CreateTemp(conf.Conf.TempDir, "file-*")
 	if err != nil {
 		return nil, err

@@ -131,12 +131,12 @@ func InitConfig() {
 		log.Warn("failed to get memory info, disable memory cache")
 	}
 
-	if conf.Conf.CacheThreshold > 0 {
-		conf.CacheThreshold = uint64(conf.Conf.CacheThreshold) << 20
+	if conf.Conf.AutoMemoryLimit > 0 {
+		conf.AutoMemoryLimit = uint64(conf.Conf.AutoMemoryLimit) << 20
 	} else {
-		conf.CacheThreshold = 0
+		conf.AutoMemoryLimit = 0
 	}
-	log.Infof("cache threshold: %dMB", conf.CacheThreshold>>20)
+	log.Infof("auto memory limit: %dMB", conf.AutoMemoryLimit>>20)
 
 	if len(conf.Conf.Log.Filter.Filters) == 0 {
 		conf.Conf.Log.Filter.Enable = false
