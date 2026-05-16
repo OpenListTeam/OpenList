@@ -15,7 +15,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
-	"github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
+	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -121,7 +121,7 @@ type downloader struct {
 	delayMu     sync.Mutex
 	readingID   int64 // 正在被读取的id
 
-	hc *hybrid_cache.HybridCache
+	hc *hcache.HybridCache
 }
 
 type ConcurrencyLimit struct {
@@ -198,7 +198,7 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.concurrency = d.cfg.Concurrency
 
 	var err error
-	d.hc, err = hybrid_cache.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.params.Range.Length))
+	d.hc, err = hcache.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.params.Range.Length))
 	if err == nil {
 		d.bufMap = make(map[int]*buffer.PipeBuffer, d.cfg.Concurrency)
 		err = d.sendChunkTask(true)

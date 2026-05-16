@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
+	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -30,7 +30,7 @@ type FileStream struct {
 	utils.Closers
 	size      int64
 	oriReader io.Reader // the original reader, used for caching
-	hc        *hybrid_cache.HybridCache
+	hc        *hcache.HybridCache
 	peek      buffer.SizedReadAtSeeker
 }
 
@@ -198,15 +198,15 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 func (f *FileStream) ensureCache(size int64) (model.File, error) {
 	if f.peek == nil {
 		blockSize := min(size, f.GetSize(), int64(conf.MaxBlockLimit))
-		hc, err := hybrid_cache.NewHybridCache(uint64(blockSize), uint64(f.GetSize()))
+		var err error
+		f.hc, err = hcache.NewHybridCache(uint64(blockSize), uint64(f.GetSize()))
 		if err != nil {
 			return nil, err
 		}
-		f.hc = hc
-		f.peek = buffer.NewDynamicReadAtSeeker(hc)
+		f.peek = buffer.NewDynamicReadAtSeeker(f.hc)
 		f.oriReader = f.Reader
 		f.Reader = io.MultiReader(f.peek, f.oriReader)
-		f.Add(hc)
+		f.Add(f.hc)
 	}
 	size = size - f.peek.Size()
 	if size <= 0 {

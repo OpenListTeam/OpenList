@@ -11,7 +11,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
-	"github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
+	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
@@ -188,7 +188,7 @@ func NewStreamSectionReader(file model.FileStreamer, sectionSize int, up *model.
 	}
 
 	blockSize := min(uint64(sectionSize), uint64(file.GetSize()), conf.MaxBlockLimit)
-	hc, err := hybrid_cache.NewHybridCache(blockSize, uint64(file.GetSize()))
+	hc, err := hcache.NewHybridCache(blockSize, uint64(file.GetSize()))
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func (*cachedSectionReader) FreeSectionReader(sr io.ReadSeeker) {}
 type hybridSectionReader struct {
 	file       model.FileStreamer
 	fileOffset int64
-	hc         *hybrid_cache.HybridCache
+	hc         *hcache.HybridCache
 	mu         sync.Mutex
 	cache      []buffer.Block
 }
