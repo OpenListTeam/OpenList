@@ -1,4 +1,4 @@
-package server
+package mcp
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-type mcpFSListArgs struct {
+type fsListArgs struct {
 	Path     string `json:"path"`
 	Password string `json:"password"`
 	Refresh  bool   `json:"refresh"`
@@ -25,43 +25,43 @@ type mcpFSListArgs struct {
 	PerPage  int    `json:"per_page"`
 }
 
-type mcpToolCallEnvelope struct {
+type toolCallEnvelope struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-func (s *mcpServer) callFSList(c *gin.Context, raw json.RawMessage) (any, *mcpError) {
-	args, mcpErr := parseMCPFSListArgs(raw)
+func (s *Server) callFSList(c *gin.Context, raw json.RawMessage) (any, *rpcError) {
+	args, mcpErr := parseFSListArgs(raw)
 	if mcpErr != nil {
 		return nil, mcpErr
 	}
 
 	user, ok := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if !ok || user == nil {
-		return nil, &mcpError{Code: -32603, Message: "missing user context"}
+		return nil, &rpcError{Code: -32603, Message: "missing user context"}
 	}
 	if user.IsGuest() && user.Disabled {
-		return nil, &mcpError{Code: -32001, Message: "guest user is disabled"}
+		return nil, &rpcError{Code: -32001, Message: "guest user is disabled"}
 	}
 
 	reqPath, err := user.JoinPath(args.Path)
 	if err != nil {
-		return nil, &mcpError{Code: -32003, Message: err.Error()}
+		return nil, &rpcError{Code: -32003, Message: err.Error()}
 	}
 
 	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-		return nil, &mcpError{Code: -32603, Message: err.Error()}
+		return nil, &rpcError{Code: -32603, Message: err.Error()}
 	}
 	if !common.CanAccess(user, meta, reqPath, args.Password) {
-		return nil, &mcpError{Code: -32003, Message: "password is incorrect or you have no permission"}
+		return nil, &rpcError{Code: -32003, Message: "password is incorrect or you have no permission"}
 	}
 
 	write := common.CanWrite(user, meta, reqPath)
 	writeContentBypass := common.CanWriteContentBypassUserPerms(meta, reqPath)
 	canWriteContentAtPath := write && (user.CanWriteContent() || writeContentBypass)
 	if args.Refresh && !canWriteContentAtPath {
-		return nil, &mcpError{Code: -32003, Message: "refresh without permission"}
+		return nil, &rpcError{Code: -32003, Message: "refresh without permission"}
 	}
 
 	ctx := context.WithValue(c.Request.Context(), conf.MetaKey, meta)
@@ -70,23 +70,23 @@ func (s *mcpServer) callFSList(c *gin.Context, raw json.RawMessage) (any, *mcpEr
 		WithStorageDetails: !user.IsGuest() && !setting.GetBool(conf.HideStorageDetails),
 	})
 	if err != nil {
-		return nil, &mcpError{Code: -32603, Message: err.Error()}
+		return nil, &rpcError{Code: -32603, Message: err.Error()}
 	}
 
-	total, paged := paginateMCPObjs(objs, args.Page, args.PerPage)
+	total, paged := paginateObjs(objs, args.Page, args.PerPage)
 	return handles.FsListResp{
-		Content:            toMCPObjResp(paged, reqPath, isEncryptMCP(meta, reqPath)),
+		Content:            toObjResp(paged, reqPath, isEncrypt(meta, reqPath)),
 		Total:              int64(total),
 		Write:              write,
 		WriteContentBypass: writeContentBypass,
-		Provider:           detectMCPProvider(reqPath, paged),
-		Readme:             getMCPReadme(meta, reqPath),
-		Header:             getMCPHeader(meta, reqPath),
+		Provider:           detectProvider(reqPath, paged),
+		Readme:             getReadme(meta, reqPath),
+		Header:             getHeader(meta, reqPath),
 	}, nil
 }
 
-func parseMCPFSListArgs(raw json.RawMessage) (*mcpFSListArgs, *mcpError) {
-	args := &mcpFSListArgs{
+func parseFSListArgs(raw json.RawMessage) (*fsListArgs, *rpcError) {
+	args := &fsListArgs{
 		Page:    1,
 		PerPage: model.MaxInt,
 	}
@@ -95,24 +95,24 @@ func parseMCPFSListArgs(raw json.RawMessage) (*mcpFSListArgs, *mcpError) {
 	}
 
 	if err := json.Unmarshal(raw, args); err == nil {
-		normalizeMCPFSListArgs(args)
+		normalizeFSListArgs(args)
 		return args, nil
 	}
 
-	var envelope mcpToolCallEnvelope
+	var envelope toolCallEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, &mcpError{Code: -32602, Message: "invalid openlist.fs.list arguments"}
+		return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.list arguments"}
 	}
 	if len(envelope.Arguments) > 0 {
 		if err := json.Unmarshal(envelope.Arguments, args); err != nil {
-			return nil, &mcpError{Code: -32602, Message: "invalid openlist.fs.list arguments"}
+			return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.list arguments"}
 		}
 	}
-	normalizeMCPFSListArgs(args)
+	normalizeFSListArgs(args)
 	return args, nil
 }
 
-func normalizeMCPFSListArgs(args *mcpFSListArgs) {
+func normalizeFSListArgs(args *fsListArgs) {
 	pageReq := model.PageReq{
 		Page:    args.Page,
 		PerPage: args.PerPage,
@@ -122,7 +122,7 @@ func normalizeMCPFSListArgs(args *mcpFSListArgs) {
 	args.PerPage = pageReq.PerPage
 }
 
-func paginateMCPObjs(objs []model.Obj, page, perPage int) (int, []model.Obj) {
+func paginateObjs(objs []model.Obj, page, perPage int) (int, []model.Obj) {
 	total := len(objs)
 	start := (page - 1) * perPage
 	if start > total {
@@ -135,7 +135,7 @@ func paginateMCPObjs(objs []model.Obj, page, perPage int) (int, []model.Obj) {
 	return total, objs[start:end]
 }
 
-func toMCPObjResp(objs []model.Obj, parent string, encrypt bool) []handles.ObjResp {
+func toObjResp(objs []model.Obj, parent string, encrypt bool) []handles.ObjResp {
 	resp := make([]handles.ObjResp, 0, len(objs))
 	for _, obj := range objs {
 		thumb, _ := model.GetThumb(obj)
@@ -157,7 +157,7 @@ func toMCPObjResp(objs []model.Obj, parent string, encrypt bool) []handles.ObjRe
 	return resp
 }
 
-func detectMCPProvider(reqPath string, objs []model.Obj) string {
+func detectProvider(reqPath string, objs []model.Obj) string {
 	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
 	if err == nil && storage != nil {
 		return storage.Config().Name
@@ -170,29 +170,26 @@ func detectMCPProvider(reqPath string, objs []model.Obj) string {
 	return "unknown"
 }
 
-func getMCPReadme(meta *model.Meta, path string) string {
+func getReadme(meta *model.Meta, path string) string {
 	if meta != nil && common.MetaCoversPath(meta.Path, path, meta.RSub) {
 		return meta.Readme
 	}
 	return ""
 }
 
-func getMCPHeader(meta *model.Meta, path string) string {
+func getHeader(meta *model.Meta, path string) string {
 	if meta != nil && common.MetaCoversPath(meta.Path, path, meta.HeaderSub) {
 		return meta.Header
 	}
 	return ""
 }
 
-func isEncryptMCP(meta *model.Meta, path string) bool {
+func isEncrypt(meta *model.Meta, path string) bool {
 	if common.IsStorageSignEnabled(path) {
 		return true
 	}
 	if meta == nil || meta.Password == "" {
 		return false
 	}
-	if !common.MetaCoversPath(meta.Path, path, meta.PSub) {
-		return false
-	}
-	return true
+	return common.MetaCoversPath(meta.Path, path, meta.PSub)
 }

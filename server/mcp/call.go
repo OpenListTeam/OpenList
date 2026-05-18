@@ -1,4 +1,4 @@
-package server
+package mcp
 
 import (
 	"encoding/json"
@@ -7,54 +7,54 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type mcpToolCallParams struct {
+type toolCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-type mcpToolResultContent struct {
+type toolResultContent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
-func (s *mcpServer) handleToolsCall(c *gin.Context, req mcpRequest) (int, mcpResponse) {
-	var params mcpToolCallParams
+func (s *Server) handleToolsCall(c *gin.Context, req request) (int, response) {
+	var params toolCallParams
 	if len(req.Params) == 0 {
-		return http.StatusBadRequest, mcpResponse{
+		return http.StatusBadRequest, response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &mcpError{Code: -32602, Message: "invalid tools/call params"},
+			Error:   &rpcError{Code: -32602, Message: "invalid tools/call params"},
 		}
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil || params.Name == "" {
-		return http.StatusBadRequest, mcpResponse{
+		return http.StatusBadRequest, response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &mcpError{Code: -32602, Message: "invalid tools/call params"},
+			Error:   &rpcError{Code: -32602, Message: "invalid tools/call params"},
 		}
 	}
 
 	var (
 		result any
-		err    *mcpError
+		err    *rpcError
 	)
 	switch params.Name {
 	case "openlist.fs.list":
 		result, err = s.callFSList(c, params.Arguments)
 	default:
-		return http.StatusOK, mcpResponse{
+		return http.StatusOK, response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &mcpError{Code: -32601, Message: "unknown tool"},
+			Error:   &rpcError{Code: -32601, Message: "unknown tool"},
 		}
 	}
 
 	if err != nil {
-		return http.StatusOK, mcpResponse{
+		return http.StatusOK, response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"content": []mcpToolResultContent{
+				"content": []toolResultContent{
 					{Type: "text", Text: err.Message},
 				},
 				"isError": true,
@@ -64,18 +64,18 @@ func (s *mcpServer) handleToolsCall(c *gin.Context, req mcpRequest) (int, mcpRes
 
 	resultJSON, marshalErr := json.Marshal(result)
 	if marshalErr != nil {
-		return http.StatusInternalServerError, mcpResponse{
+		return http.StatusInternalServerError, response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &mcpError{Code: -32603, Message: "failed to encode tool result"},
+			Error:   &rpcError{Code: -32603, Message: "failed to encode tool result"},
 		}
 	}
 
-	return http.StatusOK, mcpResponse{
+	return http.StatusOK, response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]any{
-			"content": []mcpToolResultContent{
+			"content": []toolResultContent{
 				{Type: "text", Text: string(resultJSON)},
 			},
 			"structuredContent": result,

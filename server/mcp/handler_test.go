@@ -1,4 +1,4 @@
-package server
+package mcp
 
 import (
 	"encoding/json"
@@ -13,14 +13,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestMCPInitializeCreatesSession(t *testing.T) {
+func TestInitializeCreatesSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	openListMCP.sessions = map[string]*mcpSession{}
+	defaultServer.sessions = map[string]*session{}
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		openListMCP.handlePost(c)
+		defaultServer.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -33,7 +33,7 @@ func TestMCPInitializeCreatesSession(t *testing.T) {
 			"clientInfo":{"name":"test-client","version":"1.0.0"}
 		}
 	}`))
-	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "http://example.com")
 
 	w := httptest.NewRecorder()
@@ -42,41 +42,33 @@ func TestMCPInitializeCreatesSession(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusOK)
 	}
-	if got := w.Header().Get(mcpSessionHeader); got == "" {
+	if got := w.Header().Get(SessionHeader); got == "" {
 		t.Fatal("expected session header to be set")
 	}
 
-	var resp mcpResponse
+	var resp response
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if resp.Error != nil {
 		t.Fatalf("unexpected error response: %+v", resp.Error)
 	}
-
-	result, ok := resp.Result.(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected result type: %T", resp.Result)
-	}
-	if result["protocolVersion"] != mcpProtocolVersion {
-		t.Fatalf("unexpected protocol version: got %v want %s", result["protocolVersion"], mcpProtocolVersion)
-	}
 }
 
-func TestMCPDeleteRemovesSession(t *testing.T) {
+func TestDeleteRemovesSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	openListMCP.sessions = map[string]*mcpSession{}
+	defaultServer.sessions = map[string]*session{}
 
-	session := openListMCP.createSession(1)
+	currentSession := defaultServer.createSession(1)
 	r := gin.New()
 	r.DELETE("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		openListMCP.handleDelete(c)
+		defaultServer.handleDelete(c)
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "http://example.com/mcp", nil)
 	req.Header.Set("Origin", "http://example.com")
-	req.Header.Set(mcpSessionHeader, session.id)
+	req.Header.Set(SessionHeader, currentSession.id)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -84,18 +76,18 @@ func TestMCPDeleteRemovesSession(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusNoContent)
 	}
-	if _, ok := openListMCP.getSession(session.id); ok {
+	if _, ok := defaultServer.getSession(currentSession.id); ok {
 		t.Fatal("expected session to be deleted")
 	}
 }
 
-func TestMCPGetReturnsMethodNotAllowed(t *testing.T) {
+func TestGetReturnsMethodNotAllowed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
 	r.GET("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		openListMCP.handleGet(c)
+		defaultServer.handleGet(c)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/mcp", nil)

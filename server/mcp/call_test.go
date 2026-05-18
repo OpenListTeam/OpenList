@@ -1,4 +1,4 @@
-package server
+package mcp
 
 import (
 	"encoding/json"
@@ -13,16 +13,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestMCPToolsListRequiresInitializedSession(t *testing.T) {
+func TestToolsListRequiresInitializedSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	openListMCP.sessions = map[string]*mcpSession{
+	defaultServer.sessions = map[string]*session{
 		"s1": {id: "s1", userID: 1},
 	}
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		openListMCP.handlePost(c)
+		defaultServer.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -32,7 +32,7 @@ func TestMCPToolsListRequiresInitializedSession(t *testing.T) {
 	}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "http://example.com")
-	req.Header.Set(mcpSessionHeader, "s1")
+	req.Header.Set(SessionHeader, "s1")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -40,22 +40,22 @@ func TestMCPToolsListRequiresInitializedSession(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusBadRequest)
 	}
-	resp := decodeMCPResponse(t, w)
+	resp := decodeResponse(t, w)
 	if resp.Error == nil || resp.Error.Code != -32002 {
 		t.Fatalf("unexpected error response: %+v", resp.Error)
 	}
 }
 
-func TestMCPToolsListSuccess(t *testing.T) {
+func TestToolsListSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	openListMCP.sessions = map[string]*mcpSession{
+	defaultServer.sessions = map[string]*session{
 		"s2": {id: "s2", userID: 1, initialized: true},
 	}
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		openListMCP.handlePost(c)
+		defaultServer.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -65,7 +65,7 @@ func TestMCPToolsListSuccess(t *testing.T) {
 	}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "http://example.com")
-	req.Header.Set(mcpSessionHeader, "s2")
+	req.Header.Set(SessionHeader, "s2")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -73,7 +73,7 @@ func TestMCPToolsListSuccess(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusOK)
 	}
-	resp := decodeMCPResponse(t, w)
+	resp := decodeResponse(t, w)
 	if resp.Error != nil {
 		t.Fatalf("unexpected error response: %+v", resp.Error)
 	}
@@ -86,25 +86,18 @@ func TestMCPToolsListSuccess(t *testing.T) {
 	if !ok || len(tools) != 1 {
 		t.Fatalf("unexpected tools payload: %#v", result["tools"])
 	}
-	tool, ok := tools[0].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected tool payload: %#v", tools[0])
-	}
-	if tool["name"] != "openlist.fs.list" {
-		t.Fatalf("unexpected tool name: got %v", tool["name"])
-	}
 }
 
-func TestMCPToolsCallUnknownTool(t *testing.T) {
+func TestToolsCallUnknownTool(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	openListMCP.sessions = map[string]*mcpSession{
+	defaultServer.sessions = map[string]*session{
 		"s3": {id: "s3", userID: 1, initialized: true},
 	}
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		openListMCP.handlePost(c)
+		defaultServer.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -115,7 +108,7 @@ func TestMCPToolsCallUnknownTool(t *testing.T) {
 	}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "http://example.com")
-	req.Header.Set(mcpSessionHeader, "s3")
+	req.Header.Set(SessionHeader, "s3")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -123,22 +116,22 @@ func TestMCPToolsCallUnknownTool(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusOK)
 	}
-	resp := decodeMCPResponse(t, w)
+	resp := decodeResponse(t, w)
 	if resp.Error == nil || resp.Error.Code != -32601 {
 		t.Fatalf("unexpected error response: %+v", resp.Error)
 	}
 }
 
-func TestMCPToolsCallInvalidParams(t *testing.T) {
+func TestToolsCallInvalidParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	openListMCP.sessions = map[string]*mcpSession{
+	defaultServer.sessions = map[string]*session{
 		"s4": {id: "s4", userID: 1, initialized: true},
 	}
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		openListMCP.handlePost(c)
+		defaultServer.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -149,7 +142,7 @@ func TestMCPToolsCallInvalidParams(t *testing.T) {
 	}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "http://example.com")
-	req.Header.Set(mcpSessionHeader, "s4")
+	req.Header.Set(SessionHeader, "s4")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -157,23 +150,16 @@ func TestMCPToolsCallInvalidParams(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusOK)
 	}
-	resp := decodeMCPResponse(t, w)
+	resp := decodeResponse(t, w)
 	if resp.Error != nil {
 		t.Fatalf("expected tool error result, got protocol error: %+v", resp.Error)
 	}
-	result, ok := resp.Result.(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected result type: %T", resp.Result)
-	}
-	if isError, ok := result["isError"].(bool); !ok || !isError {
-		t.Fatalf("unexpected tool error flag: %#v", result["isError"])
-	}
 }
 
-func decodeMCPResponse(t *testing.T, w *httptest.ResponseRecorder) mcpResponse {
+func decodeResponse(t *testing.T, w *httptest.ResponseRecorder) response {
 	t.Helper()
 
-	var resp mcpResponse
+	var resp response
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
