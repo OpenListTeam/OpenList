@@ -25,11 +25,6 @@ type fsListArgs struct {
 	PerPage  int    `json:"per_page"`
 }
 
-type toolCallEnvelope struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
-}
-
 func (s *Server) callFSList(c *gin.Context, raw json.RawMessage) (any, *rpcError) {
 	args, mcpErr := parseFSListArgs(raw)
 	if mcpErr != nil {
@@ -79,7 +74,7 @@ func (s *Server) callFSList(c *gin.Context, raw json.RawMessage) (any, *rpcError
 		Total:              int64(total),
 		Write:              write,
 		WriteContentBypass: writeContentBypass,
-		Provider:           detectProvider(reqPath, paged),
+		Provider:           "unknown",
 		Readme:             getReadme(meta, reqPath),
 		Header:             getHeader(meta, reqPath),
 	}, nil
@@ -94,19 +89,8 @@ func parseFSListArgs(raw json.RawMessage) (*fsListArgs, *rpcError) {
 		return args, nil
 	}
 
-	if err := json.Unmarshal(raw, args); err == nil {
-		normalizeFSListArgs(args)
-		return args, nil
-	}
-
-	var envelope toolCallEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil {
+	if err := json.Unmarshal(raw, args); err != nil {
 		return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.list arguments"}
-	}
-	if len(envelope.Arguments) > 0 {
-		if err := json.Unmarshal(envelope.Arguments, args); err != nil {
-			return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.list arguments"}
-		}
 	}
 	normalizeFSListArgs(args)
 	return args, nil
@@ -124,11 +108,24 @@ func normalizeFSListArgs(args *fsListArgs) {
 
 func paginateObjs(objs []model.Obj, page, perPage int) (int, []model.Obj) {
 	total := len(objs)
-	start := (page - 1) * perPage
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = model.MaxInt
+	}
+	offset := page - 1
+	if offset > total/perPage {
+		return total, []model.Obj{}
+	}
+	start := offset * perPage
 	if start > total {
 		return total, []model.Obj{}
 	}
-	end := start + perPage
+	end := total
+	if perPage <= total-start {
+		end = start + perPage
+	}
 	if end > total {
 		end = total
 	}
@@ -155,19 +152,6 @@ func toObjResp(objs []model.Obj, parent string, encrypt bool) []handles.ObjResp 
 		})
 	}
 	return resp
-}
-
-func detectProvider(reqPath string, objs []model.Obj) string {
-	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
-	if err == nil && storage != nil {
-		return storage.Config().Name
-	}
-	for _, obj := range objs {
-		if provider, ok := model.GetProvider(obj); ok && provider != "" {
-			return provider
-		}
-	}
-	return "unknown"
 }
 
 func getReadme(meta *model.Meta, path string) string {

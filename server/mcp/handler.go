@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,8 @@ import (
 const (
 	ProtocolVersion = "2025-06-18"
 	SessionHeader   = "Mcp-Session-Id"
+	sessionTTL      = 30 * time.Minute
+	maxSessions     = 1024
 )
 
 type session struct {
@@ -28,6 +32,7 @@ type session struct {
 	userID      uint
 	initialized bool
 	createdAt   time.Time
+	lastUsedAt  time.Time
 }
 
 type Server struct {
@@ -84,7 +89,7 @@ func (s *Server) handlePost(c *gin.Context) {
 		c.Status(http.StatusForbidden)
 		return
 	}
-	if !acceptsJSON(c.GetHeader("Accept")) {
+	if !acceptsStreamableHTTP(c.GetHeader("Accept")) {
 		c.Status(http.StatusNotAcceptable)
 		return
 	}
@@ -245,10 +250,15 @@ func (s *Server) createSession(userID uint) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now()
+	s.pruneExpiredSessionsLocked(now)
+	s.pruneLeastRecentlyUsedSessionsLocked(max(0, len(s.sessions)-maxSessions+1))
+
 	currentSession := &session{
-		id:        random.Token(),
-		userID:    userID,
-		createdAt: time.Now(),
+		id:         random.Token(),
+		userID:     userID,
+		createdAt:  now,
+		lastUsedAt: now,
 	}
 	s.sessions[currentSession.id] = currentSession
 	return currentSession
@@ -258,12 +268,18 @@ func (s *Server) getSession(id string) (session, bool) {
 	if id == "" {
 		return session{}, false
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	currentSession, ok := s.sessions[id]
 	if !ok || currentSession == nil {
 		return session{}, false
 	}
+	now := time.Now()
+	if sessionExpired(currentSession, now) {
+		delete(s.sessions, id)
+		return session{}, false
+	}
+	currentSession.lastUsedAt = now
 	return *currentSession, true
 }
 
@@ -274,15 +290,30 @@ func (s *Server) markSessionInitialized(id string) bool {
 	if !ok || currentSession == nil {
 		return false
 	}
+	now := time.Now()
+	if sessionExpired(currentSession, now) {
+		delete(s.sessions, id)
+		return false
+	}
 	currentSession.initialized = true
+	currentSession.lastUsedAt = now
 	return true
 }
 
 func (s *Server) sessionInitialized(id string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	currentSession, ok := s.sessions[id]
-	return ok && currentSession != nil && currentSession.initialized
+	if !ok || currentSession == nil {
+		return false
+	}
+	now := time.Now()
+	if sessionExpired(currentSession, now) {
+		delete(s.sessions, id)
+		return false
+	}
+	currentSession.lastUsedAt = now
+	return currentSession.initialized
 }
 
 func (s *Server) deleteSession(id string) {
@@ -291,11 +322,75 @@ func (s *Server) deleteSession(id string) {
 	delete(s.sessions, id)
 }
 
-func acceptsJSON(accept string) bool {
+func (s *Server) pruneExpiredSessionsLocked(now time.Time) {
+	for id, currentSession := range s.sessions {
+		if currentSession == nil || sessionExpired(currentSession, now) {
+			delete(s.sessions, id)
+		}
+	}
+}
+
+func (s *Server) pruneLeastRecentlyUsedSessionsLocked(count int) {
+	for range count {
+		var (
+			oldestID string
+			oldest   time.Time
+		)
+		for id, currentSession := range s.sessions {
+			if currentSession == nil {
+				oldestID = id
+				break
+			}
+			lastUsedAt := sessionLastUsedAt(currentSession)
+			if oldestID == "" || lastUsedAt.Before(oldest) {
+				oldestID = id
+				oldest = lastUsedAt
+			}
+		}
+		if oldestID == "" {
+			return
+		}
+		delete(s.sessions, oldestID)
+	}
+}
+
+func sessionExpired(currentSession *session, now time.Time) bool {
+	lastUsedAt := sessionLastUsedAt(currentSession)
+	return !lastUsedAt.IsZero() && now.Sub(lastUsedAt) > sessionTTL
+}
+
+func sessionLastUsedAt(currentSession *session) time.Time {
+	if currentSession.lastUsedAt.IsZero() {
+		return currentSession.createdAt
+	}
+	return currentSession.lastUsedAt
+}
+
+func acceptsStreamableHTTP(accept string) bool {
 	if accept == "" {
 		return false
 	}
-	return strings.Contains(accept, "application/json") || strings.Contains(accept, "*/*")
+	hasJSON := false
+	hasSSE := false
+	for part := range strings.SplitSeq(accept, ",") {
+		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+		if err != nil {
+			continue
+		}
+		if q, ok := params["q"]; ok {
+			quality, err := strconv.ParseFloat(q, 64)
+			if err == nil && quality == 0 {
+				continue
+			}
+		}
+		switch mediaType {
+		case "application/json":
+			hasJSON = true
+		case "text/event-stream":
+			hasSSE = true
+		}
+	}
+	return hasJSON && hasSSE
 }
 
 func validateOrigin(r *http.Request) bool {

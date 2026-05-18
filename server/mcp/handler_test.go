@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -15,12 +16,12 @@ import (
 
 func TestInitializeCreatesSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	defaultServer.sessions = map[string]*session{}
+	srv := newTestServer(nil)
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		defaultServer.handlePost(c)
+		srv.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -33,7 +34,7 @@ func TestInitializeCreatesSession(t *testing.T) {
 			"clientInfo":{"name":"test-client","version":"1.0.0"}
 		}
 	}`))
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
 
 	w := httptest.NewRecorder()
@@ -57,13 +58,13 @@ func TestInitializeCreatesSession(t *testing.T) {
 
 func TestDeleteRemovesSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	defaultServer.sessions = map[string]*session{}
+	srv := newTestServer(nil)
 
-	currentSession := defaultServer.createSession(1)
+	currentSession := srv.createSession(1)
 	r := gin.New()
 	r.DELETE("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		defaultServer.handleDelete(c)
+		srv.handleDelete(c)
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "http://example.com/mcp", nil)
@@ -76,7 +77,7 @@ func TestDeleteRemovesSession(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusNoContent)
 	}
-	if _, ok := defaultServer.getSession(currentSession.id); ok {
+	if _, ok := srv.getSession(currentSession.id); ok {
 		t.Fatal("expected session to be deleted")
 	}
 }
@@ -99,4 +100,20 @@ func TestGetReturnsMethodNotAllowed(t *testing.T) {
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusMethodNotAllowed)
 	}
+}
+
+func newTestServer(sessions map[string]*session) *Server {
+	if sessions == nil {
+		sessions = map[string]*session{}
+	}
+	now := time.Now()
+	for _, currentSession := range sessions {
+		if currentSession.createdAt.IsZero() {
+			currentSession.createdAt = now
+		}
+		if currentSession.lastUsedAt.IsZero() {
+			currentSession.lastUsedAt = now
+		}
+	}
+	return &Server{sessions: sessions}
 }

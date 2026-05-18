@@ -15,14 +15,14 @@ import (
 
 func TestToolsListRequiresInitializedSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	defaultServer.sessions = map[string]*session{
+	srv := newTestServer(map[string]*session{
 		"s1": {id: "s1", userID: 1},
-	}
+	})
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		defaultServer.handlePost(c)
+		srv.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -30,7 +30,7 @@ func TestToolsListRequiresInitializedSession(t *testing.T) {
 		"id":1,
 		"method":"tools/list"
 	}`))
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set(SessionHeader, "s1")
 
@@ -48,14 +48,14 @@ func TestToolsListRequiresInitializedSession(t *testing.T) {
 
 func TestToolsListSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	defaultServer.sessions = map[string]*session{
+	srv := newTestServer(map[string]*session{
 		"s2": {id: "s2", userID: 1, initialized: true},
-	}
+	})
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		defaultServer.handlePost(c)
+		srv.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -63,7 +63,7 @@ func TestToolsListSuccess(t *testing.T) {
 		"id":2,
 		"method":"tools/list"
 	}`))
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set(SessionHeader, "s2")
 
@@ -90,14 +90,14 @@ func TestToolsListSuccess(t *testing.T) {
 
 func TestToolsCallUnknownTool(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	defaultServer.sessions = map[string]*session{
+	srv := newTestServer(map[string]*session{
 		"s3": {id: "s3", userID: 1, initialized: true},
-	}
+	})
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		defaultServer.handlePost(c)
+		srv.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -106,7 +106,7 @@ func TestToolsCallUnknownTool(t *testing.T) {
 		"method":"tools/call",
 		"params":{"name":"openlist.fs.unknown","arguments":{"path":"/"}}
 	}`))
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set(SessionHeader, "s3")
 
@@ -124,14 +124,14 @@ func TestToolsCallUnknownTool(t *testing.T) {
 
 func TestToolsCallInvalidParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	defaultServer.sessions = map[string]*session{
+	srv := newTestServer(map[string]*session{
 		"s4": {id: "s4", userID: 1, initialized: true},
-	}
+	})
 
 	r := gin.New()
 	r.POST("/mcp", func(c *gin.Context) {
 		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
-		defaultServer.handlePost(c)
+		srv.handlePost(c)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
@@ -140,7 +140,7 @@ func TestToolsCallInvalidParams(t *testing.T) {
 		"method":"tools/call",
 		"params":{"name":"openlist.fs.list","arguments":"bad"}
 	}`))
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set(SessionHeader, "s4")
 
