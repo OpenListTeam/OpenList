@@ -41,6 +41,7 @@ func Init(e *gin.Engine) {
 	}
 	WebDav(g.Group("/dav"))
 	S3(g.Group("/s3"))
+	MCP(g)
 
 	downloadLimiter := middlewares.DownloadRateLimiter(stream.ClientDownloadLimit)
 	signCheck := middlewares.Down(sign.Verify)
