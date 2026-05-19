@@ -25,13 +25,13 @@ func TestRangeRead(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
-	prevCacheThreshold := conf.CacheThreshold
+	prevAutoMemoryLimit := conf.AutoMemoryLimit
 	prevMaxBlockLimit := conf.MaxBlockLimit
 	t.Cleanup(func() {
-		conf.CacheThreshold = prevCacheThreshold
+		conf.AutoMemoryLimit = prevAutoMemoryLimit
 		conf.MaxBlockLimit = prevMaxBlockLimit
 	})
-	conf.CacheThreshold = 10
+	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 15
 	tests := []struct {
 		name string
@@ -102,13 +102,13 @@ func TestPreHash(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
-	prevCacheThreshold := conf.CacheThreshold
+	prevAutoMemoryLimit := conf.AutoMemoryLimit
 	prevMaxBlockLimit := conf.MaxBlockLimit
 	t.Cleanup(func() {
-		conf.CacheThreshold = prevCacheThreshold
+		conf.AutoMemoryLimit = prevAutoMemoryLimit
 		conf.MaxBlockLimit = prevMaxBlockLimit
 	})
-	conf.CacheThreshold = 10
+	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 15
 
 	const hashSize int64 = 20
@@ -137,15 +137,15 @@ func TestStreamSectionReader(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
-	prevCacheThreshold := conf.CacheThreshold
+	prevAutoMemoryLimit := conf.AutoMemoryLimit
 	prevMaxBlockLimit := conf.MaxBlockLimit
 	prevConf := conf.Conf
 	t.Cleanup(func() {
-		conf.CacheThreshold = prevCacheThreshold
+		conf.AutoMemoryLimit = prevAutoMemoryLimit
 		conf.MaxBlockLimit = prevMaxBlockLimit
 		conf.Conf = prevConf
 	})
-	conf.CacheThreshold = 1
+	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 2 << 10
 	partSize := 3 << 10
 	conf.Conf = &conf.Config{}

@@ -1,4 +1,4 @@
-package cache
+package hybrid_cache
 
 import (
 	"errors"
@@ -6,25 +6,18 @@ import (
 	"os"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 )
 
-type FileCache interface {
-	buffer.Block
-	io.Closer
-	Truncate(size int64) error
-}
-
-type singleFileCache struct {
+type singleFileStore struct {
 	*os.File
 	size int64
 }
 
-func (s *singleFileCache) Size() int64 {
+func (s *singleFileStore) Size() int64 {
 	return s.size
 }
 
-func (s *singleFileCache) Truncate(size int64) error {
+func (s *singleFileStore) GrowTo(size int64) error {
 	if size <= s.size {
 		return nil
 	}
@@ -35,7 +28,7 @@ func (s *singleFileCache) Truncate(size int64) error {
 	return err
 }
 
-func (s *singleFileCache) Close() error {
+func (s *singleFileStore) Close() error {
 	err := s.File.Close()
 	_ = os.Remove(s.File.Name())
 	return err
@@ -47,16 +40,16 @@ type fileBlock struct {
 	written int64
 }
 
-type MultiFileCache struct {
+type MultiFileStore struct {
 	blocks []*fileBlock
 	size   int64
 }
 
-func (s *MultiFileCache) Size() int64 {
+func (s *MultiFileStore) Size() int64 {
 	return s.size
 }
 
-func (m *MultiFileCache) Close() error {
+func (m *MultiFileStore) Close() error {
 	var errs []error
 	for _, c := range m.blocks {
 		if err := c.file.Close(); err != nil {
@@ -69,7 +62,7 @@ func (m *MultiFileCache) Close() error {
 	return errors.Join(errs...)
 }
 
-func (m *MultiFileCache) Truncate(size int64) error {
+func (m *MultiFileStore) GrowTo(size int64) error {
 	if size <= m.size {
 		return nil
 	}
@@ -82,7 +75,7 @@ func (m *MultiFileCache) Truncate(size int64) error {
 	return nil
 }
 
-func (m *MultiFileCache) ReadAt(p []byte, off int64) (n int, err error) {
+func (m *MultiFileStore) ReadAt(p []byte, off int64) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -131,7 +124,7 @@ func (m *MultiFileCache) ReadAt(p []byte, off int64) (n int, err error) {
 	return n, io.EOF
 }
 
-func (m *MultiFileCache) WriteAt(p []byte, off int64) (n int, err error) {
+func (m *MultiFileStore) WriteAt(p []byte, off int64) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -170,16 +163,16 @@ func (m *MultiFileCache) WriteAt(p []byte, off int64) (n int, err error) {
 	return n, io.ErrShortWrite
 }
 
-func NewFileCache(blockSize int64) (FileCache, error) {
+func NewFileStore(blockSize int64) (BackingStore, error) {
 	f, err := os.CreateTemp(conf.Conf.TempDir, "file-*")
 	if err != nil {
 		return nil, err
 	}
 	err = f.Truncate(blockSize)
 	if err == nil {
-		return &singleFileCache{File: f, size: blockSize}, nil
+		return &singleFileStore{File: f, size: blockSize}, nil
 	}
-	return &MultiFileCache{
+	return &MultiFileStore{
 		blocks: []*fileBlock{{file: f, size: blockSize}},
 		size:   blockSize,
 	}, nil

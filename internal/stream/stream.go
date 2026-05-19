@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/internal/mem"
+	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -30,7 +30,7 @@ type FileStream struct {
 	utils.Closers
 	size      int64
 	oriReader io.Reader // the original reader, used for caching
-	hc        *mem.HybridCache
+	hc        *hcache.HybridCache
 	peek      buffer.SizedReadAtSeeker
 }
 
@@ -161,7 +161,7 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 	} else {
 		f.Reader = reader
 	}
-	return f.cache(f.GetSize())
+	return f.ensureCache(f.GetSize())
 }
 
 func (f *FileStream) GetFile() model.File {
@@ -182,7 +182,7 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 		return io.NewSectionReader(f.GetFile(), httpRange.Start, httpRange.Length), nil
 	}
 
-	cache, err := f.cache(httpRange.Start + httpRange.Length)
+	cache, err := f.ensureCache(httpRange.Start + httpRange.Length)
 	if err != nil {
 		return nil, err
 	}
@@ -195,45 +195,27 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 // 即使被写入的数据量与Buffer.Cap一致，Buffer也会扩大
 
 // 确保指定大小的数据被缓存
-func (f *FileStream) cache(maxCacheSize int64) (model.File, error) {
+func (f *FileStream) ensureCache(size int64) (model.File, error) {
 	if f.peek == nil {
-		f.oriReader = f.Reader
-		if f.GetSize() > int64(conf.CacheThreshold) {
-			blockSize := min(f.GetSize(), int64(conf.MaxBlockLimit))
-			hc, err := mem.NewHybridCache(uint64(blockSize), uint64(f.GetSize()))
-			if err != nil {
-				return nil, err
-			}
-			f.hc = hc
-			f.peek = buffer.NewDynamicReadAtSeeker(hc)
-			f.Reader = io.MultiReader(f.peek, f.oriReader)
-			f.Add(hc)
-		} else {
-			br := &buffer.Reader{}
-			f.peek = br
-			f.Reader = io.MultiReader(br, f.oriReader)
-			f.Add(br)
+		blockSize := min(size, f.GetSize(), int64(conf.MaxBlockLimit))
+		var err error
+		f.hc, err = hcache.NewHybridCache(uint64(blockSize), uint64(f.GetSize()))
+		if err != nil {
+			return nil, err
 		}
+		f.peek = buffer.NewDynamicReadAtSeeker(f.hc)
+		f.oriReader = f.Reader
+		f.Reader = io.MultiReader(f.peek, f.oriReader)
+		f.Add(f.hc)
 	}
-	cacheSize := maxCacheSize - f.peek.Size()
-	if cacheSize <= 0 {
+	size = size - f.peek.Size()
+	if size <= 0 {
 		return f.peek, nil
 	}
-	if f.hc != nil {
-		written, err := f.hc.CopyFromN(f.oriReader, cacheSize)
-		if written != cacheSize {
-			f.hc.RollbackBlockWithSize(uint64(cacheSize - written))
-			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", cacheSize, written, err)
-		}
-	} else {
-		buf := make([]byte, cacheSize)
-		n, err := io.ReadFull(f.oriReader, buf)
-		if n > 0 {
-			f.peek.(*buffer.Reader).Append(buf[:n])
-		}
-		if n != len(buf) {
-			return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", len(buf), n, err)
-		}
+	written, err := f.hc.CopyFromN(f.oriReader, size)
+	if written != size {
+		f.hc.RewindBySize(uint64(size - written))
+		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", size, written, err)
 	}
 	if f.peek.Size() >= f.GetSize() {
 		f.Reader = f.peek
