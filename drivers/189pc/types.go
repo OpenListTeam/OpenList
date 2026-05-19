@@ -441,7 +441,7 @@ type RenameResp struct {
 	ParentID    int64  `json:"parentId"`
 	Rev         string `json:"rev"`
 	Size        int64  `json:"size"`
-	ResCode     string `json:"res_code"`
+	ResCode     any    `json:"res_code"` // int or string
 }
 
 func (r *RenameResp) toFile(f *Cloud189File) *Cloud189File {

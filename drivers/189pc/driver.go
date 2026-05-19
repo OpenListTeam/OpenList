@@ -293,7 +293,7 @@ func (y *Cloud189PC) Rename(ctx context.Context, srcObj model.Obj, newName strin
 		req.SetContext(ctx).SetQueryParams(queryParam)
 	}, nil, resp, isFamily)
 	if err != nil {
-		if resp.ResCode == "FileAlreadyExists" {
+		if code, ok := resp.ResCode.(string); ok && code == "FileAlreadyExists" {
 			return nil, errs.ObjectAlreadyExists
 		}
 		return nil, err
