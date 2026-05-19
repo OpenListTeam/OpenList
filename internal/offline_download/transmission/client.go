@@ -74,6 +74,10 @@ func (t *Transmission) IsReady() bool {
 }
 
 func (t *Transmission) AddURL(args *tool.AddUrlArgs) (string, error) {
+	if err := tool.ValidateOfflineDownloadURL(context.Background(), args.Url); err != nil {
+		return "", err
+	}
+
 	endpoint, err := url.Parse(args.Url)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to parse transmission uri")
@@ -84,7 +88,11 @@ func (t *Transmission) AddURL(args *tool.AddUrlArgs) (string, error) {
 	}
 	// http url for .torrent file
 	if endpoint.Scheme == "http" || endpoint.Scheme == "https" {
-		resp, err := http.Get(args.Url)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, args.Url, nil)
+		if err != nil {
+			return "", err
+		}
+		resp, err := tool.NewOfflineDownloadHTTPClient(http.Client{}).Do(req)
 		if err != nil {
 			return "", errors.Wrap(err, "failed to get .torrent file")
 		}

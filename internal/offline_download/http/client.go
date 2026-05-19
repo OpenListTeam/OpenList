@@ -50,6 +50,10 @@ func (s SimpleHttp) Status(task *tool.DownloadTask) (*tool.Status, error) {
 }
 
 func (s SimpleHttp) Run(task *tool.DownloadTask) error {
+	if err := tool.ValidateOfflineDownloadURL(task.Ctx(), task.Url); err != nil {
+		return err
+	}
+
 	streamPut := task.DeletePolicy == tool.UploadDownloadStream
 	method := http.MethodGet
 	if streamPut {
@@ -63,7 +67,8 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 	if streamPut {
 		req.Header.Set("Range", "bytes=0-")
 	}
-	resp, err := s.client.Do(req)
+	client := tool.NewOfflineDownloadHTTPClient(s.client)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
