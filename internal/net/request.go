@@ -15,7 +15,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
-	"github.com/OpenListTeam/OpenList/v4/internal/mem"
+	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -121,7 +121,7 @@ type downloader struct {
 	delayMu     sync.Mutex
 	readingID   int64 // 正在被读取的id
 
-	hc *mem.HybridCache
+	hc *hcache.HybridCache
 }
 
 type ConcurrencyLimit struct {
@@ -198,9 +198,7 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.concurrency = d.cfg.Concurrency
 
 	var err error
-	if d.params.Range.Length > int64(conf.CacheThreshold) {
-		d.hc, err = mem.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.params.Range.Length))
-	}
+	d.hc, err = hcache.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.params.Range.Length))
 	if err == nil {
 		d.bufMap = make(map[int]*buffer.PipeBuffer, d.cfg.Concurrency)
 		err = d.sendChunkTask(true)
@@ -241,18 +239,9 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 	br := d.bufMap[d.nextChunk]
 	if br == nil {
 		var b buffer.Block
-		if d.hc != nil {
-			b, err = d.hc.NextBlock()
-			if err != nil {
-				return err
-			}
-		} else {
-			defer func() {
-				if r := recover(); r != nil {
-					err = fmt.Errorf("panic in creating new byte block: %v", r)
-				}
-			}()
-			b = buffer.NewByteBlock(make([]byte, d.cfg.PartSize))
+		b, err = d.hc.NextBlock()
+		if err != nil {
+			return err
 		}
 		br = buffer.NewPipeBuffer(d.ctx, b)
 		d.bufMap[d.nextChunk] = br

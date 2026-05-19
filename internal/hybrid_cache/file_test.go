@@ -1,4 +1,4 @@
-package cache_test
+package hybrid_cache_test
 
 import (
 	"bytes"
@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 )
 
 func TestFile(t *testing.T) {
@@ -59,7 +59,7 @@ func TestMultiFileCache(t *testing.T) {
 		conf.Conf = prevConf
 	})
 	conf.Conf = &conf.Config{}
-	f := cache.MultiFileCache{}
+	f := hybrid_cache.MultiFileStore{}
 	defer f.Close()
 	t.Run("ReadAt", func(t *testing.T) {
 		_, err := f.ReadAt(make([]byte, 1), 20)
@@ -68,7 +68,7 @@ func TestMultiFileCache(t *testing.T) {
 		}
 	})
 	t.Run("WriteAt", func(t *testing.T) {
-		err := f.Truncate(15)
+		err := f.GrowTo(15)
 		if err != nil {
 			t.Errorf("truncate err=%v", err)
 			return
@@ -79,7 +79,7 @@ func TestMultiFileCache(t *testing.T) {
 			return
 		}
 
-		err = f.Truncate(30)
+		err = f.GrowTo(30)
 		if err != nil {
 			t.Errorf("truncate err=%v", err)
 			return

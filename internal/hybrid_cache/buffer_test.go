@@ -1,24 +1,30 @@
-package buffer
+package hybrid_cache_test
 
 import (
 	"errors"
 	"io"
 	"testing"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 )
 
-func TestReadAt(t *testing.T) {
+func TestBufferStore(t *testing.T) {
 	type args struct {
 		p   []byte
 		off int64
 	}
-	bs := &Reader{}
+	bs := &hybrid_cache.BufferStore{}
 	bs.Append([]byte("github.com"))
 	bs.Append([]byte("/OpenList"))
-	bs.Append([]byte("Team/"))
-	bs.Append([]byte("OpenList"))
+	bs.Append([]byte("Team/?"))
+	b := []byte("OpenList")
+	off := bs.Size() - 1
+	_ = bs.GrowTo(off + int64(len(b)))
+	_, _ = bs.WriteAt(b, off)
+
 	tests := []struct {
 		name  string
-		b     *Reader
+		b     *hybrid_cache.BufferStore
 		args  args
 		check func(a args, n int, err error) error
 	}{
@@ -87,7 +93,7 @@ func TestReadAt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := tt.b.ReadAt(tt.args.p, tt.args.off)
 			if err := tt.check(tt.args, got, err); err != nil {
-				t.Errorf("Bytes.ReadAt() error = %v", err)
+				t.Errorf("BufferStore.ReadAt() error = %v", err)
 			}
 		})
 	}
