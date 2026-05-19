@@ -46,6 +46,22 @@ func TestCanProxyFile(t *testing.T) {
 	}
 }
 
+func TestCanProxyFileIgnoresWebdavProxyURLPolicy(t *testing.T) {
+	storage := &fsLinkTestDriver{
+		config: driver.Config{Name: "Test"},
+		storage: model.Storage{
+			MountPath: "/",
+			Proxy: model.Proxy{
+				WebdavPolicy: "use_proxy_url",
+			},
+		},
+	}
+
+	if canProxyFile(storage, "file.bin") {
+		t.Fatal("webdav proxy url policy should not enable MCP proxy support")
+	}
+}
+
 func TestBuildFSLinkInfoUsesProxyWhenStorageRequiresProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Cleanup(op.Cache.ClearAll)

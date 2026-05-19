@@ -160,7 +160,7 @@ func buildFSLinkInfo(ctx context.Context, c *gin.Context, reqPath string, args *
 }
 
 func canProxyFile(storage driver.Driver, filename string) bool {
-	if storage.Config().MustProxy() || storage.GetStorage().WebProxy || storage.GetStorage().WebdavProxyURL() {
+	if storage.Config().MustProxy() || storage.GetStorage().WebProxy {
 		return true
 	}
 	if utils.SliceContains(conf.SlicesMap[conf.ProxyTypes], utils.Ext(filename)) {

@@ -56,6 +56,78 @@ func TestInitializeCreatesSession(t *testing.T) {
 	}
 }
 
+func TestInitializeNegotiatesUnsupportedProtocolVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := newTestServer(nil)
+
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
+		srv.handlePost(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
+		"jsonrpc":"2.0",
+		"id":1,
+		"method":"initialize",
+		"params":{
+			"protocolVersion":"2026-01-01",
+			"capabilities":{},
+			"clientInfo":{"name":"test-client","version":"1.0.0"}
+		}
+	}`))
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Origin", "http://example.com")
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusOK)
+	}
+	resp := decodeResponse(t, w)
+	if resp.Error != nil {
+		t.Fatalf("unexpected error response: %+v", resp.Error)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected result type: %T", resp.Result)
+	}
+	if result["protocolVersion"] != ProtocolVersion {
+		t.Fatalf("unexpected protocol version: %v", result["protocolVersion"])
+	}
+}
+
+func TestPostInvalidAcceptReturnsJSONRPCError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := newTestServer(nil)
+
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
+		srv.handlePost(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
+		"jsonrpc":"2.0",
+		"id":1,
+		"method":"initialize"
+	}`))
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Origin", "http://example.com")
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotAcceptable {
+		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusNotAcceptable)
+	}
+	resp := decodeResponse(t, w)
+	if resp.Error == nil || resp.Error.Code != -32000 {
+		t.Fatalf("unexpected error response: %+v", resp.Error)
+	}
+}
+
 func TestDeleteRemovesSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	srv := newTestServer(nil)

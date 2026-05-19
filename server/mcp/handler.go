@@ -90,7 +90,13 @@ func (s *Server) handlePost(c *gin.Context) {
 		return
 	}
 	if !acceptsStreamableHTTP(c.GetHeader("Accept")) {
-		c.Status(http.StatusNotAcceptable)
+		c.JSON(http.StatusNotAcceptable, response{
+			JSONRPC: "2.0",
+			Error: &rpcError{
+				Code:    -32000,
+				Message: "Not Acceptable: client must accept both application/json and text/event-stream",
+			},
+		})
 		return
 	}
 
@@ -193,14 +199,6 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 			})
 			return
 		}
-	}
-	if params.ProtocolVersion != "" && params.ProtocolVersion != ProtocolVersion {
-		c.JSON(http.StatusBadRequest, response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error:   &rpcError{Code: -32602, Message: "unsupported protocol version"},
-		})
-		return
 	}
 
 	currentSession := s.createSession(c.Request.Context().Value(conf.UserKey).(*model.User).ID)
