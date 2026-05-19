@@ -41,6 +41,10 @@ func (s *Server) handleToolsCall(c *gin.Context, req request) (int, response) {
 	switch params.Name {
 	case "openlist.fs.list":
 		result, err = s.callFSList(c, params.Arguments)
+	case "openlist.fs.get":
+		result, err = s.callFSGet(c, params.Arguments)
+	case "openlist.fs.link":
+		result, err = s.callFSLink(c, params.Arguments)
 	default:
 		return http.StatusOK, response{
 			JSONRPC: "2.0",

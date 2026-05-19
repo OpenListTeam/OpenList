@@ -219,7 +219,7 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 				"name":    "OpenList MCP",
 				"version": conf.Version,
 			},
-			"instructions": "Complete initialization with notifications/initialized, then use tools/list and tools/call. The first available tool is openlist.fs.list.",
+			"instructions": "Complete initialization with notifications/initialized, then use tools/list and tools/call. Available tools include openlist.fs.list, openlist.fs.get, and openlist.fs.link.",
 		},
 	})
 }

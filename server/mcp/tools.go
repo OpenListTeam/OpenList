@@ -56,6 +56,48 @@ var openListTools = []tool{
 			Required: []string{"path"},
 		},
 	},
+	{
+		Name:        "openlist.fs.get",
+		Title:       "OpenList FS Get",
+		Description: "Get file or directory details for a mount path that the current user can access.",
+		InputSchema: toolInputSchema{
+			Type: "object",
+			Properties: map[string]schemaProperty{
+				"path": {
+					Type:        "string",
+					Description: "Mount path to inspect, for example \"/movies/demo.mp4\".",
+				},
+				"password": {
+					Type:        "string",
+					Description: "Optional password for protected paths.",
+				},
+			},
+			Required: []string{"path"},
+		},
+	},
+	{
+		Name:        "openlist.fs.link",
+		Title:       "OpenList FS Link",
+		Description: "Return usable link information for a file path that the current user can access.",
+		InputSchema: toolInputSchema{
+			Type: "object",
+			Properties: map[string]schemaProperty{
+				"path": {
+					Type:        "string",
+					Description: "File mount path, for example \"/movies/demo.mp4\".",
+				},
+				"password": {
+					Type:        "string",
+					Description: "Optional password for protected paths.",
+				},
+				"type": {
+					Type:        "string",
+					Description: "Optional link type forwarded to storage drivers.",
+				},
+			},
+			Required: []string{"path"},
+		},
+	},
 }
 
 func (s *Server) handleToolsList(req request) response {

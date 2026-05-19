@@ -83,8 +83,20 @@ func TestToolsListSuccess(t *testing.T) {
 		t.Fatalf("unexpected result type: %T", resp.Result)
 	}
 	tools, ok := result["tools"].([]any)
-	if !ok || len(tools) != 1 {
+	if !ok || len(tools) != 3 {
 		t.Fatalf("unexpected tools payload: %#v", result["tools"])
+	}
+	names := map[string]bool{}
+	for _, rawTool := range tools {
+		currentTool, ok := rawTool.(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected tool payload: %#v", rawTool)
+		}
+		name, _ := currentTool["name"].(string)
+		names[name] = true
+	}
+	if !names["openlist.fs.list"] || !names["openlist.fs.get"] || !names["openlist.fs.link"] {
+		t.Fatalf("unexpected tool names: %#v", names)
 	}
 }
 
