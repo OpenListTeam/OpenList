@@ -56,6 +56,53 @@ func TestInitializeCreatesSession(t *testing.T) {
 	}
 }
 
+func TestInitializeReusesExistingSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := newTestServer(nil)
+	currentSession := srv.createSession(1)
+	currentSession.initialized = true
+
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
+		srv.handlePost(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
+		"jsonrpc":"2.0",
+		"id":1,
+		"method":"initialize",
+		"params":{
+			"protocolVersion":"2025-06-18",
+			"capabilities":{},
+			"clientInfo":{"name":"test-client","version":"1.0.0"}
+		}
+	}`))
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(SessionHeader, currentSession.id)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusOK)
+	}
+	if got := w.Header().Get(SessionHeader); got != currentSession.id {
+		t.Fatalf("unexpected session header: got %q want %q", got, currentSession.id)
+	}
+	if len(srv.sessions) != 1 {
+		t.Fatalf("unexpected session count: got %d want %d", len(srv.sessions), 1)
+	}
+	reusedSession, ok := srv.getSession(currentSession.id)
+	if !ok {
+		t.Fatal("expected existing session to be reused")
+	}
+	if reusedSession.initialized {
+		t.Fatal("expected reused session to require initialized notification again")
+	}
+}
+
 func TestInitializeNegotiatesUnsupportedProtocolVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	srv := newTestServer(nil)
@@ -95,6 +142,48 @@ func TestInitializeNegotiatesUnsupportedProtocolVersion(t *testing.T) {
 	}
 	if result["protocolVersion"] != ProtocolVersion {
 		t.Fatalf("unexpected protocol version: %v", result["protocolVersion"])
+	}
+}
+
+func TestCreateSessionPrunesUserSessionLimit(t *testing.T) {
+	srv := newTestServer(nil)
+	var firstSessionID string
+	for i := range maxUserSessions {
+		currentSession := srv.createSession(1)
+		if i == 0 {
+			firstSessionID = currentSession.id
+		}
+	}
+	srv.createSession(2)
+	srv.createSession(1)
+
+	if _, ok := srv.sessions[firstSessionID]; ok {
+		t.Fatal("expected oldest user session to be pruned")
+	}
+	if got := countSessionsForUser(srv, 1); got != maxUserSessions {
+		t.Fatalf("unexpected user session count: got %d want %d", got, maxUserSessions)
+	}
+	if got := len(srv.sessions); got != maxUserSessions+1 {
+		t.Fatalf("unexpected total session count: got %d want %d", got, maxUserSessions+1)
+	}
+}
+
+func TestCreateSessionPrunesGlobalSessionLimit(t *testing.T) {
+	srv := newTestServer(nil)
+	var firstSessionID string
+	for i := range maxSessions {
+		currentSession := srv.createSession(uint(i + 1))
+		if i == 0 {
+			firstSessionID = currentSession.id
+		}
+	}
+	srv.createSession(uint(maxSessions + 1))
+
+	if _, ok := srv.sessions[firstSessionID]; ok {
+		t.Fatal("expected oldest global session to be pruned")
+	}
+	if got := len(srv.sessions); got != maxSessions {
+		t.Fatalf("unexpected session count: got %d want %d", got, maxSessions)
 	}
 }
 
@@ -191,4 +280,14 @@ func newTestServer(sessions map[string]*session) *Server {
 		}
 	}
 	return &Server{sessions: sessions}
+}
+
+func countSessionsForUser(srv *Server, userID uint) int {
+	count := 0
+	for _, currentSession := range srv.sessions {
+		if currentSession != nil && currentSession.userID == userID {
+			count++
+		}
+	}
+	return count
 }

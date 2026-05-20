@@ -24,7 +24,8 @@ const (
 	ProtocolVersion = "2025-06-18"
 	SessionHeader   = "Mcp-Session-Id"
 	sessionTTL      = 30 * time.Minute
-	maxSessions     = 1024
+	maxSessions     = 128
+	maxUserSessions = 16
 )
 
 type session struct {
@@ -202,7 +203,10 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 		}
 	}
 
-	currentSession := s.createSession(c.Request.Context().Value(conf.UserKey).(*model.User).ID)
+	currentSession := s.initializeSession(
+		c.Request.Context().Value(conf.UserKey).(*model.User).ID,
+		c.GetHeader(SessionHeader),
+	)
 	c.Header(SessionHeader, currentSession.id)
 	c.JSON(http.StatusOK, response{
 		JSONRPC: "2.0",
@@ -221,6 +225,24 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 			"instructions": "Complete initialization with notifications/initialized, then use tools/list and tools/call. Available tools include openlist.fs.list, openlist.fs.get, and openlist.fs.link.",
 		},
 	})
+}
+
+func (s *Server) initializeSession(userID uint, requestedID string) *session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	s.pruneExpiredSessionsLocked(now)
+	if requestedID != "" {
+		currentSession, ok := s.sessions[requestedID]
+		if ok && currentSession != nil && currentSession.userID == userID {
+			currentSession.initialized = false
+			currentSession.lastUsedAt = now
+			return currentSession
+		}
+	}
+
+	return s.createSessionLocked(userID, now)
 }
 
 func (s *Server) handleDelete(c *gin.Context) {
@@ -251,8 +273,12 @@ func (s *Server) createSession(userID uint) *session {
 
 	now := time.Now()
 	s.pruneExpiredSessionsLocked(now)
-	s.pruneLeastRecentlyUsedSessionsLocked(max(0, len(s.sessions)-maxSessions+1))
+	return s.createSessionLocked(userID, now)
+}
 
+func (s *Server) createSessionLocked(userID uint, now time.Time) *session {
+	s.pruneLeastRecentlyUsedUserSessionsLocked(userID, max(0, s.countUserSessionsLocked(userID)-maxUserSessions+1))
+	s.pruneLeastRecentlyUsedSessionsLocked(max(0, len(s.sessions)-maxSessions+1))
 	currentSession := &session{
 		id:         random.Token(),
 		userID:     userID,
@@ -339,6 +365,42 @@ func (s *Server) pruneLeastRecentlyUsedSessionsLocked(count int) {
 			if currentSession == nil {
 				oldestID = id
 				break
+			}
+			lastUsedAt := sessionLastUsedAt(currentSession)
+			if oldestID == "" || lastUsedAt.Before(oldest) {
+				oldestID = id
+				oldest = lastUsedAt
+			}
+		}
+		if oldestID == "" {
+			return
+		}
+		delete(s.sessions, oldestID)
+	}
+}
+
+func (s *Server) countUserSessionsLocked(userID uint) int {
+	count := 0
+	for _, currentSession := range s.sessions {
+		if currentSession != nil && currentSession.userID == userID {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Server) pruneLeastRecentlyUsedUserSessionsLocked(userID uint, count int) {
+	for range count {
+		var (
+			oldestID string
+			oldest   time.Time
+		)
+		for id, currentSession := range s.sessions {
+			if currentSession == nil {
+				continue
+			}
+			if currentSession.userID != userID {
+				continue
 			}
 			lastUsedAt := sessionLastUsedAt(currentSession)
 			if oldestID == "" || lastUsedAt.Before(oldest) {
