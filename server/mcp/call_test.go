@@ -32,6 +32,7 @@ func TestToolsListRequiresInitializedSession(t *testing.T) {
 	}`))
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(ProtocolVersionHeader, ProtocolVersion)
 	req.Header.Set(SessionHeader, "s1")
 
 	w := httptest.NewRecorder()
@@ -65,6 +66,7 @@ func TestToolsListSuccess(t *testing.T) {
 	}`))
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(ProtocolVersionHeader, ProtocolVersion)
 	req.Header.Set(SessionHeader, "s2")
 
 	w := httptest.NewRecorder()
@@ -120,6 +122,7 @@ func TestToolsCallUnknownTool(t *testing.T) {
 	}`))
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(ProtocolVersionHeader, ProtocolVersion)
 	req.Header.Set(SessionHeader, "s3")
 
 	w := httptest.NewRecorder()
@@ -154,6 +157,7 @@ func TestToolsCallInvalidParams(t *testing.T) {
 	}`))
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(ProtocolVersionHeader, ProtocolVersion)
 	req.Header.Set(SessionHeader, "s4")
 
 	w := httptest.NewRecorder()

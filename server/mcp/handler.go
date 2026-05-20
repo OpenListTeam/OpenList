@@ -21,11 +21,12 @@ import (
 )
 
 const (
-	ProtocolVersion = "2025-06-18"
-	SessionHeader   = "Mcp-Session-Id"
-	sessionTTL      = 30 * time.Minute
-	maxSessions     = 128
-	maxUserSessions = 16
+	ProtocolVersion       = "2025-06-18"
+	ProtocolVersionHeader = "MCP-Protocol-Version"
+	SessionHeader         = "Mcp-Session-Id"
+	sessionTTL            = 30 * time.Minute
+	maxSessions           = 128
+	maxUserSessions       = 16
 )
 
 type session struct {
@@ -130,6 +131,14 @@ func (s *Server) handlePost(c *gin.Context) {
 
 	if req.Method == "initialize" {
 		s.handleInitialize(c, req)
+		return
+	}
+	if c.GetHeader(ProtocolVersionHeader) != ProtocolVersion {
+		c.JSON(http.StatusBadRequest, response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error:   &rpcError{Code: -32000, Message: "missing or unsupported MCP protocol version"},
+		})
 		return
 	}
 

@@ -217,6 +217,73 @@ func TestPostInvalidAcceptReturnsJSONRPCError(t *testing.T) {
 	}
 }
 
+func TestPostRequiresProtocolVersionAfterInitialize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := newTestServer(map[string]*session{
+		"s1": {id: "s1", userID: 1, initialized: true},
+	})
+
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
+		srv.handlePost(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
+		"jsonrpc":"2.0",
+		"id":1,
+		"method":"tools/list"
+	}`))
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(SessionHeader, "s1")
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusBadRequest)
+	}
+	resp := decodeResponse(t, w)
+	if resp.Error == nil || resp.Error.Code != -32000 {
+		t.Fatalf("unexpected error response: %+v", resp.Error)
+	}
+}
+
+func TestPostRejectsUnsupportedProtocolVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := newTestServer(map[string]*session{
+		"s1": {id: "s1", userID: 1, initialized: true},
+	})
+
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
+		srv.handlePost(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
+		"jsonrpc":"2.0",
+		"id":1,
+		"method":"tools/list"
+	}`))
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(ProtocolVersionHeader, "2025-03-26")
+	req.Header.Set(SessionHeader, "s1")
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusBadRequest)
+	}
+	resp := decodeResponse(t, w)
+	if resp.Error == nil || resp.Error.Code != -32000 {
+		t.Fatalf("unexpected error response: %+v", resp.Error)
+	}
+}
+
 func TestDeleteRemovesSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	srv := newTestServer(nil)
