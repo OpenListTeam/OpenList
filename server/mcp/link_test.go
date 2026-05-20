@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -12,6 +13,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/gin-gonic/gin"
 )
+
+var settingCacheMu sync.Mutex
 
 func TestParseFSLinkArgs(t *testing.T) {
 	args, err := parseFSLinkArgs(json.RawMessage(`{"path":"/file.txt","password":"pw","type":"thumb"}`))
@@ -64,7 +67,11 @@ func TestCanProxyFileIgnoresWebdavProxyURLPolicy(t *testing.T) {
 
 func TestBuildFSLinkInfoUsesProxyWhenStorageRequiresProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	t.Cleanup(op.Cache.ClearAll)
+	settingCacheMu.Lock()
+	t.Cleanup(func() {
+		op.Cache.ClearAll()
+		settingCacheMu.Unlock()
+	})
 	op.Cache.SetSetting(conf.LinkExpiration, &model.SettingItem{Key: conf.LinkExpiration, Value: "0"})
 	op.Cache.SetSetting(conf.Token, &model.SettingItem{Key: conf.Token, Value: "test-token"})
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
