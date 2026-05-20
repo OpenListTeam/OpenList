@@ -81,6 +81,7 @@ func (s *Server) handleGet(c *gin.Context) {
 		c.Status(http.StatusForbidden)
 		return
 	}
+	c.Header("Allow", "POST, DELETE")
 	c.Status(http.StatusMethodNotAllowed)
 }
 

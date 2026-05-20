@@ -172,6 +172,9 @@ func TestGetReturnsMethodNotAllowed(t *testing.T) {
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusMethodNotAllowed)
 	}
+	if allow := w.Header().Get("Allow"); allow != "POST, DELETE" {
+		t.Fatalf("unexpected Allow header: got %q want %q", allow, "POST, DELETE")
+	}
 }
 
 func newTestServer(sessions map[string]*session) *Server {
