@@ -36,7 +36,7 @@ type session struct {
 }
 
 type Server struct {
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	sessions map[string]*session
 }
 
