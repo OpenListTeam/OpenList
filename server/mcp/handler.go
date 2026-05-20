@@ -27,8 +27,6 @@ const (
 	maxSessions     = 1024
 )
 
-var supportedProtocolVersions = []string{ProtocolVersion}
-
 type session struct {
 	id          string
 	userID      uint
@@ -210,7 +208,7 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]any{
-			"protocolVersion": negotiateProtocolVersion(params.ProtocolVersion),
+			"protocolVersion": ProtocolVersion,
 			"capabilities": map[string]any{
 				"tools": map[string]any{
 					"listChanged": false,
@@ -223,15 +221,6 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 			"instructions": "Complete initialization with notifications/initialized, then use tools/list and tools/call. Available tools include openlist.fs.list, openlist.fs.get, and openlist.fs.link.",
 		},
 	})
-}
-
-func negotiateProtocolVersion(clientVersion string) string {
-	for _, supportedVersion := range supportedProtocolVersions {
-		if clientVersion == supportedVersion {
-			return supportedVersion
-		}
-	}
-	return ProtocolVersion
 }
 
 func (s *Server) handleDelete(c *gin.Context) {
