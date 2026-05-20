@@ -21,8 +21,6 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/Da3zKi7/saferith v0.33.0-fixed h1:fnIWTk7EP9mZAICf7aQjeoAwpfrlCrkOvqmi6CbWdTk=
 github.com/Da3zKi7/saferith v0.33.0-fixed/go.mod h1:QKJhjoqUtBsXCAVEjw38mFqoi7DebT7kthcD7UzbnoA=
-github.com/KarpelesLab/reflink v1.0.2 h1:hQ1aM3TmjU2kTNUx5p/HaobDoADYk+a6AuEinG4Cv88=
-github.com/KarpelesLab/reflink v1.0.2/go.mod h1:WGkTOKNjd1FsJKBw3mu4JvrPEDJyJJ+JPtxBkbPoCok=
 github.com/KirCute/zip v1.0.1 h1:L/tVZglOiDVKDi9Ud+fN49htgKdQ3Z0H80iX8OZk13c=
 github.com/KirCute/zip v1.0.1/go.mod h1:xhF7dCB+Bjvy+5a56lenYCKBsH+gxDNPZSy5Cp+nlXk=
 github.com/Masterminds/semver/v3 v3.2.0 h1:3MEsd0SM6jqZojhjLWWeBY+Kcjy9i6MQAeY7YgDP83g=
@@ -35,6 +33,8 @@ github.com/OpenListTeam/go-cache v0.1.0 h1:eV2+FCP+rt+E4OCJqLUW7wGccWZNJMV0NNkh+
 github.com/OpenListTeam/go-cache v0.1.0/go.mod h1:AHWjKhNK3LE4rorVdKyEALDHoeMnP8SjiNyfVlB+Pz4=
 github.com/OpenListTeam/gsync v0.1.0 h1:ywzGybOvA3lW8K1BUjKZ2IUlT2FSlzPO4DOazfYXjcs=
 github.com/OpenListTeam/gsync v0.1.0/go.mod h1:h/Rvv9aX/6CdW/7B8di3xK3xNV8dUg45Fehrd/ksZ9s=
+github.com/OpenListTeam/reflink v0.0.0-20260520031008-ed3c0dbe8009 h1:qLqJPr/FAsZTJiqy65JKKuFJP0V9pRVtSaIE0kqaQ8w=
+github.com/OpenListTeam/reflink v0.0.0-20260520031008-ed3c0dbe8009/go.mod h1:WGkTOKNjd1FsJKBw3mu4JvrPEDJyJJ+JPtxBkbPoCok=
 github.com/OpenListTeam/sftpd-openlist v1.0.1 h1:j4S3iPFOpnXCUKRPS7uCT4mF2VCl34GyqvH6lqwnkUU=
 github.com/OpenListTeam/sftpd-openlist v1.0.1/go.mod h1:uO/wKnbvbdq3rBLmClMTZXuCnw7XW4wlAq4dZe91a40=
 github.com/OpenListTeam/tache v0.2.2 h1:CWFn6sr1AIYaEjC8ONdKs+LrxHyuErheenAjEqRhh4k=
