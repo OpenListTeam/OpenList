@@ -116,10 +116,10 @@ Dank u voor uw ondersteuning en begrip
 
 ## Documentatie
 
-- 📘 [Documentatie](https://docs.oplist.org)
-- 🌏 [CN Mirror](https://docs.oplist.org.cn)
-- ⚖️ [Gebruiksvoorwaarden](https://docs.oplist.org/terms)
-- 🔒 [Privacybeleid](https://docs.oplist.org/privacy)
+- 📘 [Documentatie](https://doc.oplist.org)
+- 🌏 [CN Mirror](https://doc.oplist.org.cn)
+- ⚖️ [Gebruiksvoorwaarden](https://doc.oplist.org/terms)
+- 🔒 [Privacybeleid](https://doc.oplist.org/privacy)
 
 ## Demo
 

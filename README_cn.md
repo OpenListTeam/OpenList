@@ -116,10 +116,10 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
 
 ## 文档
 
-- 📘 [文档](https://docs.oplist.org)
-- 🌏 [中国镜像](https://docs.oplist.org.cn)
-- ⚖️ [使用条款](https://docs.oplist.org/terms)
-- 🔒 [隐私政策](https://docs.oplist.org/privacy)
+- 📘 [文档](https://doc.oplist.org)
+- 🌏 [中国镜像](https://doc.oplist.org.cn)
+- ⚖️ [使用条款](https://doc.oplist.org/terms)
+- 🔒 [隐私政策](https://doc.oplist.org/privacy)
 
 ## Demo
 

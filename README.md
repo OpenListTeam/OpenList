@@ -116,10 +116,10 @@ Thank you for your support and understanding of the OpenList project.
 
 ## Document
 
-- 📘 [Docs](https://docs.oplist.org)
-- 🌏 [CN Mirror](https://docs.oplist.org.cn)
-- ⚖️ [Terms of Use](https://docs.oplist.org/terms)
-- 🔒 [Privacy Policy](https://docs.oplist.org/privacy)
+- 📘 [Docs](https://doc.oplist.org)
+- 🌏 [CN Mirror](https://doc.oplist.org.cn)
+- ⚖️ [Terms of Use](https://doc.oplist.org/terms)
+- 🔒 [Privacy Policy](https://doc.oplist.org/privacy)
 
 ## Demo
 
