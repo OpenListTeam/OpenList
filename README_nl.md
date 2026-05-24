@@ -116,6 +116,16 @@ Dank u voor uw ondersteuning en begrip
 
 ## Documentatie
 
+- 📘 [Documentatie](https://docs.oplist.org)
+- 🌏 [CN Mirror](https://docs.oplist.org.cn)
+- ⚖️ [Gebruiksvoorwaarden](https://docs.oplist.org/terms)
+- 🔒 [Privacybeleid](https://docs.oplist.org/privacy)
+
+## Demo
+
+- 🌎 [Global Demo](https://demo.oplist.org)
+- 🇨🇳 [CN Demo](https://demo.oplist.org.cn)
+
 ## Discussie
 
 Stel algemene vragen in [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions), ***Issues* zijn alleen voor bugmeldingen en feature requests.**
