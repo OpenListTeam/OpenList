@@ -116,9 +116,10 @@ Thank you for your support and understanding of the OpenList project.
 
 ## Document
 
-- 📘 [Global Site](https://doc.oplist.org)
-- 📚 [Backup Site](https://doc.openlist.team)
-- 🌏 [CN Site](https://doc.oplist.org.cn)
+- 📘 [Docs](https://docs.oplist.org)
+- 🌏 [CN Mirror](https://docs.oplist.org.cn)
+- ⚖️ [Terms of Use](https://docs.oplist.org/terms)
+- 🔒 [Privacy Policy](https://docs.oplist.org/privacy)
 
 ## Demo
 

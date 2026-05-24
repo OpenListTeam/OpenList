@@ -116,15 +116,6 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 
 ## ドキュメント
 
-- 📘 [グローバルサイト](https://doc.oplist.org)
-- 📚 [バックアップサイト](https://doc.openlist.team)
-- 🌏 [CNサイト](https://doc.oplist.org.cn)
-
-## デモ
-
-- 🌎 [グローバルデモ](https://demo.oplist.org)
-- 🇨🇳 [CNデモ](https://demo.oplist.org.cn)
-
 ## ディスカッション
 
 一般的な質問は [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) をご利用ください。***Issues* はバグ報告と機能リクエスト専用です。**
