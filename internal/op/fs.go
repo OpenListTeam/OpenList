@@ -426,10 +426,11 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		}
 		if cache, exist := Cache.dirCache.Get(dstKey); exist {
 			if newObj == nil {
-				newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
+				newObj = srcRawObj
 			} else {
 				newObj = wrapObjName(storage, newObj)
 			}
+			newObj = &model.ObjWrapMask{Obj: newObj, Mask: model.Temp}
 			cache.UpdateObject(srcRawObj.GetName(), newObj)
 		}
 	}
@@ -551,10 +552,11 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(dstKey); exist {
 			if newObj == nil {
-				newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
+				newObj = srcRawObj
 			} else {
 				newObj = wrapObjName(storage, newObj)
 			}
+			newObj = &model.ObjWrapMask{Obj: newObj, Mask: model.Temp}
 			cache.UpdateObject(srcRawObj.GetName(), newObj)
 		}
 	}
