@@ -222,7 +222,7 @@ func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 		return nil, err
 	}
 	_, err := d.client.UpdateFile(ctx, &sdk.UpdateFileReq{
-		FileID:  srcObj.GetID(),
+		FileID:   srcObj.GetID(),
 		FileName: newName,
 	})
 	if err != nil {
