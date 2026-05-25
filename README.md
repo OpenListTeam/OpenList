@@ -163,3 +163,11 @@ We sincerely thank the author [Xhofe](https://github.com/Xhofe) of the original 
 Thanks goes to these wonderful people:
 
 [![Contributors](https://contrib.rocks/image?repo=OpenListTeam/OpenList)](https://github.com/OpenListTeam/OpenList/graphs/contributors)
+
+## Donation
+
+ - ifdian: https://ifdian.net/a/openlist
+
+Donation List:
+
+
