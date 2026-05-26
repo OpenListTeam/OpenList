@@ -46,6 +46,22 @@ func (s *Sharing) Valid() bool {
 	return true
 }
 
+// ValidForVhost 虚拟主机场景的有效性检查。
+// 与 Valid() 的区别：不检查 Creator.CanShare()，因为 Web Hosting / 路径重映射
+// 是服务端功能，不依赖创建者的分享权限位。
+func (s *Sharing) ValidForVhost() bool {
+	if s.Disabled {
+		return false
+	}
+	if len(s.Files) == 0 {
+		return false
+	}
+	if s.Expires != nil && !s.Expires.IsZero() && s.Expires.Before(time.Now()) {
+		return false
+	}
+	return true
+}
+
 func (s *Sharing) Verify(pwd string) bool {
 	return s.Pwd == "" || s.Pwd == pwd
 }

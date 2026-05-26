@@ -91,7 +91,7 @@ func GetSharingByDomain(domain string) (*model.Sharing, error) {
 			return nil, errors.New("sharing not found by domain")
 		}
 		log.Debugf("[Sharing] domain cache hit for %q id=%s", domain, s.ID)
-		if !s.Valid() {
+		if !s.ValidForVhost() {
 			return nil, errors.New("sharing not valid")
 		}
 		return s, nil
@@ -106,10 +106,7 @@ func GetSharingByDomain(domain string) (*model.Sharing, error) {
 			}
 			return nil, errors.WithMessagef(err, "failed get sharing by domain [%s]", domain)
 		}
-		creator, err := GetUserById(sdb.CreatorId)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed get sharing creator [%s]", sdb.ID)
-		}
+		// 虚拟主机场景不需要 creator，跳过 creator 查询以避免 CanShare 校验阻断 Web Hosting
 		var files []string
 		if err = utils.Json.UnmarshalFromString(sdb.FilesRaw, &files); err != nil {
 			files = make([]string, 0)
@@ -117,7 +114,7 @@ func GetSharingByDomain(domain string) (*model.Sharing, error) {
 		s := &model.Sharing{
 			SharingDB: sdb,
 			Files:     files,
-			Creator:   creator,
+			Creator:   nil, // 虚拟主机匹配不依赖 creator 权限
 		}
 		domainSharingCache.Set(domain, s, cache.WithEx[*model.Sharing](time.Hour))
 		return s, nil
@@ -125,7 +122,7 @@ func GetSharingByDomain(domain string) (*model.Sharing, error) {
 	if err != nil {
 		return nil, err
 	}
-	if sharing == nil || !sharing.Valid() {
+	if sharing == nil || !sharing.ValidForVhost() {
 		return nil, errors.New("sharing not valid for domain")
 	}
 	return sharing, nil

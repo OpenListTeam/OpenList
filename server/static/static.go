@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	iofs "io/fs"
-	stdnet "net"
 	"net/http"
 	"os"
 	stdpath "path"
@@ -232,26 +231,27 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			} else if sharing != nil && len(sharing.Files) > 0 {
 				utils.Log.Debugf("[VirtualHost] domain=%q matched sharing: id=%s web_hosting=%v root=%q",
 					domain, sharing.ID, sharing.WebHosting, sharing.Files[0])
+				// 访问码门禁：sharing.Pwd 非空时，未通过校验的请求会被门禁函数
+				// 直接处理（密码输入页 / 提交表单 / 重定向），调用方需立即返回。
+				if !handleSharePwdGate(c, sharing) {
+					return
+				}
 				if sharing.WebHosting {
 					// Web 托管模式：直接返回文件内容
-					// 注入 guest 用户到 context，供 internalfs.Get/Link 权限检查使用
-					guest, guestErr := op.GetGuest()
-					if guestErr != nil {
-						utils.Log.Errorf("[VirtualHost] failed to get guest user: %v", guestErr)
-						c.Status(http.StatusInternalServerError)
-						return
-					}
-					common.GinWithValue(c, conf.UserKey, guest)
-					if handleWebHosting(c, sharing) {
-						return
-					}
+					// 注入 nil user 到 context，CanRead(nil, ...) 直接返回 true，
+					// 绕过 guest Disabled 限制，作为系统级内部访问处理
+					common.GinAppendValues(c, conf.UserKey, (*model.User)(nil))
+					handleWebHosting(c, sharing)
+					return
 				} else {
-					// 路径重映射模式（伪静态）：直接返回正常的 SPA 页面
-					// 地址栏保持不变，面包屑显示用户访问的路径
-					// 实际的路径映射由后端 API（fs/list、fs/get）在处理请求时完成
+					// 路径重映射模式（伪静态）：保持地址栏不变，直接返回 SPA HTML
+					// 后端 API（fs/list、fs/get、/d/、/p/）已根据 Host 头自动将路径重映射
+					// 到 sharing.Files[0] 之下，前端正常请求即可看到分享目录内容
+					// 注入 nil user，使 fs API 跳过 guest Disabled 限制
+					common.GinAppendValues(c, conf.UserKey, (*model.User)(nil))
 					utils.Log.Debugf("[VirtualHost] path remapping mode: serving SPA for domain=%q path=%q", domain, c.Request.URL.Path)
 					c.Header("Content-Type", "text/html")
-					c.Status(200)
+					c.Status(http.StatusOK)
 					_, _ = c.Writer.WriteString(conf.IndexHtml)
 					c.Writer.Flush()
 					c.Writer.WriteHeaderNow()
@@ -283,66 +283,75 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	noRoute(virtualHostHandler)
 }
 
-// handleWebHosting 处理虚拟主机（sharing）的 Web 托管请求
-// 直接将文件内容返回给客户端，而不是走前端 SPA 路由
-// 返回 true 表示已处理，false 表示未处理（继续走默认逻辑）
-func handleWebHosting(c *gin.Context, sharing *model.Sharing) bool {
-	if c.Request.Method != "GET" && c.Request.Method != "HEAD" {
+// indexCandidates 是 Web Hosting 模式下，访问目录时按优先级查找的索引文件名列表。
+// 命中第一个存在的文件即返回；全部不存在则返回 404。
+var indexCandidates = []string{
+	"index.html",
+	"index.htm",
+	"index.mhtml",
+	"index.md",
+	"default.htm",
+	"default.html",
+	"default.mhtml",
+	"default.md",
+	"README.html",
+	"README.htm",
+	"README.mhtml",
+	"README.md",
+	"readme.html",
+	"readme.htm",
+	"readme.mhtml",
+	"readme.md",
+}
+
+// handleWebHosting 处理虚拟主机（sharing）的 Web 托管请求。
+// 行为：
+//  1. 请求路径若指向某个具体文件（非目录），直接返回该文件内容；
+//  2. 请求路径指向目录或文件不存在时，按 indexCandidates 顺序查找索引文件；
+//  3. 全部未命中时返回 404。
+func handleWebHosting(c *gin.Context, sharing *model.Sharing) {
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 		utils.Log.Debugf("[VirtualHost] skip: method=%s not allowed for web hosting", c.Request.Method)
-		return false
+		c.Status(http.StatusMethodNotAllowed)
+		return
 	}
 	if len(sharing.Files) == 0 {
 		utils.Log.Debugf("[VirtualHost] skip: sharing has no files")
-		return false
+		c.Status(http.StatusNotFound)
+		return
 	}
 	root := sharing.Files[0]
 
 	reqPath := c.Request.URL.Path
-	// Map request path into the sharing root and verify it does not escape via traversal.
-	// stdpath.Join calls Clean internally, which collapses ".." segments, so we only need
-	// to confirm the result still lives under root.
+	// stdpath.Join 内部 Clean，会消除 .. 但仍可能逃出 root，故再做 HasPrefix 校验
 	filePath := stdpath.Join(root, reqPath)
 	if !strings.HasPrefix(filePath, strings.TrimRight(root, "/")+"/") && filePath != root {
 		utils.Log.Warnf("[VirtualHost] path traversal rejected: root=%q reqPath=%q", root, reqPath)
 		c.Status(http.StatusBadRequest)
-		return false
+		return
 	}
 	utils.Log.Debugf("[VirtualHost] handleWebHosting: reqPath=%q -> filePath=%q", reqPath, filePath)
 
-	// 尝试获取文件
-	obj, err := internalfs.Get(c.Request.Context(), filePath, &internalfs.GetArgs{NoLog: true})
-	if err == nil && !obj.IsDir() {
-		// 找到文件，直接代理返回
+	// 1) 直接命中文件
+	if obj, err := internalfs.Get(c.Request.Context(), filePath, &internalfs.GetArgs{NoLog: true}); err == nil && !obj.IsDir() {
 		utils.Log.Debugf("[VirtualHost] serving file: %q", filePath)
 		serveWebHostingFile(c, filePath, obj.GetName())
-		return true
+		return
 	}
-	utils.Log.Debugf("[VirtualHost] file not found or is dir at %q: %v", filePath, err)
 
-	// 如果是目录或未找到，尝试 index.html
-	indexPath := stdpath.Join(filePath, "index.html")
-	obj, err = internalfs.Get(c.Request.Context(), indexPath, &internalfs.GetArgs{NoLog: true})
-	if err == nil && !obj.IsDir() {
-		utils.Log.Debugf("[VirtualHost] serving index.html: %q", indexPath)
-		serveWebHostingFile(c, indexPath, "index.html")
-		return true
-	}
-	utils.Log.Debugf("[VirtualHost] index.html not found at %q: %v", indexPath, err)
-
-	// 尝试 <path>.html（SPA 友好路由）
-	if stdpath.Ext(reqPath) == "" && reqPath != "/" {
-		htmlPath := stdpath.Join(root, reqPath+".html")
-		obj, err = internalfs.Get(c.Request.Context(), htmlPath, &internalfs.GetArgs{NoLog: true})
-		if err == nil && !obj.IsDir() {
-			utils.Log.Debugf("[VirtualHost] serving .html fallback: %q", htmlPath)
-			serveWebHostingFile(c, htmlPath, stdpath.Base(htmlPath))
-			return true
+	// 2) 目录或文件不存在：按优先级匹配索引文件
+	for _, name := range indexCandidates {
+		candidate := stdpath.Join(filePath, name)
+		if obj, err := internalfs.Get(c.Request.Context(), candidate, &internalfs.GetArgs{NoLog: true}); err == nil && !obj.IsDir() {
+			utils.Log.Debugf("[VirtualHost] serving index candidate: %q", candidate)
+			serveWebHostingFile(c, candidate, obj.GetName())
+			return
 		}
-		utils.Log.Debugf("[VirtualHost] .html fallback not found at %q: %v", htmlPath, err)
 	}
 
-	utils.Log.Debugf("[VirtualHost] no file matched for reqPath=%q, falling through", reqPath)
-	return false
+	// 3) 全部未命中
+	utils.Log.Debugf("[VirtualHost] no index candidate matched for reqPath=%q under root=%q", reqPath, root)
+	c.Status(http.StatusNotFound)
 }
 
 // serveWebHostingFile 通过代理方式直接返回文件内容
@@ -362,20 +371,29 @@ func serveWebHostingFile(c *gin.Context, filePath, filename string) {
 	ext := strings.ToLower(stdpath.Ext(filename))
 	contentType := mimeTypeByExt(ext)
 
-	// 使用包装的 ResponseWriter，在 WriteHeader 时强制覆盖 Content-Type 和 Content-Disposition
-	// 这样即使 Proxy 内部的 maps.Copy 将上游响应头复制进来，我们也能在最终发送前覆盖
+	// .md 走服务端模板渲染（浏览器端 marked.js 渲染）。
+	// 读失败或文件过大时回退为原始内容代理，不中断请求。
+	if ext == ".md" {
+		if data, rerr := readLinkAll(c.Request.Context(), link, file.GetSize(), renderMaxBytes); rerr == nil {
+			html := renderMarkdownPreview(filename, data)
+			writeRenderedHTML(c.Writer, html)
+			return
+		} else {
+			utils.Log.Warnf("web hosting: markdown render fallback for %s: %v", filePath, rerr)
+		}
+	}
+
+	// 注意：不要修改 link.Header！
+	// link.Header 是请求上游存储时附加的请求头（如 Referer、Authorization 等），
+	// 写入 Content-Type/Content-Disposition 会污染上游请求并触发签名失败/403。
+	//
+	// 正确的做法是在响应阶段通过 forceContentTypeWriter 强制覆盖响应头，
+	// 同时在 ProxyIgnoreHeaders 之外通过响应头 set 直接生效。
 	wrapped := &forceContentTypeWriter{
 		ResponseWriter: c.Writer,
 		contentType:    contentType,
 		contentDisp:    "inline",
 	}
-
-	// 同时注入到 link.Header，供 attachHeader 路径（RangeReader/Concurrency 模式）使用
-	if link.Header == nil {
-		link.Header = make(http.Header)
-	}
-	link.Header.Set("Content-Type", contentType)
-	link.Header.Set("Content-Disposition", "inline")
 
 	// 使用通用代理函数处理文件传输
 	if err := common.Proxy(wrapped, c.Request, link, file); err != nil {
@@ -393,8 +411,14 @@ type forceContentTypeWriter struct {
 }
 
 func (w *forceContentTypeWriter) WriteHeader(statusCode int) {
-	w.ResponseWriter.Header().Set("Content-Type", w.contentType)
-	w.ResponseWriter.Header().Set("Content-Disposition", w.contentDisp)
+	// 上游可能返回非 2xx（如 OSS 签名异常的 403）；这种情况不要把异常响应包装成 200，
+	// 也不要给浏览器一个声称是 HTML 但内容是 OSS XML 错误的响应。
+	// 直接透传上游状态码，但仍覆盖 Content-Type / Content-Disposition 防止下载/乱解析。
+	h := w.ResponseWriter.Header()
+	if statusCode >= 200 && statusCode < 300 {
+		h.Set("Content-Type", w.contentType)
+		h.Set("Content-Disposition", w.contentDisp)
+	}
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -407,6 +431,17 @@ func mimeTypeByExt(ext string) string {
 	switch ext {
 	case ".html", ".htm":
 		return "text/html; charset=utf-8"
+	case ".mhtml", ".mht":
+		// MHTML（Web 归档）。Chrome / Edge 看到 multipart/related 且无 attachment 时会
+		// 调用内置的 MhtmlPageLoader 原生预览，无需服务端拆包。
+		// 注意：boundary 参数是 MHTML 文件内嵌的，响应头 Content-Type 上可以不携带；
+		// Chrome 会从响应 body 头部重新解析。
+		return "multipart/related"
+	case ".md":
+		// .md 在 Web Hosting 场景下会在 serveWebHostingFile 提前走服务端渲染。
+		// 这里仅作为回退路径（读失败 / 超大）提供合理的 Content-Type，
+		// 让浏览器直接显示源文本而不是下载。
+		return "text/markdown; charset=utf-8"
 	case ".css":
 		return "text/css; charset=utf-8"
 	case ".js", ".mjs":
@@ -440,12 +475,7 @@ func mimeTypeByExt(ext string) string {
 	}
 }
 
-// stripHostPort removes the port from a host string (supports IPv4, IPv6, and bracketed IPv6).
+// stripHostPort removes the port from a host string.
 func stripHostPort(host string) string {
-	h, _, err := stdnet.SplitHostPort(host)
-	if err != nil {
-		// No port present; return host as-is
-		return host
-	}
-	return h
+	return common.StripHostPort(host)
 }

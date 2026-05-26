@@ -2,7 +2,6 @@ package handles
 
 import (
 	"fmt"
-	"net"
 	stdpath "path"
 	"strings"
 	"time"
@@ -279,7 +278,7 @@ func FsGetSplit(c *gin.Context) {
 	// 同时将 vhost.Path 前缀存入 context，供 FsGet 生成 /p/ 链接时去掉前缀
 	var vhostPrefix string
 	req.Path, vhostPrefix = applyVhostPathMappingWithPrefix(c, req.Path)
-	common.GinWithValue(c, conf.VhostPrefixKey, vhostPrefix)
+	common.GinAppendValues(c, conf.VhostPrefixKey, vhostPrefix)
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if user.IsGuest() && user.Disabled {
 		common.ErrorStrResp(c, "Guest user is disabled, login please", 401)
@@ -495,12 +494,7 @@ func stripVhostPrefix(c *gin.Context, path string) string {
 	return path
 }
 
-// stripHostPortForVhost removes the port from a host string (supports IPv4, IPv6, and bracketed IPv6).
+// stripHostPortForVhost removes the port from a host string.
 func stripHostPortForVhost(host string) string {
-	h, _, err := net.SplitHostPort(host)
-	if err != nil {
-		// No port present; return host as-is
-		return host
-	}
-	return h
+	return common.StripHostPort(host)
 }

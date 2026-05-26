@@ -1,7 +1,6 @@
 package middlewares
 
 import (
-	"net"
 	stdpath "path"
 	"strings"
 
@@ -47,20 +46,19 @@ func applyDownVhostPathMapping(c *gin.Context, reqPath string) string {
 		return reqPath
 	}
 	root := sharing.Files[0]
-	// 路径重映射：将 reqPath 拼接到 root 后面
+	// 路径重映射：将 reqPath 拼接到 root 后面，并校验不逃逸出 root
 	mapped := stdpath.Join(root, reqPath)
+	if !strings.HasPrefix(mapped, strings.TrimRight(root, "/")+"/") && mapped != root {
+		utils.Log.Warnf("[VirtualHost] path traversal rejected for down: domain=%q reqPath=%q", domain, reqPath)
+		return reqPath
+	}
 	utils.Log.Debugf("[VirtualHost] down path remapping: domain=%q reqPath=%q -> mappedPath=%q", domain, reqPath, mapped)
 	return mapped
 }
 
-// stripDownHostPort removes the port from a host string (supports IPv4, IPv6, and bracketed IPv6).
+// stripDownHostPort removes the port from a host string.
 func stripDownHostPort(host string) string {
-	h, _, err := net.SplitHostPort(host)
-	if err != nil {
-		// No port present; return host as-is
-		return host
-	}
-	return h
+	return common.StripHostPort(host)
 }
 
 func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
