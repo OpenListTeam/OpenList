@@ -22,7 +22,7 @@ func PathParse(c *gin.Context) {
 	// 虚拟主机路径重映射：根据 Host 头匹配虚拟主机规则，将请求路径映射到实际路径
 	// 例如：vhost.Path="/123pan/Downloads"，rawPath="/tests.html" -> "/123pan/Downloads/tests.html"
 	rawPath = applyDownVhostPathMapping(c, rawPath)
-	common.GinWithValue(c, conf.PathKey, rawPath)
+	common.GinAppendValues(c, conf.PathKey, rawPath)
 	c.Next()
 }
 
@@ -71,7 +71,7 @@ func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 			common.ErrorPage(c, err, 500, true)
 			return
 		}
-		common.GinWithValue(c, conf.MetaKey, meta)
+		common.GinAppendValues(c, conf.MetaKey, meta)
 		// verify sign
 		if needSign(meta, rawPath) {
 			s := c.Query("sign")

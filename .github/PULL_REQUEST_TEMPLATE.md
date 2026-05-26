@@ -1,58 +1,114 @@
 <!--
-  Provide a general summary of your changes in the Title above.
-  The PR title must start with `feat(): `, `docs(): `, `fix(): `, `style(): `, or `refactor(): `, `chore(): `. For example: `feat(component): add new feature`.
-  If it spans multiple components, use the main component as the prefix and enumerate in the title, describe in the body.
-  For breaking changes, add `!` after the type, e.g., `feat(component)!: breaking change`.
+PR title / PR 标题:
+- Use Conventional Commits: `type(scope): summary`
+- Allowed types: `feat`, `docs`, `fix`, `style`, `refactor`, `chore`
+- Scope is required by the current PR title check.
+- For breaking changes, add `!`: `feat(driver)!: change auth flow`
 -->
+
+## Summary / 摘要
+
 <!--
-  在上方标题中提供您更改的总体摘要。
-  PR 标题需以 `feat(): `, `docs(): `, `fix(): `, `style(): `, `refactor(): `, `chore(): ` 其中之一开头，例如：`feat(component): 新增功能`。
-  如果跨多个组件，请使用主要组件作为前缀，并在标题中枚举、描述中说明。
-  如果是破坏性变更，请在类型后添加 `!`，例如 `feat(component)!: 破坏性变更`。
+Briefly describe what changed and why.
+简要说明改了什么，以及为什么需要改。
 -->
 
-## Description / 描述
+<!--
+- List user-visible behavior changes.
+- List important implementation changes.
+- Mention config, storage, API, or compatibility changes if any.
 
-<!-- Describe your changes in detail -->
-<!-- 详细描述您的更改 -->
+- 列出用户可感知的行为变化。
+- 列出重要实现变化。
+- 如涉及配置、存储、API 或兼容性变化，请明确说明。
+-->
 
-## Motivation and Context / 背景
+- [ ] This PR has breaking changes.
+      / 此 PR 包含破坏性变更。
+- [ ] This PR changes public API, config, storage format, or migration behavior.
+      / 此 PR 修改了公开 API、配置、存储格式或迁移行为。
+- [ ] This PR requires corresponding changes in related repositories.
+      / 此 PR 需要关联仓库同步修改。
 
-<!-- Why is this change required? What problem does it solve? -->
-<!-- 为什么需要此更改？它解决了什么问题？ -->
+Related repository PRs / 关联仓库 PR:
 
-<!-- If it fixes an open issue, please link to the issue here. -->
-<!-- 如果修复了一个打开的issue，请在此处链接到该issue -->
+- OpenList-Frontend:
+- OpenList-Docs:
 
-Closes #XXXX
+## Related Issues / 关联 Issue
 
-<!-- or -->
-<!-- 或者 -->
+<!--
+Use `Closes #123`, `Fixes #123`, or `Relates to #123`.
+Remove this section if not applicable.
+使用 `Closes #123`、`Fixes #123` 或 `Relates to #123`。
+不适用时请删除本节。
+-->
 
-Relates to #XXXX
+## Testing / 测试
 
-## How Has This Been Tested? / 测试
+<!--
+Describe commands, platforms, and manual checks.
+If not tested, explain why.
 
-<!-- Please describe in detail how you tested your changes. -->
-<!-- 请详细描述您如何测试更改 -->
+说明执行过的命令、测试平台和手动验证。
+如果未测试，请说明原因。
+-->
+
+- [ ] `go test ./...`
+- [ ] Manual test / 手动测试:
 
 ## Checklist / 检查清单
 
-<!-- Go over all the following points, and put an `x` in all the boxes that apply. -->
-<!-- 检查以下所有要点，并在所有适用的框中打`x` -->
+- [ ] I have read [CONTRIBUTING](https://github.com/OpenListTeam/OpenList/blob/main/CONTRIBUTING.md).
+      / 我已阅读 [CONTRIBUTING](https://github.com/OpenListTeam/OpenList/blob/main/CONTRIBUTING.md)。
+- [ ] I confirm this contribution follows the repository license, contribution policy, and code of conduct.
+      / 我确认此贡献符合仓库许可证、贡献规范和行为准则。
+- [ ] I have formatted the changed code with `gofmt`, `go fmt`, or `prettier` where applicable.
+      / 我已按适用情况使用 `gofmt`、`go fmt` 或 `prettier` 格式化变更代码。
+- [ ] I have requested review from relevant maintainers or code owners where applicable.
+      / 我已在适用情况下请求相关维护者或代码所有者审查。
 
-<!-- If you're unsure about any of these, don't hesitate to ask. We're here to help! -->
-<!-- 如果您对其中任何一项不确定，请不要犹豫提问。我们会帮助您！ -->
+## AI Disclosure / AI 使用声明
 
-- [ ] I have read the [CONTRIBUTING](https://github.com/OpenListTeam/OpenList/blob/main/CONTRIBUTING.md) document.
-      我已阅读 [CONTRIBUTING](https://github.com/OpenListTeam/OpenList/blob/main/CONTRIBUTING.md) 文档。
-- [ ] I have formatted my code with `go fmt` or [prettier](https://prettier.io/).
-      我已使用 `go fmt` 或 [prettier](https://prettier.io/) 格式化提交的代码。
-- [ ] I have added appropriate labels to this PR (or mentioned needed labels in the description if lacking permissions).
-      我已为此 PR 添加了适当的标签（如无权限或需要的标签不存在，请在描述中说明，管理员将后续处理）。
-- [ ] I have requested review from relevant code authors using the "Request review" feature when applicable.
-      我已在适当情况下使用"Request review"功能请求相关代码作者进行审查。
-- [ ] I have updated the repository accordingly (If it’s needed).
-      我已相应更新了相关仓库（若适用）。
-  - [ ] [OpenList-Frontend](https://github.com/OpenListTeam/OpenList-Frontend) #XXXX
-  - [ ] [OpenList-Docs](https://github.com/OpenListTeam/OpenList-Docs) #XXXX
+<!--
+Please disclose any substantial AI assistance used in this PR.
+Minor AI assistance, such as typo fixes, autocomplete, formatting suggestions,
+or wording polish, does not need to be disclosed.
+Remove this section if not applicable.
+
+请披露此 PR 中使用的重要 AI 辅助内容。
+轻微 AI 辅助，例如拼写修正、自动补全、格式建议或文字润色，无需披露。
+如不适用，请删除本节。
+
+Deliberate non-disclosure may be treated as a trust and compliance issue.
+
+故意隐瞒 AI 使用情况可能被视为信任与合规问题。
+-->
+
+- [ ] This PR includes AI-assisted content.
+      / 此 PR 包含 AI 辅助内容。
+
+Tools used / 使用工具:
+
+- [ ] ChatGPT
+- [ ] Codex
+- [ ] GitHub Copilot
+- [ ] Claude
+- [ ] Gemini
+- [ ] Other (please specify) / 其他（请注明）:
+
+Usage scope / 使用范围:
+
+- [ ] Code generation / 代码生成
+- [ ] Refactoring / 重构
+- [ ] Documentation / 文档
+- [ ] Tests / 测试
+- [ ] Translation / 翻译
+- [ ] Review assistance / 审查辅助
+
+- [ ] I have reviewed and validated all AI-assisted content included in this PR.
+      / 我已审核并验证此 PR 中的所有 AI 辅助内容。
+- [ ] I have ensured that all AI-assisted commits include `Co-Authored-By` attribution.
+      / 我已确保所有 AI 辅助提交都包含 `Co-Authored-By` 归属信息。
+- [ ] I can reproduce all AI-assisted content included in this PR without any AI tools.
+      / 我可以在没有任何 AI 工具的情况下重现此 PR 中包含的所有 AI 辅助内容。

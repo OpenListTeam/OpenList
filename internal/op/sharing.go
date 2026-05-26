@@ -209,6 +209,15 @@ func UpdateSharing(sharing *model.Sharing, skipMarshal ...bool) (err error) {
 	return db.UpdateSharing(sharing.SharingDB)
 }
 
+func UpdateSharingId(sharing *model.Sharing, newId string) error {
+	sharingCache.Del(sharing.ID)
+	if err := db.UpdateSharingId(sharing.ID, newId); err != nil {
+		return err
+	}
+	sharing.ID = newId
+	return nil
+}
+
 func DeleteSharing(sid string) error {
 	// 先读取 domain 用于失效缓存
 	var oldDomain string

@@ -7,7 +7,7 @@
 Prerequisites:
 
 - [git](https://git-scm.com)
-- [Go 1.24+](https://golang.org/doc/install)
+- [Go](https://golang.org/doc/install) version declared in [`go.mod`](./go.mod)
 - [gcc](https://gcc.gnu.org/)
 - [nodejs](https://nodejs.org/)
 
@@ -16,8 +16,8 @@ Prerequisites:
 Fork and clone `OpenList` and `OpenList-Frontend` anywhere:
 
 ```shell
-$ git clone https://github.com/<your-username>/OpenList.git
-$ git clone --recurse-submodules https://github.com/<your-username>/OpenList-Frontend.git
+git clone https://github.com/<your-username>/OpenList.git
+git clone --recurse-submodules https://github.com/<your-username>/OpenList-Frontend.git
 ```
 
 ## Creating a branch
@@ -25,7 +25,7 @@ $ git clone --recurse-submodules https://github.com/<your-username>/OpenList-Fro
 Create a new branch from the `main` branch, with an appropriate name.
 
 ```shell
-$ git checkout -b <branch-name>
+git checkout -b <branch-name>
 ```
 
 ## Preview your change
@@ -33,18 +33,28 @@ $ git checkout -b <branch-name>
 ### backend
 
 ```shell
-$ go run main.go
+go run main.go
 ```
 
 ### frontend
 
 ```shell
-$ pnpm dev
+pnpm dev
 ```
 
 ## Add a new driver
 
 Copy `drivers/template` folder and rename it, and follow the comments in it.
+
+## Community and policies
+
+By contributing, you agree to follow the repository's code of conduct and license terms.
+
+- Code of conduct: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- License: [LICENSE](./LICENSE)
+- Security issues: please report privately according to [SECURITY.md](./SECURITY.md)
+
+If your contribution includes substantial AI-assisted content, disclose the tools used and the scope of assistance in the pull request.
 
 ## Create a commit
 
@@ -52,7 +62,7 @@ Commit messages should be well formatted, and to make that "standardized".
 
 Submit your pull request. For PR titles, follow [Conventional Commits](https://www.conventionalcommits.org).
 
-https://github.com/OpenListTeam/OpenList/issues/376
+<https://github.com/OpenListTeam/OpenList/issues/376>
 
 It's suggested to sign your commits. See: [How to sign commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits)
 
@@ -71,6 +81,19 @@ At least 1 approving review is required by reviewers with write access. You can 
 ## Delete your branch
 
 (Optional) After your pull request is merged, you can delete your branch.
+
+## AI Disclosure
+
+If your pull request includes substantial AI-assisted content, disclose it in the PR description.
+
+Please include:
+
+- Tools used, such as ChatGPT, GitHub Copilot, Claude, Cursor, or other AI tools.
+- Usage scope, such as code generation, refactoring, documentation, tests, translation, or review assistance.
+- Confirmation that you have reviewed and validated all AI-assisted content before submission.
+- Confirmation that the submitted content complies with this repository's license and contribution policies.
+
+Minor AI assistance, such as typo fixes, autocomplete, formatting suggestions, or wording polish, does not need to be disclosed.
 
 ---
 

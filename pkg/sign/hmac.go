@@ -26,13 +26,13 @@ func (s HMACSign) Sign(data string, expire int64) string {
 }
 
 func (s HMACSign) Verify(data, sign string) error {
-	signSlice := strings.Split(sign, ":")
-	// check whether contains expire time
-	if signSlice[len(signSlice)-1] == "" {
+	// check whether contains exp time
+	exp := sign[strings.LastIndex(sign, ":")+1:]
+	if exp == "" {
 		return ErrExpireMissing
 	}
 	// check whether expire time is expired
-	expires, err := strconv.ParseInt(signSlice[len(signSlice)-1], 10, 64)
+	expires, err := strconv.ParseInt(exp, 10, 64)
 	if err != nil {
 		return ErrExpireInvalid
 	}

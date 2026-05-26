@@ -1,5 +1,5 @@
 <div align="center">
-  <img style="width: 128px; height: 128px;" src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" alt="logo" />
+  <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
 
   <p><em>OpenList is a resilient, long-term governance, community-driven fork of AList — built to defend open source against trust-based attacks.</em></p>
 
@@ -116,9 +116,10 @@ Thank you for your support and understanding of the OpenList project.
 
 ## Document
 
-- 📘 [Global Site](https://doc.oplist.org)
-- 📚 [Backup Site](https://doc.openlist.team)
-- 🌏 [CN Site](https://doc.oplist.org.cn)
+- 📘 [Docs](https://doc.oplist.org)
+- 🌏 [CN Mirror](https://doc.oplist.org.cn)
+- ⚖️ [Terms of Use](https://doc.oplist.org/terms)
+- 🔒 [Privacy Policy](https://doc.oplist.org/privacy)
 
 ## Demo
 

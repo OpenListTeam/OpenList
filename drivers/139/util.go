@@ -655,10 +655,12 @@ func (d *Yun139) personalGetLink(fileId string) (string, error) {
 	}
 	cdnUrl := jsoniter.Get(res, "data", "cdnUrl").ToString()
 	if cdnUrl != "" {
-		return cdnUrl, nil
-	} else {
-		return jsoniter.Get(res, "data", "url").ToString(), nil
+		cdnSwitch := jsoniter.Get(res, "data", "cdnSwitch").ToBool()
+		if cdnSwitch {
+			return cdnUrl, nil
+		}
 	}
+	return jsoniter.Get(res, "data", "url").ToString(), nil
 }
 
 func (d *Yun139) getAuthorization() string {
@@ -1178,7 +1180,6 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 		"x-DeviceInfo":        "4|127.0.0.1|5|1.2.6|Xiaomi|23116PN5BC||02-00-00-00-00-00|android 15|1440x3200|android|||",
 		"Content-Type":        "text/plain;charset=UTF-8",
 		"Host":                "user-njs.yun.139.com",
-		"Connection":          "Keep-Alive",
 		"Accept-Encoding":     "gzip",
 		"User-Agent":          "okhttp/3.12.2",
 	}

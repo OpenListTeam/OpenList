@@ -217,6 +217,11 @@ func _fs(g *gin.RouterGroup) {
 	// g.POST("/add_transmission", handles.SetTransmission)
 	g.POST("/add_offline_download", handles.AddOfflineDownload)
 	g.POST("/archive/decompress", handles.FsArchiveDecompress)
+	// Torrent 相关接口
+	g.POST("/torrent/parse", handles.ParseTorrent)
+	g.POST("/torrent/upload_parse", handles.UploadTorrentAndParse)
+	g.POST("/torrent/rapid_upload", handles.TorrentRapidUpload)
+	g.POST("/torrent/generate", handles.GenerateTorrentForPath)
 	// Direct upload (client-side upload to storage)
 	g.POST("/get_direct_upload_info", middlewares.FsUp, handles.FsGetDirectUploadInfo)
 }
