@@ -82,6 +82,7 @@ func GetSharingById(id string, refresh ...bool) (*model.Sharing, error) {
 // 仅当 sharing.Domain 非空、Disabled=false、Files 非空、Expires 未过期时才视为有效。
 // 如果在 DB 中未找到，会负缓存 5 分钟，避免反复穿透 DB。
 func GetSharingByDomain(domain string) (*model.Sharing, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
 	if domain == "" {
 		return nil, errors.New("empty domain")
 	}
@@ -184,8 +185,11 @@ func CreateSharing(sharing *model.Sharing) (id string, err error) {
 	if err != nil {
 		return "", errors.WithStack(err)
 	}
-	invalidateDomainCache(sharing.Domain)
-	return db.CreateSharing(sharing.SharingDB)
+	id, err = db.CreateSharing(sharing.SharingDB)
+	if err == nil {
+		invalidateDomainCache(sharing.Domain)
+	}
+	return id, err
 }
 
 func UpdateSharing(sharing *model.Sharing, skipMarshal ...bool) (err error) {
@@ -201,9 +205,12 @@ func UpdateSharing(sharing *model.Sharing, skipMarshal ...bool) (err error) {
 	if old, e := db.GetSharingById(sharing.ID); e == nil {
 		oldDomain = old.Domain
 	}
-	sharingCache.Del(sharing.ID)
-	invalidateDomainCache(oldDomain, sharing.Domain)
-	return db.UpdateSharing(sharing.SharingDB)
+	err = db.UpdateSharing(sharing.SharingDB)
+	if err == nil {
+		sharingCache.Del(sharing.ID)
+		invalidateDomainCache(oldDomain, sharing.Domain)
+	}
+	return err
 }
 
 func UpdateSharingId(sharing *model.Sharing, newId string) error {
@@ -221,9 +228,12 @@ func DeleteSharing(sid string) error {
 	if old, e := db.GetSharingById(sid); e == nil {
 		oldDomain = old.Domain
 	}
-	sharingCache.Del(sid)
-	invalidateDomainCache(oldDomain)
-	return db.DeleteSharingById(sid)
+	err := db.DeleteSharingById(sid)
+	if err == nil {
+		sharingCache.Del(sid)
+		invalidateDomainCache(oldDomain)
+	}
+	return err
 }
 
 func DeleteSharingsByCreatorId(creatorId uint) error {

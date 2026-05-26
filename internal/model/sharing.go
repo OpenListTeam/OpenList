@@ -15,7 +15,8 @@ type SharingDB struct {
 	Readme      string     `json:"readme" gorm:"type:text"`
 	Header      string     `json:"header" gorm:"type:text"`
 	// Domain 绑定的域名，可为空；非空时该条记录额外作为虚拟主机参与 Host 匹配（与旧 VirtualHost.Domain 等价）。
-	Domain string `json:"domain" gorm:"uniqueIndex"`
+	// 唯一性由应用层在 Create/Update 时校验，避免空字符串在 MySQL 下触发 uniqueIndex 冲突。
+	Domain string `json:"domain" gorm:"index"`
 	// WebHosting 仅在 Domain 非空时有效；为 true 时启用 Web 托管模式（直接响应文件内容），为 false 时仅做路径重映射。
 	WebHosting bool `json:"web_hosting"`
 	Sort

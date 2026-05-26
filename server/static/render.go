@@ -80,8 +80,8 @@ const markdownPreviewTpl = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{TITLE}}</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown.min.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css" crossorigin="anonymous">
 <style>
   html,body{margin:0;padding:0;background:#fff}
   .markdown-body{box-sizing:border-box;min-width:200px;max-width:980px;margin:0 auto;padding:32px 45px}
@@ -92,11 +92,11 @@ const markdownPreviewTpl = `<!DOCTYPE html>
 <body>
 <article class="markdown-body" id="md-target"><p class="md-loading">Rendering Markdown...</p></article>
 <script id="md-source" type="text/markdown">{{MD_BODY}}</script>
-<script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked-highlight@2/lib/index.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/core.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/common.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked-highlight@2/lib/index.umd.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/core.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/common.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js" crossorigin="anonymous"></script>
 <script>
 (function(){
   try{
@@ -156,8 +156,9 @@ func writeRenderedHTML(w http.ResponseWriter, html []byte) {
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Content-Disposition", "inline")
-	// 已是完整的同步内容，禁用缓存以方便用户排查
-	h.Set("Cache-Control", "no-store")
+	// Markdown 内容不常变化，允许浏览器缓存但每次需验证
+	h.Set("Cache-Control", "no-cache, must-revalidate")
+	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(html); err != nil {
 		utils.Log.Debugf("[VirtualHost] writeRenderedHTML: %v", err)

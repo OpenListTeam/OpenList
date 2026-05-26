@@ -24,6 +24,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// vhostInternalUser 是虚拟主机内部使用的系统用户。
+// Web Hosting 模式下，文件访问不依赖真实用户身份，但 context 中必须有非 nil 的 User
+// 以避免下游 hook/中间件对 nil 指针解引用 panic。
+// 该用户 BasePath="/" 且 Permission 全开，实际访问范围由 handleWebHosting 的
+// HasPrefix 沙箱校验保证安全。
+var vhostInternalUser = &model.User{
+	ID:         0,
+	Username:   "_vhost_internal",
+	Role:       model.GUEST,
+	Permission: 0x7FFF, // 所有权限位开启（读、WebDAV 读等）
+	BasePath:   "/",
+	Disabled:   false,
+}
+
 type ManifestIcon struct {
 	Src   string `json:"src"`
 	Sizes string `json:"sizes"`
@@ -221,16 +235,12 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	virtualHostHandler := func(c *gin.Context) {
 		// 直接从 Host 头解析域名，检查是否匹配 sharing 中的虚拟主机记录
 		rawHost := c.Request.Host
-		domain := stripHostPort(rawHost)
-		utils.Log.Debugf("[VirtualHost] handler triggered: method=%s path=%s host=%q domain=%q",
-			c.Request.Method, c.Request.URL.Path, rawHost, domain)
+		domain := common.StripHostPort(rawHost)
 		if domain != "" {
 			sharing, err := op.GetSharingByDomain(domain)
-			if err != nil {
-				utils.Log.Debugf("[VirtualHost] domain=%q not matched any sharing: %v", domain, err)
-			} else if sharing != nil && len(sharing.Files) > 0 {
-				utils.Log.Debugf("[VirtualHost] domain=%q matched sharing: id=%s web_hosting=%v root=%q",
-					domain, sharing.ID, sharing.WebHosting, sharing.Files[0])
+			if err == nil && sharing != nil && len(sharing.Files) > 0 {
+				utils.Log.Debugf("[VirtualHost] domain=%q matched sharing id=%s web_hosting=%v path=%q",
+					domain, sharing.ID, sharing.WebHosting, c.Request.URL.Path)
 				// 访问码门禁：sharing.Pwd 非空时，未通过校验的请求会被门禁函数
 				// 直接处理（密码输入页 / 提交表单 / 重定向），调用方需立即返回。
 				if !handleSharePwdGate(c, sharing) {
@@ -238,18 +248,18 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 				}
 				if sharing.WebHosting {
 					// Web 托管模式：直接返回文件内容
-					// 注入 nil user 到 context，CanRead(nil, ...) 直接返回 true，
-					// 绕过 guest Disabled 限制，作为系统级内部访问处理
-					common.GinAppendValues(c, conf.UserKey, (*model.User)(nil))
+					// 注入 vhostInternalUser 到 context，确保下游 hook 不会因 nil user panic，
+					// 同时绕过 guest Disabled 限制，作为系统级内部访问处理。
+					// 实际访问范围由 handleWebHosting 的 HasPrefix 沙箱校验保证。
+					common.GinAppendValues(c, conf.UserKey, vhostInternalUser)
 					handleWebHosting(c, sharing)
 					return
 				} else {
 					// 路径重映射模式（伪静态）：保持地址栏不变，直接返回 SPA HTML
 					// 后端 API（fs/list、fs/get、/d/、/p/）已根据 Host 头自动将路径重映射
-					// 到 sharing.Files[0] 之下，前端正常请求即可看到分享目录内容
-					// 注入 nil user，使 fs API 跳过 guest Disabled 限制
-					common.GinAppendValues(c, conf.UserKey, (*model.User)(nil))
-					utils.Log.Debugf("[VirtualHost] path remapping mode: serving SPA for domain=%q path=%q", domain, c.Request.URL.Path)
+					// 到 sharing.Files[0] 之下，前端正常请求即可看到分享目录内容。
+					// 注意：此处不注入 user——浏览器加载 SPA 后发起的 /api/fs/list 是新请求，
+					// 会经过 auth 中间件正常填入 guest/登录用户。
 					c.Header("Content-Type", "text/html")
 					c.Status(http.StatusOK)
 					_, _ = c.Writer.WriteString(conf.IndexHtml)
@@ -418,13 +428,19 @@ func (w *forceContentTypeWriter) WriteHeader(statusCode int) {
 	if statusCode >= 200 && statusCode < 300 {
 		h.Set("Content-Type", w.contentType)
 		h.Set("Content-Disposition", w.contentDisp)
+		// 安全头：防止 MIME 嘲探、限制嵌入、控制引用来源
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// HTML 类不缓存，静态资源类允许缓存
+		if strings.HasPrefix(w.contentType, "text/html") {
+			h.Set("Cache-Control", "no-cache, must-revalidate")
+		} else {
+			h.Set("Cache-Control", "public, max-age=86400")
+		}
 	}
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
-func (w *forceContentTypeWriter) Write(b []byte) (int, error) {
-	return w.ResponseWriter.Write(b)
-}
 
 // mimeTypeByExt 根据文件扩展名返回 MIME 类型
 func mimeTypeByExt(ext string) string {
@@ -475,7 +491,4 @@ func mimeTypeByExt(ext string) string {
 	}
 }
 
-// stripHostPort removes the port from a host string.
-func stripHostPort(host string) string {
-	return common.StripHostPort(host)
-}
+

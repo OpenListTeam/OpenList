@@ -30,7 +30,7 @@ func PathParse(c *gin.Context) {
 // 仅在 sharing 有效（未禁用、未过期、Files 非空）且非 Web 托管模式时生效。
 func applyDownVhostPathMapping(c *gin.Context, reqPath string) string {
 	rawHost := c.Request.Host
-	domain := stripDownHostPort(rawHost)
+	domain := common.StripHostPort(rawHost)
 	if domain == "" {
 		return reqPath
 	}
@@ -56,10 +56,6 @@ func applyDownVhostPathMapping(c *gin.Context, reqPath string) string {
 	return mapped
 }
 
-// stripDownHostPort removes the port from a host string.
-func stripDownHostPort(host string) string {
-	return common.StripHostPort(host)
-}
 
 func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 	return func(c *gin.Context) {

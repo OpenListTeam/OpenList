@@ -450,7 +450,7 @@ func applyVhostPathMapping(c *gin.Context, reqPath string) string {
 // 如果没有匹配的虚拟主机规则，则返回 (原始路径, "")
 func applyVhostPathMappingWithPrefix(c *gin.Context, reqPath string) (string, string) {
 	rawHost := c.Request.Host
-	domain := stripHostPortForVhost(rawHost)
+	domain := common.StripHostPort(rawHost)
 	if domain == "" {
 		return reqPath, ""
 	}
@@ -494,7 +494,4 @@ func stripVhostPrefix(c *gin.Context, path string) string {
 	return path
 }
 
-// stripHostPortForVhost removes the port from a host string.
-func stripHostPortForVhost(host string) string {
-	return common.StripHostPort(host)
-}
+

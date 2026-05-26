@@ -14,7 +14,10 @@
 package static
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -42,15 +45,24 @@ func sharePwdCookieName(sharingID string) string {
 	return b.String()
 }
 
-// extractSharePwd 按优先级从请求中提取访问码。
+// sharePwdToken 用于生成存储在 cookie 中的令牌（而非明文密码）。
+// 令牌 = HMAC-SHA256(sharingID + ":" + pwd, salt)，即使 cookie 泄露也无法反推原始密码。
+const sharePwdHMACSalt = "openlist-vhost-share-pwd-v1"
+
+func sharePwdToken(sharingID, pwd string) string {
+	mac := hmac.New(sha256.New, []byte(sharePwdHMACSalt))
+	mac.Write([]byte(sharingID + ":" + pwd))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// extractSharePwd 按优先级从请求中提取访问码（明文）。
+// 注意：不从 cookie 中提取，因为 cookie 存储的是 HMAC token 而非明文密码，
+// cookie 验证在 verifySharePwd 中单独处理。
 func extractSharePwd(c *gin.Context, sharingID string) string {
 	if v := c.Query("pwd"); v != "" {
 		return v
 	}
 	if v := c.GetHeader("X-Share-Pwd"); v != "" {
-		return v
-	}
-	if v, err := c.Cookie(sharePwdCookieName(sharingID)); err == nil && v != "" {
 		return v
 	}
 	return ""
@@ -69,18 +81,27 @@ func verifySharePwd(c *gin.Context, sharing *model.Sharing) bool {
 	}
 	got := extractSharePwd(c, sharing.ID)
 	if got == "" {
+		// 尝试从 cookie 中验证令牌（非明文密码）
+		if token, err := c.Cookie(sharePwdCookieName(sharing.ID)); err == nil && token != "" {
+			expected := sharePwdToken(sharing.ID, sharing.Pwd)
+			if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1 {
+				return true
+			}
+		}
 		return false
 	}
 	return constantTimeEqual(got, sharing.Pwd)
 }
 
-// setSharePwdCookie 把校验通过的密码写入 cookie，便于后续请求免输入。
+// setSharePwdCookie 把校验通过的令牌（哈希）写入 cookie，便于后续请求免输入。
+// 不存储明文密码，避免本机 cookie 数据库泄露风险。
 func setSharePwdCookie(c *gin.Context, sharingID, pwd string) {
 	secure := c.Request.TLS != nil ||
 		strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https")
+	token := sharePwdToken(sharingID, pwd)
 	cookie := &http.Cookie{
 		Name:     sharePwdCookieName(sharingID),
-		Value:    pwd,
+		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -147,7 +168,7 @@ func handleSharePwdGate(c *gin.Context, sharing *model.Sharing) bool {
 	return false
 }
 
-// stripPwdQuery 从 raw query 中剔除 pwd 参数，保留其他参数原序。
+// stripPwdQuery 从 raw query 中剔除 pwd 参数（大小写不敏感），保留其他参数原序。
 func stripPwdQuery(raw string) string {
 	if raw == "" {
 		return ""
@@ -162,7 +183,7 @@ func stripPwdQuery(raw string) string {
 		if i := strings.Index(p, "="); i >= 0 {
 			key = p[:i]
 		}
-		if key == "pwd" {
+		if strings.EqualFold(key, "pwd") {
 			continue
 		}
 		out = append(out, p)
