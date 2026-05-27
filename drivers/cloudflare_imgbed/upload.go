@@ -27,15 +27,20 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (d *CFImgBed) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	fileSize := file.GetSize()
+func (d *CFImgBed) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (newObj model.Obj, err error) {
+
 	// 如果文件较大且配置了 HuggingFace 渠道，走直传流程
-	if fileSize >= hfDirectThreshold && d.LargeChannelType == "huggingface" {
-		log.WithField("size", fileSize).Debug("file exceeds threshold, using HuggingFace direct upload")
-		return d.hfDirectUpload(ctx, dstDir, file, up)
+	if file.GetSize() >= hfDirectThreshold && d.LargeChannelType == "huggingface" {
+		log.WithField("size", file.GetSize()).Debug("file exceeds threshold, using HuggingFace direct upload")
+		newObj, err = d.hfDirectUpload(ctx, dstDir, file, up)
+	} else {
+		// 否则走普通图床 API 上传
+		newObj, err = d.standardUpload(ctx, dstDir, file, up)
 	}
-	// 否则走普通图床 API 上传
-	return d.standardUpload(ctx, dstDir, file, up)
+	if newObj != nil && model.ObjHasMask(dstDir, model.Virtual) {
+		d.virtualDir.Delete(dstDir.GetPath())
+	}
+	return
 }
 
 // standardUpload 通过普通 multipart 表单上传。

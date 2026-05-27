@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
@@ -17,7 +19,8 @@ import (
 type CFImgBed struct {
 	model.Storage
 	Addition
-	client *resty.Client
+	client     *resty.Client
+	virtualDir cache.WeakCacheMap[string, model.Object]
 }
 
 func (d *CFImgBed) Config() driver.Config          { return config }
@@ -52,6 +55,10 @@ func (d *CFImgBed) Init(ctx context.Context) error {
 func (d *CFImgBed) Drop(ctx context.Context) error { return nil }
 
 func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+	if model.ObjHasMask(dir, model.Virtual) {
+		return nil, nil
+	}
+
 	reqPath := dir.GetPath()
 
 	dirSeen := make(map[string]bool)
@@ -105,18 +112,33 @@ func (d *CFImgBed) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 	return &model.Link{URL: d.Address + "/file/" + utils.EncodePath(file.GetPath())}, nil
 }
 
+func (d *CFImgBed) Get(ctx context.Context, pathStr string) (model.Obj, error) {
+	fullPath := path.Join(d.RootFolderPath, pathStr)
+	if obj, found := d.virtualDir.Load(fullPath); found {
+		return obj, nil
+	}
+	return nil, errs.NotSupport
+}
+
 // MakeDir 在图床中通常是虚拟的，此处返回虚拟目录对象以支持上传时的路径展示
 func (d *CFImgBed) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	fullPath := path.Join(parentDir.GetPath(), dirName)
-	return &model.Object{
+	temp := &model.Object{
 		Path:     fullPath,
 		Name:     dirName,
 		IsFolder: true,
-	}, nil
+		Mask:     model.Virtual | model.NoMove | model.NoCopy,
+	}
+	d.virtualDir.Store(fullPath, temp)
+	return temp, nil
 }
 
 func (d *CFImgBed) Remove(ctx context.Context, obj model.Obj) error {
 	reqPath := obj.GetPath()
+	if model.ObjHasMask(obj, model.Virtual) {
+		d.virtualDir.Delete(reqPath)
+		return nil
+	}
 	_, err := d.doRequest(http.MethodPost, deleteApi, func(req *resty.Request) {
 		req.SetBody(map[string]string{
 			"path": reqPath,
