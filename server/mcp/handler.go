@@ -143,12 +143,21 @@ func (s *Server) handlePost(c *gin.Context) {
 	}
 
 	sessionID := c.GetHeader(SessionHeader)
-	currentSession, ok := s.getSession(sessionID)
-	if !ok {
+	if sessionID == "" {
 		c.JSON(http.StatusBadRequest, response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &rpcError{Code: -32000, Message: "missing or invalid MCP session"},
+			Error:   &rpcError{Code: -32000, Message: "missing MCP session"},
+		})
+		return
+	}
+
+	currentSession, ok := s.getSession(sessionID)
+	if !ok {
+		c.JSON(http.StatusNotFound, response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error:   &rpcError{Code: -32001, Message: "session not found"},
 		})
 		return
 	}
