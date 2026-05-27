@@ -134,6 +134,14 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
+## 寄付者
+
+以下の方々の寛大なご支援に感謝いたします：
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
+
 ## ライセンス
 
 「OpenList」は [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) ライセンスの下で公開されているオープンソースソフトウェアです。

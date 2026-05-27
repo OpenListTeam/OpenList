@@ -134,6 +134,14 @@ Stel algemene vragen in [*Discussions*](https://github.com/OpenListTeam/OpenList
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
+## Donatie Bijdragers
+
+Dank aan de volgende donateurs voor hun steun:
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
+
 ## Licentie
 
 `OpenList` is open-source software onder de [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) licentie.

@@ -134,6 +134,14 @@ Please refer to [*Discussions*](https://github.com/OpenListTeam/OpenList/discuss
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
+## Donors
+
+Thanks to the following donors for their generous support:
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
+
 ## License
 
 The `OpenList` is open-source software licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) license.
@@ -163,3 +171,4 @@ We sincerely thank the author [Xhofe](https://github.com/Xhofe) of the original 
 Thanks goes to these wonderful people:
 
 [![Contributors](https://contrib.rocks/image?repo=OpenListTeam/OpenList)](https://github.com/OpenListTeam/OpenList/graphs/contributors)
+
