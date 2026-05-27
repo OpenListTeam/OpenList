@@ -82,3 +82,9 @@ body:
       label: 复现链接（可选）
       description: |
         请提供能复现此问题的链接。
+  - type: textarea
+    id: aigenerated
+    attributes:
+      label: AI生成内容（可选）
+      description: |
+        如果此问题是由AI辅助您发现的，请提供全部聊天记录，包括使用的模型信息。

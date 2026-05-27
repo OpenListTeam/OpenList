@@ -16,7 +16,7 @@ require (
 	github.com/OpenListTeam/wopan-sdk-go v0.1.5
 	github.com/ProtonMail/go-crypto v1.3.0
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0
-	github.com/SheltonZhu/115driver v1.2.3
+	github.com/SheltonZhu/115driver v1.3.3
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/antchfx/htmlquery v1.3.5
 	github.com/antchfx/xpath v1.3.5
@@ -67,9 +67,9 @@ require (
 	github.com/rclone/rclone v1.70.3
 	github.com/shirou/gopsutil/v4 v4.25.5
 	github.com/sirupsen/logrus v1.9.3
-	github.com/spf13/afero v1.14.0
-	github.com/spf13/cobra v1.9.1
-	github.com/stretchr/testify v1.10.0
+	github.com/spf13/afero v1.15.0
+	github.com/spf13/cobra v1.10.2
+	github.com/stretchr/testify v1.11.1
 	github.com/t3rm1n4l/go-mega v0.0.0-20241213151442-a19cff0ec7b5
 	github.com/tchap/go-patricia/v2 v2.3.3
 	github.com/u2takey/ffmpeg-go v0.5.0
@@ -284,7 +284,7 @@ require (
 	github.com/shabbyrobe/gocovmerge v0.0.0-20230507112040-c3350d9342df // indirect
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.6 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
@@ -313,3 +313,5 @@ replace github.com/ProtonMail/go-proton-api => github.com/henrybear327/go-proton
 replace github.com/cronokirby/saferith => github.com/Da3zKi7/saferith v0.33.0-fixed
 
 // replace github.com/OpenListTeam/115-sdk-go => ../../OpenListTeam/115-sdk-go
+
+replace github.com/KarpelesLab/reflink => github.com/OpenListTeam/reflink v0.0.0-20260520031008-ed3c0dbe8009

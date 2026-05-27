@@ -116,14 +116,15 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 
 ## ドキュメント
 
-- 📘 [グローバルサイト](https://doc.oplist.org)
-- 📚 [バックアップサイト](https://doc.openlist.team)
-- 🌏 [CNサイト](https://doc.oplist.org.cn)
+- 📘 [ドキュメント](https://doc.oplist.org)
+- 🌏 [中国ミラー](https://doc.oplist.org.cn)
+- ⚖️ [利用規約](https://doc.oplist.org/terms)
+- 🔒 [プライバシーポリシー](https://doc.oplist.org/privacy)
 
-## デモ
+## Demo
 
-- 🌎 [グローバルデモ](https://demo.oplist.org)
-- 🇨🇳 [CNデモ](https://demo.oplist.org.cn)
+- 🌎 [グローバル Demo](https://demo.oplist.org)
+- 🇨🇳 [中国 Demo](https://demo.oplist.org.cn)
 
 ## ディスカッション
 
