@@ -29,7 +29,7 @@ func TestInitializeCreatesSession(t *testing.T) {
 		"id":1,
 		"method":"initialize",
 		"params":{
-			"protocolVersion":"2025-06-18",
+			"protocolVersion":"2025-11-25",
 			"capabilities":{},
 			"clientInfo":{"name":"test-client","version":"1.0.0"}
 		}
@@ -53,6 +53,55 @@ func TestInitializeCreatesSession(t *testing.T) {
 	}
 	if resp.Error != nil {
 		t.Fatalf("unexpected error response: %+v", resp.Error)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected result type: %T", resp.Result)
+	}
+	if result["protocolVersion"] != ProtocolVersion {
+		t.Fatalf("unexpected protocol version: %v", result["protocolVersion"])
+	}
+}
+
+func TestInitializeNegotiatesSupportedOlderProtocolVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := newTestServer(nil)
+
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
+		srv.handlePost(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
+		"jsonrpc":"2.0",
+		"id":1,
+		"method":"initialize",
+		"params":{
+			"protocolVersion":"2025-06-18",
+			"capabilities":{},
+			"clientInfo":{"name":"test-client","version":"1.0.0"}
+		}
+	}`))
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Origin", "http://example.com")
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusOK)
+	}
+	resp := decodeResponse(t, w)
+	if resp.Error != nil {
+		t.Fatalf("unexpected error response: %+v", resp.Error)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected result type: %T", resp.Result)
+	}
+	if result["protocolVersion"] != "2025-06-18" {
+		t.Fatalf("unexpected protocol version: %v", result["protocolVersion"])
 	}
 }
 
@@ -100,6 +149,9 @@ func TestInitializeReusesExistingSession(t *testing.T) {
 	}
 	if reusedSession.initialized {
 		t.Fatal("expected reused session to require initialized notification again")
+	}
+	if reusedSession.protocolVersion != "2025-06-18" {
+		t.Fatalf("unexpected protocol version: got %q want %q", reusedSession.protocolVersion, "2025-06-18")
 	}
 }
 
@@ -270,6 +322,40 @@ func TestPostRejectsUnsupportedProtocolVersion(t *testing.T) {
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set(ProtocolVersionHeader, "2025-03-26")
+	req.Header.Set(SessionHeader, "s1")
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: got %d want %d", w.Code, http.StatusBadRequest)
+	}
+	resp := decodeResponse(t, w)
+	if resp.Error == nil || resp.Error.Code != -32000 {
+		t.Fatalf("unexpected error response: %+v", resp.Error)
+	}
+}
+
+func TestPostRejectsProtocolVersionMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := newTestServer(map[string]*session{
+		"s1": {id: "s1", userID: 1, protocolVersion: "2025-06-18", initialized: true},
+	})
+
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
+		srv.handlePost(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(`{
+		"jsonrpc":"2.0",
+		"id":1,
+		"method":"tools/list"
+	}`))
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set(ProtocolVersionHeader, ProtocolVersion)
 	req.Header.Set(SessionHeader, "s1")
 
 	w := httptest.NewRecorder()

@@ -21,20 +21,21 @@ import (
 )
 
 const (
-	ProtocolVersion       = "2025-06-18"
+	ProtocolVersion       = "2025-11-25"
 	ProtocolVersionHeader = "MCP-Protocol-Version"
-	SessionHeader         = "Mcp-Session-Id"
+	SessionHeader         = "MCP-Session-Id"
 	sessionTTL            = 30 * time.Minute
 	maxSessions           = 128
 	maxUserSessions       = 16
 )
 
 type session struct {
-	id          string
-	userID      uint
-	initialized bool
-	createdAt   time.Time
-	lastUsedAt  time.Time
+	id              string
+	userID          uint
+	protocolVersion string
+	initialized     bool
+	createdAt       time.Time
+	lastUsedAt      time.Time
 }
 
 type Server struct {
@@ -69,6 +70,11 @@ type initializeParams struct {
 
 var defaultServer = &Server{
 	sessions: map[string]*session{},
+}
+
+var supportedProtocolVersions = map[string]struct{}{
+	"2025-11-25": {},
+	"2025-06-18": {},
 }
 
 func Register(g *gin.RouterGroup) {
@@ -133,15 +139,6 @@ func (s *Server) handlePost(c *gin.Context) {
 		s.handleInitialize(c, req)
 		return
 	}
-	if c.GetHeader(ProtocolVersionHeader) != ProtocolVersion {
-		c.JSON(http.StatusBadRequest, response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error:   &rpcError{Code: -32000, Message: "missing or unsupported MCP protocol version"},
-		})
-		return
-	}
-
 	sessionID := c.GetHeader(SessionHeader)
 	if sessionID == "" {
 		c.JSON(http.StatusBadRequest, response{
@@ -168,6 +165,15 @@ func (s *Server) handlePost(c *gin.Context) {
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32001, Message: "session not found"},
+		})
+		return
+	}
+
+	if !s.validateRequestProtocolVersion(c.GetHeader(ProtocolVersionHeader), currentSession.protocolVersion) {
+		c.JSON(http.StatusBadRequest, response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error:   &rpcError{Code: -32000, Message: "missing or unsupported MCP protocol version"},
 		})
 		return
 	}
@@ -221,16 +227,18 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 		}
 	}
 
+	protocolVersion := negotiateProtocolVersion(params.ProtocolVersion)
 	currentSession := s.initializeSession(
 		c.Request.Context().Value(conf.UserKey).(*model.User).ID,
 		c.GetHeader(SessionHeader),
+		protocolVersion,
 	)
 	c.Header(SessionHeader, currentSession.id)
 	c.JSON(http.StatusOK, response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]any{
-			"protocolVersion": ProtocolVersion,
+			"protocolVersion": protocolVersion,
 			"capabilities": map[string]any{
 				"tools": map[string]any{
 					"listChanged": false,
@@ -245,7 +253,7 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 	})
 }
 
-func (s *Server) initializeSession(userID uint, requestedID string) *session {
+func (s *Server) initializeSession(userID uint, requestedID string, protocolVersion string) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -255,12 +263,13 @@ func (s *Server) initializeSession(userID uint, requestedID string) *session {
 		currentSession, ok := s.sessions[requestedID]
 		if ok && currentSession != nil && currentSession.userID == userID {
 			currentSession.initialized = false
+			currentSession.protocolVersion = protocolVersion
 			currentSession.lastUsedAt = now
 			return currentSession
 		}
 	}
 
-	return s.createSessionLocked(userID, now)
+	return s.createSessionLocked(userID, protocolVersion, now)
 }
 
 func (s *Server) handleDelete(c *gin.Context) {
@@ -291,20 +300,38 @@ func (s *Server) createSession(userID uint) *session {
 
 	now := time.Now()
 	s.pruneExpiredSessionsLocked(now)
-	return s.createSessionLocked(userID, now)
+	return s.createSessionLocked(userID, ProtocolVersion, now)
 }
 
-func (s *Server) createSessionLocked(userID uint, now time.Time) *session {
+func (s *Server) createSessionLocked(userID uint, protocolVersion string, now time.Time) *session {
 	s.pruneLeastRecentlyUsedUserSessionsLocked(userID, max(0, s.countUserSessionsLocked(userID)-maxUserSessions+1))
 	s.pruneLeastRecentlyUsedSessionsLocked(max(0, len(s.sessions)-maxSessions+1))
 	currentSession := &session{
-		id:         random.Token(),
-		userID:     userID,
-		createdAt:  now,
-		lastUsedAt: now,
+		id:              random.Token(),
+		userID:          userID,
+		protocolVersion: protocolVersion,
+		createdAt:       now,
+		lastUsedAt:      now,
 	}
 	s.sessions[currentSession.id] = currentSession
 	return currentSession
+}
+
+func (s *Server) validateRequestProtocolVersion(requestedVersion string, negotiatedVersion string) bool {
+	if requestedVersion == "" {
+		return false
+	}
+	if _, ok := supportedProtocolVersions[requestedVersion]; !ok {
+		return false
+	}
+	return negotiatedVersion == "" || requestedVersion == negotiatedVersion
+}
+
+func negotiateProtocolVersion(requestedVersion string) string {
+	if _, ok := supportedProtocolVersions[requestedVersion]; ok {
+		return requestedVersion
+	}
+	return ProtocolVersion
 }
 
 func (s *Server) getSession(id string) (session, bool) {
