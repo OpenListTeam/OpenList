@@ -54,7 +54,9 @@ func (d *CFImgBed) Init(ctx context.Context) error {
 }
 
 func (d *CFImgBed) Drop(ctx context.Context) error {
-	d.virtualDir.Clear()
+	if d.virtualDir != nil {
+		d.virtualDir.Clear()
+	}
 	return nil
 }
 

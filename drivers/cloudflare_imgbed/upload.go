@@ -61,9 +61,11 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	}
 
 	// 1. 将参数放入 Query String
-	reqUrl, _ := url.Parse(d.Address + uploadApi)
+	reqUrl, err := url.Parse(d.Address + uploadApi)
+	if err != nil {
+		return nil, err
+	}
 	q := reqUrl.Query()
-	q.Set("uploadFolder", dstDir.GetPath())
 	q.Set("returnFormat", "default")
 	q.Set("channelName", channelName)
 	reqUrl.RawQuery = q.Encode()
@@ -157,7 +159,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 	}
 	sampleBuf := make([]byte, sampleSize)
 	_, err = io.ReadFull(sampleRd, sampleBuf)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, err
 	}
 	fileSample := base64.StdEncoding.EncodeToString(sampleBuf)
@@ -289,12 +291,16 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 		// 合并分片
 		// sort.Slice(parts, func(i, j int) bool { return parts[i]["partNumber"].(int) < parts[j]["partNumber"].(int) })
 		mergeBody, _ := json.Marshal(map[string]any{"oid": getUrlResp.Oid, "parts": parts})
-		mergeReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, href, bytes.NewReader(mergeBody))
+		mergeReq, err := http.NewRequestWithContext(ctx, http.MethodPost, href, bytes.NewReader(mergeBody))
+		if err != nil {
+			return nil, err
+		}
 		mergeReq.Header.Set("Content-Type", "application/vnd.git-lfs+json")
 		for k, v := range headers {
 			if k != "chunk_size" && len(k) != 5 {
 				mergeReq.Header.Set(k, v)
 			}
+		}
 		}
 		res, err := base.HttpClient.Do(mergeReq)
 		if err != nil {
@@ -313,7 +319,10 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 			UpdateProgress: model.UpdateProgressWithRange(up, 0, 97),
 		})
 
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPut, href, limitedReader)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, href, limitedReader)
+		if err != nil {
+			return nil, err
+		}
 		req.ContentLength = fileSize
 		for k, v := range headers {
 			req.Header.Set(k, v)
@@ -348,8 +357,11 @@ func (d *CFImgBed) hfCommit(ctx context.Context, getUrlResp hfGetUrlResp, fileNa
 	_, err := d.doRequest(http.MethodPost, hfCommitApi, func(req *resty.Request) {
 		req.SetBody(commitBody)
 	}, &commitResp)
-	if err != nil || !commitResp.Success {
-		return nil, fmt.Errorf("HF commit failed")
+	if err != nil {
+		return nil, fmt.Errorf("HF commit request failed: %w", err)
+	}
+	if !commitResp.Success {
+		return nil, fmt.Errorf("HF commit failed: success=false")
 	}
 
 	srcPath := strings.TrimPrefix(commitResp.Src, "/file/")
