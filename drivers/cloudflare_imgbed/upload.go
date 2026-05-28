@@ -68,12 +68,13 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	q := reqUrl.Query()
 	q.Set("returnFormat", "default")
 	q.Set("channelName", channelName)
+	q.Set("uploadFolder", dstDir.GetPath())
 	reqUrl.RawQuery = q.Encode()
 
 	// 2. 构建 multipart 表单的头部
 	b := bytes.NewBuffer(make([]byte, 0, 164+len(file.GetName()))) // 预估头部大小，避免频繁扩容
 	w := multipart.NewWriter(b)
-	_, err := w.CreateFormFile("file", file.GetName())
+	_, err = w.CreateFormFile("file", file.GetName())
 	if err != nil {
 		return nil, err
 	}
@@ -157,12 +158,17 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 	if err != nil {
 		return nil, err
 	}
-	sampleBuf := make([]byte, sampleSize)
-	_, err = io.ReadFull(sampleRd, sampleBuf)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	var sampleBuilder strings.Builder
+	sampleEncoder := base64.NewEncoder(base64.StdEncoding, &sampleBuilder)
+	_, err = utils.CopyWithBuffer(sampleEncoder, sampleRd)
+	if err != nil {
+		_ = sampleEncoder.Close()
 		return nil, err
 	}
-	fileSample := base64.StdEncoding.EncodeToString(sampleBuf)
+	if err = sampleEncoder.Close(); err != nil {
+		return nil, err
+	}
+	fileSample := sampleBuilder.String()
 
 	fileMime := file.GetMimetype()
 	// 1. 请求图床后端获取 HF 授权地址
@@ -301,7 +307,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 				mergeReq.Header.Set(k, v)
 			}
 		}
-		}
+
 		res, err := base.HttpClient.Do(mergeReq)
 		if err != nil {
 			return nil, err
