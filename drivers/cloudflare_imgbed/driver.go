@@ -39,7 +39,7 @@ func (d *CFImgBed) Init(ctx context.Context) error {
 		SetDebug(false)
 
 	// 连通性测试：尝试获取根目录单条数据
-	_, err := d.doRequest(http.MethodGet, listApi, func(req *resty.Request) {
+	_, err := d.doRequest(ctx, http.MethodGet, listApi, func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
 			"start": "0",
 			"count": "1",
@@ -74,7 +74,7 @@ func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 	start := 0
 	for {
 		var resp ListResponse
-		_, err := d.doRequest(http.MethodGet, listApi, func(req *resty.Request) {
+		_, err := d.doRequest(ctx, http.MethodGet, listApi, func(req *resty.Request) {
 			req.SetQueryParams(map[string]string{
 				"dir":   dir.GetPath(),
 				"start": fmt.Sprintf("%d", start),
@@ -145,7 +145,7 @@ func (d *CFImgBed) Remove(ctx context.Context, obj model.Obj) error {
 		d.virtualDir.Delete(reqPath)
 		return nil
 	}
-	_, err := d.doRequest(http.MethodPost, deleteApi, func(req *resty.Request) {
+	_, err := d.doRequest(ctx, http.MethodPost, deleteApi, func(req *resty.Request) {
 		req.SetBody(map[string]string{
 			"path": reqPath,
 		}).SetQueryParam("folder", fmt.Sprintf("%t", obj.IsDir()))

@@ -183,7 +183,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 	}
 
 	var getUrlResp hfGetUrlResp
-	_, err = d.doRequest(http.MethodPost, hfGetUrlApi, func(req *resty.Request) {
+	_, err = d.doRequest(ctx, http.MethodPost, hfGetUrlApi, func(req *resty.Request) {
 		req.SetBody(reqBody)
 		req.SetHeader("Content-Type", "application/json")
 	}, &getUrlResp)
@@ -360,7 +360,7 @@ func (d *CFImgBed) hfCommit(ctx context.Context, getUrlResp hfGetUrlResp, fileNa
 		"channelName": getUrlResp.ChannelName,
 	}
 	var commitResp hfCommitResp
-	_, err := d.doRequest(http.MethodPost, hfCommitApi, func(req *resty.Request) {
+	_, err := d.doRequest(ctx, http.MethodPost, hfCommitApi, func(req *resty.Request) {
 		req.SetBody(commitBody)
 	}, &commitResp)
 	if err != nil {

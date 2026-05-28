@@ -1,6 +1,7 @@
 package cloudflare_imgbed
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -20,10 +21,11 @@ const (
 )
 
 // doRequest 通用请求封装，包含重试和 API 错误解析
-func (d *CFImgBed) doRequest(method, urlPath string, callback func(*resty.Request), resp interface{}) ([]byte, error) {
+func (d *CFImgBed) doRequest(ctx context.Context, method, urlPath string, callback func(*resty.Request), resp interface{}) ([]byte, error) {
 	maxRetries := 3
 	for i := 0; i < maxRetries; i++ {
 		req := d.client.R()
+		req.SetContext(ctx)
 		if callback != nil {
 			callback(req)
 		}
