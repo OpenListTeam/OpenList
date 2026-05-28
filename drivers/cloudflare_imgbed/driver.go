@@ -61,7 +61,7 @@ func (d *CFImgBed) Drop(ctx context.Context) error {
 }
 
 func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	if model.ObjHasMask(dir, model.Virtual) {
+	if !args.Refresh && model.ObjHasMask(dir, model.Virtual) {
 		if _, ok := d.virtualDir.Load(dir.GetPath()); ok {
 			return nil, nil
 		}
