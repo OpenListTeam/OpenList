@@ -20,7 +20,7 @@ type CFImgBed struct {
 	model.Storage
 	Addition
 	client     *resty.Client
-	virtualDir cache.WeakCacheMap[string, model.Object]
+	virtualDir *cache.WeakCacheMap[string, model.Object]
 }
 
 func (d *CFImgBed) Config() driver.Config          { return config }
@@ -49,17 +49,21 @@ func (d *CFImgBed) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("init verification failed: %w", err)
 	}
+	d.virtualDir = cache.NewWeakCacheMap[string, model.Object]()
 	return nil
 }
 
-func (d *CFImgBed) Drop(ctx context.Context) error { return nil }
+func (d *CFImgBed) Drop(ctx context.Context) error {
+	d.virtualDir.Clear()
+	return nil
+}
 
 func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	if model.ObjHasMask(dir, model.Virtual) {
-		return nil, nil
+		if _, ok := d.virtualDir.Load(dir.GetPath()); ok {
+			return nil, nil
+		}
 	}
-
-	reqPath := dir.GetPath()
 
 	dirSeen := make(map[string]bool)
 	fileSeen := make(map[string]bool)
@@ -70,7 +74,7 @@ func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		var resp ListResponse
 		_, err := d.doRequest(http.MethodGet, listApi, func(req *resty.Request) {
 			req.SetQueryParams(map[string]string{
-				"dir":   reqPath,
+				"dir":   dir.GetPath(),
 				"start": fmt.Sprintf("%d", start),
 				"count": fmt.Sprintf("%d", listPageSize),
 			})
@@ -80,12 +84,12 @@ func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		}
 
 		for _, rawDir := range resp.Directories {
-			cleanDir := strings.TrimRight(rawDir, "/")
-			if !dirSeen[cleanDir] {
-				dirSeen[cleanDir] = true
+			rawDir = "/" + strings.TrimRight(rawDir, "/")
+			if !dirSeen[rawDir] {
+				dirSeen[rawDir] = true
 				objs = append(objs, &model.Object{
-					Path:     cleanDir,
-					Name:     path.Base(cleanDir),
+					Path:     rawDir,
+					Name:     path.Base(rawDir),
 					Modified: d.Modified,
 					IsFolder: true,
 				})

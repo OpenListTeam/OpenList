@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -38,7 +39,10 @@ func (d *CFImgBed) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 		newObj, err = d.standardUpload(ctx, dstDir, file, up)
 	}
 	if newObj != nil && model.ObjHasMask(dstDir, model.Virtual) {
-		d.virtualDir.Delete(dstDir.GetPath())
+		key := dstDir.GetPath()
+		for d.virtualDir.Delete(key) {
+			key = path.Dir(key)
+		}
 	}
 	return
 }
