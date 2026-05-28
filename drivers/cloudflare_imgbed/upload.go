@@ -158,17 +158,12 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 	if err != nil {
 		return nil, err
 	}
-	var sampleBuilder strings.Builder
-	sampleEncoder := base64.NewEncoder(base64.StdEncoding, &sampleBuilder)
-	_, err = utils.CopyWithBuffer(sampleEncoder, sampleRd)
-	if err != nil {
-		_ = sampleEncoder.Close()
+	sampleBuf := make([]byte, sampleSize)
+	_, err = io.ReadFull(sampleRd, sampleBuf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, err
 	}
-	if err = sampleEncoder.Close(); err != nil {
-		return nil, err
-	}
-	fileSample := sampleBuilder.String()
+	fileSample := base64.StdEncoding.EncodeToString(sampleBuf)
 
 	fileMime := file.GetMimetype()
 	// 1. 请求图床后端获取 HF 授权地址

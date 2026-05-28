@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -105,7 +106,7 @@ func parseFile(item FileItem) *model.Object {
 	}
 
 	return &model.Object{
-		Path:     item.Name,
+		Path:     "/" + strings.TrimRight(item.Name, "/"),
 		Name:     name,
 		Size:     size,
 		Modified: modTime,

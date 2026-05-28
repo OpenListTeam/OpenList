@@ -43,14 +43,13 @@ func (d *CFImgBed) doRequest(ctx context.Context, method, urlPath string, callba
 			return nil, err
 		}
 
-		body := res.Body()
-
 		// Retry on rate limit before attempting to interpret the body as an API error.
 		if res.StatusCode() == 429 {
 			time.Sleep(time.Duration(i+1) * 2 * time.Second)
 			continue
 		}
 
+		body := res.Body()
 		var apiErr apiError
 		if err := json.Unmarshal(body, &apiErr); err == nil {
 			if apiErr.Error != "" || apiErr.Message != "" {
@@ -65,7 +64,6 @@ func (d *CFImgBed) doRequest(ctx context.Context, method, urlPath string, callba
 		if res.IsError() {
 			return nil, fmt.Errorf("HTTP %d", res.StatusCode())
 		}
-		return body, nil
 		return body, nil
 	}
 	return nil, fmt.Errorf("max retries exceeded")

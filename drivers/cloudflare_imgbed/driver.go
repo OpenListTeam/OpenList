@@ -61,15 +61,15 @@ func (d *CFImgBed) Drop(ctx context.Context) error {
 }
 
 func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	if !args.Refresh && model.ObjHasMask(dir, model.Virtual) {
-		if _, ok := d.virtualDir.Load(dir.GetPath()); ok {
-			return nil, nil
-		}
-	}
+	// if !args.Refresh && model.ObjHasMask(dir, model.Virtual) {
+	// 	if _, ok := d.virtualDir.Load(dir.GetPath()); ok {
+	// 		return nil, nil
+	// 	}
+	// }
 
-	dirSeen := make(map[string]bool)
-	fileSeen := make(map[string]bool)
-	objs := make([]model.Obj, 0)
+	var dirSeen map[string]bool
+	var fileSeen map[string]bool
+	var objs []model.Obj
 
 	start := 0
 	for {
@@ -83,6 +83,15 @@ func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		}, &resp)
 		if err != nil {
 			return nil, err
+		}
+		if len(resp.Files) == 0 && len(resp.Directories) == 0 {
+			break
+		}
+
+		if start == 0 {
+			dirSeen = make(map[string]bool, len(resp.Directories))
+			fileSeen = make(map[string]bool, len(resp.Files))
+			objs = make([]model.Obj, 0, len(resp.Directories)+len(resp.Files))
 		}
 
 		for _, rawDir := range resp.Directories {
@@ -115,7 +124,7 @@ func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 }
 
 func (d *CFImgBed) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	return &model.Link{URL: d.Address + "/file/" + utils.EncodePath(file.GetPath())}, nil
+	return &model.Link{URL: d.Address + "/file" + utils.EncodePath(file.GetPath())}, nil
 }
 
 func (d *CFImgBed) Get(ctx context.Context, pathStr string) (model.Obj, error) {
@@ -133,7 +142,8 @@ func (d *CFImgBed) MakeDir(ctx context.Context, parentDir model.Obj, dirName str
 		Path:     fullPath,
 		Name:     dirName,
 		IsFolder: true,
-		Mask:     model.Virtual | model.NoMove | model.NoCopy,
+		Modified: d.Modified,
+		Mask:     model.Virtual,
 	}
 	d.virtualDir.Store(fullPath, temp)
 	return temp, nil
@@ -145,10 +155,8 @@ func (d *CFImgBed) Remove(ctx context.Context, obj model.Obj) error {
 		d.virtualDir.Delete(reqPath)
 		return nil
 	}
-	_, err := d.doRequest(ctx, http.MethodPost, deleteApi, func(req *resty.Request) {
-		req.SetBody(map[string]string{
-			"path": reqPath,
-		}).SetQueryParam("folder", fmt.Sprintf("%t", obj.IsDir()))
+	_, err := d.doRequest(ctx, http.MethodPost, deleteApi+utils.EncodePath(reqPath), func(req *resty.Request) {
+		req.SetQueryParam("folder", fmt.Sprintf("%t", obj.IsDir()))
 	}, nil)
 	return err
 }
