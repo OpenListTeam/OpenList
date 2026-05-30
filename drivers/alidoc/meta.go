@@ -14,7 +14,7 @@ var config = driver.Config{
 	Name:        "AliDoc",
 	LocalSort:   true,
 	DefaultRoot: "",
-	Alert:       "info|If you use PDF preview, please enable proxy, otherwise the preview may fail because of CORS.",
+	Alert:       "info|This driver supports accessing DingDrive through DingTalk Docs and is currently read-only.",
 }
 
 func init() {
