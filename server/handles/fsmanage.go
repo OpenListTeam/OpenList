@@ -119,6 +119,7 @@ func FsMove(c *gin.Context) {
 			req.Names[i] = ""
 			continue
 		}
+		req.Names[i] = srcPath
 		if !req.Overwrite {
 			base := stdpath.Base(srcPath)
 			if base == "." || base == "/" {
@@ -129,12 +130,11 @@ func FsMove(c *gin.Context) {
 				if !req.SkipExisting {
 					common.ErrorStrResp(c, fmt.Sprintf("file [%s] exists", name), 403)
 					return
-				} else {
-					continue
 				}
+				req.Names[i] = ""
+				continue
 			}
 		}
-		req.Names[i] = srcPath
 	}
 
 	// Create all tasks immediately without any synchronous validation
@@ -222,6 +222,7 @@ func FsCopy(c *gin.Context) {
 			req.Names[i] = ""
 			continue
 		}
+		req.Names[i] = srcPath
 		if !req.Overwrite {
 			base := stdpath.Base(srcPath)
 			if base == "." || base == "/" {
@@ -233,11 +234,11 @@ func FsCopy(c *gin.Context) {
 					common.ErrorStrResp(c, fmt.Sprintf("file [%s] exists", name), 403)
 					return
 				} else if !req.Merge || !res.IsDir() {
+					req.Names[i] = ""
 					continue
 				}
 			}
 		}
-		req.Names[i] = srcPath
 	}
 
 	// Create all tasks immediately without any synchronous validation
