@@ -93,7 +93,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(upperSliceMD5s, "\n")))
 	}
 
-
 	// 使用与 Web 端一致的三步秒传流程
 	fullUrl := "https://upload.cloud.189.cn"
 	if isFamily {
@@ -114,7 +113,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		initParams.Set("familyId", y.FamilyID)
 	}
 
-
 	var uploadInfo InitMultiUploadResp
 	_, err = y.request(fullUrl+"/initMultiUpload", "GET", func(req *resty.Request) {
 		req.SetContext(ctx)
@@ -122,7 +120,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	if err != nil {
 		return nil, fmt.Errorf("initMultiUpload 失败: %w", err)
 	}
-
 
 	uploadFileId := uploadInfo.Data.UploadFileID
 
@@ -132,7 +129,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		"sliceMd5":     sliceMd5Hex,
 		"uploadFileId": uploadFileId,
 	}
-
 
 	var checkResp struct {
 		Data struct {
@@ -146,7 +142,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		utils.Log.Errorf("[RapidUpload] checkTransSecond 失败: uploadFileId=%s, err=%v", uploadFileId, err)
 		return nil, fmt.Errorf("秒传检查失败: %w", err)
 	}
-
 
 	if checkResp.Data.FileDataExists != 1 {
 		return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", fileMD5Upper, sliceMd5Hex, fileSize)
@@ -191,7 +186,7 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 				Reader:   bytes.NewReader(torrentData),
 				Mimetype: "application/x-bittorrent",
 			}
-			_, uploadErr := y.FastUpload(context.Background(), capturedDstDir, torrentFileStream, func(p float64) {}, capturedIsFamily, false)
+			_, uploadErr := y.fastUpload(context.Background(), capturedDstDir, torrentFileStream, func(p float64) {}, capturedIsFamily, false, false)
 			if uploadErr != nil {
 				utils.Log.Warnf("上传 torrent 文件失败: %v", uploadErr)
 			} else {
@@ -297,6 +292,10 @@ func GetInfoHashHex(torrentData []byte) (string, error) {
 	return hex.EncodeToString(t.InfoHash), nil
 }
 
+func isCASTorrentFile(fileName string) bool {
+	return strings.HasSuffix(fileName, ".cas.torrent")
+}
+
 // ComputeSliceMD5sFromReader 从 reader 中计算每个 10MB 分片的 MD5
 // 返回：整文件 MD5、分片 MD5 列表
 func ComputeSliceMD5sFromReader(reader io.Reader, sliceSize int64) (string, []string, error) {
@@ -350,7 +349,7 @@ func (y *Cloud189PC) torrentFollowCopy(srcFolderId string, srcFileName string, d
 			return
 		}
 		// 复制 torrent 文件到目标目录
-		_, copyErr := y.CreateBatchTask("COPY", IF(isFamily, y.FamilyID, ""), dstDir.GetID(),
+		resp, copyErr := y.CreateBatchTask("COPY", IF(isFamily, y.FamilyID, ""), dstDir.GetID(),
 			map[string]string{"targetFileName": dstDir.GetName()},
 			BatchTaskInfo{
 				FileId:   torrentFile.GetID(),
@@ -359,6 +358,10 @@ func (y *Cloud189PC) torrentFollowCopy(srcFolderId string, srcFileName string, d
 			})
 		if copyErr != nil {
 			utils.Log.Warnf("跟随复制 torrent 文件失败: %v", copyErr)
+			return
+		}
+		if err = y.WaitBatchTask("COPY", resp.TaskID, time.Second); err != nil {
+			utils.Log.Warnf("等待跟随复制 torrent 文件失败: %v", err)
 		}
 	}()
 }

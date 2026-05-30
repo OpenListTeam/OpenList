@@ -911,6 +911,11 @@ func (y *Cloud189PC) RapidUpload(ctx context.Context, dstDir model.Obj, stream m
 
 // 快传
 func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool) (model.Obj, error) {
+	generateTorrent := y.Addition.GenerateTorrent && !isCASTorrentFile(file.GetName())
+	return y.fastUpload(ctx, dstDir, file, up, isFamily, overwrite, generateTorrent)
+}
+
+func (y *Cloud189PC) fastUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool, generateTorrent bool) (model.Obj, error) {
 	var (
 		cache = file.GetFile()
 		tmpF  *os.File
@@ -949,8 +954,6 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 		writers = append(writers, tmpF)
 	}
 
-	// 如果启用了 torrent 生成，额外计算 SHA-1 piece hash
-	generateTorrent := y.Addition.GenerateTorrent
 	pieceSHA1Hashes := make([]byte, 0, count*20)
 
 	written := int64(0)
@@ -1130,7 +1133,7 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 				Reader:   bytes.NewReader(torrentData),
 				Mimetype: "application/x-bittorrent",
 			}
-			_, uploadErr := y.FastUpload(context.Background(), capturedDstDir, torrentFileStream, func(p float64) {}, capturedIsFamily, false)
+			_, uploadErr := y.fastUpload(context.Background(), capturedDstDir, torrentFileStream, func(p float64) {}, capturedIsFamily, false, false)
 			if uploadErr != nil {
 				utils.Log.Warnf("上传 torrent 文件失败: %v", uploadErr)
 			} else {
