@@ -7,14 +7,14 @@ import (
 
 type Addition struct {
 	driver.RootID
-	Cookie string `json:"cookie" type:"text" required:"true" help:"DingTalk AliDoc web cookie"`
+	Cookie       string `json:"cookie" type:"text" required:"true" help:"钉钉文档网页 Cookie"`
 }
 
 var config = driver.Config{
 	Name:        "AliDoc",
 	LocalSort:   true,
 	DefaultRoot: "",
-	Alert:       "warning|AliDoc uses web cookies captured from the DingTalk document site. Keep the cookie private. This driver is read-only.",
+	Alert:       "info|If you use PDF preview, please enable proxy, otherwise the preview may fail because of CORS.",
 }
 
 func init() {
