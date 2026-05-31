@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	netutil "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
+	"github.com/google/uuid"
 )
 
 const (
@@ -67,6 +68,9 @@ func (d *AliDoc) put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 		err = d.singleUpload(ctx, src, size, info, up)
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := d.commitUpload(ctx, parentID, file.GetName(), size, info.Data.UploadKey); err != nil {
 		return nil, err
 	}
 
@@ -145,6 +149,35 @@ func (d *AliDoc) getUploadInfo(ctx context.Context, parentDentryUUID, name strin
 		return result, fmt.Errorf("empty upload bucket")
 	}
 	return result, nil
+}
+
+func (d *AliDoc) commitUpload(ctx context.Context, parentDentryUUID, name string, fileSize int64, uploadKey string) error {
+	uploadKey = strings.TrimSpace(uploadKey)
+	if uploadKey == "" {
+		return fmt.Errorf("empty upload key")
+	}
+
+	var result apiResp
+	body := map[string]interface{}{
+		"parentDentryUuid":      parentDentryUUID,
+		"uploadKey":             uploadKey,
+		"fileSize":              fileSize,
+		"name":                  name,
+		"toPrevDentryUuid":      nil,
+		"toNextDentryUuid":      nil,
+		"batchId":               uuid.NewString(),
+		"batchUploadType":       1,
+		"batchParentDentryUuid": parentDentryUUID,
+	}
+	resp, err := d.request(ctx).
+		SetBody(body).
+		SetResult(&result).
+		SetError(&result).
+		Post(apiBase + "/box/api/v2/file/commit")
+	if err != nil {
+		return err
+	}
+	return checkResp(resp, result)
 }
 
 func calcAliDocPartSize(fileSize, minPartSize int64) int64 {
@@ -247,13 +280,7 @@ func (d *AliDoc) newOSSBucket(info uploadInfoResp) (*oss.Bucket, string, error) 
 		return nil, "", fmt.Errorf("empty upload object key")
 	}
 
-	endpoint := strings.TrimSpace(sts.AccelerateCname)
-	if endpoint == "" {
-		endpoint = strings.TrimSpace(sts.Cname)
-	}
-	if endpoint == "" {
-		endpoint = strings.TrimSpace(sts.EndPoint)
-	}
+	endpoint, useCname := pickAliDocOSSEndpoint(sts)
 	if endpoint == "" {
 		return nil, "", fmt.Errorf("empty upload endpoint")
 	}
@@ -261,11 +288,15 @@ func (d *AliDoc) newOSSBucket(info uploadInfoResp) (*oss.Bucket, string, error) 
 		endpoint = "https://" + endpoint
 	}
 
+	options := []oss.ClientOption{oss.SecurityToken(sts.AccessToken)}
+	if useCname {
+		options = append(options, oss.UseCname(true))
+	}
 	client, err := netutil.NewOSSClient(
 		endpoint,
 		sts.AccessKeyID,
 		sts.AccessKeySecret,
-		oss.SecurityToken(sts.AccessToken),
+		options...,
 	)
 	if err != nil {
 		return nil, "", err
@@ -275,6 +306,19 @@ func (d *AliDoc) newOSSBucket(info uploadInfoResp) (*oss.Bucket, string, error) 
 		return nil, "", err
 	}
 	return bucket, objectKey, nil
+}
+
+func pickAliDocOSSEndpoint(sts uploadSTSSignatureInfo) (endpoint string, useCname bool) {
+	if endpoint = strings.TrimSpace(sts.EndPoint); endpoint != "" {
+		return endpoint, false
+	}
+	if endpoint = strings.TrimSpace(sts.Cname); endpoint != "" {
+		return endpoint, true
+	}
+	if endpoint = strings.TrimSpace(sts.AccelerateCname); endpoint != "" {
+		return endpoint, true
+	}
+	return "", false
 }
 
 func (d *AliDoc) findUploadedObj(ctx context.Context, parentID, parentPath, name string, size int64, startedAt time.Time) (model.Obj, error) {
