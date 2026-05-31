@@ -138,8 +138,9 @@ func (ios *int64_str) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	// 所有格式都失败，返回错误
-	return fmt.Errorf("无法解析时间字段: %s", str)
+	// 所有格式都失败，返回 0（避免因时间格式问题导致整个解析失败）
+	*ios = 0
+	return nil
 }
 
 type File struct {
