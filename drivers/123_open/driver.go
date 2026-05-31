@@ -34,8 +34,8 @@ func (d *Open123) Init(ctx context.Context) error {
 		d.UploadThread = 3
 	}
 
-	if d.RefreshToken != "" {
-		// refresh token 直接主动刷新
+	if (d.UseOnlineAPI && d.RefreshToken != "" && len(d.APIAddress) > 0) || (d.ClientID != "" && d.ClientSecret != "") {
+		// proactive refresh by renewapi or client credentials
 		d.AccessToken = ""
 		d.tm = &tokenManager{}
 	} else {

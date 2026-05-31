@@ -3,6 +3,7 @@ package handles
 import (
 	"fmt"
 	stdpath "path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -416,6 +417,19 @@ type UpdateSharingReq struct {
 	CreatorName string `json:"creator"`
 	Accessed    int    `json:"accessed"`
 	ID          string `json:"id"`
+	NewID       string `json:"new_id"`
+}
+
+var validSharingID = regexp.MustCompile(`^[\w\p{Han}\-]+$`)
+
+func validateSharingID(id string) error {
+	if len([]rune(id)) > 64 {
+		return errors.New("share id must be at most 64 characters")
+	}
+	if !validSharingID.MatchString(id) {
+		return errors.New("share id can only contain letters, numbers, underscores, hyphens, and CJK characters")
+	}
+	return nil
 }
 
 func UpdateSharing(c *gin.Context) {
@@ -471,6 +485,20 @@ func UpdateSharing(c *gin.Context) {
 	s.Readme = req.Readme
 	s.Remark = req.Remark
 	s.Creator = user
+	if req.NewID != "" && req.NewID != req.ID {
+		if !reqUser.CanCustomizeShareID() {
+			common.ErrorStrResp(c, "permission denied", 403)
+			return
+		}
+		if err = validateSharingID(req.NewID); err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+		if err = op.UpdateSharingId(s, req.NewID); err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+	}
 	if err = op.UpdateSharing(s); err != nil {
 		common.ErrorResp(c, err, 500)
 	} else {
@@ -493,6 +521,12 @@ func CreateSharing(c *gin.Context) {
 		common.ErrorStrResp(c, "must add at least 1 object", 400)
 		return
 	}
+	if req.ID != "" {
+		if err = validateSharingID(req.ID); err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+	}
 	var user *model.User
 	reqUser := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if reqUser.IsAdmin() && req.CreatorName != "" {
@@ -503,7 +537,7 @@ func CreateSharing(c *gin.Context) {
 		}
 	} else {
 		user = reqUser
-		if !user.CanShare() || (!user.IsAdmin() && req.ID != "") {
+		if !user.CanShare() || (!user.CanCustomizeShareID() && req.ID != "") {
 			common.ErrorStrResp(c, "permission denied", 403)
 			return
 		}

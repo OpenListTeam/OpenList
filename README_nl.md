@@ -1,5 +1,5 @@
 <div align="center">
-  <img style="width: 128px; height: 128px;" src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" alt="logo" />
+  <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
 
   <p><em>OpenList is een veerkrachtige, langetermijn, door de gemeenschap geleide fork van AList — gebouwd om open source te beschermen tegen op vertrouwen gebaseerde aanvallen.</em></p>
 
@@ -116,9 +116,10 @@ Dank u voor uw ondersteuning en begrip
 
 ## Documentatie
 
-- 📘 [Global Site](https://doc.oplist.org)
-- 📚 [Backup Site](https://doc.openlist.team)
-- 🌏 [CN Site](https://doc.oplist.org.cn)
+- 📘 [Documentatie](https://doc.oplist.org)
+- 🌏 [CN Mirror](https://doc.oplist.org.cn)
+- ⚖️ [Gebruiksvoorwaarden](https://doc.oplist.org/terms)
+- 🔒 [Privacybeleid](https://doc.oplist.org/privacy)
 
 ## Demo
 

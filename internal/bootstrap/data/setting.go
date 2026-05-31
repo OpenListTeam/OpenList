@@ -34,6 +34,13 @@ func initSettings() {
 	}
 	settingMap := map[string]*model.SettingItem{}
 	for _, v := range settings {
+		if v.Key == "" {
+			err := db.DeleteSettingItemByKey(v.Key)
+			if err != nil {
+				utils.Log.Errorf("failed delete setting with empty key: %+v", err)
+			}
+			continue
+		}
 		if !isActive(v.Key) && v.Flag != model.DEPRECATED {
 			v.Flag = model.DEPRECATED
 			err = op.SaveSettingItem(&v)
@@ -153,7 +160,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.SharePreviewDownloadByDefault, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW},
 		{Key: conf.SharePreviewArchivesByDefault, Value: "false", Type: conf.TypeBool, Group: model.PREVIEW},
 		{Key: conf.ReadMeAutoRender, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW},
-		{Key: conf.FilterReadMeScripts, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW},
+		{Key: conf.FilterReadMeScripts, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW}, // frontend
 		{Key: conf.NonEFSZipEncoding, Value: "IBM437", Type: conf.TypeString, Group: model.PREVIEW},
 		// global settings
 		{Key: conf.HideFiles, Value: "/\\/README.md/i", Type: conf.TypeText, Group: model.GLOBAL},
