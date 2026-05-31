@@ -146,40 +146,40 @@ type File struct {
 	Cataid  int `json:"cataid"`
 	Cfid    int `json:"cfid"`
 	Content struct {
-		Cfid             int     `json:"cfid"`
-		Pid              int     `json:"pid"`
-		FolderName       string  `json:"folderName"`
-		ShareType        int     `json:"shareType"`
-		Preview          string  `json:"preview"`
-		Filetype         string  `json:"filetype"`
-		PreviewURL       string  `json:"previewUrl"`
-		IsImg            bool    `json:"isImg"`
-		ParentPath       string  `json:"parentPath"`
-		Icon             string  `json:"icon"`
-		Suffix           string  `json:"suffix"`
-		Duration         int     `json:"duration"`
-		Pantype          string  `json:"pantype"`
-		Puid             int_str `json:"puid"`
-		Filepath         string  `json:"filepath"`
-		Crc              string  `json:"crc"`
-		Isfile           bool    `json:"isfile"`
-		Residstr         string  `json:"residstr"`
-		ObjectID         string  `json:"objectId"`
-		Extinfo          string  `json:"extinfo"`
-		Thumbnail        string  `json:"thumbnail"`
-		Creator          int     `json:"creator"`
-		ResTypeValue     int     `json:"resTypeValue"`
-		UploadDateFormat string  `json:"uploadDateFormat"`
-		DisableOpt       bool    `json:"disableOpt"`
-		DownPath         string  `json:"downPath"`
-		Sort             int     `json:"sort"`
-		Topsort          int     `json:"topsort"`
-		Restype          string     `json:"restype"`
-		Size             int_str    `json:"size"`
-		UploadDate       int64_str  `json:"uploadDate"`
-		FileSize         string     `json:"fileSize"`
-		Name             string     `json:"name"`
-		FileID           string     `json:"fileId"`
+		Cfid             int       `json:"cfid"`
+		Pid              int       `json:"pid"`
+		FolderName       string    `json:"folderName"`
+		ShareType        int       `json:"shareType"`
+		Preview          string    `json:"preview"`
+		Filetype         string    `json:"filetype"`
+		PreviewURL       string    `json:"previewUrl"`
+		IsImg            bool      `json:"isImg"`
+		ParentPath       string    `json:"parentPath"`
+		Icon             string    `json:"icon"`
+		Suffix           string    `json:"suffix"`
+		Duration         int       `json:"duration"`
+		Pantype          string    `json:"pantype"`
+		Puid             int_str   `json:"puid"`
+		Filepath         string    `json:"filepath"`
+		Crc              string    `json:"crc"`
+		Isfile           bool      `json:"isfile"`
+		Residstr         string    `json:"residstr"`
+		ObjectID         string    `json:"objectId"`
+		Extinfo          string    `json:"extinfo"`
+		Thumbnail        string    `json:"thumbnail"`
+		Creator          int       `json:"creator"`
+		ResTypeValue     int       `json:"resTypeValue"`
+		UploadDateFormat string    `json:"uploadDateFormat"`
+		DisableOpt       bool      `json:"disableOpt"`
+		DownPath         string    `json:"downPath"`
+		Sort             int       `json:"sort"`
+		Topsort          int       `json:"topsort"`
+		Restype          string    `json:"restype"`
+		Size             int_str   `json:"size"`
+		UploadDate       int64_str `json:"uploadDate"`
+		FileSize         string    `json:"fileSize"`
+		Name             string    `json:"name"`
+		FileID           string    `json:"fileId"`
 	} `json:"content"`
 	CreatorID  int    `json:"creatorId"`
 	DesID      string `json:"des_id"`
