@@ -14,7 +14,6 @@ var config = driver.Config{
 	Name:        "AliDoc",
 	LocalSort:   true,
 	DefaultRoot: "",
-	Alert:       "info|This driver supports accessing DingDrive through DingTalk Docs, including listing, download, upload, move, and recycle delete.",
 }
 
 func init() {
