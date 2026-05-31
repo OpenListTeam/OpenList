@@ -111,6 +111,16 @@ func newClient() *resty.Client {
 	return client
 }
 
+func pickAliDocDentryType(obj model.Obj) string {
+	if o, ok := obj.(*Object); ok && strings.TrimSpace(o.DentryType) != "" {
+		return o.DentryType
+	}
+	if obj != nil && obj.IsDir() {
+		return "folder"
+	}
+	return "file"
+}
+
 func (d *AliDoc) list(ctx context.Context, dentryUUID string) ([]dentry, error) {
 	var result listResp
 	resp, err := d.request(ctx).

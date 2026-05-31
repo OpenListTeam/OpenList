@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -97,7 +98,47 @@ func (d *AliDoc) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 }
 
 func (d *AliDoc) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	return nil, readonlyError()
+	dirName = strings.TrimSpace(dirName)
+	if dirName == "" {
+		return nil, fmt.Errorf("folder name is empty")
+	}
+
+	parentID := d.RootFolderID
+	parentPath := "/"
+	if parentDir != nil {
+		if id := strings.TrimSpace(parentDir.GetID()); id != "" {
+			parentID = id
+		}
+		if p := parentDir.GetPath(); p != "" {
+			parentPath = p
+		}
+	}
+
+	var result apiResp
+	resp, err := d.request(ctx).
+		SetBody(map[string]string{
+			"dentryType":             "folder",
+			"name":                   dirName,
+			"parentDentryUuid":       parentID,
+			"conflictHandleStrategy": "auto_rename",
+		}).
+		SetResult(&result).
+		SetError(&result).
+		Post(apiBase + "/box/api/v2/dentry/createfolder")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(resp, result); err != nil {
+		return nil, err
+	}
+	return &Object{
+		Object: model.Object{
+			Path:     joinPath(parentPath, dirName),
+			Name:     dirName,
+			IsFolder: true,
+		},
+		DentryType: "folder",
+	}, nil
 }
 
 func (d *AliDoc) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
@@ -136,11 +177,99 @@ func (d *AliDoc) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 }
 
 func (d *AliDoc) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	return nil, readonlyError()
+	if srcObj == nil {
+		return nil, fmt.Errorf("source object is nil")
+	}
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return nil, fmt.Errorf("new name is empty")
+	}
+	dentryUUID := strings.TrimSpace(srcObj.GetID())
+	if dentryUUID == "" {
+		return nil, fmt.Errorf("dentry uuid is empty")
+	}
+
+	var result apiResp
+	resp, err := d.request(ctx).
+		SetBody(map[string]string{
+			"dentryUuid": dentryUUID,
+			"name":       newName,
+		}).
+		SetResult(&result).
+		SetError(&result).
+		Post(apiBase + "/box/api/v2/dentry/rename")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(resp, result); err != nil {
+		return nil, err
+	}
+
+	newPath := srcObj.GetPath()
+	if newPath != "" {
+		newPath = path.Join(path.Dir(newPath), newName)
+	}
+	return &Object{
+		Object: model.Object{
+			ID:       srcObj.GetID(),
+			Path:     newPath,
+			Name:     newName,
+			Size:     srcObj.GetSize(),
+			Modified: srcObj.ModTime(),
+			Ctime:    srcObj.CreateTime(),
+			IsFolder: srcObj.IsDir(),
+			HashInfo: srcObj.GetHash(),
+		},
+		DentryType: pickAliDocDentryType(srcObj),
+	}, nil
 }
 
 func (d *AliDoc) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	return nil, readonlyError()
+	if srcObj == nil {
+		return nil, fmt.Errorf("source object is nil")
+	}
+	if dstDir == nil {
+		return nil, fmt.Errorf("destination directory is nil")
+	}
+	sourceID := strings.TrimSpace(srcObj.GetID())
+	targetID := strings.TrimSpace(dstDir.GetID())
+	if sourceID == "" {
+		return nil, fmt.Errorf("source dentry uuid is empty")
+	}
+	if targetID == "" {
+		return nil, fmt.Errorf("target parent dentry uuid is empty")
+	}
+
+	var result apiResp
+	resp, err := d.request(ctx).
+		SetBody(map[string]interface{}{
+			"sourceDentryUuid":       sourceID,
+			"targetParentDentryUuid": targetID,
+			"operateFrom":            1,
+			"onlyCopyMeta":           false,
+		}).
+		SetResult(&result).
+		SetError(&result).
+		Post(apiBase + "/box/api/v2/dentry/copy")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(resp, result); err != nil {
+		return nil, err
+	}
+
+	return &Object{
+		Object: model.Object{
+			Path:     joinPath(dstDir.GetPath(), srcObj.GetName()),
+			Name:     srcObj.GetName(),
+			Size:     srcObj.GetSize(),
+			Modified: srcObj.ModTime(),
+			Ctime:    srcObj.CreateTime(),
+			IsFolder: srcObj.IsDir(),
+			HashInfo: srcObj.GetHash(),
+		},
+		DentryType: pickAliDocDentryType(srcObj),
+	}, nil
 }
 
 func (d *AliDoc) Remove(ctx context.Context, obj model.Obj) error {
