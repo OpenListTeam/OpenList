@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/go-resty/resty/v2"
 )
@@ -92,10 +91,6 @@ func toObjWithPath(fullPath string, item dentry) model.Obj {
 		// Keep size as 0 for folders; childrenCount is intentionally ignored.
 	}
 	return obj
-}
-
-func readonlyError() error {
-	return fmt.Errorf("alidoc driver is read-only: %w", errs.NotSupport)
 }
 
 func firstDownloadURL(resp downloadResp) (string, error) {
