@@ -46,10 +46,6 @@ type AddURLArgs struct {
 }
 
 func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, error) {
-	if err := ValidateOfflineDownloadURL(ctx, args.URL); err != nil {
-		return nil, err
-	}
-
 	// check storage
 	storage, dstDirActualPath, err := op.GetStorageAndActualPath(args.DstDirPath)
 	if err != nil {
