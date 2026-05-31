@@ -101,7 +101,38 @@ func (d *AliDoc) MakeDir(ctx context.Context, parentDir model.Obj, dirName strin
 }
 
 func (d *AliDoc) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	return nil, readonlyError()
+	if srcObj == nil {
+		return nil, fmt.Errorf("source object is nil")
+	}
+	if dstDir == nil {
+		return nil, fmt.Errorf("destination directory is nil")
+	}
+	sourceID := strings.TrimSpace(srcObj.GetID())
+	targetID := strings.TrimSpace(dstDir.GetID())
+	if sourceID == "" {
+		return nil, fmt.Errorf("source dentry uuid is empty")
+	}
+	if targetID == "" {
+		return nil, fmt.Errorf("target parent dentry uuid is empty")
+	}
+
+	var result apiResp
+	resp, err := d.request(ctx).
+		SetBody(map[string]interface{}{
+			"targetParentDentryUuid": targetID,
+			"sourceDentryUuid":       sourceID,
+			"operateFrom":            1,
+		}).
+		SetResult(&result).
+		SetError(&result).
+		Post(apiBase + "/box/api/v2/dentry/move")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(resp, result); err != nil {
+		return nil, err
+	}
+	return srcObj, nil
 }
 
 func (d *AliDoc) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
@@ -113,11 +144,30 @@ func (d *AliDoc) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 }
 
 func (d *AliDoc) Remove(ctx context.Context, obj model.Obj) error {
-	return readonlyError()
+	if obj == nil {
+		return fmt.Errorf("object is nil")
+	}
+	dentryUUID := strings.TrimSpace(obj.GetID())
+	if dentryUUID == "" {
+		return fmt.Errorf("dentry uuid is empty")
+	}
+
+	var result apiResp
+	resp, err := d.request(ctx).
+		SetBody(map[string]string{
+			"dentryUuid": dentryUUID,
+		}).
+		SetResult(&result).
+		SetError(&result).
+		Post(apiBase + "/box/api/v1/dentry/recycle")
+	if err != nil {
+		return err
+	}
+	return checkResp(resp, result)
 }
 
 func (d *AliDoc) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	return nil, readonlyError()
+	return d.put(ctx, dstDir, file, up)
 }
 
 var (

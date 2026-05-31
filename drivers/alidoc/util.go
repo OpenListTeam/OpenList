@@ -3,6 +3,7 @@ package alidoc
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -55,11 +56,27 @@ func checkResp(resp *resty.Response, result apiResp) error {
 }
 
 func toObj(parentPath string, item dentry) model.Obj {
+	return toObjWithPath(joinPath(parentPath, item.Name), item)
+}
+
+func toObjUsingBestPath(parentPath string, item dentry) model.Obj {
+	fullPath := strings.TrimSpace(item.Path)
+	if fullPath == "" {
+		fullPath = joinPath(parentPath, item.Name)
+	}
+	return toObjWithPath(fullPath, item)
+}
+
+func toObjWithPath(fullPath string, item dentry) model.Obj {
+	name := item.Name
+	if name == "" {
+		name = path.Base(fullPath)
+	}
 	obj := &Object{
 		Object: model.Object{
 			ID:       item.DentryUUID,
-			Path:     joinPath(parentPath, item.Name),
-			Name:     item.Name,
+			Path:     fullPath,
+			Name:     name,
 			Size:     item.FileSize,
 			Modified: msToTime(item.UpdatedTime),
 			Ctime:    msToTime(item.CreatedTime),
