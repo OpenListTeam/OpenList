@@ -9,7 +9,6 @@ import (
 	"io"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 )
 
 type sha1State struct {
@@ -86,7 +85,7 @@ func (s *sha1State) SumHex() string {
 	return hex.EncodeToString(out)
 }
 
-func buildUploadRequest(file model.FileStreamer, fileName string, fileSize int64, pdirKey string) (*preUploadArgs, error) {
+func buildUploadRequest(file model.File, fileName string, fileSize int64, pdirKey string) (*preUploadArgs, error) {
 	if fileSize < 0 {
 		return nil, fmt.Errorf("weiyun open upload does not support unknown file size")
 	}
@@ -135,7 +134,7 @@ func emptyUploadRequest(fileName string, pdirKey string) *preUploadArgs {
 }
 
 func collectBlockHashes(
-	file model.FileStreamer,
+	file model.File,
 	beforeBlockSize int64,
 	sha1Hash *sha1State,
 	md5Hash io.Writer,
@@ -161,7 +160,7 @@ func collectBlockHashes(
 }
 
 func finishLastBlock(
-	file model.FileStreamer,
+	file model.File,
 	beforeBlockSize int64,
 	lastBlockSize int64,
 	checkBlockSize int64,
@@ -194,11 +193,8 @@ func finishLastBlock(
 	return checkSHA, base64.StdEncoding.EncodeToString(tail), sha1Hash.SumHex(), nil
 }
 
-func readChunk(file model.FileStreamer, offset int64, length int64) ([]byte, error) {
-	reader, err := file.RangeRead(http_range.Range{Start: offset, Length: length})
-	if err != nil {
-		return nil, err
-	}
+func readChunk(file model.File, offset int64, length int64) ([]byte, error) {
+	reader := io.NewSectionReader(file, offset, length)
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err

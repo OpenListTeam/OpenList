@@ -8,20 +8,17 @@ import (
 )
 
 const (
-	defaultAPIURL       = "https://www.weiyun.com/api/v3/mcpserver"
-	defaultRootName     = "/"
-	listPageSize        = 50
-	maxUploadRounds     = 200
-	defaultUploadThread = 4
-	minUploadThread     = 4
-	maxUploadThread     = 32
-	uploadBlockSize     = 512 * 1024
-	checkBlockDivisor   = 128
-	cacheProgressEnd    = 10
-	uploadStateDone     = 2
-	emptyFileSHA1       = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-	emptyFileMD5        = "d41d8cd98f00b204e9800998ecf8427e"
-	emptySHA1StateHex   = "0123456789abcdeffedcba9876543210f0e1d2c3"
+	defaultAPIURL     = "https://www.weiyun.com/api/v3/mcpserver"
+	defaultRootName   = "/"
+	listPageSize      = 50
+	maxUploadRounds   = 200
+	uploadBlockSize   = 512 * 1024
+	checkBlockDivisor = 128
+	cacheProgressEnd  = 10
+	uploadStateDone   = 2
+	emptyFileSHA1     = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+	emptyFileMD5      = "d41d8cd98f00b204e9800998ecf8427e"
+	emptySHA1StateHex = "0123456789abcdeffedcba9876543210f0e1d2c3"
 )
 
 const (

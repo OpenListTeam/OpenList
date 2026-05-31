@@ -13,7 +13,6 @@ type Addition struct {
 	RootPDirKey      string `json:"root_pdir_key"`
 	OrderBy          string `json:"order_by" type:"select" options:"name,modified,none" default:"name"`
 	OrderDirection   string `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
-	UploadThread     int    `json:"upload_thread" type:"number" default:"4" help:"4<=thread<=32"`
 	DeleteCompletely bool   `json:"delete_completely" type:"bool" default:"false"`
 }
 

@@ -35,7 +35,6 @@ func (d *WeiYunOpen) Init(ctx context.Context) error {
 	if d.RootDirKey != "" && d.RootPDirKey == "" {
 		return errors.New("root_pdir_key is required when root_dir_key is set")
 	}
-	d.normalizeUploadThread()
 	d.client = newMCPClient(d.Addition)
 	root, err := d.discoverRoot(ctx)
 	if err != nil {
@@ -43,12 +42,6 @@ func (d *WeiYunOpen) Init(ctx context.Context) error {
 	}
 	d.root = root
 	return nil
-}
-
-func (d *WeiYunOpen) normalizeUploadThread() {
-	if d.UploadThread < minUploadThread || d.UploadThread > maxUploadThread {
-		d.UploadThread = defaultUploadThread
-	}
 }
 
 func (d *WeiYunOpen) Drop(ctx context.Context) error {
