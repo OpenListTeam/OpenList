@@ -13,15 +13,16 @@ type Addition struct {
 	AccessToken  string `json:"access_token" required:"false"`
 	RefreshToken string `json:"refresh_token" help:"To switch accounts, please clear this field"`
 	driver.RootID
-	OrderBy        string `json:"order_by" type:"select" options:"filename,filesize,lastOpTime" default:"filename"`
-	OrderDirection string `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
-	Type           string `json:"type" type:"select" options:"personal,family" default:"personal"`
-	FamilyID       string `json:"family_id"`
-	UploadMethod   string `json:"upload_method" type:"select" options:"stream,rapid,old" default:"stream"`
-	UploadThread   string `json:"upload_thread" default:"3" help:"1<=thread<=32"`
-	FamilyTransfer bool   `json:"family_transfer"`
-	RapidUpload    bool   `json:"rapid_upload"`
-	NoUseOcr       bool   `json:"no_use_ocr"`
+	OrderBy         string `json:"order_by" type:"select" options:"filename,filesize,lastOpTime" default:"filename"`
+	OrderDirection  string `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
+	Type            string `json:"type" type:"select" options:"personal,family" default:"personal"`
+	FamilyID        string `json:"family_id"`
+	UploadMethod    string `json:"upload_method" type:"select" options:"stream,rapid,old" default:"stream"`
+	UploadThread    string `json:"upload_thread" default:"3" help:"1<=thread<=32"`
+	FamilyTransfer  bool   `json:"family_transfer"`
+	RapidUpload     bool   `json:"rapid_upload"`
+	NoUseOcr        bool   `json:"no_use_ocr"`
+	GenerateTorrent bool   `json:"generate_torrent" help:"Generate torrent file with CAS extension after upload"`
 }
 
 var config = driver.Config{

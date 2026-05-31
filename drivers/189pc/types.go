@@ -432,7 +432,7 @@ type RenameResp struct {
 	ResMsg      string `json:"res_message"`
 	CreateDate  Time   `json:"createDate"`
 	FileCate    int    `json:"fileCata"`
-	ID          string `json:"id"`
+	ID          String `json:"id"`
 	LastOpTime  Time   `json:"lastOpTime"`
 	MD5         string `json:"md5"`
 	MediaType   int    `json:"mediaType"`
@@ -441,12 +441,12 @@ type RenameResp struct {
 	ParentID    int64  `json:"parentId"`
 	Rev         string `json:"rev"`
 	Size        int64  `json:"size"`
-	ResCode     string `json:"res_code"`
+	ResCode     any    `json:"res_code"` // int or string
 }
 
 func (r *RenameResp) toFile(f *Cloud189File) *Cloud189File {
 	return &Cloud189File{
-		ID:         String(r.ID),
+		ID:         r.ID,
 		Name:       r.Name,
 		Size:       r.Size,
 		Md5:        r.MD5,
@@ -458,7 +458,7 @@ func (r *RenameResp) toFile(f *Cloud189File) *Cloud189File {
 
 func (r *RenameResp) toFolder() *Cloud189Folder {
 	return &Cloud189Folder{
-		ID:         String(r.ID),
+		ID:         r.ID,
 		Name:       r.Name,
 		ParentID:   r.ParentID,
 		LastOpTime: r.LastOpTime,

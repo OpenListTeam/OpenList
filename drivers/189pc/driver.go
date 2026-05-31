@@ -293,7 +293,7 @@ func (y *Cloud189PC) Rename(ctx context.Context, srcObj model.Obj, newName strin
 		req.SetContext(ctx).SetQueryParams(queryParam)
 	}, nil, resp, isFamily)
 	if err != nil {
-		if resp.ResCode == "FileAlreadyExists" {
+		if code, ok := resp.ResCode.(string); ok && code == "FileAlreadyExists" {
 			return nil, errs.ObjectAlreadyExists
 		}
 		return nil, err
@@ -343,6 +343,7 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 
 	// 响应时间长,按需启用
 	if y.Addition.RapidUpload && !stream.IsForceStreamUpload() {
+		// 尝试妙传
 		if newObj, err := y.RapidUpload(ctx, dstDir, stream, isFamily, overwrite); err == nil {
 			return newObj, nil
 		}
@@ -351,10 +352,11 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	uploadMethod := y.UploadMethod
 	if stream.IsForceStreamUpload() {
 		uploadMethod = "stream"
-	}
-
-	// 旧版上传家庭云也有限制
-	if uploadMethod == "old" {
+	} else if y.Addition.RapidUpload && stream.GetFile() != nil {
+		// 文件流支持随机读取，走FastUpload计算MD5并尝试秒传
+		uploadMethod = "rapid"
+	} else if uploadMethod == "old" {
+		// 旧版上传家庭云也有限制
 		return y.OldUpload(ctx, dstDir, stream, up, isFamily, overwrite)
 	}
 
@@ -415,19 +417,6 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	case "stream":
 		if stream.GetSize() == 0 {
 			return y.FastUpload(ctx, dstDir, stream, up, isFamily, overwrite)
-		}
-		// 尝试秒传：如果已有MD5且启用了RapidUpload则用RapidUpload，否则走FastUpload（会计算MD5并尝试秒传）
-		if !stream.IsForceStreamUpload() {
-			fileMd5 := stream.GetHash().GetHash(utils.MD5)
-			if len(fileMd5) >= utils.MD5.Width && y.Addition.RapidUpload {
-				// 源文件已有MD5且启用了RapidUpload配置，尝试快速秒传
-				if newObj, err := y.RapidUpload(ctx, dstDir, stream, isFamily, overwrite); err == nil {
-					return newObj, nil
-				}
-			} else if len(fileMd5) < utils.MD5.Width {
-				// 源文件无MD5（如从本地复制），走FastUpload计算MD5并尝试秒传
-				return y.FastUpload(ctx, dstDir, stream, up, isFamily, overwrite)
-			}
 		}
 		fallthrough
 	default:
