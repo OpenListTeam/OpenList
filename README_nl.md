@@ -116,9 +116,10 @@ Dank u voor uw ondersteuning en begrip
 
 ## Documentatie
 
-- 📘 [Global Site](https://doc.oplist.org)
-- 📚 [Backup Site](https://doc.openlist.team)
-- 🌏 [CN Site](https://doc.oplist.org.cn)
+- 📘 [Documentatie](https://doc.oplist.org)
+- 🌏 [CN Mirror](https://doc.oplist.org.cn)
+- ⚖️ [Gebruiksvoorwaarden](https://doc.oplist.org/terms)
+- 🔒 [Privacybeleid](https://doc.oplist.org/privacy)
 
 ## Demo
 

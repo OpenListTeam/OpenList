@@ -1180,7 +1180,6 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 		"x-DeviceInfo":        "4|127.0.0.1|5|1.2.6|Xiaomi|23116PN5BC||02-00-00-00-00-00|android 15|1440x3200|android|||",
 		"Content-Type":        "text/plain;charset=UTF-8",
 		"Host":                "user-njs.yun.139.com",
-		"Connection":          "Keep-Alive",
 		"Accept-Encoding":     "gzip",
 		"User-Agent":          "okhttp/3.12.2",
 	}

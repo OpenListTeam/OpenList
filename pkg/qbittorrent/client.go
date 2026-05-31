@@ -99,12 +99,14 @@ func (c *client) login() error {
 	defer resp.Body.Close()
 
 	// avoid long waiting time if being upgraded to websocket connections (e.g. 101 responses)
-	// as per API documentation, qBittorrent returns only 200 on successful login
-	// so we safely treat any non-200 response as a failure
-	if resp.StatusCode != http.StatusOK {
+	// as per API documentation, qBittorrent returns only 200 on successful login (qBittorrent < 5.2.0)
+	// qBittorrent 5.2.0 /api/v2/auth/login returns HTTP 204 on success
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return errors.New("failed to login into qBittorrent webui with status code: " + resp.Status)
 	}
-
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
 	// check result
 	body := make([]byte, 2)
 	_, err = resp.Body.Read(body)
@@ -180,6 +182,10 @@ func (c *client) AddFromLink(link string, savePath string, id string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// qBittorrent 5.2.0 returns 204 on success.
+	if resp.StatusCode != http.StatusNoContent {
+		return nil
+	}
 
 	// check result
 	body := make([]byte, 2)

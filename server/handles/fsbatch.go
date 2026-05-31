@@ -49,7 +49,7 @@ func FsRecursiveMove(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	common.GinWithValue(c, conf.MetaKey, srcMeta)
+	common.GinAppendValues(c, conf.MetaKey, srcMeta)
 
 	dstDir, err := user.JoinPath(req.DstDir)
 	if err != nil {
@@ -183,7 +183,7 @@ func FsBatchRename(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	common.GinWithValue(c, conf.MetaKey, meta)
+	common.GinAppendValues(c, conf.MetaKey, meta)
 	for _, renameObject := range req.RenameObjects {
 		if renameObject.SrcName == "" || renameObject.NewName == "" {
 			continue
@@ -236,7 +236,7 @@ func FsRegexRename(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	common.GinWithValue(c, conf.MetaKey, meta)
+	common.GinAppendValues(c, conf.MetaKey, meta)
 
 	srcRegexp, err := regexp.Compile(req.SrcNameRegex)
 	if err != nil {
