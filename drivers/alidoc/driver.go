@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -51,13 +50,9 @@ func (d *AliDoc) Drop(ctx context.Context) error {
 
 func (d *AliDoc) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	parentID := d.RootFolderID
-	parentPath := "/"
 	if dir != nil {
 		if id := strings.TrimSpace(dir.GetID()); id != "" {
 			parentID = id
-		}
-		if p := dir.GetPath(); p != "" {
-			parentPath = p
 		}
 	}
 
@@ -71,7 +66,7 @@ func (d *AliDoc) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 		if strings.TrimSpace(item.DentryUUID) == "" || strings.TrimSpace(item.Name) == "" {
 			continue
 		}
-		objs = append(objs, toObj(parentPath, item))
+		objs = append(objs, toObj(item))
 	}
 	return objs, nil
 }
@@ -104,13 +99,9 @@ func (d *AliDoc) MakeDir(ctx context.Context, parentDir model.Obj, dirName strin
 	}
 
 	parentID := d.RootFolderID
-	parentPath := "/"
 	if parentDir != nil {
 		if id := strings.TrimSpace(parentDir.GetID()); id != "" {
 			parentID = id
-		}
-		if p := parentDir.GetPath(); p != "" {
-			parentPath = p
 		}
 	}
 
@@ -133,7 +124,6 @@ func (d *AliDoc) MakeDir(ctx context.Context, parentDir model.Obj, dirName strin
 	}
 	return &Object{
 		Object: model.Object{
-			Path:     joinPath(parentPath, dirName),
 			Name:     dirName,
 			IsFolder: true,
 		},
@@ -204,15 +194,9 @@ func (d *AliDoc) Rename(ctx context.Context, srcObj model.Obj, newName string) (
 	if err := checkResp(resp, result); err != nil {
 		return nil, err
 	}
-
-	newPath := srcObj.GetPath()
-	if newPath != "" {
-		newPath = path.Join(path.Dir(newPath), newName)
-	}
 	return &Object{
 		Object: model.Object{
 			ID:       srcObj.GetID(),
-			Path:     newPath,
 			Name:     newName,
 			Size:     srcObj.GetSize(),
 			Modified: srcObj.ModTime(),
@@ -260,7 +244,6 @@ func (d *AliDoc) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 
 	return &Object{
 		Object: model.Object{
-			Path:     joinPath(dstDir.GetPath(), srcObj.GetName()),
 			Name:     srcObj.GetName(),
 			Size:     srcObj.GetSize(),
 			Modified: srcObj.ModTime(),

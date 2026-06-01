@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"strings"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -30,19 +29,15 @@ func (d *AliDoc) put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 	}
 
 	parentID := d.RootFolderID
-	parentPath := "/"
 	if dstDir != nil {
 		if id := strings.TrimSpace(dstDir.GetID()); id != "" {
 			parentID = id
 		}
-		if p := dstDir.GetPath(); p != "" {
-			parentPath = p
-		}
 	}
 
-	src, size, err := prepareAliDocUploadFile(file)
-	if err != nil {
-		return nil, err
+	size := file.GetSize()
+	if size < 0 {
+		return nil, fmt.Errorf("unknown file size is not supported")
 	}
 
 	useMultipart := size > defaultAliDocMultipartThreshold
@@ -61,11 +56,14 @@ func (d *AliDoc) put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 		}
 	}
 
-	startedAt := time.Now()
 	if useMultipart && size > 0 {
+		src, err := prepareAliDocUploadFile(file)
+		if err != nil {
+			return nil, err
+		}
 		err = d.multipartUpload(ctx, src, size, info, up)
 	} else {
-		err = d.singleUpload(ctx, src, size, info, up)
+		err = d.singleUpload(ctx, file, size, info, up)
 	}
 	if err != nil {
 		return nil, err
@@ -73,55 +71,25 @@ func (d *AliDoc) put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 	if err := d.commitUpload(ctx, parentID, file.GetName(), size, info.Data.UploadKey); err != nil {
 		return nil, err
 	}
-
-	if obj, err := d.findUploadedObj(ctx, parentID, parentPath, file.GetName(), size, startedAt); err == nil && obj != nil {
-		return obj, nil
-	}
-
-	return &Object{
-		Object: model.Object{
-			Path:     joinPath(parentPath, file.GetName()),
-			Name:     file.GetName(),
-			Size:     size,
-			Modified: startedAt,
-			Ctime:    startedAt,
-		},
-		DentryType: "file",
-	}, nil
+	return nil, nil
 }
 
-func prepareAliDocUploadFile(file model.FileStreamer) (model.File, int64, error) {
-	size := file.GetSize()
-	if src := file.GetFile(); src != nil && size >= 0 {
+func prepareAliDocUploadFile(file model.FileStreamer) (model.File, error) {
+	if src := file.GetFile(); src != nil {
 		if _, err := src.Seek(0, io.SeekStart); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
-		return src, size, nil
+		return src, nil
 	}
 
 	src, err := file.CacheFullAndWriter(nil, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	size = file.GetSize()
-	if size < 0 {
-		cur, err := src.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return nil, 0, err
-		}
-		end, err := src.Seek(0, io.SeekEnd)
-		if err != nil {
-			return nil, 0, err
-		}
-		size = end
-		if _, err := src.Seek(cur, io.SeekStart); err != nil {
-			return nil, 0, err
-		}
-	}
-	return src, size, nil
+	return src, nil
 }
 
 func (d *AliDoc) getUploadInfo(ctx context.Context, parentDentryUUID, name string, fileSize int64, multipart bool) (uploadInfoResp, error) {
@@ -195,18 +163,14 @@ func calcAliDocPartSize(fileSize, minPartSize int64) int64 {
 	return partSize
 }
 
-func (d *AliDoc) singleUpload(ctx context.Context, src model.File, size int64, info uploadInfoResp, up driver.UpdateProgress) error {
+func (d *AliDoc) singleUpload(ctx context.Context, src model.FileStreamer, size int64, info uploadInfoResp, up driver.UpdateProgress) error {
 	bucket, objectKey, err := d.newOSSBucket(info)
 	if err != nil {
 		return err
 	}
-	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	reader := io.NewSectionReader(src, 0, size)
 	err = bucket.PutObject(
 		objectKey,
-		driver.NewLimitedUploadStream(ctx, io.TeeReader(reader, driver.NewProgress(size, up))),
+		driver.NewLimitedUploadStream(ctx, io.TeeReader(src, driver.NewProgress(size, up))),
 	)
 	if err != nil {
 		return err
@@ -319,48 +283,4 @@ func pickAliDocOSSEndpoint(sts uploadSTSSignatureInfo) (endpoint string, useCnam
 		return endpoint, true
 	}
 	return "", false
-}
-
-func (d *AliDoc) findUploadedObj(ctx context.Context, parentID, parentPath, name string, size int64, startedAt time.Time) (model.Obj, error) {
-	for attempt := 0; attempt < 5; attempt++ {
-		items, err := d.list(ctx, parentID)
-		if err != nil {
-			return nil, err
-		}
-		var (
-			matched    dentry
-			hasMatched bool
-		)
-		for i := range items {
-			item := items[i]
-			if item.DentryType != "file" || item.Name != name {
-				continue
-			}
-			if size >= 0 && item.FileSize != size {
-				continue
-			}
-			if !hasMatched || item.UpdatedTime > matched.UpdatedTime {
-				matched = item
-				hasMatched = true
-			}
-		}
-		if hasMatched {
-			obj := toObj(parentPath, matched)
-			if !obj.ModTime().IsZero() && obj.ModTime().Before(startedAt.Add(-5*time.Second)) {
-				// Keep polling briefly if only an older homonymous file is visible.
-			} else {
-				return obj, nil
-			}
-		}
-		if attempt < 4 {
-			timer := time.NewTimer(time.Duration(attempt+1) * 300 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, ctx.Err()
-			case <-timer.C:
-			}
-		}
-	}
-	return nil, fmt.Errorf("uploaded object not found")
 }
