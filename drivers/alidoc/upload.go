@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	netutil "github.com/OpenListTeam/OpenList/v4/internal/net"
+	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/google/uuid"
 )
@@ -57,11 +58,7 @@ func (d *AliDoc) put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 	}
 
 	if useMultipart && size > 0 {
-		src, err := prepareAliDocUploadFile(file)
-		if err != nil {
-			return nil, err
-		}
-		err = d.multipartUpload(ctx, src, size, info, up)
+		err = d.multipartUpload(ctx, file, size, info, up)
 	} else {
 		err = d.singleUpload(ctx, file, size, info, up)
 	}
@@ -72,24 +69,6 @@ func (d *AliDoc) put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 		return nil, err
 	}
 	return nil, nil
-}
-
-func prepareAliDocUploadFile(file model.FileStreamer) (model.File, error) {
-	if src := file.GetFile(); src != nil {
-		if _, err := src.Seek(0, io.SeekStart); err != nil {
-			return nil, err
-		}
-		return src, nil
-	}
-
-	src, err := file.CacheFullAndWriter(nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-	return src, nil
 }
 
 func (d *AliDoc) getUploadInfo(ctx context.Context, parentDentryUUID, name string, fileSize int64, multipart bool) (uploadInfoResp, error) {
@@ -179,7 +158,7 @@ func (d *AliDoc) singleUpload(ctx context.Context, src model.FileStreamer, size 
 	return nil
 }
 
-func (d *AliDoc) multipartUpload(ctx context.Context, src model.File, size int64, info uploadInfoResp, up driver.UpdateProgress) error {
+func (d *AliDoc) multipartUpload(ctx context.Context, src model.FileStreamer, size int64, info uploadInfoResp, up driver.UpdateProgress) error {
 	bucket, objectKey, err := d.newOSSBucket(info)
 	if err != nil {
 		return err
@@ -193,7 +172,10 @@ func (d *AliDoc) multipartUpload(ctx context.Context, src model.File, size int64
 	partSize := calcAliDocPartSize(size, info.Data.FileUploadProtocolConfig.MinPartSize)
 	partNum := int((size + partSize - 1) / partSize)
 	parts := make([]oss.UploadPart, 0, partNum)
-	progress := driver.NewProgress(size, up)
+	ss, err := streamPkg.NewStreamSectionReader(src, int(partSize), &up)
+	if err != nil {
+		return err
+	}
 
 	var offset int64
 	for partNumber := 1; partNumber <= partNum; partNumber++ {
@@ -207,14 +189,19 @@ func (d *AliDoc) multipartUpload(ctx context.Context, src model.File, size int64
 
 		var part oss.UploadPart
 		var uploadErr error
+		var reader io.ReadSeeker
 		for attempt := 0; attempt < 3; attempt++ {
-			reader := io.NewSectionReader(src, offset, length)
+			reader, uploadErr = ss.GetSectionReader(offset, length)
+			if uploadErr != nil {
+				break
+			}
 			part, uploadErr = bucket.UploadPart(
 				imur,
-				driver.NewLimitedUploadStream(ctx, io.TeeReader(reader, progress)),
+				driver.NewLimitedUploadStream(ctx, reader),
 				length,
 				partNumber,
 			)
+			ss.FreeSectionReader(reader)
 			if uploadErr == nil {
 				break
 			}
