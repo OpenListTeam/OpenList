@@ -6,12 +6,14 @@ import (
 	"io"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	netutil "github.com/OpenListTeam/OpenList/v4/internal/net"
 	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
+	"github.com/avast/retry-go"
 	"github.com/google/uuid"
 )
 
@@ -187,13 +189,15 @@ func (d *AliDoc) multipartUpload(ctx context.Context, src model.FileStreamer, si
 			length = remain
 		}
 
+		reader, err := ss.GetSectionReader(offset, length)
+		if err != nil {
+			return err
+		}
 		var part oss.UploadPart
 		var uploadErr error
-		var reader io.ReadSeeker
-		for attempt := 0; attempt < 3; attempt++ {
-			reader, uploadErr = ss.GetSectionReader(offset, length)
-			if uploadErr != nil {
-				break
+		err = retry.Do(func() error {
+			if _, err := reader.Seek(0, io.SeekStart); err != nil {
+				return err
 			}
 			part, uploadErr = bucket.UploadPart(
 				imur,
@@ -201,13 +205,16 @@ func (d *AliDoc) multipartUpload(ctx context.Context, src model.FileStreamer, si
 				length,
 				partNumber,
 			)
-			ss.FreeSectionReader(reader)
-			if uploadErr == nil {
-				break
-			}
-		}
-		if uploadErr != nil {
 			return uploadErr
+		},
+			retry.Context(ctx),
+			retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second),
+		)
+		ss.FreeSectionReader(reader)
+		if err != nil {
+			return err
 		}
 		parts = append(parts, part)
 		offset += length
