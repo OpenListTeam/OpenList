@@ -22,13 +22,6 @@ func (d *AliDoc) request(ctx context.Context) *resty.Request {
 		SetHeader("Origin", apiBase)
 }
 
-func joinPath(basePath, name string) string {
-	if basePath == "" || basePath == "/" {
-		return "/" + name
-	}
-	return strings.TrimRight(basePath, "/") + "/" + name
-}
-
 func msToTime(v int64) time.Time {
 	if v <= 0 {
 		return time.Time{}
@@ -88,6 +81,20 @@ func newClient() *resty.Client {
 	return client
 }
 
+func aliDocObjID(obj model.Obj) string {
+	if obj == nil {
+		return ""
+	}
+	return strings.TrimSpace(obj.GetID())
+}
+
+func (d *AliDoc) parentID(dir model.Obj) string {
+	if id := aliDocObjID(dir); id != "" {
+		return id
+	}
+	return d.RootFolderID
+}
+
 func pickAliDocDentryType(obj model.Obj) string {
 	if o, ok := obj.(*Object); ok && strings.TrimSpace(o.DentryType) != "" {
 		return o.DentryType
@@ -96,6 +103,19 @@ func pickAliDocDentryType(obj model.Obj) string {
 		return "folder"
 	}
 	return "file"
+}
+
+func (d *AliDoc) post(ctx context.Context, path string, body interface{}) error {
+	var result apiResp
+	resp, err := d.request(ctx).
+		SetBody(body).
+		SetResult(&result).
+		SetError(&result).
+		Post(apiBase + path)
+	if err != nil {
+		return err
+	}
+	return checkResp(resp, result)
 }
 
 func (d *AliDoc) list(ctx context.Context, dentryUUID string) ([]dentry, error) {

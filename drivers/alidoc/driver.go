@@ -91,37 +91,16 @@ func (d *AliDoc) MakeDir(ctx context.Context, parentDir model.Obj, dirName strin
 		return nil, fmt.Errorf("folder name is empty")
 	}
 
-	parentID := d.RootFolderID
-	if parentDir != nil {
-		if id := strings.TrimSpace(parentDir.GetID()); id != "" {
-			parentID = id
-		}
-	}
-
-	var result apiResp
-	resp, err := d.request(ctx).
-		SetBody(map[string]string{
-			"dentryType":             "folder",
-			"name":                   dirName,
-			"parentDentryUuid":       parentID,
-			"conflictHandleStrategy": "auto_rename",
-		}).
-		SetResult(&result).
-		SetError(&result).
-		Post(apiBase + "/box/api/v2/dentry/createfolder")
+	err := d.post(ctx, "/box/api/v2/dentry/createfolder", map[string]string{
+		"dentryType":             "folder",
+		"name":                   dirName,
+		"parentDentryUuid":       d.parentID(parentDir),
+		"conflictHandleStrategy": "auto_rename",
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := checkResp(resp, result); err != nil {
-		return nil, err
-	}
-	return &Object{
-		Object: model.Object{
-			Name:     dirName,
-			IsFolder: true,
-		},
-		DentryType: "folder",
-	}, nil
+	return nil, nil
 }
 
 func (d *AliDoc) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
@@ -131,8 +110,8 @@ func (d *AliDoc) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 	if dstDir == nil {
 		return nil, fmt.Errorf("destination directory is nil")
 	}
-	sourceID := strings.TrimSpace(srcObj.GetID())
-	targetID := strings.TrimSpace(dstDir.GetID())
+	sourceID := aliDocObjID(srcObj)
+	targetID := aliDocObjID(dstDir)
 	if sourceID == "" {
 		return nil, fmt.Errorf("source dentry uuid is empty")
 	}
@@ -140,20 +119,12 @@ func (d *AliDoc) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 		return nil, fmt.Errorf("target parent dentry uuid is empty")
 	}
 
-	var result apiResp
-	resp, err := d.request(ctx).
-		SetBody(map[string]interface{}{
-			"targetParentDentryUuid": targetID,
-			"sourceDentryUuid":       sourceID,
-			"operateFrom":            1,
-		}).
-		SetResult(&result).
-		SetError(&result).
-		Post(apiBase + "/box/api/v2/dentry/move")
+	err := d.post(ctx, "/box/api/v2/dentry/move", map[string]interface{}{
+		"targetParentDentryUuid": targetID,
+		"sourceDentryUuid":       sourceID,
+		"operateFrom":            1,
+	})
 	if err != nil {
-		return nil, err
-	}
-	if err := checkResp(resp, result); err != nil {
 		return nil, err
 	}
 	return srcObj, nil
@@ -167,38 +138,19 @@ func (d *AliDoc) Rename(ctx context.Context, srcObj model.Obj, newName string) (
 	if newName == "" {
 		return nil, fmt.Errorf("new name is empty")
 	}
-	dentryUUID := strings.TrimSpace(srcObj.GetID())
+	dentryUUID := aliDocObjID(srcObj)
 	if dentryUUID == "" {
 		return nil, fmt.Errorf("dentry uuid is empty")
 	}
 
-	var result apiResp
-	resp, err := d.request(ctx).
-		SetBody(map[string]string{
-			"dentryUuid": dentryUUID,
-			"name":       newName,
-		}).
-		SetResult(&result).
-		SetError(&result).
-		Post(apiBase + "/box/api/v2/dentry/rename")
+	err := d.post(ctx, "/box/api/v2/dentry/rename", map[string]string{
+		"dentryUuid": dentryUUID,
+		"name":       newName,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := checkResp(resp, result); err != nil {
-		return nil, err
-	}
-	return &Object{
-		Object: model.Object{
-			ID:       srcObj.GetID(),
-			Name:     newName,
-			Size:     srcObj.GetSize(),
-			Modified: srcObj.ModTime(),
-			Ctime:    srcObj.CreateTime(),
-			IsFolder: srcObj.IsDir(),
-			HashInfo: srcObj.GetHash(),
-		},
-		DentryType: pickAliDocDentryType(srcObj),
-	}, nil
+	return nil, nil
 }
 
 func (d *AliDoc) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
@@ -208,8 +160,8 @@ func (d *AliDoc) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 	if dstDir == nil {
 		return nil, fmt.Errorf("destination directory is nil")
 	}
-	sourceID := strings.TrimSpace(srcObj.GetID())
-	targetID := strings.TrimSpace(dstDir.GetID())
+	sourceID := aliDocObjID(srcObj)
+	targetID := aliDocObjID(dstDir)
 	if sourceID == "" {
 		return nil, fmt.Errorf("source dentry uuid is empty")
 	}
@@ -217,58 +169,29 @@ func (d *AliDoc) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 		return nil, fmt.Errorf("target parent dentry uuid is empty")
 	}
 
-	var result apiResp
-	resp, err := d.request(ctx).
-		SetBody(map[string]interface{}{
-			"sourceDentryUuid":       sourceID,
-			"targetParentDentryUuid": targetID,
-			"operateFrom":            1,
-			"onlyCopyMeta":           false,
-		}).
-		SetResult(&result).
-		SetError(&result).
-		Post(apiBase + "/box/api/v2/dentry/copy")
+	err := d.post(ctx, "/box/api/v2/dentry/copy", map[string]interface{}{
+		"sourceDentryUuid":       sourceID,
+		"targetParentDentryUuid": targetID,
+		"operateFrom":            1,
+		"onlyCopyMeta":           false,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := checkResp(resp, result); err != nil {
-		return nil, err
-	}
-
-	return &Object{
-		Object: model.Object{
-			Name:     srcObj.GetName(),
-			Size:     srcObj.GetSize(),
-			Modified: srcObj.ModTime(),
-			Ctime:    srcObj.CreateTime(),
-			IsFolder: srcObj.IsDir(),
-			HashInfo: srcObj.GetHash(),
-		},
-		DentryType: pickAliDocDentryType(srcObj),
-	}, nil
+	return nil, nil
 }
 
 func (d *AliDoc) Remove(ctx context.Context, obj model.Obj) error {
 	if obj == nil {
 		return fmt.Errorf("object is nil")
 	}
-	dentryUUID := strings.TrimSpace(obj.GetID())
+	dentryUUID := aliDocObjID(obj)
 	if dentryUUID == "" {
 		return fmt.Errorf("dentry uuid is empty")
 	}
-
-	var result apiResp
-	resp, err := d.request(ctx).
-		SetBody(map[string]string{
-			"dentryUuid": dentryUUID,
-		}).
-		SetResult(&result).
-		SetError(&result).
-		Post(apiBase + "/box/api/v1/dentry/recycle")
-	if err != nil {
-		return err
-	}
-	return checkResp(resp, result)
+	return d.post(ctx, "/box/api/v1/dentry/recycle", map[string]string{
+		"dentryUuid": dentryUUID,
+	})
 }
 
 func (d *AliDoc) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
