@@ -49,14 +49,7 @@ func (d *AliDoc) Drop(ctx context.Context) error {
 }
 
 func (d *AliDoc) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	parentID := d.RootFolderID
-	if dir != nil {
-		if id := strings.TrimSpace(dir.GetID()); id != "" {
-			parentID = id
-		}
-	}
-
-	items, err := d.list(ctx, parentID)
+	items, err := d.list(ctx, dir.GetID())
 	if err != nil {
 		return nil, err
 	}
