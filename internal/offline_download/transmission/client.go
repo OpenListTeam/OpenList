@@ -113,7 +113,7 @@ func (t *Transmission) AddURL(args *tool.AddUrlArgs) (string, error) {
 		rpcPayload.Filename = &args.Url
 	}
 
-	torrent, err := t.client.TorrentAdd(context.TODO(), rpcPayload)
+	torrent, err := t.client.TorrentAdd(args.Ctx, rpcPayload)
 	if err != nil {
 		return "", err
 	}
@@ -130,7 +130,7 @@ func (t *Transmission) Remove(task *tool.DownloadTask) error {
 	if err != nil {
 		return err
 	}
-	err = t.client.TorrentRemove(context.TODO(), transmissionrpc.TorrentRemovePayload{
+	err = t.client.TorrentRemove(task.Ctx(), transmissionrpc.TorrentRemovePayload{
 		IDs:             []int64{gid},
 		DeleteLocalData: false,
 	})
@@ -142,7 +142,7 @@ func (t *Transmission) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	if err != nil {
 		return nil, err
 	}
-	infos, err := t.client.TorrentGetAllFor(context.TODO(), []int64{gid})
+	infos, err := t.client.TorrentGetAllFor(task.Ctx(), []int64{gid})
 	if err != nil {
 		return nil, err
 	}

@@ -303,12 +303,9 @@ type safeTransport struct {
 
 func (t *safeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := req.URL.Hostname()
-	addrs, err := gonet.DefaultResolver.LookupIPAddr(context.Background(), host)
-	if err != nil {
+	addrs, err := gonet.DefaultResolver.LookupIPAddr(req.Context(), host)
+	if err != nil || len(addrs) == 0 {
 		return nil, errors.Wrapf(err, "failed to resolve host: %s", host)
-	}
-	if len(addrs) == 0 {
-		return nil, fmt.Errorf("no IP addresses found for host: %s", host)
 	}
 	for _, addr := range addrs {
 		if isCloudMetadataIP(addr.IP) {
