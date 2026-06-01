@@ -217,6 +217,7 @@ func (d *AliDoc) multipartUpload(ctx context.Context, src model.FileStreamer, si
 			return err
 		}
 		parts = append(parts, part)
+		up(100 * float64(len(parts)) / float64(partNum+1))
 		offset += length
 	}
 
