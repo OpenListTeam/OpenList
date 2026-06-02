@@ -38,28 +38,23 @@ func (d *Wps) Init(ctx context.Context) error {
 
 	d.client = base.NewRestyClient()
 
-	resp, err := d.request(ctx).SetResult(&d.login).Get("https://account.kdocs.cn/api/v3/islogin")
+	d.login = &loginState{}
+	resp, err := d.request(ctx).SetResult(d.login).Get("https://account.kdocs.cn/api/v3/islogin")
 	if err != nil {
 		return err
 	}
 	if !resp.IsSuccess() {
 		return fmt.Errorf("failed to check login status, status code: %d, body: %s", resp.StatusCode(), resp.String())
 	}
-	if d.login == nil {
-		return fmt.Errorf("wps login failed: empty login state, please check cookie")
+	if d.login.CompanyID == 0 {
+		return fmt.Errorf("wps company id is empty, please check business account login")
 	}
-
 	return nil
 }
 
 func (d *Wps) Drop(ctx context.Context) error {
-
-	if d.client != nil {
-		d.client = nil
-	}
-	if d.login != nil {
-		d.login = nil
-	}
+	d.client = nil
+	d.login = nil
 	return nil
 }
 
@@ -385,10 +380,6 @@ func (d *Wps) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 }
 
 func (d *Wps) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	if d.login == nil {
-		return nil, fmt.Errorf("wps login state is nil, please reinitialize or check cookie")
-	}
-
 	if d.isPersonal() {
 		url := ENDPOINT_PERSONAL + "/api/v3/spaces"
 		var resp spacesResp
@@ -406,11 +397,6 @@ func (d *Wps) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 			},
 		}, nil
 	}
-
-	if d.login.CompanyID == 0 {
-		return nil, fmt.Errorf("wps company id is empty, please check business account login")
-	}
-
 	url := ENDPOINT_BUSINESS + "/3rd/plussvr/compose/v1/u/companies/batch/service-space?comp_ids=" + fmt.Sprint(d.login.CompanyID)
 	var resp serviceSpaceResp
 	r, err := d.request(ctx).SetResult(&resp).SetError(&resp).Get(url)
