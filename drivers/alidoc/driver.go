@@ -40,9 +40,6 @@ func (d *AliDoc) Init(ctx context.Context) error {
 	if err := d.checkCookie(ctx); err != nil {
 		return err
 	}
-	if _, err := d.list(ctx, d.RootFolderID); err != nil {
-		return err
-	}
 	return nil
 }
 
