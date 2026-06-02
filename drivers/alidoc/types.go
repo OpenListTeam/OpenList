@@ -1,7 +1,5 @@
 package alidoc
 
-import "github.com/OpenListTeam/OpenList/v4/internal/model"
-
 type apiResp struct {
 	Status    int    `json:"status"`
 	IsSuccess bool   `json:"isSuccess"`
@@ -86,13 +84,4 @@ type uploadSTSSignatureInfo struct {
 	Cname                 string `json:"cname"`
 	EndPoint              string `json:"endPoint"`
 	ObjectKey             string `json:"objectKey"`
-}
-
-type Object struct {
-	model.Object
-	DentryType  string
-	ContentType string
-	Extension   string
-	PreviewURL  string
-	EditURL     string
 }

@@ -23,54 +23,36 @@ const (
 	maxAliDocMultipartParts         = 10000
 )
 
-func (d *AliDoc) put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	if file == nil {
-		return nil, fmt.Errorf("file is nil")
-	}
-	if up == nil {
-		up = func(float64) {}
-	}
-
-	parentID := d.RootFolderID
-	if dstDir != nil {
-		if id := strings.TrimSpace(dstDir.GetID()); id != "" {
-			parentID = id
-		}
-	}
-
+func (d *AliDoc) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) error {
 	size := file.GetSize()
-	if size < 0 {
-		return nil, fmt.Errorf("unknown file size is not supported")
-	}
-
 	useMultipart := size > defaultAliDocMultipartThreshold
-	info, err := d.getUploadInfo(ctx, parentID, file.GetName(), size, useMultipart)
+	info, err := d.getUploadInfo(ctx, dstDir.GetID(), file.GetName(), size, useMultipart)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if size > 0 {
 		partSize := calcAliDocPartSize(size, info.Data.FileUploadProtocolConfig.MinPartSize)
 		if size > partSize && !useMultipart {
 			useMultipart = true
-			info, err = d.getUploadInfo(ctx, parentID, file.GetName(), size, true)
+			info, err = d.getUploadInfo(ctx, dstDir.GetID(), file.GetName(), size, true)
 			if err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
 
-	if useMultipart && size > 0 {
+	if useMultipart {
 		err = d.multipartUpload(ctx, file, size, info, up)
 	} else {
 		err = d.singleUpload(ctx, file, size, info, up)
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := d.commitUpload(ctx, parentID, file.GetName(), size, info.Data.UploadKey); err != nil {
-		return nil, err
+	if err := d.commitUpload(ctx, dstDir.GetID(), file.GetName(), size, info.Data.UploadKey); err != nil {
+		return err
 	}
-	return nil, nil
+	return nil
 }
 
 func (d *AliDoc) getUploadInfo(ctx context.Context, parentDentryUUID, name string, fileSize int64, multipart bool) (uploadInfoResp, error) {

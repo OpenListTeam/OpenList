@@ -3,7 +3,6 @@ package alidoc
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -47,25 +46,14 @@ func checkResp(resp *resty.Response, result apiResp) error {
 }
 
 func toObj(item dentry) model.Obj {
-	obj := &Object{
-		Object: model.Object{
-			ID:       item.DentryUUID,
-			Name:     item.Name,
-			Size:     item.FileSize,
-			Modified: msToTime(item.UpdatedTime),
-			Ctime:    msToTime(item.CreatedTime),
-			IsFolder: item.DentryType == "folder",
-		},
-		DentryType:  item.DentryType,
-		ContentType: item.ContentType,
-		Extension:   item.Extension,
-		PreviewURL:  item.URL.PCChildAppPreviewURL,
-		EditURL:     item.URL.PCChildAppURL,
+	return &model.Object{
+		ID:       item.DentryUUID,
+		Name:     item.Name,
+		Size:     item.FileSize,
+		Modified: msToTime(item.UpdatedTime),
+		Ctime:    msToTime(item.CreatedTime),
+		IsFolder: item.DentryType == "folder",
 	}
-	if obj.IsDir() && item.DentryStatistic.ChildrenCount > 0 && obj.Size == 0 {
-		// Keep size as 0 for folders; childrenCount is intentionally ignored.
-	}
-	return obj
 }
 
 func firstDownloadURL(resp downloadResp) (string, error) {
@@ -79,30 +67,6 @@ func newClient() *resty.Client {
 	client := base.NewRestyClient()
 	client.SetHeader("User-Agent", base.UserAgent)
 	return client
-}
-
-func aliDocObjID(obj model.Obj) string {
-	if obj == nil {
-		return ""
-	}
-	return strings.TrimSpace(obj.GetID())
-}
-
-func (d *AliDoc) parentID(dir model.Obj) string {
-	if id := aliDocObjID(dir); id != "" {
-		return id
-	}
-	return d.RootFolderID
-}
-
-func pickAliDocDentryType(obj model.Obj) string {
-	if o, ok := obj.(*Object); ok && strings.TrimSpace(o.DentryType) != "" {
-		return o.DentryType
-	}
-	if obj != nil && obj.IsDir() {
-		return "folder"
-	}
-	return "file"
 }
 
 func (d *AliDoc) post(ctx context.Context, path string, body interface{}) error {

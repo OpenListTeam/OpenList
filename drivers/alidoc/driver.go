@@ -65,7 +65,7 @@ func (d *AliDoc) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 }
 
 func (d *AliDoc) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	if file == nil || file.IsDir() {
+	if file.IsDir() {
 		return nil, fmt.Errorf("alidoc does not support directory links")
 	}
 	resp, err := d.download(ctx, file.GetID())
@@ -86,15 +86,10 @@ func (d *AliDoc) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 }
 
 func (d *AliDoc) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	dirName = strings.TrimSpace(dirName)
-	if dirName == "" {
-		return nil, fmt.Errorf("folder name is empty")
-	}
-
 	err := d.post(ctx, "/box/api/v2/dentry/createfolder", map[string]string{
 		"dentryType":             "folder",
 		"name":                   dirName,
-		"parentDentryUuid":       d.parentID(parentDir),
+		"parentDentryUuid":       parentDir.GetID(),
 		"conflictHandleStrategy": "auto_rename",
 	})
 	if err != nil {
@@ -104,24 +99,9 @@ func (d *AliDoc) MakeDir(ctx context.Context, parentDir model.Obj, dirName strin
 }
 
 func (d *AliDoc) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	if srcObj == nil {
-		return nil, fmt.Errorf("source object is nil")
-	}
-	if dstDir == nil {
-		return nil, fmt.Errorf("destination directory is nil")
-	}
-	sourceID := aliDocObjID(srcObj)
-	targetID := aliDocObjID(dstDir)
-	if sourceID == "" {
-		return nil, fmt.Errorf("source dentry uuid is empty")
-	}
-	if targetID == "" {
-		return nil, fmt.Errorf("target parent dentry uuid is empty")
-	}
-
 	err := d.post(ctx, "/box/api/v2/dentry/move", map[string]interface{}{
-		"targetParentDentryUuid": targetID,
-		"sourceDentryUuid":       sourceID,
+		"targetParentDentryUuid": dstDir.GetID(),
+		"sourceDentryUuid":       srcObj.GetID(),
 		"operateFrom":            1,
 	})
 	if err != nil {
@@ -131,71 +111,30 @@ func (d *AliDoc) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 }
 
 func (d *AliDoc) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	if srcObj == nil {
-		return nil, fmt.Errorf("source object is nil")
-	}
-	newName = strings.TrimSpace(newName)
-	if newName == "" {
-		return nil, fmt.Errorf("new name is empty")
-	}
-	dentryUUID := aliDocObjID(srcObj)
-	if dentryUUID == "" {
-		return nil, fmt.Errorf("dentry uuid is empty")
-	}
-
 	err := d.post(ctx, "/box/api/v2/dentry/rename", map[string]string{
-		"dentryUuid": dentryUUID,
+		"dentryUuid": srcObj.GetID(),
 		"name":       newName,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return nil, nil
+	srcObj.(*model.Object).Name = newName
+	return srcObj, nil
 }
 
-func (d *AliDoc) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	if srcObj == nil {
-		return nil, fmt.Errorf("source object is nil")
-	}
-	if dstDir == nil {
-		return nil, fmt.Errorf("destination directory is nil")
-	}
-	sourceID := aliDocObjID(srcObj)
-	targetID := aliDocObjID(dstDir)
-	if sourceID == "" {
-		return nil, fmt.Errorf("source dentry uuid is empty")
-	}
-	if targetID == "" {
-		return nil, fmt.Errorf("target parent dentry uuid is empty")
-	}
-
-	err := d.post(ctx, "/box/api/v2/dentry/copy", map[string]interface{}{
-		"sourceDentryUuid":       sourceID,
-		"targetParentDentryUuid": targetID,
+func (d *AliDoc) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
+	return d.post(ctx, "/box/api/v2/dentry/copy", map[string]interface{}{
+		"sourceDentryUuid":       srcObj.GetID(),
+		"targetParentDentryUuid": dstDir.GetID(),
 		"operateFrom":            1,
 		"onlyCopyMeta":           false,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return nil, nil
 }
 
 func (d *AliDoc) Remove(ctx context.Context, obj model.Obj) error {
-	if obj == nil {
-		return fmt.Errorf("object is nil")
-	}
-	dentryUUID := aliDocObjID(obj)
-	if dentryUUID == "" {
-		return fmt.Errorf("dentry uuid is empty")
-	}
 	return d.post(ctx, "/box/api/v1/dentry/recycle", map[string]string{
-		"dentryUuid": dentryUUID,
+		"dentryUuid": obj.GetID(),
 	})
-}
-
-func (d *AliDoc) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	return d.put(ctx, dstDir, file, up)
 }
 
 var (
@@ -203,7 +142,6 @@ var (
 	_ driver.MkdirResult  = (*AliDoc)(nil)
 	_ driver.MoveResult   = (*AliDoc)(nil)
 	_ driver.RenameResult = (*AliDoc)(nil)
-	_ driver.CopyResult   = (*AliDoc)(nil)
+	_ driver.Copy         = (*AliDoc)(nil)
 	_ driver.Remove       = (*AliDoc)(nil)
-	_ driver.PutResult    = (*AliDoc)(nil)
 )
