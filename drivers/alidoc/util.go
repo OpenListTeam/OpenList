@@ -82,6 +82,18 @@ func (d *AliDoc) post(ctx context.Context, path string, body interface{}) error 
 	return checkResp(resp, result)
 }
 
+func (d *AliDoc) checkCookie(ctx context.Context) error {
+	var result apiResp
+	resp, err := d.request(ctx).
+		SetResult(&result).
+		SetError(&result).
+		Get(apiBase + "/portal/api/v1/mine/info")
+	if err != nil {
+		return err
+	}
+	return checkResp(resp, result)
+}
+
 func (d *AliDoc) list(ctx context.Context, dentryUUID string) ([]dentry, error) {
 	var result listResp
 	resp, err := d.request(ctx).
