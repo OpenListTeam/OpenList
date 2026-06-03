@@ -460,6 +460,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 	if model.ObjHasMask(srcRawObj, model.NoRename) {
 		return errors.WithStack(errs.PermissionDenied)
 	}
+	oldName := srcRawObj.GetName()
 	srcObj := model.UnwrapObjName(srcRawObj)
 
 	var newObj model.Obj
@@ -477,19 +478,19 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 
 	dirKey := Key(storage, stdpath.Dir(srcPath))
 	if !srcRawObj.IsDir() {
-		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, srcRawObj.GetName()))
+		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, oldName))
 		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstName))
 	}
 	if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(dirKey); exist {
 			if srcRawObj.IsDir() {
-				Cache.deleteDirectoryTree(stdpath.Join(dirKey, srcRawObj.GetName()))
+				Cache.deleteDirectoryTree(stdpath.Join(dirKey, oldName))
 			}
 			if newObj == nil {
 				newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
 			}
 			newObj = wrapObjName(storage, newObj)
-			cache.UpdateObject(srcRawObj.GetName(), newObj)
+			cache.UpdateObject(oldName, newObj)
 		}
 	}
 
