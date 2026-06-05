@@ -24,7 +24,6 @@ type Addition struct {
 var config = driver.Config{
 	Name:              "GuangYaPan",
 	LocalSort:         false,
-	OnlyLocal:         false,
 	OnlyProxy:         false,
 	NoCache:           false,
 	NoUpload:          false,
