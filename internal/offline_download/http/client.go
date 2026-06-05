@@ -79,11 +79,13 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 		filename = fmt.Sprintf("%s-%d-%x", filename, time.Now().UnixMilli(), rand.Uint32())
 	}
 	fileSize := resp.ContentLength
+	task.SetFileInfo(filename, fileSize)
 	if streamPut {
 		if fileSize == 0 {
 			start, end, _ := http_range.ParseContentRange(resp.Header.Get("Content-Range"))
 			fileSize = start + end
 		}
+		task.SetFileInfo(filename, fileSize)
 		task.SetTotalBytes(fileSize)
 		task.TempDir = filename
 		return nil

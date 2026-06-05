@@ -3,6 +3,7 @@ package aria2
 import (
 	"context"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -99,8 +100,12 @@ func (a *Aria2) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		Completed:  info.Status == "complete",
 		Err:        err,
 		TotalBytes: total,
+		FileName:   fileNameFromStatus(info),
+		FileSize:   total,
 	}
-	s.Progress = float64(downloaded) / float64(total) * 100
+	if total > 0 {
+		s.Progress = float64(downloaded) / float64(total) * 100
+	}
 	if len(info.FollowedBy) != 0 {
 		s.NewGID = info.FollowedBy[0]
 		notify.Signals.Delete(task.GID)
@@ -124,6 +129,19 @@ func (a *Aria2) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		return nil, errors.Errorf("[aria2] unknown status %s", info.Status)
 	}
 	return s, nil
+}
+
+func fileNameFromStatus(info rpc.StatusInfo) string {
+	if info.BitTorrent.Info.Name != "" {
+		return info.BitTorrent.Info.Name
+	}
+	for _, file := range info.Files {
+		if file.Selected == "false" || file.Path == "" {
+			continue
+		}
+		return path.Base(file.Path)
+	}
+	return ""
 }
 
 var _ tool.Tool = (*Aria2)(nil)
