@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Xhofe/go-cache"
 	guangyapandriver "github.com/OpenListTeam/OpenList/v4/drivers/guangyapan"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
+	"github.com/Xhofe/go-cache"
 )
 
 const (
