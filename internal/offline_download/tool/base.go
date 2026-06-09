@@ -1,6 +1,8 @@
 package tool
 
 import (
+	"context"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
@@ -9,6 +11,7 @@ type AddUrlArgs struct {
 	UID     string
 	TempDir string
 	Signal  chan int
+	Ctx     context.Context
 }
 
 type Status struct {
