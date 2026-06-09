@@ -24,6 +24,7 @@ func (d *GithubReleases) GetRequest(url string) (*resty.Response, error) {
 	}
 	if res.StatusCode() != 200 {
 		log.Warn("failed to get request: ", res.StatusCode(), res.String())
+		return nil, fmt.Errorf("github api error: status %d", res.StatusCode())
 	}
 	return res, nil
 }
