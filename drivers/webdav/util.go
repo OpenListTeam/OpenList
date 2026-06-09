@@ -6,6 +6,7 @@ import (
 	"net/http/cookiejar"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/webdav/odrvcookie"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/gowebdav"
 )
@@ -49,4 +50,14 @@ func getPath(obj model.Obj) string {
 		return obj.GetPath() + "/"
 	}
 	return obj.GetPath()
+}
+
+func normalizeError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if gowebdav.IsErrNotFound(err) {
+		return errs.ObjectNotFound
+	}
+	return err
 }

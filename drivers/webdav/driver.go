@@ -52,7 +52,7 @@ func (d *WebDav) Drop(ctx context.Context) error {
 func (d *WebDav) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	files, err := d.client.ReadDir(dir.GetPath())
 	if err != nil {
-		return nil, err
+		return nil, normalizeError(err)
 	}
 	return utils.SliceConvert(files, func(src os.FileInfo) (model.Obj, error) {
 		return &model.Object{
@@ -68,7 +68,7 @@ func (d *WebDav) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	url, header, err := d.client.Link(file.GetPath())
 	if err != nil {
-		return nil, err
+		return nil, normalizeError(err)
 	}
 	if args.Redirect {
 		// get the url after redirect
@@ -93,23 +93,23 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 }
 
 func (d *WebDav) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	return d.client.MkdirAll(path.Join(parentDir.GetPath(), dirName), 0644)
+	return normalizeError(d.client.MkdirAll(path.Join(parentDir.GetPath(), dirName), 0644))
 }
 
 func (d *WebDav) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	return d.client.Rename(getPath(srcObj), path.Join(dstDir.GetPath(), srcObj.GetName()), true)
+	return normalizeError(d.client.Rename(getPath(srcObj), path.Join(dstDir.GetPath(), srcObj.GetName()), true))
 }
 
 func (d *WebDav) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	return d.client.Rename(getPath(srcObj), path.Join(path.Dir(srcObj.GetPath()), newName), true)
+	return normalizeError(d.client.Rename(getPath(srcObj), path.Join(path.Dir(srcObj.GetPath()), newName), true))
 }
 
 func (d *WebDav) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	return d.client.Copy(getPath(srcObj), path.Join(dstDir.GetPath(), srcObj.GetName()), true)
+	return normalizeError(d.client.Copy(getPath(srcObj), path.Join(dstDir.GetPath(), srcObj.GetName()), true))
 }
 
 func (d *WebDav) Remove(ctx context.Context, obj model.Obj) error {
-	return d.client.RemoveAll(getPath(obj))
+	return normalizeError(d.client.RemoveAll(getPath(obj)))
 }
 
 func (d *WebDav) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
@@ -122,7 +122,7 @@ func (d *WebDav) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer
 		UpdateProgress: up,
 	})
 	err := d.client.WriteStream(path.Join(dstDir.GetPath(), s.GetName()), reader, 0644, callback)
-	return err
+	return normalizeError(err)
 }
 
 // implements driver.Getter interface
@@ -130,7 +130,7 @@ func (d *WebDav) Get(ctx context.Context, _path string) (model.Obj, error) {
 	_path = path.Join(d.GetRootPath(), _path)
 	info, err := d.client.Stat(_path)
 	if err != nil {
-		return nil, err
+		return nil, normalizeError(err)
 	}
 
 	return &model.Object{
