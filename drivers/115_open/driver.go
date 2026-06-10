@@ -2,6 +2,7 @@ package _115_open
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	stdpath "path"
@@ -14,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -169,6 +171,9 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = stdpath.Join(d.parentPath, path)
 	resp, err := d.client.GetFolderInfoByPath(ctx, path)
 	if err != nil {
+		if errors.Is(err, sdk.ErrObjectNotFound) {
+			return nil, errs.ObjectNotFound
+		}
 		return nil, err
 	}
 	return &Obj{
@@ -218,7 +223,7 @@ func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 		return nil, err
 	}
 	_, err := d.client.UpdateFile(ctx, &sdk.UpdateFileReq{
-		FileID:  srcObj.GetID(),
+		FileID:   srcObj.GetID(),
 		FileName: newName,
 	})
 	if err != nil {
