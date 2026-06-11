@@ -170,6 +170,8 @@ func (d *PikPak) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 }
 
 func pickMediaLink(medias []Media) string {
+	// Prefer the original media to keep full quality, then fall back to the
+	// server-selected default stream, and finally any available media URL.
 	for _, media := range medias {
 		if media.IsOrigin && media.Link.Url != "" {
 			return media.Link.Url
