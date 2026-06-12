@@ -45,11 +45,11 @@ func (d *Yun139) GetAddition() driver.Additional {
 
 func (d *Yun139) Init(ctx context.Context) error {
 	if d.ref == nil {
-	`tif err := d.validateAndInitCredentials(); err != nil {
-	`t`treturn err
-	`t}
+		if err := d.validateAndInitCredentials(); err != nil {
+			return err
+		}
 
-	`tif d.Authorization != "" {
+		if d.Authorization != "" {
 			err := d.refreshToken()
 			if err != nil {
 				return err
