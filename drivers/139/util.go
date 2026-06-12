@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/md5"
 	crypto_rand "crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
