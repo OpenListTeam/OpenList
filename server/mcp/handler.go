@@ -319,7 +319,8 @@ func (s *Server) createSessionLocked(userID uint, protocolVersion string, now ti
 
 func (s *Server) validateRequestProtocolVersion(requestedVersion string, negotiatedVersion string) bool {
 	if requestedVersion == "" {
-		return false
+		_, ok := supportedProtocolVersions[negotiatedVersion]
+		return ok
 	}
 	if _, ok := supportedProtocolVersions[requestedVersion]; !ok {
 		return false
@@ -490,13 +491,16 @@ func acceptsStreamableHTTP(accept string) bool {
 			}
 		}
 		switch mediaType {
-		case "application/json":
+		case "*/*":
 			hasJSON = true
-		case "text/event-stream":
+			hasSSE = true
+		case "application/*", "application/json":
+			hasJSON = true
+		case "text/*", "text/event-stream":
 			hasSSE = true
 		}
 	}
-	return hasJSON && hasSSE
+	return hasJSON || hasSSE
 }
 
 func validateOrigin(r *http.Request) bool {
