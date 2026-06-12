@@ -4,7 +4,6 @@ package s3
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"path"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/itsHenry35/gofakes3/signature"
 )
@@ -20,11 +20,14 @@ import (
 func redirectHandler(next http.Handler, authPairs map[string]string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, ok := directObjectURL(r, authPairs); ok {
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.Header().Set("Cache-Control", "max-age=0, no-cache, no-store, must-revalidate")
 			w.Header().Set("Location", u)
 			w.WriteHeader(http.StatusFound)
 			return
 		}
 		if u, ok := directUploadURL(r, authPairs); ok {
+			w.Header().Set("Referrer-Policy", "no-referrer")
 			w.Header().Set("Location", u)
 			w.Header().Set("Cache-Control", "no-store")
 			w.WriteHeader(http.StatusTemporaryRedirect)
@@ -57,7 +60,7 @@ func directObjectURL(r *http.Request, authPairs map[string]string) (string, bool
 		return "", false
 	}
 	link, file, err := fs.Link(ctx, reqPath, model.LinkArgs{
-		IP:       clientIP(r),
+		IP:       utils.ClientIP(r),
 		Header:   r.Header,
 		Redirect: true,
 	})
@@ -133,17 +136,20 @@ func parseObjectPath(rawPath string) (bucket, object string, ok bool) {
 	return parts[0], parts[1], true
 }
 
+// hasNonObjectQuery reports whether the request carries a query parameter that
+// makes gofakes3 route it to a sub-resource handler instead of plain object
+// download (see gofakes3 routing.go). Only those keys force server-side
+// handling; every other query parameter (response-content-disposition,
+// response-content-type, etc.) is irrelevant to route selection and must not
+// block a direct redirect.
 func hasNonObjectQuery(r *http.Request) bool {
 	query := r.URL.Query()
-	for key := range query {
-		lower := strings.ToLower(key)
-		if strings.HasPrefix(lower, "x-amz-") ||
-			lower == "awsaccesskeyid" ||
-			lower == "signature" ||
-			lower == "expires" ||
-			lower == "x-id" {
-			continue
+	for _, key := range []string{"uploadId", "uploads", "versioning", "versions", "location"} {
+		if _, ok := query[key]; ok {
+			return true
 		}
+	}
+	if versionID := query.Get("versionId"); versionID != "" && versionID != "null" {
 		return true
 	}
 	return false
@@ -158,12 +164,4 @@ func s3RequestAuthorized(r *http.Request, authPairs map[string]string) bool {
 		result = signature.V2SignVerify(r)
 	}
 	return result == signature.ErrNone
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
