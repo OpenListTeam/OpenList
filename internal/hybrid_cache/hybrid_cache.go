@@ -18,6 +18,7 @@ type HybridCache struct {
 	memoryOffset  uint64
 	backingStore  BackingStore
 	backingOffset uint64
+	cleanup       runtime.Cleanup
 }
 
 // HybridCache本身是一个大的Block，支持分块成多个小的Block
@@ -99,11 +100,15 @@ func (hc *HybridCache) initFileCache() error {
 	if err != nil {
 		return err
 	}
+	hc.cleanup = runtime.AddCleanup(hc, func(file BackingStore) {
+		_ = file.Close()
+	}, file)
 	hc.backingStore = file
 	return nil
 }
 
 func (hc *HybridCache) Close() error {
+	hc.cleanup.Stop()
 	var err error
 	if hc.memoryStore != nil {
 		err = hc.memoryStore.Free()
@@ -228,12 +233,6 @@ func NewHybridCache(blockSize, maxMemorySize uint64) (hc *HybridCache, err error
 			return nil, errors.Join(err, err2)
 		}
 	}
-	runtime.SetFinalizer(hc, func(hc *HybridCache) {
-		if hc.backingStore != nil {
-			_ = hc.backingStore.Close()
-			hc.backingStore = nil
-		}
-	})
 	return hc, nil
 }
 

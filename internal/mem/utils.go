@@ -58,15 +58,16 @@ func NewGuardedMemory(cap, max uint64) (m LinearMemory, err error) {
 	if s, ok := m.(interface{ SetGrowCheck(GrowCheck) }); ok {
 		s.SetGrowCheck(MemoryGrowCheck)
 	}
-	gm := &guardedMemory{m}
-	runtime.SetFinalizer(gm, func(gm *guardedMemory) {
-		gm.Free()
-	})
+	gm := &guardedMemory{LinearMemory: m}
+	gm.cleanup = runtime.AddCleanup(gm, func(m LinearMemory) {
+		m.Free()
+	}, m)
 	return gm, nil
 }
 
 type guardedMemory struct {
 	LinearMemory
+	cleanup runtime.Cleanup
 }
 
 func (s *guardedMemory) Reallocate(size uint64) (all []byte, err error) {
@@ -76,4 +77,9 @@ func (s *guardedMemory) Reallocate(size uint64) (all []byte, err error) {
 		}
 	}()
 	return s.LinearMemory.Reallocate(size)
+}
+
+func (s *guardedMemory) Free() error {
+	s.cleanup.Stop()
+	return s.LinearMemory.Free()
 }
