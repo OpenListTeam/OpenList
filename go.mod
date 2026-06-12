@@ -113,6 +113,7 @@ require (
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
+	github.com/huaweicloud/huaweicloud-sdk-go-obs v3.23.9+incompatible // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/gofork v1.7.6 // indirect
