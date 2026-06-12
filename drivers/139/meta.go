@@ -7,10 +7,10 @@ import (
 
 type Addition struct {
 	//Account       string `json:"account" required:"true"`
-	Authorization string `json:"authorization" type:"text" required:"true"`
-	Username      string `json:"username" required:"true"`
-	Password      string `json:"password" required:"true" secret:"true"`
-	MailCookies   string `json:"mail_cookies" required:"true" type:"text" help:"Cookies from mail.139.com used for login authentication."`
+	Authorization string `json:"authorization" type:"text" help:"Authorization can be used alone. If empty, use mail_cookies alone for fast login, or mail_cookies + username + password for full login fallback."`
+	Username      string `json:"username" help:"Required only when using password login fallback with mail_cookies."`
+	Password      string `json:"password" secret:"true" help:"Required only when using password login fallback with mail_cookies."`
+	MailCookies   string `json:"mail_cookies" type:"text" help:"Cookies from mail.139.com. Can be used alone for fast login, or with username and password for full login fallback."`
 	driver.RootID
 	Type                 string `json:"type" type:"select" options:"personal_new,family,group,personal" default:"personal_new"`
 	CloudID              string `json:"cloud_id"`
