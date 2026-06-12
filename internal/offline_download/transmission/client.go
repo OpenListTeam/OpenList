@@ -150,7 +150,13 @@ func (t *Transmission) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		Err:       err,
 	}
 	s.Progress = *info.PercentDone * 100
-	s.TotalBytes = int64(*info.SizeWhenDone / 8)
+	if info.Name != nil {
+		s.FileName = *info.Name
+	}
+	if info.SizeWhenDone != nil {
+		s.TotalBytes = int64(*info.SizeWhenDone / 8)
+		s.FileSize = s.TotalBytes
+	}
 
 	switch *info.Status {
 	case transmissionrpc.TorrentStatusCheckWait,

@@ -27,7 +27,14 @@ type TaskInfo struct {
 	StartTime   *time.Time  `json:"start_time"`
 	EndTime     *time.Time  `json:"end_time"`
 	TotalBytes  int64       `json:"total_bytes"`
+	FileName    string      `json:"file_name,omitempty"`
+	FileSize    int64       `json:"file_size,omitempty"`
 	Error       string      `json:"error"`
+}
+
+type taskFileInfo interface {
+	GetFileName() string
+	GetFileSize() int64
 }
 
 func getTaskInfo[T task.TaskExtensionInfo](task T) TaskInfo {
@@ -46,6 +53,12 @@ func getTaskInfo[T task.TaskExtensionInfo](task T) TaskInfo {
 		creatorName = task.GetCreator().Username
 		creatorRole = task.GetCreator().Role
 	}
+	fileName := ""
+	fileSize := int64(0)
+	if taskWithFileInfo, ok := any(task).(taskFileInfo); ok {
+		fileName = taskWithFileInfo.GetFileName()
+		fileSize = taskWithFileInfo.GetFileSize()
+	}
 	return TaskInfo{
 		ID:          task.GetID(),
 		Name:        task.GetName(),
@@ -57,6 +70,8 @@ func getTaskInfo[T task.TaskExtensionInfo](task T) TaskInfo {
 		StartTime:   task.GetStartTime(),
 		EndTime:     task.GetEndTime(),
 		TotalBytes:  task.GetTotalBytes(),
+		FileName:    fileName,
+		FileSize:    fileSize,
 		Error:       errMsg,
 	}
 }

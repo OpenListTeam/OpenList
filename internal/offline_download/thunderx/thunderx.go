@@ -118,11 +118,13 @@ func (t *ThunderX) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		if t.ID == task.GID {
 			s.Progress = float64(t.Progress)
 			s.Status = t.Message
+			s.FileName = t.FileName
 			s.Completed = t.Phase == "PHASE_TYPE_COMPLETE"
 			s.TotalBytes, err = strconv.ParseInt(t.FileSize, 10, 64)
 			if err != nil {
 				s.TotalBytes = 0
 			}
+			s.FileSize = s.TotalBytes
 			if t.Phase == "PHASE_TYPE_ERROR" {
 				s.Err = errors.New(t.Message)
 			}
