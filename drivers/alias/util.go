@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -94,6 +95,113 @@ func (d *Alias) getRootsAndPath(path string) (roots []string, sub string) {
 		return d.pathMap[path], ""
 	}
 	return d.pathMap[before], after
+}
+
+func (d *Alias) aliasInternalPath(reqPath string) string {
+	if reqPath == "" {
+		return ""
+	}
+	reqPath = utils.FixAndCleanPath(reqPath)
+	mountPath := utils.GetActualMountPath(d.MountPath)
+	if reqPath == mountPath {
+		return "/"
+	}
+	if strings.HasPrefix(reqPath, mountPath+"/") {
+		return strings.TrimPrefix(reqPath, mountPath)
+	}
+	return reqPath
+}
+
+func (d *Alias) cacheResolvedChildren(reqPath string, children map[string]aliasResolved) {
+	ttl := d.cacheTTL()
+	if ttl <= 0 || reqPath == "" || len(children) == 0 {
+		return
+	}
+	parent := d.aliasInternalPath(reqPath)
+	if parent == "" {
+		return
+	}
+	maxEntries := d.cacheMaxEntries()
+	for name, resolved := range children {
+		d.cache.setResolved(stdpath.Join(parent, name), resolved, ttl, maxEntries)
+	}
+}
+
+func (d *Alias) getFromResolvedPaths(ctx context.Context, sub string, resolved aliasResolved) (model.Obj, error) {
+	for idx, rawPath := range resolved.paths {
+		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
+		if err != nil {
+			continue
+		}
+		return d.buildBalancedObj(ctx, sub, rawPath, obj, resolved.paths[idx+1:], resolved.skipped || idx > 0), nil
+	}
+	return nil, errs.ObjectNotFound
+}
+
+func newAliasResolved(paths []string, skipped bool, obj model.Obj) aliasResolved {
+	resolved := aliasResolved{
+		paths:   paths,
+		skipped: skipped,
+	}
+	if obj != nil {
+		resolved.obj = model.Object{
+			ID:       obj.GetID(),
+			Path:     obj.GetPath(),
+			Name:     obj.GetName(),
+			Size:     obj.GetSize(),
+			Modified: obj.ModTime(),
+			Ctime:    obj.CreateTime(),
+			IsFolder: obj.IsDir(),
+			HashInfo: obj.GetHash(),
+			Mask:     model.GetObjMask(obj),
+		}
+		resolved.hasObj = true
+	}
+	return resolved
+}
+
+func (d *Alias) buildBalancedObj(ctx context.Context, sub, rawPath string, obj model.Obj, remainingPaths []string, skipped bool) BalancedObjs {
+	mask := model.GetObjMask(obj) &^ model.Temp
+	if sub == "" {
+		// root directory
+		mask |= model.Locked | model.Virtual
+	}
+	ret := model.Object{
+		Path:     rawPath,
+		Name:     obj.GetName(),
+		Size:     obj.GetSize(),
+		Modified: obj.ModTime(),
+		IsFolder: obj.IsDir(),
+		HashInfo: obj.GetHash(),
+		Mask:     mask,
+	}
+	var first model.Obj = &ret
+	if d.ProviderPassThrough && !obj.IsDir() {
+		if storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{}); err == nil {
+			first = &model.ObjectProvider{
+				Object: ret,
+				Provider: model.Provider{
+					Provider: storage.Config().Name,
+				},
+			}
+		}
+	}
+
+	capacity := len(remainingPaths) + 1
+	if skipped {
+		capacity++
+	}
+	objs := make(BalancedObjs, 0, capacity)
+	objs = append(objs, first)
+	if skipped {
+		objs = append(objs, nil)
+	}
+	for _, path := range remainingPaths {
+		objs = append(objs, &tempObj{model.Object{
+			Path: path,
+		}})
+	}
+	return objs
 }
 
 func (d *Alias) link(ctx context.Context, reqPath string, args model.LinkArgs) (*model.Link, model.Obj, error) {
