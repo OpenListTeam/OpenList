@@ -51,7 +51,9 @@ func Proxy(c *gin.Context) {
 		common.ErrorPage(c, err, 500)
 		return
 	}
-	if canProxy(storage, filename) {
+	// 支持 ?force 参数强制代理（用于媒体库等需要 JS 加载文件内容的场景，避免 CORS 问题）
+	_, forceProxy := c.GetQuery("force")
+	if forceProxy || canProxy(storage, filename) {
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath); url != "" {
 				c.Redirect(302, url)

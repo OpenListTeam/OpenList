@@ -161,6 +161,45 @@ const (
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
+
+	// media
+	MediaTMDBKey          = "media_tmdb_key"
+	MediaTMDBAPIURL       = "media_tmdb_api_url"
+	MediaDiscogsToken     = "media_discogs_token"
+	MediaDiscogsAPIURL    = "media_discogs_api_url"
+	MediaThumbnailMode    = "media_thumbnail_mode"
+	MediaThumbnailPath    = "media_thumbnail_path"
+	MediaStoreThumbnail   = "media_store_thumbnail"
+	MediaScrapeConcurrency = "media_scrape_concurrency"
+
+	// transcode (云端/本地 FFmpeg 转码)
+	TranscodeEnabled            = "transcode_enabled"              // 总开关，默认关
+	TranscodeMinSizeGB          = "transcode_min_size_gb"          // 文件大于多少 GB 才转码
+	TranscodeMinBitrateMbps     = "transcode_min_bitrate_mbps"     // 视频码率高于多少 Mbps 才转码（0=不限）
+	TranscodeSourceCodecs       = "transcode_source_codecs"        // 仅对这些源编码进行转码
+	TranscodeSourceExtensions   = "transcode_source_extensions"    // 仅对这些后缀进行转码
+	TranscodeOutputFormat       = "transcode_output_format"        // 输出封装格式 hls/dash/mp4
+	TranscodeOutputCodec        = "transcode_output_codec"         // 重新编码的视频编码
+	TranscodeOutputBitrate      = "transcode_output_bitrate"       // 输出视频码率，例如 4000k
+	TranscodeOutputAudioCodec   = "transcode_output_audio_codec"   // 输出音频编码
+	TranscodeOutputAudioBitrate = "transcode_output_audio_bitrate" // 输出音频码率，例如 160k
+	TranscodeOutputResolution   = "transcode_output_resolution"    // 输出分辨率上限
+	TranscodeSegmentDuration    = "transcode_segment_duration"     // HLS 切片时长(秒)
+	TranscodeHWAccel            = "transcode_hwaccel"              // 硬件加速类型 none/auto/nvenc/qsv/vaapi/amf/videotoolbox
+	TranscodeFFmpegPath         = "transcode_ffmpeg_path"          // 自定义 ffmpeg 可执行路径
+	TranscodeFFprobePath        = "transcode_ffprobe_path"         // 自定义 ffprobe 可执行路径
+	TranscodeRunMode            = "transcode_run_mode"             // local / remote / hybrid
+	TranscodeWorkerSecret       = "transcode_worker_secret"        // 远程 Worker 共享密钥
+	TranscodeCachePath          = "transcode_cache_path"           // 切片缓存目录
+	TranscodeCacheMaxGB         = "transcode_cache_max_gb"         // 缓存最大占用，超出 LRU 淘汰
+	TranscodeJobTimeoutMin      = "transcode_job_timeout_min"      // 单个任务超时分钟
+	TranscodeLocalConcurrency   = "transcode_local_concurrency"    // 本地内置 worker 并发数(run_mode=local/hybrid 时生效)
+	TranscodeIdleTimeoutSec     = "transcode_idle_timeout_sec"     // 播放端无请求多少秒后自动停止转码（默认90秒）
+	// === 智能 chunk 调度相关 ===
+	TranscodeChunkDurationSec    = "transcode_chunk_duration_sec"    // 每个 chunk 时长(秒)，将整个视频分成多个 chunk 按需转码（默认60秒）
+	TranscodeMaxChunkConcurrency = "transcode_max_chunk_concurrency" // 单个 Job 最多同时运行的 chunk 数（默认2）
+	TranscodeChunkIdleSec        = "transcode_chunk_idle_sec"        // chunk 多久没被访问就 kill ffmpeg 释放资源（默认60秒）
+	TranscodeChunkPrefetch       = "transcode_chunk_prefetch"        // 当前 chunk 转码进度过半时，是否预启动下一个 chunk（默认true）
 )
 
 const (
