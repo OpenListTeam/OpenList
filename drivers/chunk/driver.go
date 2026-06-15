@@ -80,7 +80,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 	if err != nil {
 		return nil, err
 	}
-	var totalSize int64 = 0
+	var totalSize int64
 	// 0号块默认为-1 以支持空文件
 	chunkSizes := []int64{-1}
 	h := make(map[*utils.HashType]string)
@@ -100,7 +100,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 			continue
 		}
 		idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
-		if err != nil {
+		if err != nil || idx < 0 {
 			continue
 		}
 		totalSize += o.GetSize()
@@ -117,6 +117,9 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 			chunkSizes = newChunkSizes
 			chunkSizes[idx] = o.GetSize()
 		}
+	}
+	if first == nil || chunkSizes[0] == -1 {
+		return nil, errs.NewErr(errs.ObjectNotFound, "chunk part[0] is missing")
 	}
 	reqDir, _ := stdpath.Split(path)
 	objRes := chunkObject{
