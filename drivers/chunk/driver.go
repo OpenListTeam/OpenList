@@ -53,8 +53,8 @@ func (d *Chunk) Drop(ctx context.Context) error {
 	return nil
 }
 
-func (Addition) GetRootPath() string {
-	return "/"
+func (*Chunk) GetRootPath() string {
+	return ""
 }
 
 func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
