@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	stdpath "path"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -51,13 +52,35 @@ func (d *FTP) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	if err := d.login(); err != nil {
 		return nil, err
 	}
-	entries, err := d.conn.List(encode(dir.GetPath(), d.Encoding))
+
+	path := encode(dir.GetPath(), d.Encoding)
+
+	var entries []*ftp.Entry
+	var err error
+
+	if d.CwdList {
+		origDir, cwdErr := d.conn.CurrentDir()
+		if cwdErr != nil {
+			return nil, cwdErr
+		}
+		if cwdErr = d.conn.ChangeDir(path); cwdErr != nil {
+			return nil, cwdErr
+		}
+		entries, err = d.conn.List("")
+		if restoreErr := d.conn.ChangeDir(origDir); restoreErr != nil {
+			d.conn = nil
+		}
+	} else {
+		entries, err = d.conn.List(path)
+	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	res := make([]model.Obj, 0)
 	for _, entry := range entries {
-		if entry.Name == "." || entry.Name == ".." {
+		if entry.Name == "." || entry.Name == ".." || strings.Contains(entry.Name, "/") {
 			continue
 		}
 		name := decode(entry.Name, d.Encoding)
