@@ -274,7 +274,7 @@ func (d *Alias) listBackendDirs(ctx context.Context, dirPaths []string, args mod
 			})
 			if err == nil {
 				results[i] = tmp
-			} else if !errs.IsObjectNotFound(err) {
+			} else if !errs.IsNotFoundError(err) {
 				cacheable = false
 			}
 		}
@@ -297,7 +297,7 @@ func (d *Alias) listBackendDirs(ctx context.Context, dirPaths []string, args mod
 			})
 			if err == nil {
 				results[i] = tmp
-			} else if !errs.IsObjectNotFound(err) {
+			} else if !errs.IsNotFoundError(err) {
 				mu.Lock()
 				cacheable = false
 				mu.Unlock()
