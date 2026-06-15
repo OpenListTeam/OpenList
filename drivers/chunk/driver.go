@@ -84,7 +84,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 	// 0号块默认为-1 以支持空文件
 	chunkSizes := []int64{-1}
 	h := make(map[*utils.HashType]string)
-	var first model.Obj
+	var last model.Obj
 	for _, o := range chunkObjs {
 		if o.IsDir() {
 			continue
@@ -100,14 +100,12 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 			continue
 		}
 		idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
-		if err != nil || idx < 0 {
+		if err != nil {
 			continue
 		}
+		last = o
 		totalSize += o.GetSize()
 		if len(chunkSizes) > idx {
-			if idx == 0 {
-				first = o
-			}
 			chunkSizes[idx] = o.GetSize()
 		} else if len(chunkSizes) == idx {
 			chunkSizes = append(chunkSizes, o.GetSize())
@@ -118,17 +116,22 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 			chunkSizes[idx] = o.GetSize()
 		}
 	}
-	if first == nil || chunkSizes[0] == -1 {
-		return nil, errs.NewErr(errs.ObjectNotFound, "chunk part[0] is missing")
-	}
 	reqDir, _ := stdpath.Split(path)
+	if last == nil {
+		return &model.Object{
+			Path:     stdpath.Join(reqDir, chunkName),
+			Name:     chunkName,
+			IsFolder: true,
+			Modified: d.Modified,
+		}, nil
+	}
 	objRes := chunkObject{
 		Object: model.Object{
 			Path:     stdpath.Join(reqDir, chunkName),
 			Name:     name,
 			Size:     totalSize,
-			Modified: first.ModTime(),
-			Ctime:    first.CreateTime(),
+			Modified: last.ModTime(),
+			Ctime:    last.CreateTime(),
 		},
 		chunkSizes: chunkSizes,
 	}
@@ -172,7 +175,7 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					}
 					totalSize := int64(0)
 					h := make(map[*utils.HashType]string)
-					first := obj
+					var last model.Obj
 					for _, o := range chunkObjs {
 						if o.IsDir() {
 							continue
@@ -187,20 +190,27 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 								continue
 							}
 						}
-						idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
+						_, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
 						if err != nil {
 							continue
 						}
-						if idx == 0 {
-							first = o
-						}
+						last = o
 						totalSize += o.GetSize()
+					}
+					if last == nil {
+						result[resultIdx] = &model.Object{
+							Name:     rawName,
+							Size:     obj.GetSize(),
+							Modified: obj.ModTime(),
+							IsFolder: true,
+						}
+						return nil
 					}
 					objRes := model.Object{
 						Name:     name,
 						Size:     totalSize,
-						Modified: first.ModTime(),
-						Ctime:    first.CreateTime(),
+						Modified: last.ModTime(),
+						Ctime:    last.CreateTime(),
 					}
 					if len(h) > 0 {
 						objRes.HashInfo = utils.NewHashInfoByMap(h)
