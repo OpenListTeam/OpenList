@@ -22,24 +22,28 @@ func (d *Alias) getResolvedFromSearchIndex(ctx context.Context, roots []string, 
 		return aliasResolved{}, false
 	}
 	known := make(map[string]aliasSearchIndexState)
+	paths := make([]string, 0, len(roots))
+	firstIndex := -1
 	for idx, root := range roots {
 		rawPath := stdpath.Join(root, sub)
 		_, exists, reliable := aliasSearchIndexPath(ctx, rawPath, known)
 		if exists {
-			paths := make([]string, 0, len(roots)-idx)
-			for _, root := range roots[idx:] {
-				paths = append(paths, stdpath.Join(root, sub))
+			if firstIndex < 0 {
+				firstIndex = idx
 			}
-			return aliasResolved{
-				paths:   paths,
-				skipped: idx > 0,
-			}, true
+			paths = append(paths, rawPath)
 		}
 		if !reliable {
 			return aliasResolved{}, false
 		}
 	}
-	return aliasResolved{}, false
+	if len(paths) == 0 {
+		return aliasResolved{}, false
+	}
+	return aliasResolved{
+		paths:   paths,
+		skipped: firstIndex > 0,
+	}, true
 }
 
 func aliasSearchIndexReady() bool {
