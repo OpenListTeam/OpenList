@@ -59,6 +59,10 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 	}
 	directUploadInfo, err := fs.GetDirectUploadInfo(c, req.Tool, path, req.FileName, req.FileSize, overwrite)
 	if err != nil {
+		if !overwrite && errs.IsObjectAlreadyExists(err) {
+			common.ErrorStrResp(c, "file exists", 403)
+			return
+		}
 		common.ErrorResp(c, err, 500)
 		return
 	}
