@@ -2,6 +2,7 @@ package handles
 
 import (
 	"net/url"
+	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -39,13 +40,14 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 		return
 	}
 	overwrite := c.GetHeader("Overwrite") != "false"
+	dstPath := stdpath.Join(path, req.FileName)
 	if !overwrite {
-		if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
+		if res, _ := fs.Get(c.Request.Context(), dstPath, &fs.GetArgs{NoLog: true}); res != nil {
 			common.ErrorStrResp(c, "file exists", 403)
 			return
 		}
 	}
-	directUploadInfo, err := fs.GetDirectUploadInfo(c, req.Tool, path, req.FileName, req.FileSize)
+	directUploadInfo, err := fs.GetDirectUploadInfo(c, req.Tool, path, req.FileName, req.FileSize, overwrite)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return

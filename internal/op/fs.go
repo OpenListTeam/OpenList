@@ -779,7 +779,7 @@ func GetDirectUploadTools(storage driver.Driver) []string {
 	return du.GetDirectUploadTools()
 }
 
-func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64) (any, error) {
+func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64, overwrite bool) (any, error) {
 	du, ok := storage.(driver.DirectUploader)
 	if !ok {
 		return nil, errors.WithStack(errs.NotImplement)
@@ -789,9 +789,12 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 	}
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	dstPath := stdpath.Join(dstDirPath, dstName)
-	_, err := Get(ctx, storage, dstPath)
-	if err == nil {
-		return nil, errors.WithStack(errs.ObjectAlreadyExists)
+	var err error
+	if !overwrite {
+		_, err = Get(ctx, storage, dstPath)
+		if err == nil {
+			return nil, errors.WithStack(errs.ObjectAlreadyExists)
+		}
 	}
 	err = MakeDir(ctx, storage, dstDirPath)
 	if err != nil {

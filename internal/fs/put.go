@@ -110,10 +110,10 @@ func putDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer
 	return op.Put(ctx, storage, dstDirActualPath, file, nil)
 }
 
-func getDirectUploadInfo(ctx context.Context, tool, dstDirPath, dstName string, fileSize int64) (any, error) {
+func getDirectUploadInfo(ctx context.Context, tool, dstDirPath, dstName string, fileSize int64, overwrite bool) (any, error) {
 	storage, dstDirActualPath, err := op.GetStorageAndActualPath(dstDirPath)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed get storage")
 	}
-	return op.GetDirectUploadInfo(ctx, tool, storage, dstDirActualPath, dstName, fileSize)
+	return op.GetDirectUploadInfo(ctx, tool, storage, dstDirActualPath, dstName, fileSize, overwrite)
 }
