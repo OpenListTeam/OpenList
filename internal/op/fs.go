@@ -795,6 +795,9 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 		if err == nil {
 			return nil, errors.WithStack(errs.ObjectAlreadyExists)
 		}
+		if !errs.IsObjectNotFound(err) {
+			return nil, errors.WithMessage(err, "failed to check if object exists")
+		}
 	}
 	err = MakeDir(ctx, storage, dstDirPath)
 	if err != nil {

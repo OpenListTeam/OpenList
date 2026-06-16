@@ -5,6 +5,7 @@ import (
 	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -39,10 +40,19 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
+	if err := checkRelativePath(req.FileName); err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
 	overwrite := c.GetHeader("Overwrite") != "false"
 	dstPath := stdpath.Join(path, req.FileName)
 	if !overwrite {
-		if res, _ := fs.Get(c.Request.Context(), dstPath, &fs.GetArgs{NoLog: true}); res != nil {
+		res, err := fs.Get(c.Request.Context(), dstPath, &fs.GetArgs{NoLog: true})
+		if err != nil && !errs.IsObjectNotFound(err) {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		if res != nil {
 			common.ErrorStrResp(c, "file exists", 403)
 			return
 		}
