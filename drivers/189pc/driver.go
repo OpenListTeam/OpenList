@@ -267,7 +267,7 @@ func (y *Cloud189PC) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.
 	if !srcObj.IsDir() {
 		var srcFolderId string
 		if f, ok := srcObj.(*Cloud189File); ok {
-			srcFolderId = f.ParentId
+			srcFolderId = f.ParentID
 		}
 		y.torrentFollowMove(srcFolderId, srcObj.GetName(), dstDir)
 	}
@@ -311,7 +311,7 @@ func (y *Cloud189PC) Rename(ctx context.Context, srcObj model.Obj, newName strin
 
 	// 跟随重命名 torrent 文件
 	if f, ok := srcObj.(*Cloud189File); ok {
-		y.torrentFollowRename(f.ParentId, srcObj.GetName(), newName)
+		y.torrentFollowRename(f.ParentID, srcObj.GetName(), newName)
 	}
 
 	switch f := srcObj.(type) {
@@ -343,7 +343,7 @@ func (y *Cloud189PC) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if !srcObj.IsDir() {
 		var srcFolderId string
 		if f, ok := srcObj.(*Cloud189File); ok {
-			srcFolderId = f.ParentId
+			srcFolderId = f.ParentID
 		}
 		y.torrentFollowCopy(srcFolderId, srcObj.GetName(), dstDir)
 	}

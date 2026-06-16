@@ -210,7 +210,7 @@ func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool)
 			res = append(res, &resp.FileListAO.FolderList[i])
 		}
 		for i := 0; i < len(resp.FileListAO.FileList); i++ {
-			resp.FileListAO.FileList[i].ParentId = fileId
+			resp.FileListAO.FileList[i].ParentID = fileId
 			res = append(res, &resp.FileListAO.FileList[i])
 		}
 	}
@@ -986,8 +986,8 @@ func (y *Cloud189PC) fastUpload(ctx context.Context, dstDir model.Obj, file mode
 		partInfos = append(partInfos, fmt.Sprint(i, "-", base64.StdEncoding.EncodeToString(md5Byte)))
 		sliceMd5.Reset()
 
-		// 收集 SHA-1 piece hash
-		if generateTorrent && sha1Writer != nil {
+		// 收集 SHA-1 piece hash（仅在本次分片实际写入了数据时追加）
+		if generateTorrent && n > 0 {
 			pieceSHA1Hashes = append(pieceSHA1Hashes, sha1Writer.Sum(nil)...)
 		}
 	}
@@ -1107,7 +1107,7 @@ func (y *Cloud189PC) fastUpload(ctx context.Context, dstDir model.Obj, file mode
 	}
 
 	// 生成 torrent 文件（异步，不影响上传结果）
-	if generateTorrent && len(pieceSHA1Hashes) > 0 {
+	if generateTorrent && size > 0 && len(pieceSHA1Hashes) > 0 {
 		capturedDstDir := dstDir
 		capturedIsFamily := isFamily
 		capturedFileName := file.GetName()

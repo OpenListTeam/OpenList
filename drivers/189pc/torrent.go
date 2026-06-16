@@ -345,7 +345,7 @@ func (y *Cloud189PC) torrentFollowCopy(srcFolderId string, srcFileName string, d
 	go func() {
 		torrentFile, err := y.findFileByName(context.Background(), torrentName, srcFolderId, isFamily)
 		if err != nil {
-			// torrent 文件不存在，忽略
+			utils.Log.Debugf("查找 torrent 文件失败（跟随复制）: %v", err)
 			return
 		}
 		// 复制 torrent 文件到目标目录
@@ -383,7 +383,7 @@ func (y *Cloud189PC) torrentFollowMove(srcFolderId string, srcFileName string, d
 	go func() {
 		torrentFile, err := y.findFileByName(context.Background(), torrentName, srcFolderId, isFamily)
 		if err != nil {
-			// torrent 文件不存在，忽略
+			utils.Log.Debugf("查找 torrent 文件失败（跟随移动）: %v", err)
 			return
 		}
 		// 移动 torrent 文件到目标目录
@@ -398,7 +398,9 @@ func (y *Cloud189PC) torrentFollowMove(srcFolderId string, srcFileName string, d
 			utils.Log.Warnf("跟随移动 torrent 文件失败: %v", moveErr)
 			return
 		}
-		_ = y.WaitBatchTask("MOVE", resp.TaskID, time.Millisecond*400)
+		if err = y.WaitBatchTask("MOVE", resp.TaskID, time.Millisecond*400); err != nil {
+			utils.Log.Warnf("等待跟随移动 torrent 文件失败: %v", err)
+		}
 	}()
 }
 
@@ -420,7 +422,7 @@ func (y *Cloud189PC) torrentFollowRename(folderId string, oldFileName string, ne
 	go func() {
 		torrentFile, err := y.findFileByName(context.Background(), oldTorrentName, folderId, isFamily)
 		if err != nil {
-			// torrent 文件不存在，忽略
+			utils.Log.Debugf("查找 torrent 文件失败（跟随重命名）: %v", err)
 			return
 		}
 
