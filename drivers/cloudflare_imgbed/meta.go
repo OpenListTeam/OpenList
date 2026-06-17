@@ -11,7 +11,7 @@ type Addition struct {
 	Token            string `json:"token" required:"true" help:"Authentication Token"`
 	SmallChannelName string `json:"smallChannelName" help:"Channel name for regular files (typically <20MB)"`
 	LargeChannelName string `json:"largeChannelName" help:"Channel name for large files"`
-	LargeChannelType string `json:"largeChannelType" type:"select" options:",huggingface" help:"Special type for large file channels (select 'huggingface' for direct upload to HuggingFace)"`
+	LargeChannelType string `json:"largeChannelType" type:"select" options:",huggingface,telegram,cfr2,s3,discord" help:"Large File Channel Type: Hugging Face (Direct Upload)、telegram/cfr2/s3/discord(Multipart Upload)"`
 	UploadThread     int    `json:"uploadThread" type:"number" default:"3" help:"Concurrent thread count for HuggingFace chunked direct upload"`
 }
 

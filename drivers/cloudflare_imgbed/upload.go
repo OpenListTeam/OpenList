@@ -29,14 +29,17 @@ import (
 )
 
 func (d *CFImgBed) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (newObj model.Obj, err error) {
-
-	// 如果文件较大且配置了 HuggingFace 渠道，走直传流程
-	if file.GetSize() >= hfDirectThreshold && d.LargeChannelType == "huggingface" {
-		log.WithField("size", file.GetSize()).Debug("file exceeds threshold, using HuggingFace direct upload")
-		newObj, err = d.hfDirectUpload(ctx, dstDir, file, up)
-	} else {
-		// 否则走普通图床 API 上传
+	if file.GetSize() < hfDirectThreshold {
 		newObj, err = d.standardUpload(ctx, dstDir, file, up)
+	} else {
+		switch d.LargeChannelType {
+		case "huggingface":
+			newObj, err = d.hfDirectUpload(ctx, dstDir, file, up)
+		case "telegram", "cfr2", "s3", "discord":
+			newObj, err = d.chunkedUpload(ctx, dstDir, file, up, d.LargeChannelType, d.LargeChannelName)
+		default:
+			newObj, err = d.standardUpload(ctx, dstDir, file, up)
+		}
 	}
 	if newObj != nil && model.ObjHasMask(dstDir, model.Virtual) {
 		key := dstDir.GetPath()
@@ -54,7 +57,7 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	channelName := d.SmallChannelName
 	if file.GetSize() >= hfDirectThreshold {
 		channelName = d.LargeChannelName
-		log.WithField("size", file.GetSize()).Warn("File exceeds threshold but non-HF channel is used.")
+		log.WithField("size", file.GetSize()).Warn("large file falls back to standard upload, consider configuring LargeChannelType")
 	}
 	if channelName == "" {
 		return nil, fmt.Errorf("channel name not configured")
@@ -69,6 +72,7 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	q.Set("returnFormat", "default")
 	q.Set("channelName", channelName)
 	q.Set("uploadFolder", dstDir.GetPath())
+	q.Set("autoRetry", "true")
 	reqUrl.RawQuery = q.Encode()
 
 	// 2. 构建 multipart 表单的头部
@@ -127,10 +131,185 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	srcPath := strings.TrimPrefix(resp[0].Src, "/file/")
 	srcPath = strings.TrimPrefix(srcPath, "/")
 
+	if resp[0].PublicUrl != "" {
+		if u, err := url.Parse(resp[0].PublicUrl); err == nil {
+			d.publicUrlPrefix = u.Scheme + "://" + u.Host
+		}
+	}
+
 	return &model.Object{
 		Path:     srcPath,
 		Name:     file.GetName(),
 		Size:     file.GetSize(),
+		Modified: file.ModTime(),
+		IsFolder: false,
+	}, nil
+}
+
+func (d *CFImgBed) chunkedUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, channelType, channelName string) (model.Obj, error) {
+	if channelName == "" {
+		return nil, fmt.Errorf("channel name not configured for chunked upload")
+	}
+
+	fileSize := file.GetSize()
+	fileMime := file.GetMimetype()
+	fileName := file.GetName()
+
+	var chunkSizeMap = map[string]int64{
+
+	}
+	chunkSize := chunkSizeMap[channelType]
+	if chunkSize == 0 {
+		chunkSize = 5 * 1024 * 1024
+	}
+	totalChunks := int((fileSize + chunkSize - 1) / chunkSize)
+
+	// 第一步：initChunked
+	var initResp struct {
+		Success  bool   `json:"success"`
+		UploadId string `json:"uploadId"`
+	}
+	_, err := d.doRequest(ctx, http.MethodPost, uploadApi, func(req *resty.Request) {
+		req.SetQueryParams(map[string]string{
+			"initChunked":   "true",
+			"uploadChannel": channelType,
+			"channelName":   channelName,
+		})
+		req.SetFormData(map[string]string{
+			"originalFileName": fileName,
+			"originalFileType": fileMime,
+			"totalChunks":      strconv.Itoa(totalChunks),
+		})
+	}, &initResp)
+	if err != nil {
+		return nil, fmt.Errorf("initChunked failed: %w", err)
+	}
+	if !initResp.Success || initResp.UploadId == "" {
+		return nil, fmt.Errorf("initChunked returned no uploadId")
+	}
+	uploadId := initResp.UploadId
+
+	// 第二步：逐块上传
+	ss, err := stream.NewStreamSectionReader(file, int(chunkSize), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	reqUrl := d.Address + uploadApi + "?chunked=true&uploadChannel=" + channelType + "&channelName=" + channelName
+	b := bytes.NewBuffer(make([]byte, 0, 2048))
+
+	g, uploadCtx := errgroup.NewOrderedGroupWithContext(ctx, min(d.UploadThread, totalChunks),
+		retry.Attempts(3),
+		retry.Delay(time.Second),
+		retry.DelayType(retry.BackOffDelay))
+
+	for i := 0; i < totalChunks; i++ {
+		if utils.IsCanceled(uploadCtx) {
+			break
+		}
+		chunkIndex := i
+		offset := int64(chunkIndex) * chunkSize
+		sizeToRead := chunkSize
+		if offset+sizeToRead > fileSize {
+			sizeToRead = fileSize - offset
+		}
+
+		var reader io.ReadSeeker
+		g.GoWithLifecycle(errgroup.Lifecycle{
+			Before: func(ctx context.Context) (err error) {
+				reader, err = ss.GetSectionReader(offset, sizeToRead)
+				return
+			},
+			After: func(err error) {
+				ss.FreeSectionReader(reader)
+			},
+			Do: func(ctx context.Context) (err error) {
+				_, err = reader.Seek(0, io.SeekStart)
+				if err != nil {
+					return err
+				}
+
+				b.Reset()
+				w := multipart.NewWriter(b)
+				_ = w.WriteField("uploadId", uploadId)
+				_ = w.WriteField("chunkIndex", strconv.Itoa(chunkIndex))
+				_ = w.WriteField("totalChunks", strconv.Itoa(totalChunks))
+				_ = w.WriteField("originalFileName", fileName)
+				_ = w.WriteField("originalFileType", fileMime)
+				_, _ = w.CreateFormFile("file", fileName)
+				headSize := b.Len()
+				_ = w.Close()
+				head := bytes.NewReader(b.Bytes()[:headSize])
+				tail := bytes.NewReader(b.Bytes()[headSize:])
+
+				rateLimitedRd := driver.NewLimitedUploadStream(ctx, io.MultiReader(head, reader, tail))
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqUrl, rateLimitedRd)
+				if err != nil {
+					return err
+				}
+				req.Header.Set("Content-Type", w.FormDataContentType())
+				req.Header.Set("Authorization", "Bearer "+d.Token)
+				req.ContentLength = int64(headSize) + sizeToRead + int64(b.Len()-headSize)
+
+				res, err := base.HttpClient.Do(req)
+				if err != nil {
+					return err
+				}
+				defer res.Body.Close()
+				if res.StatusCode != http.StatusOK {
+					return fmt.Errorf("chunk %d upload failed: %d", chunkIndex, res.StatusCode)
+				}
+
+				up(90 * float64(chunkIndex+1) / float64(totalChunks))
+				return nil
+			},
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	// 第三步：merge
+	var mergeResp standardUploadResp
+	_, err = d.doRequest(ctx, http.MethodPost, uploadApi, func(req *resty.Request) {
+		req.SetQueryParams(map[string]string{
+			"chunked":       "true",
+			"merge":         "true",
+			"uploadChannel": channelType,
+			"channelName":   channelName,
+			"returnFormat":  "default",
+			"uploadFolder":  dstDir.GetPath(),
+		})
+		req.SetFormData(map[string]string{
+			"uploadId":         uploadId,
+			"totalChunks":      strconv.Itoa(totalChunks),
+			"originalFileName": fileName,
+			"originalFileType": fileMime,
+		})
+	}, &mergeResp)
+	if err != nil {
+		return nil, fmt.Errorf("merge failed: %w", err)
+	}
+	if len(mergeResp) == 0 || mergeResp[0].Src == "" {
+		return nil, fmt.Errorf("merge returned no src")
+	}
+
+	up(95)
+
+	srcPath := strings.TrimPrefix(mergeResp[0].Src, "/file/")
+	srcPath = strings.TrimPrefix(srcPath, "/")
+
+	if mergeResp[0].PublicUrl != "" {
+		if u, err := url.Parse(mergeResp[0].PublicUrl); err == nil {
+			d.publicUrlPrefix = u.Scheme + "://" + u.Host
+		}
+	}
+
+	return &model.Object{
+		Path:     srcPath,
+		Name:     fileName,
+		Size:     fileSize,
 		Modified: file.ModTime(),
 		IsFolder: false,
 	}, nil
@@ -188,6 +367,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 
 	// 秒传逻辑
 	if getUrlResp.AlreadyExists || !getUrlResp.NeedsLfs {
+		up(100)
 		return d.hfCommit(ctx, getUrlResp, file.GetName(), fileSize, fileMime, file.ModTime())
 	}
 
@@ -209,7 +389,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 
 		partUrls := make(map[int]string)
 		for k, v := range headers {
-			if len(k) == 5 { // 格式通常为 "00001", "00002"
+			if k != "chunk_size" {
 				if idx, err := strconv.Atoi(k); err == nil {
 					partUrls[idx] = v
 				}
@@ -259,11 +439,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 					if err != nil {
 						return err
 					}
-					for key, val := range headers {
-						if len(key) != 5 && key != "chunk_size" {
-							req.Header.Set(key, val)
-						}
-					}
+
 					req.ContentLength = sizeToRead
 
 					res, err := base.HttpClient.Do(req)
@@ -297,21 +473,21 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 			return nil, err
 		}
 		mergeReq.Header.Set("Content-Type", "application/vnd.git-lfs+json")
-		for k, v := range headers {
-			if k != "chunk_size" && len(k) != 5 {
-				mergeReq.Header.Set(k, v)
-			}
+		if d.Token != "" {
+			mergeReq.Header.Set("Authorization", "Bearer "+d.Token)
 		}
 
 		res, err := base.HttpClient.Do(mergeReq)
 		if err != nil {
 			return nil, err
 		}
-		up(97)
 		defer res.Body.Close()
+		body, _ := io.ReadAll(res.Body) // 读取 HF 返回的错误详情
 		if res.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("merge chunks failed")
+			log.WithField("status", res.StatusCode).WithField("response", string(body)).Error("HF merge chunks failed")
+			return nil, fmt.Errorf("merge chunks failed: %s", string(body))
 		}
+		up(97)
 
 	} else {
 		// 单文件直传 (PUT)
@@ -367,6 +543,12 @@ func (d *CFImgBed) hfCommit(ctx context.Context, getUrlResp hfGetUrlResp, fileNa
 
 	srcPath := strings.TrimPrefix(commitResp.Src, "/file/")
 	srcPath = strings.TrimPrefix(srcPath, "/")
+
+	if commitResp.PublicUrl != "" {
+		if u, err := url.Parse(commitResp.PublicUrl); err == nil {
+			d.publicUrlPrefix = u.Scheme + "://" + u.Host
+		}
+	}
 
 	return &model.Object{
 		Path:     srcPath,

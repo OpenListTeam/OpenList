@@ -19,8 +19,9 @@ import (
 type CFImgBed struct {
 	model.Storage
 	Addition
-	client     *resty.Client
-	virtualDir *cache.WeakCacheMap[string, model.Object]
+	client          *resty.Client
+	virtualDir      *cache.WeakCacheMap[string, model.Object]
+	publicUrlPrefix string
 }
 
 func (d *CFImgBed) Config() driver.Config          { return config }
@@ -62,9 +63,9 @@ func (d *CFImgBed) Drop(ctx context.Context) error {
 
 func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	// if !args.Refresh && model.ObjHasMask(dir, model.Virtual) {
-	// 	if _, ok := d.virtualDir.Load(dir.GetPath()); ok {
-	// 		return nil, nil
-	// 	}
+	//      if _, ok := d.virtualDir.Load(dir.GetPath()); ok {
+	//              return nil, nil
+	//      }
 	// }
 
 	var dirSeen map[string]bool
@@ -124,6 +125,9 @@ func (d *CFImgBed) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 }
 
 func (d *CFImgBed) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	if d.publicUrlPrefix != "" {
+		return &model.Link{URL: d.publicUrlPrefix + utils.EncodePath(file.GetPath())}, nil
+	}
 	return &model.Link{URL: d.Address + "/file" + utils.EncodePath(file.GetPath())}, nil
 }
 

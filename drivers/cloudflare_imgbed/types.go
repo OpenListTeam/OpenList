@@ -30,7 +30,8 @@ type apiError struct {
 
 // standardUploadResp 标准上传成功返回的数组
 type standardUploadResp []struct {
-	Src string `json:"src"`
+	Src       string `json:"src"`
+	PublicUrl string `json:"publicUrl"`
 }
 
 // hfGetUrlResp 获取 HF 直传授权地址的响应
@@ -52,10 +53,11 @@ type UploadAction struct {
 }
 
 type hfCommitResp struct {
-	Success bool   `json:"success"`
-	Src     string `json:"src"`
-	FileUrl string `json:"fileUrl"`
-	FullID  string `json:"fullId"`
+	Success   bool   `json:"success"`
+	Src       string `json:"src"`
+	PublicUrl string `json:"publicUrl"`
+	FileUrl   string `json:"fileUrl"`
+	FullID    string `json:"fullId"`
 }
 
 // 辅助函数：从 map 中安全提取字符串/数值
