@@ -234,17 +234,17 @@ func (m *MountPoint) GetSourceCodeByTagName(tagName string) []File {
 	return nil
 }
 
-func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error), refresh bool) []File {
+func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error), refresh bool) ([]File, error) {
 	if m.OtherFile == nil || refresh {
 		resp, err := get("https://api.github.com/repos/" + m.Repo + "/contents")
 		if err != nil {
 			m.OtherFile = nil
-			return nil
+			return nil, err
 		}
 		otherFile := new([]FileInfo)
 		if err := json.Unmarshal(resp.Body(), otherFile); err != nil {
 			m.OtherFile = nil
-			return nil
+			return nil, err
 		}
 		m.OtherFile = otherFile
 	}
@@ -264,7 +264,7 @@ func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error),
 			})
 		}
 	}
-	return files
+	return files, nil
 }
 
 type File struct {
