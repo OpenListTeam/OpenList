@@ -246,8 +246,9 @@ func TestPanicDo(t *testing.T) {
 
 	select {
 	case <-done:
-		if panicCount.Load() != int32(n) {
-			t.Errorf("Expect %d panic, but got %d", n, panicCount)
+		count := panicCount.Load()
+		if count != int32(n) {
+			t.Errorf("Expect %d panic, but got %d", n, count)
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("Do hangs")

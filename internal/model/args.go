@@ -42,6 +42,23 @@ type Link struct {
 	RequireReference bool `json:"-"`
 }
 
+func (l *Link) Clone() *Link {
+	l2 := &Link{
+		URL:           l.URL,
+		Header:        l.Header,
+		RangeReader:   l.RangeReader,
+		Expiration:    l.Expiration,
+		Concurrency:   l.Concurrency,
+		PartSize:      l.PartSize,
+		ContentLength: l.ContentLength,
+	}
+	if l.SyncClosers.Length() > 0 {
+		l2.RequireReference = true
+		l2.SyncClosers.Add(&l.SyncClosers)
+	}
+	return l2
+}
+
 type OtherArgs struct {
 	Obj    Obj
 	Method string
