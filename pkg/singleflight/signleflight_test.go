@@ -112,9 +112,9 @@ func TestDoDupSuppress(t *testing.T) {
 	var g Group[string]
 	var wg1, wg2 sync.WaitGroup
 	c := make(chan string, 1)
-	var calls int32
+	var calls atomic.Int32
 	fn := func() (string, error) {
-		if atomic.AddInt32(&calls, 1) == 1 {
+		if calls.Add(1) == 1 {
 			// First invocation.
 			wg1.Done()
 		}
@@ -149,7 +149,7 @@ func TestDoDupSuppress(t *testing.T) {
 	// least reached the line before the Do.
 	c <- "bar"
 	wg2.Wait()
-	if got := atomic.LoadInt32(&calls); got <= 0 || got >= n {
+	if got := calls.Load(); got <= 0 || got >= n {
 		t.Errorf("number of calls = %d; want over 0 and less than %d", got, n)
 	}
 }
@@ -223,18 +223,19 @@ func TestPanicDo(t *testing.T) {
 	}
 
 	const n = 5
-	waited := int32(n)
-	panicCount := int32(0)
+	waited := atomic.Int32{}
+	waited.Store(int32(n))
+	panicCount := atomic.Int32{}
 	done := make(chan struct{})
 	for i := 0; i < n; i++ {
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
 					t.Logf("Got panic: %v\n%s", err, debug.Stack())
-					atomic.AddInt32(&panicCount, 1)
+					panicCount.Add(1)
 				}
 
-				if atomic.AddInt32(&waited, -1) == 0 {
+				if waited.Add(-1) == 0 {
 					close(done)
 				}
 			}()
@@ -245,7 +246,7 @@ func TestPanicDo(t *testing.T) {
 
 	select {
 	case <-done:
-		if panicCount != n {
+		if panicCount.Load() != int32(n) {
 			t.Errorf("Expect %d panic, but got %d", n, panicCount)
 		}
 	case <-time.After(time.Second):
@@ -261,7 +262,8 @@ func TestGoexitDo(t *testing.T) {
 	}
 
 	const n = 5
-	waited := int32(n)
+	waited := atomic.Int32{}
+	waited.Store(int32(n))
 	done := make(chan struct{})
 	for i := 0; i < n; i++ {
 		go func() {
@@ -270,7 +272,7 @@ func TestGoexitDo(t *testing.T) {
 				if err != nil {
 					t.Errorf("Error should be nil, but got: %v", err)
 				}
-				if atomic.AddInt32(&waited, -1) == 0 {
+				if waited.Add(-1) == 0 {
 					close(done)
 				}
 			}()

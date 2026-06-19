@@ -262,8 +262,9 @@ type sendRequest struct {
 }
 
 var reqid = func() func() uint64 {
-	var id = uint64(time.Now().UnixNano())
+	var id atomic.Uint64
+	id.Store(uint64(time.Now().UnixNano()))
 	return func() uint64 {
-		return atomic.AddUint64(&id, 1)
+		return id.Add(1)
 	}
 }()

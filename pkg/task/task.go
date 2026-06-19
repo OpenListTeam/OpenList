@@ -108,11 +108,11 @@ func (t *Task[K]) Cancel() {
 	if t.state == SUCCEEDED || t.state == CANCELED {
 		return
 	}
+	// maybe can't cancel
+	t.state = CANCELING
 	if t.cancel != nil {
 		t.cancel()
 	}
-	// maybe can't cancel
-	t.state = CANCELING
 }
 
 func WithCancelCtx[K comparable](task *Task[K]) *Task[K] {

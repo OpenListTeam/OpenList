@@ -13,11 +13,18 @@ import (
 
 var ErrNotEnoughMemory = errors.New("not enough memory")
 
+// memoryReservation holds an owned available-memory counter used as a
+// reservation budget across concurrent callers. It avoids atomic operations
+// on the plain uint64 field of the external gopsutil struct.
+type memoryReservation struct {
+	available atomic.Uint64
+}
+
 func MemoryGrowCheck(growSize uint64) error {
 	if conf.MinFreeMemory == 0 {
 		return ErrNotEnoughMemory
 	}
-	m, err, _ := singleflight.AnyGroup.Do("MemoryGrowCheck", func() (any, error) {
+	r, err, _ := singleflight.AnyGroup.Do("MemoryGrowCheck", func() (any, error) {
 		m, err := mem.VirtualMemory()
 		if err != nil {
 			return nil, err
@@ -25,18 +32,20 @@ func MemoryGrowCheck(growSize uint64) error {
 		if m.Available < conf.MinFreeMemory {
 			return nil, ErrNotEnoughMemory
 		}
-		return m, nil
+		r := &memoryReservation{}
+		r.available.Store(m.Available)
+		return r, nil
 	})
 	if err != nil {
 		return err
 	}
-	memStat := m.(*mem.VirtualMemoryStat)
+	res := r.(*memoryReservation)
 	for {
-		available := atomic.LoadUint64(&memStat.Available)
+		available := res.available.Load()
 		if available < growSize || available-growSize < conf.MinFreeMemory {
 			return ErrNotEnoughMemory
 		}
-		if atomic.CompareAndSwapUint64(&memStat.Available, available, available-growSize) {
+		if res.available.CompareAndSwap(available, available-growSize) {
 			return nil
 		}
 	}
