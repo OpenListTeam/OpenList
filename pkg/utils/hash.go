@@ -187,7 +187,7 @@ func (m *MultiHasher) Size() int64 {
 
 // A HashInfo contains hash string for one or more hashType
 type HashInfo struct {
-	h map[*HashType]string `json:"hashInfo"`
+	h map[*HashType]string
 }
 
 func NewHashInfoByMap(h map[*HashType]string) HashInfo {
