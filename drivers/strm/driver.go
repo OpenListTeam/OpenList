@@ -219,9 +219,7 @@ func (d *Strm) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 		}, nil
 	}
 
-	resultLink := *link
-	resultLink.SyncClosers = utils.NewSyncClosers(link)
-	return &resultLink, nil
+	return link.Clone(), nil
 }
 
 var _ driver.Driver = (*Strm)(nil)

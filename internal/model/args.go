@@ -52,9 +52,9 @@ func (l *Link) Clone() *Link {
 		PartSize:      l.PartSize,
 		ContentLength: l.ContentLength,
 	}
-	if l.SyncClosers.Length() > 0 {
+	if l.RequireReference {
 		l2.RequireReference = true
-		l2.SyncClosers.Add(&l.SyncClosers)
+		l2.SyncClosers.Add(l)
 	}
 	return l2
 }
