@@ -43,20 +43,17 @@ type Link struct {
 }
 
 func (l *Link) Clone() *Link {
-	l2 := &Link{
-		URL:           l.URL,
-		Header:        l.Header,
-		RangeReader:   l.RangeReader,
-		Expiration:    l.Expiration,
-		Concurrency:   l.Concurrency,
-		PartSize:      l.PartSize,
-		ContentLength: l.ContentLength,
+	return &Link{
+		URL:              l.URL,
+		Header:           l.Header,
+		RangeReader:      l.RangeReader,
+		Expiration:       l.Expiration,
+		Concurrency:      l.Concurrency,
+		PartSize:         l.PartSize,
+		ContentLength:    l.ContentLength,
+		SyncClosers:      utils.NewSyncClosers(l),
+		RequireReference: l.RequireReference,
 	}
-	if l.RequireReference {
-		l2.RequireReference = true
-		l2.SyncClosers.Add(l)
-	}
-	return l2
 }
 
 type OtherArgs struct {
