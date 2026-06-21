@@ -2,8 +2,10 @@ package smb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -29,37 +31,103 @@ func (d *SMB) getLastConnTime() time.Time {
 
 func (d *SMB) initFS(ctx context.Context) error {
 	_, err, _ := singleflight.AnyGroup.Do(fmt.Sprintf("SMB.initFS:%p", d), func() (any, error) {
-		return nil, d._initFS(ctx)
+		d.connMu.Lock()
+		defer d.connMu.Unlock()
+		return nil, d.initFSLocked(ctx)
 	})
 	return err
 }
+
 func (d *SMB) _initFS(ctx context.Context) error {
+	d.connMu.Lock()
+	defer d.connMu.Unlock()
+	return d.initFSLocked(ctx)
+}
+
+func (d *SMB) initFSLocked(ctx context.Context) error {
+	_ = d.closeFSLocked()
 	dialer := &smb2.Dialer{
 		Initiator: &smb2.NTLMInitiator{
 			User:     d.Username,
 			Password: d.Password,
 		},
 	}
-	s, err := dialer.Dial(ctx, d.Address)
+	conn, err := net.Dial("tcp", d.Address)
 	if err != nil {
 		return err
 	}
-	d.fs, err = s.Mount(d.ShareName)
+	s, err := dialer.DialConn(ctx, conn, d.Address)
 	if err != nil {
+		_ = conn.Close()
 		return err
 	}
+	fs, err := s.Mount(d.ShareName)
+	if err != nil {
+		_ = s.Logoff()
+		_ = conn.Close()
+		return err
+	}
+	d.conn = conn
+	d.session = s
+	d.fs = fs
 	d.updateLastConnTime()
+	return nil
+}
+
+func (d *SMB) closeFS() error {
+	d.connMu.Lock()
+	defer d.connMu.Unlock()
+	return d.closeFSLocked()
+}
+
+func (d *SMB) closeFSLocked() error {
+	var err error
+	if d.fs != nil {
+		err = errors.Join(err, d.fs.Umount())
+		d.fs = nil
+	}
+	if d.session != nil {
+		err = errors.Join(err, d.session.Logoff())
+		d.session = nil
+	}
+	if d.conn != nil {
+		err = errors.Join(err, d.conn.Close())
+		d.conn = nil
+	}
+	d.cleanLastConnTime()
 	return err
 }
 
 func (d *SMB) checkConn(ctx context.Context) error {
-	if time.Since(d.getLastConnTime()) < 5*time.Minute {
-		return nil
+	_, release, err := d.acquireConn(ctx)
+	if release != nil {
+		release()
 	}
-	if d.fs != nil {
-		_ = d.fs.Umount()
+	return err
+}
+
+func (d *SMB) acquireConn(ctx context.Context) (*smb2.Share, func(), error) {
+	d.connMu.Lock()
+	defer d.connMu.Unlock()
+
+	if d.fs == nil || (time.Since(d.getLastConnTime()) >= 5*time.Minute && d.activeOps == 0) {
+		if err := d.initFSLocked(ctx); err != nil {
+			return nil, nil, err
+		}
 	}
-	return d.initFS(ctx)
+	if d.fs == nil {
+		return nil, nil, errors.New("smb share is not initialized")
+	}
+	d.activeOps++
+	return d.fs, d.releaseConn, nil
+}
+
+func (d *SMB) releaseConn() {
+	d.connMu.Lock()
+	defer d.connMu.Unlock()
+	if d.activeOps > 0 {
+		d.activeOps--
+	}
 }
 
 // CopyFile File copies a single file from src to dst
