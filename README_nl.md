@@ -95,6 +95,7 @@ Dank u voor uw ondersteuning en begrip
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [Weiyun](https://www.weiyun.com)
+  - [x] [DingTalk-documenten](https://alidocs.dingtalk.com/)
 - [x] Eenvoudig te implementeren en direct te gebruiken
 - [x] Bestandsvoorbeeld (PDF, markdown, code, platte tekst, ...)
 - [x] Afbeeldingsvoorbeeld in galerijweergave

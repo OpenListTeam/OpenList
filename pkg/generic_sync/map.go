@@ -60,10 +60,36 @@ func (m *MapOf[K, V]) Has(key K) bool {
 }
 
 func (m *MapOf[K, V]) Values() []V {
-	var res []V
+	var values []V
 	m.Map.Range(func(_, value any) bool {
-		res = append(res, value.(V))
+		values = append(values, value.(V))
 		return true
 	})
-	return res
+	return values
+}
+
+func (m *MapOf[K, V]) Count() int {
+	count := 0
+	m.Map.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	return count
+}
+
+func (m *MapOf[K, V]) Empty() bool {
+	return m.Count() == 0
+}
+
+func (m *MapOf[K, V]) ToMap() map[K]V {
+	ans := make(map[K]V)
+	m.Range(func(key K, value V) bool {
+		ans[key] = value
+		return true
+	})
+	return ans
+}
+
+func (m *MapOf[K, V]) Clear() {
+	m.Map.Clear()
 }
