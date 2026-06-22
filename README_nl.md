@@ -95,6 +95,7 @@ Dank u voor uw ondersteuning en begrip
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [Weiyun](https://www.weiyun.com)
+  - [x] [DingTalk-documenten](https://alidocs.dingtalk.com/)
 - [x] Eenvoudig te implementeren en direct te gebruiken
 - [x] Bestandsvoorbeeld (PDF, markdown, code, platte tekst, ...)
 - [x] Afbeeldingsvoorbeeld in galerijweergave
@@ -133,6 +134,14 @@ Stel algemene vragen in [*Discussions*](https://github.com/OpenListTeam/OpenList
 ## Sponsoren
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
+
+## Donatie Bijdragers
+
+Dank aan de volgende donateurs voor hun steun:
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
 
 ## Licentie
 

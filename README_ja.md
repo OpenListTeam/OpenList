@@ -94,6 +94,7 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [Weiyun](https://www.weiyun.com)
+  - [x] [DingTalk ドキュメント](https://alidocs.dingtalk.com/)
   - [x] [MediaFire](https://www.mediafire.com)
 - [x] 簡単にデプロイでき、すぐに使える
 - [x] ファイルプレビュー（PDF、markdown、コード、テキストなど）
@@ -133,6 +134,14 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 ## スポンサー
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
+
+## 寄付者
+
+以下の方々の寛大なご支援に感謝いたします：
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
 
 ## ライセンス
 

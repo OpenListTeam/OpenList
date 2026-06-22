@@ -95,6 +95,7 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [微云](https://www.weiyun.com)
+  - [x] [钉钉文档](https://alidocs.dingtalk.com/)
 - [x] 部署方便，开箱即用
 - [x] 文件预览（PDF、markdown、代码、纯文本等）
 - [x] 画廊模式下的图片预览
@@ -133,6 +134,14 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
 ## 赞助者
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
+
+## 捐赠者
+
+感谢以下捐赠者的慷慨支持：
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
 
 ## 许可证
 

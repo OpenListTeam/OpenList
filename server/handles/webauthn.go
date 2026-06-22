@@ -133,7 +133,10 @@ func BeginAuthnRegistration(c *gin.Context) {
 		return
 	}
 
-	options, sessionData, err := authnInstance.BeginRegistration(user)
+	options, sessionData, err := authnInstance.BeginRegistration(
+		user,
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
+	)
 
 	if err != nil {
 		common.ErrorResp(c, err, 400)
