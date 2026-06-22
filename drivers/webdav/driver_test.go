@@ -23,10 +23,10 @@ func TestGetMapsMissingPathToObjectNotFound(t *testing.T) {
 }
 
 func TestMakeDirAfterMissingWebDAVStat(t *testing.T) {
-	var mkcolCount int32
+	var mkcolCount atomic.Int32
 	d, cleanup := newTestDriver(t, func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == "MKCOL" && (r.URL.Path == "/new" || r.URL.Path == "/new/") {
-			atomic.AddInt32(&mkcolCount, 1)
+			mkcolCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
 			return true
 		}
@@ -37,7 +37,7 @@ func TestMakeDirAfterMissingWebDAVStat(t *testing.T) {
 	if err := op.MakeDir(context.Background(), d, "/new"); err != nil {
 		t.Fatalf("MakeDir failed: %v", err)
 	}
-	if got := atomic.LoadInt32(&mkcolCount); got != 1 {
+	if got := mkcolCount.Load(); got != 1 {
 		t.Fatalf("expected one MKCOL request, got %d", got)
 	}
 }
