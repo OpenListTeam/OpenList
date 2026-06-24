@@ -35,11 +35,50 @@ OpenList has no official association with third-party derivative projects that u
 
 - [x] Multiple storages
   - [x] Local storage
-  - [x] Aliyundrive, OneDrive / Sharepoint, 189cloud, GoogleDrive, 123pan
-  - [x] FTP / SFTP, S3, WebDAV, SMB
-  - [x] PikPak, Seafile, MediaFire, ProtonDrive, YandexDisk, Terabox, Dropbox, Mega.nz
-  - [x] BaiduNetdisk, UC, Quark, Thunder, Lanzou, ILanzou, 115, Weiyun
-  - [x] Cloudreve, FeijiPan, dogecloud, Azure Blob Storage, Chaoxing, CNB, Degoo, Doubao, Febbox, GitHub, OpenList, Teldrive
+  - [x] [Aliyundrive](https://www.alipan.com)
+  - [x] OneDrive / Sharepoint ([Global](https://www.microsoft.com/en-us/microsoft-365/onedrive/online-cloud-storage), [CN](https://portal.partner.microsoftonline.cn), DE, US)
+  - [x] [189cloud](https://cloud.189.cn) (Personal, Family)
+  - [x] [GoogleDrive](https://drive.google.com)
+  - [x] [123pan](https://www.123pan.com)
+  - [x] [FTP / SFTP](https://en.wikipedia.org/wiki/File_Transfer_Protocol)
+  - [x] [PikPak](https://www.mypikpak.com)
+  - [x] [S3](https://aws.amazon.com/s3)
+  - [x] [Seafile](https://seafile.com)
+  - [x] [UPYUN Storage Service](https://www.upyun.com/products/file-storage)
+  - [x] [WebDAV](https://en.wikipedia.org/wiki/WebDAV)
+  - [x] Teambition([China](https://www.teambition.com), [International](https://us.teambition.com))
+  - [x] [MediaFire](https://www.mediafire.com)
+  - [x] [Mediatrack](https://www.mediatrack.cn)
+  - [x] [ProtonDrive](https://proton.me/drive)
+  - [x] [139yun](https://yun.139.com) (Personal, Family, Group)
+  - [x] [YandexDisk](https://disk.yandex.com)
+  - [x] [BaiduNetdisk](http://pan.baidu.com)
+  - [x] [Terabox](https://www.terabox.com/main)
+  - [x] [UC](https://drive.uc.cn)
+  - [x] [Quark](https://pan.quark.cn)
+  - [x] [Thunder](https://pan.xunlei.com)
+  - [x] [Lanzou](https://www.lanzou.com)
+  - [x] [ILanzou](https://www.ilanzou.com)
+  - [x] [Google photo](https://photos.google.com)
+  - [x] [Mega.nz](https://mega.nz)
+  - [x] [Baidu photo](https://photo.baidu.com)
+  - [x] [SMB](https://en.wikipedia.org/wiki/Server_Message_Block)
+  - [x] [115](https://115.com)
+  - [x] [Cloudreve](https://cloudreve.org)
+  - [x] [Dropbox](https://www.dropbox.com)
+  - [x] [FeijiPan](https://www.feijipan.com)
+  - [x] [dogecloud](https://www.dogecloud.com/product/oss)
+  - [x] [Azure Blob Storage](https://azure.microsoft.com/products/storage/blobs)
+  - [x] [Chaoxing](https://www.chaoxing.com)
+  - [x] [CNB](https://cnb.cool/)
+  - [x] [Degoo](https://degoo.com)
+  - [x] [Doubao](https://www.doubao.com)
+  - [x] [Febbox](https://www.febbox.com)
+  - [x] [GitHub](https://github.com)
+  - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
+  - [x] [Teldrive](https://github.com/tgdrive/teldrive)
+  - [x] [Weiyun](https://www.weiyun.com)
+  - [x] [DingTalk Docs](https://alidocs.dingtalk.com/)
 - [x] Easy to deploy and out-of-the-box
 - [x] File preview (PDF, markdown, code, plain text, ...)
 - [x] Image preview in gallery mode

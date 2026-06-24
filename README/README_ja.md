@@ -14,7 +14,7 @@
 
 ---
 
-- [English](../README.md) | [中文](./README_cn.md) | 日本語 | [Dutch](./README_nl.md) | [한국어](./README_kr.md) | [Deutsch](./README_de.md) | [Русский](./README_ru.md) | [Français](./README_fr.md) | [Español](./README_es.md) | [العربية](./README_ar.md)
+- [English](../README.md) | [中文](./README_cn.md) | 日本語 | [Dutch](./README_nl.md) | [한국어](./README_ko.md) | [Deutsch](./README_de.md) | [Русский](./README_ru.md) | [Français](./README_fr.md) | [Español](./README_es.md) | [العربية](./README_ar.md)
 
 - [コントリビュート](../CONTRIBUTING.md)
 - [行動規範](../CODE_OF_CONDUCT.md)
