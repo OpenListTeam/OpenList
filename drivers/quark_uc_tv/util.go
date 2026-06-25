@@ -83,7 +83,7 @@ func (d *QuarkUCTV) request(ctx context.Context, pathname string, method string,
 		// token 过期 / 无效
 		err = d.getRefreshTokenByTV(ctx, d.Addition.RefreshToken, true)
 		if err != nil {
-			return nil, err
+			return nil, d.handleInvalidRefreshToken(ctx, err)
 		}
 		ctx1, cancelFunc := context.WithTimeout(ctx, 10*time.Second)
 		defer cancelFunc()
@@ -187,6 +187,9 @@ func (d *QuarkUCTV) getRefreshTokenByTV(ctx context.Context, code string, isRefr
 		op.MustSaveDriverStorage(d)
 		d.QuarkUCTVCommon.AccessToken = resp.Data.AccessToken
 	} else {
+		if resp.Data.ErrorInfo != "" {
+			return errors.New(resp.Data.ErrorInfo)
+		}
 		return errors.New("refresh token is empty")
 	}
 	return nil
