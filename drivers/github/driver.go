@@ -154,15 +154,19 @@ func (d *Github) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 			}
 		}
 		return ret, nil
-	} else {
-		ret := make([]model.Obj, 0, len(obj.Entries))
-		for _, entry := range obj.Entries {
-			if entry.Name != ".gitkeep" {
-				ret = append(ret, entry.toModelObj())
-			}
-		}
-		return ret, nil
 	}
+
+	ret := make([]model.Obj, 0, len(obj.Entries))
+	entries := make([]Object, 0, len(obj.Entries))
+	for _, entry := range obj.Entries {
+		if entry.Name == ".gitkeep" {
+			continue
+		}
+		ret = append(ret, entry.toModelObj())
+		entries = append(entries, entry)
+	}
+	d.fetchAccurateModifiedTimes(ctx, dir.GetPath(), ret, entries)
+	return ret, nil
 }
 
 func (d *Github) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
