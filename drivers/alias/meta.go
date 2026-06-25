@@ -15,6 +15,10 @@ type Addition struct {
 	DownloadPartSize     int    `json:"download_part_size" default:"0" type:"number" required:"false" help:"Need to enable proxy. Unit: KB"`
 	ProviderPassThrough  bool   `json:"provider_pass_through" type:"bool" default:"false"`
 	DetailsPassThrough   bool   `json:"details_pass_through" type:"bool" default:"false"`
+	AliasCacheEnabled    bool   `json:"alias_cache_enabled" type:"bool" default:"false" help:"Cache aggregated Alias directory listings and resolved backend paths"`
+	AliasCacheExpiration int    `json:"alias_cache_expiration" default:"30" required:"false" type:"number" help:"Alias cache expiration in minutes"`
+	AliasCacheMaxEntries int    `json:"alias_cache_max_entries" default:"0" required:"false" type:"number" help:"Maximum Alias cache entries. 0 means unlimited"`
+	AliasListConcurrency int    `json:"alias_list_concurrency" default:"1" required:"false" type:"number" help:"Maximum number of backend folders to list concurrently. 1 or less means serial listing"`
 }
 
 var config = driver.Config{
