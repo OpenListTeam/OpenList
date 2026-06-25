@@ -23,7 +23,7 @@ import (
 )
 
 // 创建文件 V2
-func (d *Open123) create(parentFileID int64, filename string, etag string, size int64, duplicate int, containDir bool) (*UploadCreateResp, error) {
+func (d *Open123) Create(parentFileID int64, filename string, etag string, size int64, duplicate int, containDir bool) (*UploadCreateResp, error) {
 	var resp UploadCreateResp
 	_, err := d.Request(UploadCreate, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(base.Json{
