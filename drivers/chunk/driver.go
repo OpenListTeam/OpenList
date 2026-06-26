@@ -53,8 +53,8 @@ func (d *Chunk) Drop(ctx context.Context) error {
 	return nil
 }
 
-func (Addition) GetRootPath() string {
-	return "/"
+func (*Chunk) GetRootPath() string {
+	return ""
 }
 
 func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
@@ -80,7 +80,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 	if err != nil {
 		return nil, err
 	}
-	var totalSize int64 = 0
+	var totalSize int64
 	// 0号块默认为-1 以支持空文件
 	chunkSizes := []int64{-1}
 	h := make(map[*utils.HashType]string)
@@ -119,6 +119,25 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 	}
 	reqDir, _ := stdpath.Split(path)
+	// 文件块不完整时，返回文件夹对象
+	if chunkSizes[0] == -1 {
+		return &model.Object{
+			Path:     stdpath.Join(reqDir, chunkName),
+			Name:     chunkName,
+			IsFolder: true,
+			Modified: d.Modified,
+		}, nil
+	}
+	for i, l := 1, len(chunkSizes)-1; i < l; i++ {
+		if chunkSizes[i] == 0 {
+			return &model.Object{
+				Path:     stdpath.Join(reqDir, chunkName),
+				Name:     chunkName,
+				IsFolder: true,
+				Modified: d.Modified,
+			}, nil
+		}
+	}
 	objRes := chunkObject{
 		Object: model.Object{
 			Path:     stdpath.Join(reqDir, chunkName),
@@ -161,37 +180,69 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 				result = append(result, nil)
 				listG.Go(func(ctx context.Context) error {
 					chunkObjs, err := op.List(ctx, remoteStorage, stdpath.Join(remoteActualDir, rawName), model.ListArgs{
-						ReqPath: stdpath.Join(args.ReqPath, rawName),
 						Refresh: args.Refresh,
 					})
 					if err != nil {
 						return err
 					}
-					totalSize := int64(0)
+					var totalSize int64
+					// 0号块默认为-1 以支持空文件
+					chunkSizes := []int64{-1}
 					h := make(map[*utils.HashType]string)
-					first := obj
+					var first model.Obj
 					for _, o := range chunkObjs {
 						if o.IsDir() {
 							continue
 						}
-						if after, ok := strings.CutPrefix(strings.TrimSuffix(o.GetName(), d.CustomExt), "hash_"); ok {
-							hn, value, ok := strings.Cut(after, "_")
+						if after, ok := strings.CutPrefix(o.GetName(), "hash_"); ok {
+							hn, value, ok := strings.Cut(strings.TrimSuffix(after, d.CustomExt), "_")
 							if ok {
 								ht, ok := utils.GetHashByName(hn)
 								if ok {
 									h[ht] = value
 								}
-								continue
 							}
+							continue
 						}
 						idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
 						if err != nil {
 							continue
 						}
-						if idx == 0 {
-							first = o
-						}
 						totalSize += o.GetSize()
+						if len(chunkSizes) > idx {
+							if idx == 0 {
+								first = o
+							}
+							chunkSizes[idx] = o.GetSize()
+						} else if len(chunkSizes) == idx {
+							chunkSizes = append(chunkSizes, o.GetSize())
+						} else {
+							newChunkSizes := make([]int64, idx+1)
+							copy(newChunkSizes, chunkSizes)
+							chunkSizes = newChunkSizes
+							chunkSizes[idx] = o.GetSize()
+						}
+					}
+					// 文件块不完整时，返回文件夹对象
+					if chunkSizes[0] == -1 {
+						result[resultIdx] = &model.Object{
+							Name:     rawName,
+							Size:     obj.GetSize(),
+							Modified: obj.ModTime(),
+							IsFolder: true,
+						}
+						return nil
+					}
+					for i, l := 1, len(chunkSizes)-1; i < l; i++ {
+						if chunkSizes[i] == 0 {
+							result[resultIdx] = &model.Object{
+								Name:     rawName,
+								Size:     obj.GetSize(),
+								Modified: obj.ModTime(),
+								IsFolder: true,
+							}
+							return nil
+						}
 					}
 					objRes := model.Object{
 						Name:     name,
