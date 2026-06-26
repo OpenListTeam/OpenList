@@ -1035,6 +1035,21 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 
 	dycpwd := jsoniter.Get(res.Body(), "var", "artifact").ToString()
 	if dycpwd == "" {
+		code := jsoniter.Get(res.Body(), "code").ToString()
+		summary := jsoniter.Get(res.Body(), "summary").ToString()
+		if code == "" {
+			if match := regexp.MustCompile(`['"]code['"]\s*:\s*['"]([^'"]+)['"]`).FindSubmatch(res.Body()); len(match) == 2 {
+				code = string(match[1])
+			}
+		}
+		if summary == "" {
+			if match := regexp.MustCompile(`['"]summary['"]\s*:\s*['"]([^'"]+)['"]`).FindSubmatch(res.Body()); len(match) == 2 {
+				summary = string(match[1])
+			}
+		}
+		if code != "" || summary != "" {
+			return "", fmt.Errorf("failed to extract dycpwd from artifact exchange response: code=%s summary=%s", code, summary)
+		}
 		return "", errors.New("failed to extract dycpwd from artifact exchange response")
 	}
 	log.Debugf("DEBUG: dycpwd extracted from artifact exchange response.")
@@ -1376,6 +1391,9 @@ func (d *Yun139) credentialState() (credentialState, error) {
 	d.MailCookies = strings.TrimSpace(d.MailCookies)
 
 	if d.Authorization != "" {
+		if strings.HasPrefix(strings.ToLower(d.Authorization), "basic ") {
+			return 0, fmt.Errorf("authorization should not include Basic prefix")
+		}
 		return credentialStateAuthorization, nil
 	}
 
