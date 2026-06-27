@@ -13,7 +13,7 @@ type Addition struct {
 	AccessToken  string `json:"access_token" type:"text" help:"Short-lived PDS access token; either access_token or refresh_token is required"`
 	RefreshToken string `json:"refresh_token" type:"text"`
 	TokenType    string `json:"token_type" default:"Bearer"`
-	ExpiresAt    int64  `json:"expires_at" type:"number" help:"Unix timestamp in seconds; leave 0 if unknown"`
+	ExpiresAt    int64  `json:"expires_at" type:"number" default:"0" help:"Unix timestamp in seconds; leave 0 if unknown"`
 }
 
 var config = driver.Config{
