@@ -44,6 +44,28 @@ func resolveDirectUploadDir(c *gin.Context, rawPath, fileName string) (string, e
 	return path, nil
 }
 
+func resolveDirectUploadFile(c *gin.Context, rawPath, fileName string) (string, string, error) {
+	filePath := c.GetHeader("File-Path")
+	if filePath != "" {
+		path, err := url.PathUnescape(filePath)
+		if err != nil {
+			return "", "", err
+		}
+		user := c.Request.Context().Value(conf.UserKey).(*model.User)
+		path, err = user.JoinPath(path)
+		if err != nil {
+			return "", "", err
+		}
+		name := stdpath.Base(path)
+		if err := checkRelativePath(name); err != nil {
+			return "", "", err
+		}
+		return stdpath.Dir(path), name, nil
+	}
+	path, err := resolveDirectUploadDir(c, rawPath, fileName)
+	return path, fileName, err
+}
+
 func checkDirectUploadWritePermission(c *gin.Context, parentPath string) error {
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	parentMeta, err := op.GetNearestMeta(parentPath)
@@ -79,7 +101,7 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	path, err := resolveDirectUploadDir(c, req.Path, req.FileName)
+	path, fileName, err := resolveDirectUploadFile(c, req.Path, req.FileName)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
 		return
@@ -88,7 +110,7 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 		return
 	}
 	overwrite := c.GetHeader("Overwrite") != "false"
-	dstPath := stdpath.Join(path, req.FileName)
+	dstPath := stdpath.Join(path, fileName)
 	if !overwrite {
 		res, err := fs.Get(c.Request.Context(), dstPath, &fs.GetArgs{NoLog: true})
 		if err != nil && !errs.IsObjectNotFound(err) {
@@ -100,7 +122,7 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 			return
 		}
 	}
-	directUploadInfo, err := fs.GetDirectUploadInfo(c, req.Tool, path, req.FileName, req.FileSize, overwrite)
+	directUploadInfo, err := fs.GetDirectUploadInfo(c, req.Tool, path, fileName, req.FileSize, overwrite)
 	if err != nil {
 		if !overwrite && errs.IsObjectAlreadyExists(err) {
 			common.ErrorStrResp(c, "file exists", 403)
@@ -120,7 +142,7 @@ func FsCompleteDirectUpload(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	path, err := resolveDirectUploadDir(c, req.Path, req.FileName)
+	path, fileName, err := resolveDirectUploadFile(c, req.Path, req.FileName)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
 		return
@@ -132,7 +154,7 @@ func FsCompleteDirectUpload(c *gin.Context) {
 	if respondDirectUploadPermissionError(c, checkDirectUploadWritePermission(c, path)) {
 		return
 	}
-	obj, err := fs.CompleteDirectUpload(c.Request.Context(), req.Tool, path, req.FileName, req.UploadToken)
+	obj, err := fs.CompleteDirectUpload(c.Request.Context(), req.Tool, path, fileName, req.UploadToken)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return

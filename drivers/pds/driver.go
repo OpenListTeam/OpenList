@@ -107,7 +107,7 @@ func (d *PDS) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) 
 	if err != nil {
 		return nil, err
 	}
-	return out.toObj(), nil
+	return withParentPath(parentDir.GetPath(), out.toObj()), nil
 }
 
 func (d *PDS) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
@@ -122,7 +122,11 @@ func (d *PDS) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 	if err != nil {
 		return nil, err
 	}
-	return d.getFileObj(ctx, out.FileID)
+	obj, err := d.getFileObj(ctx, out.FileID)
+	if err != nil {
+		return nil, err
+	}
+	return withParentPath(dstDir.GetPath(), obj), nil
 }
 
 func (d *PDS) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
@@ -136,7 +140,7 @@ func (d *PDS) Rename(ctx context.Context, srcObj model.Obj, newName string) (mod
 	if err != nil {
 		return nil, err
 	}
-	return out.toObj(), nil
+	return withParentPath(path.Dir(srcObj.GetPath()), out.toObj()), nil
 }
 
 func (d *PDS) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
@@ -151,7 +155,11 @@ func (d *PDS) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 	if err != nil {
 		return nil, err
 	}
-	return d.getFileObj(ctx, out.FileID)
+	obj, err := d.getFileObj(ctx, out.FileID)
+	if err != nil {
+		return nil, err
+	}
+	return withParentPath(dstDir.GetPath(), obj), nil
 }
 
 func (d *PDS) Remove(ctx context.Context, obj model.Obj) error {
@@ -200,7 +208,11 @@ func (d *PDS) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	if err != nil {
 		return nil, err
 	}
-	return d.getFileObj(ctx, created.FileID)
+	obj, err := d.getFileObj(ctx, created.FileID)
+	if err != nil {
+		return nil, err
+	}
+	return withParentPath(dstDir.GetPath(), obj), nil
 }
 
 func (d *PDS) Get(ctx context.Context, path string) (model.Obj, error) {
@@ -234,6 +246,19 @@ func (d *PDS) fileID(obj model.Obj) string {
 		return id
 	}
 	return d.RootFolderID
+}
+
+func withParentPath(parentPath string, obj model.Obj) model.Obj {
+	if obj == nil {
+		return nil
+	}
+	if parentPath == "" || parentPath == "." {
+		parentPath = "/"
+	}
+	if setter, ok := obj.(model.SetPath); ok {
+		setter.SetPath(path.Join(parentPath, obj.GetName()))
+	}
+	return obj
 }
 
 func (d *PDS) getFile(ctx context.Context, fileID string) (fileItem, error) {

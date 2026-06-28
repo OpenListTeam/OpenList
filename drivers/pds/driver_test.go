@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
 func TestInitRequiresToken(t *testing.T) {
@@ -194,6 +196,39 @@ func TestDirectUploadTools(t *testing.T) {
 	tools := driver.GetDirectUploadTools()
 	if len(tools) != 1 || tools[0] != directUploadTool {
 		t.Fatalf("GetDirectUploadTools() = %v, want [%s]", tools, directUploadTool)
+	}
+}
+
+func TestMakeDirSetsReturnedPath(t *testing.T) {
+	driver := &PDS{
+		Addition: Addition{
+			DomainID:    "domain",
+			DriveID:     "drive",
+			AccessToken: "access",
+			TokenType:   "Bearer",
+		},
+	}
+	driver.client = &client{
+		addition: &driver.Addition,
+		http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Host != "domain.api.aliyunfile.com" || req.URL.Path != "/v2/file/create" {
+				return nil, fmt.Errorf("unexpected request to %s", req.URL.String())
+			}
+			return testJSONResponse(req, http.StatusOK, `{"file_id":"child-id","name":"child"}`), nil
+		})},
+	}
+
+	obj, err := driver.MakeDir(context.Background(), &model.Object{
+		ID:       "parent-id",
+		Path:     "/parent",
+		Name:     "parent",
+		IsFolder: true,
+	}, "child")
+	if err != nil {
+		t.Fatalf("MakeDir() error = %v", err)
+	}
+	if obj.GetPath() != "/parent/child" {
+		t.Fatalf("MakeDir() path = %q, want /parent/child", obj.GetPath())
 	}
 }
 

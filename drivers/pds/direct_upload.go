@@ -127,7 +127,7 @@ func (d *PDS) CompleteDirectUpload(ctx context.Context, tool string, dstDir mode
 		return nil, err
 	}
 	if token.DomainID != d.DomainID || token.DriveID != d.DriveID ||
-		token.ParentFileID != d.fileID(dstDir) || token.FileName != fileName {
+		token.ParentFileID != d.fileID(dstDir) {
 		return nil, fmt.Errorf("direct upload token does not match request")
 	}
 	if token.FileID == "" || token.UploadID == "" {
@@ -146,7 +146,11 @@ func (d *PDS) CompleteDirectUpload(ctx context.Context, tool string, dstDir mode
 	if fileID == "" {
 		fileID = token.FileID
 	}
-	return d.getFileObj(ctx, fileID)
+	obj, err := d.getFileObj(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	return withParentPath(dstDir.GetPath(), obj), nil
 }
 
 func (d *PDS) signDirectUploadToken(token directUploadToken) (string, error) {
