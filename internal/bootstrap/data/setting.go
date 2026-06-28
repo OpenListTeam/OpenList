@@ -162,6 +162,12 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.ReadMeAutoRender, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW},
 		{Key: conf.FilterReadMeScripts, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW}, // frontend
 		{Key: conf.NonEFSZipEncoding, Value: "IBM437", Type: conf.TypeString, Group: model.PREVIEW},
+
+		// wopi settings
+		{Key: conf.WopiEnabled, Value: "false", Type: conf.TypeBool, Group: model.PREVIEW, Flag: model.PUBLIC},
+		{Key: conf.WopiServices, Value: "[]", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PUBLIC, Help: "WOPI services JSON array"},
+		{Key: conf.WopiMaxSize, Value: "52428800", Type: conf.TypeNumber, Group: model.PREVIEW, Flag: model.PRIVATE, Help: "Max file size for WOPI editing in bytes (default 50MB)"},
+
 		// global settings
 		{Key: conf.HideFiles, Value: "/\\/README.md/i", Type: conf.TypeText, Group: model.GLOBAL},
 		{Key: "package_download", Value: "true", Type: conf.TypeBool, Group: model.GLOBAL},
