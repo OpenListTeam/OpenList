@@ -31,8 +31,6 @@ on:
         description: 'GitHub token with permissions to delete packages (leave empty to use default GITHUB_TOKEN)'
         required: false
         default: ''
-  schedule:
-    - cron: '30 2 * * MON'
 
 jobs:
   cleanup:
