@@ -1,6 +1,9 @@
 package handles
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"strings"
 
 	_115 "github.com/OpenListTeam/OpenList/v4/drivers/115"
@@ -17,6 +20,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
+	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -478,10 +482,74 @@ func OfflineDownloadTools(c *gin.Context) {
 }
 
 type AddOfflineDownloadReq struct {
-	Urls         []string `json:"urls"`
-	Path         string   `json:"path"`
-	Tool         string   `json:"tool"`
-	DeletePolicy string   `json:"delete_policy"`
+	Urls         []string        `json:"urls"`
+	TorrentData  torrentDataList `json:"torrent_data"`
+	Path         string          `json:"path"`
+	Tool         string          `json:"tool"`
+	DeletePolicy string          `json:"delete_policy"`
+}
+
+type torrentDataList []string
+
+func (l *torrentDataList) UnmarshalJSON(data []byte) error {
+	var list []string
+	if err := json.Unmarshal(data, &list); err == nil {
+		*l = list
+		return nil
+	}
+
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		if strings.TrimSpace(single) == "" {
+			*l = nil
+		} else {
+			*l = []string{single}
+		}
+		return nil
+	}
+
+	return fmt.Errorf("torrent_data must be a base64 string or string array")
+}
+
+func decodeOfflineDownloadTorrentData(encoded string) ([]byte, string, error) {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil, "", nil
+	}
+	if strings.HasPrefix(strings.ToLower(encoded), "data:") {
+		comma := strings.Index(encoded, ",")
+		if comma < 0 {
+			return nil, "", fmt.Errorf("无效的 torrent data URL")
+		}
+		meta := strings.ToLower(encoded[:comma])
+		if !strings.Contains(meta, ";base64") {
+			return nil, "", fmt.Errorf("torrent data URL 必须使用 base64 编码")
+		}
+		encoded = encoded[comma+1:]
+	}
+
+	if len(encoded) > maxTorrentBase64Len {
+		return nil, "", fmt.Errorf("torrent 数据过大（最大 10MB）")
+	}
+
+	torrentData, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, "", fmt.Errorf("无效的 torrent Base64 编码: %w", err)
+	}
+
+	t, err := torrent.Decode(torrentData)
+	if err != nil {
+		return nil, "", fmt.Errorf("解析 torrent 失败: %w", err)
+	}
+	if err := validateParsedTorrent(t); err != nil {
+		return nil, "", err
+	}
+
+	name := t.Info.Name
+	if name == "" {
+		name = t.GetInfoHashHex()
+	}
+	return torrentData, name, nil
 }
 
 func AddOfflineDownload(c *gin.Context) {
@@ -520,6 +588,31 @@ func AddOfflineDownload(c *gin.Context) {
 
 		t, err := tool.AddURL(c, &tool.AddURLArgs{
 			URL:          trimmedUrl,
+			DstDirPath:   reqPath,
+			Tool:         req.Tool,
+			DeletePolicy: tool.DeletePolicy(req.DeletePolicy),
+		})
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		if t != nil {
+			tasks = append(tasks, t)
+		}
+	}
+	for _, encodedTorrent := range req.TorrentData {
+		torrentData, name, err := decodeOfflineDownloadTorrentData(encodedTorrent)
+		if err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+		if len(torrentData) == 0 {
+			continue
+		}
+
+		t, err := tool.AddURL(c, &tool.AddURLArgs{
+			URL:          name,
+			TorrentData:  torrentData,
 			DstDirPath:   reqPath,
 			Tool:         req.Tool,
 			DeletePolicy: tool.DeletePolicy(req.DeletePolicy),

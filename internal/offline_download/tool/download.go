@@ -21,9 +21,11 @@ import (
 type DownloadTask struct {
 	task.TaskExtension
 	Url               string       `json:"url"`
+	TorrentData       []byte       `json:"-"`
 	DstDirPath        string       `json:"dst_dir_path"`
 	TempDir           string       `json:"temp_dir"`
 	DeletePolicy      DeletePolicy `json:"delete_policy"`
+	DeleteAfterTime   time.Time    `json:"delete_after_time,omitempty"`
 	Toolname          string       `json:"toolname"`
 	Status            string       `json:"-"`
 	Signal            chan int     `json:"-"`
@@ -54,11 +56,12 @@ func (t *DownloadTask) Run() error {
 		t.Signal = nil
 	}()
 	gid, err := t.tool.AddURL(&AddUrlArgs{
-		Ctx:     t.Ctx(),
-		Url:     t.Url,
-		UID:     t.ID,
-		TempDir: t.TempDir,
-		Signal:  t.Signal,
+		Ctx:         t.Ctx(),
+		Url:         t.Url,
+		TorrentData: t.TorrentData,
+		UID:         t.ID,
+		TempDir:     t.TempDir,
+		Signal:      t.Signal,
 	})
 	if err != nil {
 		return err
@@ -116,10 +119,9 @@ outer:
 	t.Status = "offline download completed, maybe transferring"
 	// hack for qBittorrent
 	if t.tool.Name() == "qBittorrent" {
-		seedTime := setting.GetInt(conf.QbittorrentSeedtime, 0)
-		if seedTime >= 0 {
+		if seedDuration, ok := t.seedingDuration(); ok {
 			t.Status = "offline download completed, waiting for seeding"
-			<-time.After(time.Minute * time.Duration(seedTime))
+			<-time.After(seedDuration)
 			err := t.tool.Remove(t)
 			if err != nil {
 				log.Errorln(err.Error())
@@ -129,10 +131,9 @@ outer:
 
 	if t.tool.Name() == "Transmission" {
 		// hack for transmission
-		seedTime := setting.GetInt(conf.TransmissionSeedtime, 0)
-		if seedTime >= 0 {
+		if seedDuration, ok := t.seedingDuration(); ok {
 			t.Status = "offline download completed, waiting for seeding"
-			<-time.After(time.Minute * time.Duration(seedTime))
+			<-time.After(seedDuration)
 			err := t.tool.Remove(t)
 			if err != nil {
 				log.Errorln(err.Error())
@@ -164,6 +165,7 @@ func (t *DownloadTask) Update() (bool, error) {
 	}
 	// if download completed
 	if info.Completed {
+		t.setDeleteAfterTime()
 		err := t.Transfer()
 		return true, errors.WithMessage(err, "failed to transfer file")
 	}
@@ -174,16 +176,56 @@ func (t *DownloadTask) Update() (bool, error) {
 	return false, nil
 }
 
+func (t *DownloadTask) setDeleteAfterTime() {
+	if t.DeletePolicy != DeleteAfterSeeding || !t.isSeedingTool() || !t.DeleteAfterTime.IsZero() {
+		return
+	}
+	seedDuration, ok := t.seedingDuration()
+	if !ok {
+		return
+	}
+	t.DeleteAfterTime = time.Now().Add(seedDuration)
+}
+
+func (t *DownloadTask) transferDeletePolicy() DeletePolicy {
+	if t.DeletePolicy == DeleteAfterSeeding && !t.isSeedingTool() {
+		return DeleteNever
+	}
+	return t.DeletePolicy
+}
+
+func (t *DownloadTask) isSeedingTool() bool {
+	toolName := t.tool.Name()
+	return toolName == "qBittorrent" || toolName == "Transmission"
+}
+
+func (t *DownloadTask) seedingDuration() (time.Duration, bool) {
+	var seedTime int
+	switch t.tool.Name() {
+	case "qBittorrent":
+		seedTime = setting.GetInt(conf.QbittorrentSeedtime, 0)
+	case "Transmission":
+		seedTime = setting.GetInt(conf.TransmissionSeedtime, 0)
+	default:
+		return 0, false
+	}
+	if seedTime < 0 {
+		return 0, false
+	}
+	return time.Minute * time.Duration(seedTime), true
+}
+
 func (t *DownloadTask) Transfer() error {
 	toolName := t.tool.Name()
+	deletePolicy := t.transferDeletePolicy()
 	if toolName == "115 Cloud" || toolName == "115 Open" || toolName == "123 Open" || toolName == "123Pan" || toolName == "PikPak" || toolName == "Thunder" || toolName == "ThunderX" || toolName == "ThunderBrowser" {
 		// 如果不是直接下载到目标路径，则进行转存
 		if t.TempDir != t.DstDirPath {
-			return transferObj(t.Ctx(), t.TempDir, t.DstDirPath, t.DeletePolicy)
+			return transferObj(t.Ctx(), t.TempDir, t.DstDirPath, deletePolicy, t.DeleteAfterTime)
 		}
 		return nil
 	}
-	if t.DeletePolicy == UploadDownloadStream {
+	if deletePolicy == UploadDownloadStream {
 		dstStorage, dstDirActualPath, err := op.GetStorageAndActualPath(t.DstDirPath)
 		if err != nil {
 			return errors.WithMessage(err, "failed get dst storage")
@@ -200,8 +242,9 @@ func (t *DownloadTask) Transfer() error {
 				DstStorage:    dstStorage,
 				DstStorageMp:  dstStorage.GetStorage().MountPath,
 			},
-			DeletePolicy: t.DeletePolicy,
-			Url:          t.Url,
+			DeletePolicy:    deletePolicy,
+			DeleteAfterTime: t.DeleteAfterTime,
+			Url:             t.Url,
 		}
 		tsk.SetTotalBytes(t.GetTotalBytes())
 		tsk.groupID = path.Join(tsk.DstStorageMp, tsk.DstActualPath)
@@ -209,7 +252,7 @@ func (t *DownloadTask) Transfer() error {
 		TransferTaskManager.Add(tsk)
 		return nil
 	}
-	return transferStd(t.Ctx(), t.TempDir, t.DstDirPath, t.DeletePolicy)
+	return transferStd(t.Ctx(), t.TempDir, t.DstDirPath, deletePolicy, t.DeleteAfterTime)
 }
 
 func (t *DownloadTask) GetName() string {
