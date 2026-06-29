@@ -122,9 +122,11 @@ outer:
 		if seedDuration, ok := t.seedingDuration(); ok {
 			t.Status = "offline download completed, waiting for seeding"
 			<-time.After(seedDuration)
-			err := t.tool.Remove(t)
-			if err != nil {
-				log.Errorln(err.Error())
+			if t.shouldRemoveTaskAfterSeeding() {
+				err := t.tool.Remove(t)
+				if err != nil {
+					log.Errorln(err.Error())
+				}
 			}
 		}
 	}
@@ -134,9 +136,11 @@ outer:
 		if seedDuration, ok := t.seedingDuration(); ok {
 			t.Status = "offline download completed, waiting for seeding"
 			<-time.After(seedDuration)
-			err := t.tool.Remove(t)
-			if err != nil {
-				log.Errorln(err.Error())
+			if t.shouldRemoveTaskAfterSeeding() {
+				err := t.tool.Remove(t)
+				if err != nil {
+					log.Errorln(err.Error())
+				}
 			}
 		}
 	}
@@ -197,6 +201,10 @@ func (t *DownloadTask) transferDeletePolicy() DeletePolicy {
 func (t *DownloadTask) isSeedingTool() bool {
 	toolName := t.tool.Name()
 	return toolName == "qBittorrent" || toolName == "Transmission"
+}
+
+func (t *DownloadTask) shouldRemoveTaskAfterSeeding() bool {
+	return t.DeletePolicy != DeleteNever
 }
 
 func (t *DownloadTask) seedingDuration() (time.Duration, bool) {
