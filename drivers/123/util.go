@@ -24,9 +24,9 @@ import (
 // do others that not defined in Driver interface
 
 const (
-	Api              = "https://www.123pan.com/api"
+	Api              = "https://api.123pan.cn/api"
 	AApi             = "https://www.123pan.com/a/api"
-	BApi             = "https://www.123pan.com/b/api"
+	BApi             = "https://api.123278.com/b/api"
 	LoginApi         = "https://login.123pan.com/api"
 	MainApi          = BApi
 	SignIn           = LoginApi + "/user/sign_in"
