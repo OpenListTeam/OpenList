@@ -7,7 +7,6 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/go-resty/resty/v2"
-	log "github.com/sirupsen/logrus"
 )
 
 // 发送 GET 请求
@@ -23,7 +22,7 @@ func (d *GithubReleases) GetRequest(url string) (*resty.Response, error) {
 		return nil, err
 	}
 	if res.StatusCode() != 200 {
-		log.Warn("failed to get request: ", res.StatusCode(), res.String())
+		return nil, fmt.Errorf("github api error: status %d", res.StatusCode())
 	}
 	return res, nil
 }

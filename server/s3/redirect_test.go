@@ -42,7 +42,20 @@ func TestHasNonObjectQuery(t *testing.T) {
 		{name: "aws auth query", raw: "/bucket/object?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc", want: false},
 		{name: "legacy auth query", raw: "/bucket/object?AWSAccessKeyId=ak&Signature=sig&Expires=1", want: false},
 		{name: "sdk operation marker", raw: "/bucket/object?x-id=GetObject", want: false},
-		{name: "list query", raw: "/bucket/object?list-type=2", want: true},
+		{name: "response content disposition", raw: "/bucket/object?response-content-disposition=attachment%3Bfilename%3Dx", want: false},
+		{name: "response content type", raw: "/bucket/object?response-content-type=text%2Fplain", want: false},
+		// list-type is not a routing key in gofakes3: a path with an object
+		// segment is dispatched to getObject regardless, so it must not block
+		// a direct redirect.
+		{name: "list query", raw: "/bucket/object?list-type=2", want: false},
+		{name: "multipart uploads", raw: "/bucket/object?uploads", want: true},
+		{name: "multipart upload id", raw: "/bucket/object?uploadId=123", want: true},
+		{name: "versioning", raw: "/bucket/object?versioning", want: true},
+		{name: "versions", raw: "/bucket/object?versions", want: true},
+		{name: "bucket location", raw: "/bucket/object?location", want: true},
+		{name: "version id", raw: "/bucket/object?versionId=abc", want: true},
+		{name: "version id null", raw: "/bucket/object?versionId=null", want: false},
+		{name: "version id empty", raw: "/bucket/object?versionId=", want: false},
 	}
 
 	for _, tt := range tests {

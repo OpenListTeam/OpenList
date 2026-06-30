@@ -19,33 +19,54 @@ type MountPoint struct {
 }
 
 // 请求最新版本
-func (m *MountPoint) RequestRelease(get func(url string) (*resty.Response, error), refresh bool) {
+func (m *MountPoint) RequestRelease(get func(url string) (*resty.Response, error), refresh bool) error {
 	if m.Repo == "" {
-		return
+		return nil
 	}
 
 	if m.Release == nil || refresh {
-		resp, _ := get("https://api.github.com/repos/" + m.Repo + "/releases/latest")
-		m.Release = new(Release)
-		json.Unmarshal(resp.Body(), m.Release)
+		resp, err := get("https://api.github.com/repos/" + m.Repo + "/releases/latest")
+		if err != nil {
+			m.Release = nil
+			return err
+		}
+		release := new(Release)
+		if err := json.Unmarshal(resp.Body(), release); err != nil {
+			m.Release = nil
+			return err
+		}
+		m.Release = release
 	}
+	return nil
 }
 
 // 请求所有版本
-func (m *MountPoint) RequestReleases(get func(url string) (*resty.Response, error), refresh bool) {
+func (m *MountPoint) RequestReleases(get func(url string) (*resty.Response, error), refresh bool) error {
 	if m.Repo == "" {
-		return
+		return nil
 	}
 
 	if m.Releases == nil || refresh {
-		resp, _ := get("https://api.github.com/repos/" + m.Repo + "/releases")
-		m.Releases = new([]Release)
-		json.Unmarshal(resp.Body(), m.Releases)
+		resp, err := get("https://api.github.com/repos/" + m.Repo + "/releases")
+		if err != nil {
+			m.Releases = nil
+			return err
+		}
+		releases := new([]Release)
+		if err := json.Unmarshal(resp.Body(), releases); err != nil {
+			m.Releases = nil
+			return err
+		}
+		m.Releases = releases
 	}
+	return nil
 }
 
 // 获取最新版本
 func (m *MountPoint) GetLatestRelease() []File {
+	if m.Release == nil {
+		return nil
+	}
 	files := make([]File, 0, len(m.Release.Assets))
 	for _, asset := range m.Release.Assets {
 		files = append(files, File{
@@ -63,6 +84,9 @@ func (m *MountPoint) GetLatestRelease() []File {
 
 // 获取最新版本大小
 func (m *MountPoint) GetLatestSize() int64 {
+	if m.Release == nil {
+		return 0
+	}
 	size := int64(0)
 	for _, asset := range m.Release.Assets {
 		size += asset.Size
@@ -72,6 +96,9 @@ func (m *MountPoint) GetLatestSize() int64 {
 
 // 获取所有版本
 func (m *MountPoint) GetAllVersion() []File {
+	if m.Releases == nil {
+		return nil
+	}
 	files := make([]File, 0)
 	for _, release := range *m.Releases {
 		file := File{
@@ -93,6 +120,9 @@ func (m *MountPoint) GetAllVersion() []File {
 
 // 根据版本号获取版本
 func (m *MountPoint) GetReleaseByTagName(tagName string) []File {
+	if m.Releases == nil {
+		return nil
+	}
 	for _, item := range *m.Releases {
 		if item.TagName == tagName {
 			files := make([]File, 0)
@@ -145,6 +175,9 @@ func (m *MountPoint) GetAllVersionSize() int64 {
 }
 
 func (m *MountPoint) GetSourceCode() []File {
+	if m.Release == nil {
+		return nil
+	}
 	files := make([]File, 0)
 
 	// 无法获取文件大小，此处设为 1
@@ -171,6 +204,9 @@ func (m *MountPoint) GetSourceCode() []File {
 }
 
 func (m *MountPoint) GetSourceCodeByTagName(tagName string) []File {
+	if m.Releases == nil {
+		return nil
+	}
 	for _, item := range *m.Releases {
 		if item.TagName == tagName {
 			files := make([]File, 0)
@@ -198,11 +234,19 @@ func (m *MountPoint) GetSourceCodeByTagName(tagName string) []File {
 	return nil
 }
 
-func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error), refresh bool) []File {
+func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error), refresh bool) ([]File, error) {
 	if m.OtherFile == nil || refresh {
-		resp, _ := get("https://api.github.com/repos/" + m.Repo + "/contents")
-		m.OtherFile = new([]FileInfo)
-		json.Unmarshal(resp.Body(), m.OtherFile)
+		resp, err := get("https://api.github.com/repos/" + m.Repo + "/contents")
+		if err != nil {
+			m.OtherFile = nil
+			return nil, err
+		}
+		otherFile := new([]FileInfo)
+		if err := json.Unmarshal(resp.Body(), otherFile); err != nil {
+			m.OtherFile = nil
+			return nil, err
+		}
+		m.OtherFile = otherFile
 	}
 
 	files := make([]File, 0)
@@ -220,7 +264,7 @@ func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error),
 			})
 		}
 	}
-	return files
+	return files, nil
 }
 
 type File struct {

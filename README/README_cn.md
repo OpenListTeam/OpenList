@@ -14,11 +14,11 @@
 
 ---
 
-- [English](./README.md) | 中文 | [日本語](./README_ja.md) | [Dutch](./README_nl.md)
+- [English](../README.md) | 中文 | [日本語](./README_ja.md) | [Dutch](./README_nl.md) | [한국어](./README_ko.md) | [Deutsch](./README_de.md) | [Русский](./README_ru.md) | [Français](./README_fr.md) | [Español](./README_es.md) | [العربية](./README_ar.md)
 
-- [贡献指南](./CONTRIBUTING.md)
-- [行为准则](./CODE_OF_CONDUCT.md)
-- [许可证](./LICENSE)
+- [贡献指南](../CONTRIBUTING.md)
+- [行为准则](../CODE_OF_CONDUCT.md)
+- [许可证](../LICENSE)
 
 ## 免责声明
 
@@ -95,6 +95,7 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [微云](https://www.weiyun.com)
+  - [x] [钉钉文档](https://alidocs.dingtalk.com/)
 - [x] 部署方便，开箱即用
 - [x] 文件预览（PDF、markdown、代码、纯文本等）
 - [x] 画廊模式下的图片预览
@@ -134,6 +135,14 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
+## 捐赠者
+
+感谢以下捐赠者的慷慨支持：
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
+
 ## 许可证
 
 `OpenList` 是基于 [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) 许可证的开源软件。
@@ -148,7 +157,7 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
 - 本软件按“原样”提供，不附带任何明示或暗示的担保，包括但不限于适销性或特定用途的适用性。
 - 维护者不对因使用或无法使用本软件而导致的任何直接或间接损失负责。
 - 您需自行承担使用本软件的所有风险，包括但不限于账号被封、下载限速等。
-- 本项目遵循 [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) 许可证，详情请参见 [LICENSE](./LICENSE) 文件。
+- 本项目遵循 [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) 许可证，详情请参见 [LICENSE](../LICENSE) 文件。
 
 ## 联系我们
 
