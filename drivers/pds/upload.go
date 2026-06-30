@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -47,6 +48,41 @@ type directUploadCompletionInfo struct {
 	Method  string            `json:"method,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    map[string]any    `json:"body,omitempty"`
+}
+
+func (d *PDS) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
+	var created createFileResp
+	err := d.client.post(ctx, "/v2/file/create", map[string]any{
+		"drive_id":        d.DriveID,
+		"parent_file_id":  d.fileID(dstDir),
+		"name":            stream.GetName(),
+		"type":            "file",
+		"check_name_mode": "auto_rename",
+		"size":            stream.GetSize(),
+		"part_info_list":  []map[string]int{{"part_number": 1}},
+	}, &created)
+	if err != nil {
+		return nil, err
+	}
+	if len(created.PartInfoList) == 0 || created.PartInfoList[0].UploadURL == "" {
+		return nil, errors.New("pds create file did not return upload_url")
+	}
+	if err := d.client.putRaw(ctx, created.PartInfoList[0].UploadURL, stream); err != nil {
+		return nil, err
+	}
+	err = d.client.post(ctx, "/v2/file/complete", map[string]any{
+		"drive_id":  d.DriveID,
+		"file_id":   created.FileID,
+		"upload_id": created.UploadID,
+	}, &created)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := d.getFileObj(ctx, created.FileID)
+	if err != nil {
+		return nil, err
+	}
+	return withParentPath(dstDir.GetPath(), obj), nil
 }
 
 func (d *PDS) GetDirectUploadTools() []string {
