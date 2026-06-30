@@ -102,8 +102,8 @@ jobs:
           TEMP_FILE="/tmp/all_versions.ndjson"
 
           > "$TEMP_FILE"
-
-          while [[ -n "$URL" ]]; do
+          PAGE=1
+          while [[ -n "$URL" && $PAGE -le 10 ]]; do
             echo "Fetching: $URL"
             
             curl -s -H "Authorization: token $TOKEN" \
@@ -114,6 +114,7 @@ jobs:
             jq -c '.[]' page.json >> "$TEMP_FILE"
             
             URL=$(grep -i '^link:' headers.txt | grep -o '<[^>]*>;\s*rel="next"' | sed 's/<\(.*\)>.*/\1/' || true)
+            PAGE=$((PAGE + 1))
           done
           rm -f headers.txt page.json
 
