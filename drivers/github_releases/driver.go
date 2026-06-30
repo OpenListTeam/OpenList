@@ -11,6 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	log "github.com/sirupsen/logrus"
 )
 
 type GithubReleases struct {
@@ -45,12 +46,25 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 		point := &d.points[i]
 
 		if !d.Addition.ShowAllVersion { // latest
-			point.RequestRelease(d.GetRequest, args.Refresh)
+			err := point.RequestRelease(d.GetRequest, args.Refresh)
+			if err != nil {
+				log.Warnf("failed to request release for %s: %v", point.Repo, err)
+			}
 
 			if point.Point == path { // 与仓库路径相同
+				if point.Release == nil {
+					if err != nil {
+						return nil, fmt.Errorf("failed to get release for %s: %w", point.Repo, err)
+					}
+					return nil, fmt.Errorf("failed to get release for %s: unknown error", point.Repo)
+				}
 				files = append(files, point.GetLatestRelease()...)
 				if d.Addition.ShowReadme {
-					files = append(files, point.GetOtherFile(d.GetRequest, args.Refresh)...)
+					otherFiles, err := point.GetOtherFile(d.GetRequest, args.Refresh)
+					if err != nil {
+						return nil, fmt.Errorf("failed to get other files for %s: %w", point.Repo, err)
+					}
+					files = append(files, otherFiles...)
 				}
 				if d.Addition.ShowSourceCode {
 					files = append(files, point.GetSourceCode()...)
@@ -59,6 +73,9 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 				nextDir := GetNextDir(point.Point, path)
 				if nextDir == "" {
 					continue
+				}
+				if err != nil {
+					return nil, fmt.Errorf("failed to get release for %s: %w", point.Repo, err)
 				}
 
 				hasSameDir := false
@@ -70,29 +87,50 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 					}
 				}
 				if !hasSameDir {
+					var updateAt, createAt string
+					if point.Release != nil {
+						updateAt = point.Release.PublishedAt
+						createAt = point.Release.CreatedAt
+					}
 					files = append(files, File{
 						Path:     stdpath.Join(path, nextDir),
 						FileName: nextDir,
 						Size:     point.GetLatestSize(),
-						UpdateAt: point.Release.PublishedAt,
-						CreateAt: point.Release.CreatedAt,
+						UpdateAt: updateAt,
+						CreateAt: createAt,
 						Type:     "dir",
 						Url:      "",
 					})
 				}
 			}
 		} else { // all version
-			point.RequestReleases(d.GetRequest, args.Refresh)
+			err := point.RequestReleases(d.GetRequest, args.Refresh)
+			if err != nil {
+				log.Warnf("failed to request releases for %s: %v", point.Repo, err)
+			}
 
 			if point.Point == path { // 与仓库路径相同
+				if point.Releases == nil {
+					if err != nil {
+						return nil, fmt.Errorf("failed to get releases for %s: %w", point.Repo, err)
+					}
+					return nil, fmt.Errorf("failed to get releases for %s: unknown error", point.Repo)
+				}
 				files = append(files, point.GetAllVersion()...)
 				if d.Addition.ShowReadme {
-					files = append(files, point.GetOtherFile(d.GetRequest, args.Refresh)...)
+					otherFiles, err := point.GetOtherFile(d.GetRequest, args.Refresh)
+					if err != nil {
+						return nil, fmt.Errorf("failed to get other files for %s: %w", point.Repo, err)
+					}
+					files = append(files, otherFiles...)
 				}
 			} else if strings.HasPrefix(point.Point, path) { // 仓库目录的父目录
 				nextDir := GetNextDir(point.Point, path)
 				if nextDir == "" {
 					continue
+				}
+				if err != nil {
+					return nil, fmt.Errorf("failed to get releases for %s: %w", point.Repo, err)
 				}
 
 				hasSameDir := false
@@ -104,12 +142,17 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 					}
 				}
 				if !hasSameDir {
+					var updateAt, createAt string
+					if point.Releases != nil && len(*point.Releases) > 0 {
+						updateAt = (*point.Releases)[0].PublishedAt
+						createAt = (*point.Releases)[0].CreatedAt
+					}
 					files = append(files, File{
 						FileName: nextDir,
 						Path:     stdpath.Join(path, nextDir),
 						Size:     point.GetAllVersionSize(),
-						UpdateAt: (*point.Releases)[0].PublishedAt,
-						CreateAt: (*point.Releases)[0].CreatedAt,
+						UpdateAt: updateAt,
+						CreateAt: createAt,
 						Type:     "dir",
 						Url:      "",
 					})
@@ -118,6 +161,12 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 				tagName := GetNextDir(path, point.Point)
 				if tagName == "" {
 					continue
+				}
+				if point.Releases == nil {
+					if err != nil {
+						return nil, fmt.Errorf("failed to get releases for %s: %w", point.Repo, err)
+					}
+					return nil, fmt.Errorf("failed to get releases for %s: unknown error", point.Repo)
 				}
 
 				files = append(files, point.GetReleaseByTagName(tagName)...)

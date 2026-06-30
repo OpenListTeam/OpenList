@@ -89,7 +89,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(upperSliceMD5s, "\n")))
 	}
 
-
 	// 使用与 Web 端一致的三步秒传流程
 	fullUrl := "https://upload.cloud.189.cn"
 	if isFamily {
@@ -110,7 +109,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		initParams.Set("familyId", y.FamilyID)
 	}
 
-
 	var uploadInfo InitMultiUploadResp
 	_, err = y.request(fullUrl+"/initMultiUpload", "GET", func(req *resty.Request) {
 		req.SetContext(ctx)
@@ -118,7 +116,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	if err != nil {
 		return nil, fmt.Errorf("initMultiUpload 失败: %w", err)
 	}
-
 
 	uploadFileId := uploadInfo.Data.UploadFileID
 
@@ -128,7 +125,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		"sliceMd5":     sliceMd5Hex,
 		"uploadFileId": uploadFileId,
 	}
-
 
 	var checkResp struct {
 		Data struct {
@@ -142,7 +138,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		utils.Log.Errorf("[RapidUpload] checkTransSecond 失败: uploadFileId=%s, err=%v", uploadFileId, err)
 		return nil, fmt.Errorf("秒传检查失败: %w", err)
 	}
-
 
 	if checkResp.Data.FileDataExists != 1 {
 		return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", fileMD5Upper, sliceMd5Hex, fileSize)

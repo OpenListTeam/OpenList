@@ -27,6 +27,7 @@ type Addition struct {
 	Encoding string `json:"encoding" required:"true"`
 	Username string `json:"username" required:"true"`
 	Password string `json:"password" required:"true"`
+	CwdList  bool   `json:"cwd_list" type:"bool" default:"false" help:"enter directory before listing"`
 	driver.RootPath
 }
 

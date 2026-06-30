@@ -14,11 +14,11 @@
 
 ---
 
-- [English](./README.md) | [中文](./README_cn.md) | [日本語](./README_ja.md) | Dutch
+- [English](../README.md) | [中文](./README_cn.md) | [日本語](./README_ja.md) | Dutch | [한국어](./README_ko.md) | [Deutsch](./README_de.md) | [Русский](./README_ru.md) | [Français](./README_fr.md) | [Español](./README_es.md) | [العربية](./README_ar.md)
 
-- [Bijdragen](./CONTRIBUTING.md)
-- [Gedragscode](./CODE_OF_CONDUCT.md)
-- [Licentie](./LICENSE)
+- [Bijdragen](../CONTRIBUTING.md)
+- [Gedragscode](../CODE_OF_CONDUCT.md)
+- [Licentie](../LICENSE)
 
 ## Disclaimer
 
@@ -95,6 +95,7 @@ Dank u voor uw ondersteuning en begrip
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [Weiyun](https://www.weiyun.com)
+  - [x] [DingTalk-documenten](https://alidocs.dingtalk.com/)
 - [x] Eenvoudig te implementeren en direct te gebruiken
 - [x] Bestandsvoorbeeld (PDF, markdown, code, platte tekst, ...)
 - [x] Afbeeldingsvoorbeeld in galerijweergave
@@ -134,6 +135,14 @@ Stel algemene vragen in [*Discussions*](https://github.com/OpenListTeam/OpenList
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
+## Donatie Bijdragers
+
+Dank aan de volgende donateurs voor hun steun:
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
+
 ## Licentie
 
 `OpenList` is open-source software onder de [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) licentie.
@@ -148,7 +157,7 @@ Stel algemene vragen in [*Discussions*](https://github.com/OpenListTeam/OpenList
 - De software wordt geleverd "zoals deze is", zonder enige vorm van garantie, expliciet of impliciet, inclusief maar niet beperkt tot garanties van verkoopbaarheid of geschiktheid voor een bepaald doel.
 - De beheerders zijn niet aansprakelijk voor enige directe of indirecte schade die voortvloeit uit het gebruik van of het onvermogen om deze software te gebruiken.
 - U bent zelf verantwoordelijk voor alle risico's die gepaard gaan met het gebruik van deze software, inclusief maar niet beperkt tot accountblokkades of downloadbeperkingen.
-- Dit project valt onder de [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) licentie. Zie het [LICENSE](./LICENSE) bestand voor details.
+- Dit project valt onder de [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) licentie. Zie het [LICENSE](../LICENSE) bestand voor details.
 
 ## Contact
 
