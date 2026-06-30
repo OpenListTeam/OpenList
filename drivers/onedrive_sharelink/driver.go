@@ -33,6 +33,7 @@ const (
 	headerTTL          = 25 * time.Minute
 	driveTokenTTL      = 20 * time.Minute
 	directLinkTTL      = 20 * time.Minute
+	simpleUploadLimit  = 250 * 1024 * 1024
 	uploadSessionChunk = 10 * 1024 * 1024
 )
 
@@ -302,7 +303,7 @@ func (d *OnedriveSharelink) createUploadInfo(ctx context.Context, path string, f
 	if err != nil {
 		return nil, err
 	}
-	if fileSize == 0 {
+	if fileSize >= 0 && fileSize <= simpleUploadLimit {
 		return &model.HttpDirectUploadInfo{
 			UploadURL: injectAccessToken(d.drivePathAPIURL(path)+"/content", token),
 			Method:    http.MethodPut,

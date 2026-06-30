@@ -944,38 +944,14 @@ func (d *Yun139) GetDetails(ctx context.Context) (*model.StorageDetails, error) 
 	if d.UserDomainID == "" {
 		return nil, errs.NotImplement
 	}
-	var total, used int64
-	if d.isFamily() {
-		diskInfo, err := d.getFamilyDiskInfo(ctx)
-		if err != nil {
-			return nil, err
-		}
-		totalMb, err := strconv.ParseInt(diskInfo.Data.DiskSize, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
-		}
-		usedMb, err := strconv.ParseInt(diskInfo.Data.UsedSize, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed convert used size into integer: %+v", err)
-		}
-		total = totalMb * 1024 * 1024
-		used = usedMb * 1024 * 1024
-	} else {
-		diskInfo, err := d.getPersonalDiskInfo(ctx)
-		if err != nil {
-			return nil, err
-		}
-		totalMb, err := strconv.ParseInt(diskInfo.Data.DiskSize, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed convert disk size into integer: %+v", err)
-		}
-		freeMb, err := strconv.ParseInt(diskInfo.Data.FreeDiskSize, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed convert free size into integer: %+v", err)
-		}
-		total = totalMb * 1024 * 1024
-		used = total - (freeMb * 1024 * 1024)
+	detail, err := d.getDiskQuotaDetail(ctx)
+	if err != nil {
+		return nil, err
 	}
+
+	total := detail.Data.DiskSize * utils.MB
+	used := (detail.Data.DiskSize - detail.Data.FreeDiskSize) * utils.MB
+
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
 			TotalSpace: total,

@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -43,9 +42,9 @@ func (d *LanZou) get(url string, callback base.ReqCallback) ([]byte, error) {
 func (d *LanZou) post(url string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	data, err := d._post(url, callback, resp, false)
 	if err == ErrCookieExpiration && d.IsAccount() {
-		if atomic.CompareAndSwapInt32(&d.flag, 0, 1) {
+		if d.flag.CompareAndSwap(0, 1) {
 			_, err2 := d.Login()
-			atomic.SwapInt32(&d.flag, 0)
+			d.flag.Swap(0)
 			if err2 != nil {
 				err = errors.Join(err, err2)
 				d.Status = err.Error()
@@ -53,7 +52,7 @@ func (d *LanZou) post(url string, callback base.ReqCallback, resp interface{}) (
 				return data, err
 			}
 		}
-		for atomic.LoadInt32(&d.flag) != 0 {
+		for d.flag.Load() != 0 {
 			runtime.Gosched()
 		}
 		return d._post(url, callback, resp, false)

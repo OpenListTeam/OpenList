@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -84,7 +86,12 @@ func (t *Transmission) AddURL(args *tool.AddUrlArgs) (string, error) {
 	}
 	// http url for .torrent file
 	if endpoint.Scheme == "http" || endpoint.Scheme == "https" {
-		resp, err := http.Get(args.Url)
+		resp, err := net.RequestHttp(
+			args.Ctx,
+			http.MethodGet,
+			http.Header{"User-Agent": []string{base.UserAgent}},
+			args.Url,
+		)
 		if err != nil {
 			return "", errors.Wrap(err, "failed to get .torrent file")
 		}
@@ -106,7 +113,7 @@ func (t *Transmission) AddURL(args *tool.AddUrlArgs) (string, error) {
 		rpcPayload.Filename = &args.Url
 	}
 
-	torrent, err := t.client.TorrentAdd(context.TODO(), rpcPayload)
+	torrent, err := t.client.TorrentAdd(args.Ctx, rpcPayload)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +130,7 @@ func (t *Transmission) Remove(task *tool.DownloadTask) error {
 	if err != nil {
 		return err
 	}
-	err = t.client.TorrentRemove(context.TODO(), transmissionrpc.TorrentRemovePayload{
+	err = t.client.TorrentRemove(task.Ctx(), transmissionrpc.TorrentRemovePayload{
 		IDs:             []int64{gid},
 		DeleteLocalData: false,
 	})
@@ -135,7 +142,7 @@ func (t *Transmission) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	if err != nil {
 		return nil, err
 	}
-	infos, err := t.client.TorrentGetAllFor(context.TODO(), []int64{gid})
+	infos, err := t.client.TorrentGetAllFor(task.Ctx(), []int64{gid})
 	if err != nil {
 		return nil, err
 	}
