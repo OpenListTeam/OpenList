@@ -313,20 +313,16 @@ type RefreshTokenResp struct {
 	Desc        string   `xml:"desc"`
 }
 
-type PersonalDiskInfoResp struct {
+type DiskQuotaDetail struct {
 	BaseResp
 	Data struct {
-		FreeDiskSize         string `json:"freeDiskSize"`
-		DiskSize             string `json:"diskSize"`
-		IsInfinitePicStorage *bool  `json:"isInfinitePicStorage"`
-	} `json:"data"`
-}
-
-type FamilyDiskInfoResp struct {
-	BaseResp
-	Data struct {
-		UsedSize string `json:"usedSize"`
-		DiskSize string `json:"diskSize"`
+		FreeDiskSize int64 `json:"freeDiskSize"`
+		DiskSize     int64 `json:"diskSize"`
+		// QuotaList    []struct {
+		// 	DriveType int    `json:"driveType"`
+		// 	DriveName string `json:"driveName"`
+		// 	UsedSize  int64  `json:"usedSize"`
+		// } `json:"quotaList"`
 	} `json:"data"`
 }
 

@@ -98,7 +98,7 @@ func directUploadURL(r *http.Request, authPairs map[string]string) (string, bool
 	if err != nil || storage.Config().NoUpload {
 		return "", false
 	}
-	info, err := op.GetDirectUploadInfo(r.Context(), "HttpDirect", storage, dstDirActualPath, path.Base(reqPath), r.ContentLength)
+	info, err := op.GetDirectUploadInfo(r.Context(), "HttpDirect", storage, dstDirActualPath, path.Base(reqPath), r.ContentLength, true)
 	if err != nil {
 		return "", false
 	}

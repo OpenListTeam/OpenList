@@ -54,6 +54,7 @@ func (t *DownloadTask) Run() error {
 		t.Signal = nil
 	}()
 	gid, err := t.tool.AddURL(&AddUrlArgs{
+		Ctx:     t.Ctx(),
 		Url:     t.Url,
 		UID:     t.ID,
 		TempDir: t.TempDir,
