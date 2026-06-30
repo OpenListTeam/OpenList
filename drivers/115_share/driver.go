@@ -2,6 +2,7 @@ package _115_share
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -96,8 +97,12 @@ func (d *Pan115Share) Link(ctx context.Context, file model.Obj, args model.LinkA
 	if err != nil {
 		return nil, err
 	}
-
-	return &model.Link{URL: downloadInfo.URL.URL}, nil
+	header := http.Header{}
+	header.Set("User-Agent", ua)
+	return &model.Link{
+		URL:    downloadInfo.URL.URL,
+		Header: header,
+	}, nil
 }
 
 func (d *Pan115Share) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {

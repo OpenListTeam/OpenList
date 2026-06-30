@@ -106,6 +106,10 @@ type SFTP struct {
 	Listen string `json:"listen" env:"LISTEN"`
 }
 
+type MCP struct {
+	Enable bool `json:"enable" env:"ENABLE"`
+}
+
 type Config struct {
 	Force                 bool        `json:"force" env:"FORCE"`
 	SiteURL               string      `json:"site_url" env:"SITE_URL"`
@@ -120,9 +124,9 @@ type Config struct {
 	DistDir               string      `json:"dist_dir"`
 	Log                   LogConfig   `json:"log" envPrefix:"LOG_"`
 	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
+	AutoMemoryLimit       int         `json:"auto_memory_limit" env:"AUTO_MEMORY_LIMIT"`
 	MinFreeMemory         int         `json:"min_free_memory" env:"MIN_FREE_MEMORY"`
 	MaxBlockLimit         int         `json:"max_block_limit" env:"MAX_BLOCK_LIMIT"`
-	CacheThreshold        int         `json:"cache_threshold" env:"CACHE_THRESHOLD"`
 	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`
 	MaxConcurrency        int         `json:"max_concurrency" env:"MAX_CONCURRENCY"`
 	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
@@ -131,6 +135,7 @@ type Config struct {
 	S3                    S3          `json:"s3" envPrefix:"S3_"`
 	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
 	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
+	MCP                   MCP         `json:"mcp" envPrefix:"MCP_"`
 	LastLaunchedVersion   string      `json:"last_launched_version"`
 	ProxyAddress          string      `json:"proxy_address" env:"PROXY_ADDRESS"`
 }
@@ -179,7 +184,7 @@ func DefaultConfig(dataDir string) *Config {
 				},
 			},
 		},
-		CacheThreshold:        4,
+		AutoMemoryLimit:       4,
 		MaxConnections:        0,
 		MaxConcurrency:        64,
 		TlsInsecureSkipVerify: false,
@@ -243,6 +248,9 @@ func DefaultConfig(dataDir string) *Config {
 		SFTP: SFTP{
 			Enable: false,
 			Listen: ":5222",
+		},
+		MCP: MCP{
+			Enable: false,
 		},
 		LastLaunchedVersion: "",
 		ProxyAddress:        "",

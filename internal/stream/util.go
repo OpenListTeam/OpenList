@@ -1,7 +1,6 @@
 package stream
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -12,12 +11,11 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
-	"github.com/OpenListTeam/OpenList/v4/internal/mem"
+	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
-	"github.com/OpenListTeam/OpenList/v4/pkg/pool"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
@@ -184,25 +182,13 @@ type StreamSectionReader interface {
 	DiscardSection(off int64, length int64) error
 }
 
-func NewStreamSectionReader(file model.FileStreamer, maxBufferSize int, up *model.UpdateProgress) (StreamSectionReader, error) {
+func NewStreamSectionReader(file model.FileStreamer, sectionSize int, up *model.UpdateProgress) (StreamSectionReader, error) {
 	if file.GetFile() != nil {
 		return &cachedSectionReader{file.GetFile()}, nil
 	}
 
-	maxBufferSize = min(maxBufferSize, int(file.GetSize()))
-	if file.GetSize() <= int64(conf.CacheThreshold) {
-		bufPool := &pool.Pool[[]byte]{
-			New: func() []byte {
-				return make([]byte, maxBufferSize)
-			},
-		}
-		file.Add(bufPool)
-		ss := &byteSectionReader{file: file, bufPool: bufPool}
-		return ss, nil
-	}
-
-	blockSize := min(uint64(maxBufferSize), conf.MaxBlockLimit)
-	hc, err := mem.NewHybridCache(blockSize, uint64(file.GetSize()))
+	blockSize := min(uint64(sectionSize), uint64(file.GetSize()), conf.MaxBlockLimit)
+	hc, err := hcache.NewHybridCache(blockSize, uint64(file.GetSize()))
 	if err != nil {
 		return nil, err
 	}
@@ -222,56 +208,10 @@ func (s *cachedSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker
 }
 func (*cachedSectionReader) FreeSectionReader(sr io.ReadSeeker) {}
 
-type byteSectionReader struct {
-	file       model.FileStreamer
-	fileOffset int64
-	bufPool    *pool.Pool[[]byte]
-}
-
-// 线程不安全
-func (ss *byteSectionReader) DiscardSection(off int64, length int64) error {
-	if off != ss.fileOffset {
-		return fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
-	}
-	n, err := utils.CopyWithBufferN(io.Discard, ss.file, length)
-	ss.fileOffset += n
-	if err != nil {
-		return fmt.Errorf("failed to skip data: (expect =%d, actual =%d) %w", length, n, err)
-	}
-	return nil
-}
-
-type bytesRefReadSeeker struct {
-	io.ReadSeeker
-	buf []byte
-}
-
-// 线程不安全
-func (ss *byteSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker, error) {
-	if off != ss.fileOffset {
-		return nil, fmt.Errorf("stream not cached: request offset %d != current offset %d", off, ss.fileOffset)
-	}
-	tempBuf := ss.bufPool.Get()
-	buf := tempBuf[:length]
-	n, err := io.ReadFull(ss.file, buf)
-	ss.fileOffset += int64(n)
-	if int64(n) != length {
-		return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", length, n, err)
-	}
-	return &bytesRefReadSeeker{bytes.NewReader(buf), buf}, nil
-}
-func (ss *byteSectionReader) FreeSectionReader(rs io.ReadSeeker) {
-	if sr, ok := rs.(*bytesRefReadSeeker); ok {
-		ss.bufPool.Put(sr.buf[0:cap(sr.buf)])
-		sr.buf = nil
-		sr.ReadSeeker = nil
-	}
-}
-
 type hybridSectionReader struct {
 	file       model.FileStreamer
 	fileOffset int64
-	hc         *mem.HybridCache
+	hc         *hcache.HybridCache
 	mu         sync.Mutex
 	cache      []buffer.Block
 }

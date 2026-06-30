@@ -14,11 +14,11 @@
 
 ---
 
-- [English](./README.md) | [中文](./README_cn.md) | 日本語 | [Dutch](./README_nl.md)
+- [English](../README.md) | [中文](./README_cn.md) | 日本語 | [Dutch](./README_nl.md) | [한국어](./README_ko.md) | [Deutsch](./README_de.md) | [Русский](./README_ru.md) | [Français](./README_fr.md) | [Español](./README_es.md) | [العربية](./README_ar.md)
 
-- [コントリビュート](./CONTRIBUTING.md)
-- [行動規範](./CODE_OF_CONDUCT.md)
-- [ライセンス](./LICENSE)
+- [コントリビュート](../CONTRIBUTING.md)
+- [行動規範](../CODE_OF_CONDUCT.md)
+- [ライセンス](../LICENSE)
 
 ## 免責事項
 
@@ -94,6 +94,7 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
   - [x] [Teldrive](https://github.com/tgdrive/teldrive)
   - [x] [Weiyun](https://www.weiyun.com)
+  - [x] [DingTalk ドキュメント](https://alidocs.dingtalk.com/)
   - [x] [MediaFire](https://www.mediafire.com)
 - [x] 簡単にデプロイでき、すぐに使える
 - [x] ファイルプレビュー（PDF、markdown、コード、テキストなど）
@@ -116,14 +117,15 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 
 ## ドキュメント
 
-- 📘 [グローバルサイト](https://doc.oplist.org)
-- 📚 [バックアップサイト](https://doc.openlist.team)
-- 🌏 [CNサイト](https://doc.oplist.org.cn)
+- 📘 [ドキュメント](https://doc.oplist.org)
+- 🌏 [中国ミラー](https://doc.oplist.org.cn)
+- ⚖️ [利用規約](https://doc.oplist.org/terms)
+- 🔒 [プライバシーポリシー](https://doc.oplist.org/privacy)
 
-## デモ
+## Demo
 
-- 🌎 [グローバルデモ](https://demo.oplist.org)
-- 🇨🇳 [CNデモ](https://demo.oplist.org.cn)
+- 🌎 [グローバル Demo](https://demo.oplist.org)
+- 🇨🇳 [中国 Demo](https://demo.oplist.org.cn)
 
 ## ディスカッション
 
@@ -132,6 +134,14 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 ## スポンサー
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
+
+## 寄付者
+
+以下の方々の寛大なご支援に感謝いたします：
+
+- [HisAtri](https://github.com/HisAtri)
+- 爱发电用户_7jTh
+- suka
 
 ## ライセンス
 
@@ -147,7 +157,7 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
 - 本ソフトウェアは「現状有姿」で提供されており、商品性や特定目的への適合性を含むいかなる保証もありません。
 - 本ソフトウェアの使用または使用不能によるいかなる直接的・間接的損害についても、メンテナは責任を負いません。
 - 本ソフトウェアの利用に伴うすべてのリスク（アカウントの凍結やダウンロード速度制限などを含む）は、利用者自身が負うものとします。
-- 本プロジェクトは [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) ライセンスに従います。詳細は [LICENSE](./LICENSE) ファイルをご覧ください。
+- 本プロジェクトは [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) ライセンスに従います。詳細は [LICENSE](../LICENSE) ファイルをご覧ください。
 
 ## お問い合わせ
 

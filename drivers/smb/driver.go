@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -16,7 +17,7 @@ import (
 )
 
 type SMB struct {
-	lastConnTime int64
+	lastConnTime atomic.Int64
 	model.Storage
 	Addition
 	fs *smb2.Share

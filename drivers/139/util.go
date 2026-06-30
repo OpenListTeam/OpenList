@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/md5"
 	crypto_rand "crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
@@ -205,9 +204,7 @@ func (d *Yun139) requestRoute(data interface{}, resp interface{}) ([]byte, error
 	callback := func(req *resty.Request) {
 		req.SetBody(data)
 	}
-	if callback != nil {
-		callback(req)
-	}
+	callback(req)
 	body, err := utils.Json.Marshal(req.Body)
 	if err != nil {
 		return nil, err
@@ -728,12 +725,12 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 	return nil
 }
 
-func (d *Yun139) getPersonalDiskInfo(ctx context.Context) (*PersonalDiskInfoResp, error) {
+func (d *Yun139) getDiskQuotaDetail(ctx context.Context) (*DiskQuotaDetail, error) {
 	data := map[string]interface{}{
 		"userDomainId": d.UserDomainID,
 	}
-	var resp PersonalDiskInfoResp
-	_, err := d.request("https://user-njs.yun.139.com/user/disk/getPersonalDiskInfo", http.MethodPost, func(req *resty.Request) {
+	var resp DiskQuotaDetail
+	_, err := d.request("https://user-njs.yun.139.com/user/disk/quota/detail", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
 		req.SetContext(ctx)
 	}, &resp)
@@ -741,26 +738,6 @@ func (d *Yun139) getPersonalDiskInfo(ctx context.Context) (*PersonalDiskInfoResp
 		return nil, err
 	}
 	return &resp, nil
-}
-
-func (d *Yun139) getFamilyDiskInfo(ctx context.Context) (*FamilyDiskInfoResp, error) {
-	data := map[string]interface{}{
-		"userDomainId": d.UserDomainID,
-	}
-	var resp FamilyDiskInfoResp
-	_, err := d.request("https://user-njs.yun.139.com/user/disk/getFamilyDiskInfo", http.MethodPost, func(req *resty.Request) {
-		req.SetBody(data)
-		req.SetContext(ctx)
-	}, &resp)
-	if err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func getMd5(dataStr string) string {
-	hash := md5.Sum([]byte(dataStr))
-	return fmt.Sprintf("%x", hash)
 }
 
 func (d *Yun139) step1_password_login() (string, error) {
@@ -1180,7 +1157,6 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 		"x-DeviceInfo":        "4|127.0.0.1|5|1.2.6|Xiaomi|23116PN5BC||02-00-00-00-00-00|android 15|1440x3200|android|||",
 		"Content-Type":        "text/plain;charset=UTF-8",
 		"Host":                "user-njs.yun.139.com",
-		"Connection":          "Keep-Alive",
 		"Accept-Encoding":     "gzip",
 		"User-Agent":          "okhttp/3.12.2",
 	}

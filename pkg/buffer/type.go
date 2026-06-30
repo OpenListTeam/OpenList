@@ -13,8 +13,10 @@ type Block interface {
 }
 
 type WriteAtSeeker = model.FileWriter
+type WriteAtSeekerProvider interface{ GetWriteAtSeeker() WriteAtSeeker }
 
 type ReadAtSeeker = model.File
+type ReadAtSeekerProvider interface{ GetReadAtSeeker() ReadAtSeeker }
 
 type SizedReadAtSeeker interface {
 	ReadAtSeeker

@@ -8,11 +8,11 @@ import (
 
 func SharingIdParse(c *gin.Context) {
 	sid := c.Param("sid")
-	common.GinWithValue(c, conf.SharingIDKey, sid)
+	common.GinAppendValues(c, conf.SharingIDKey, sid)
 	c.Next()
 }
 
 func EmptyPathParse(c *gin.Context) {
-	common.GinWithValue(c, conf.PathKey, "/")
+	common.GinAppendValues(c, conf.PathKey, "/")
 	c.Next()
 }

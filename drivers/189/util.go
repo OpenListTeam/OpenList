@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	sha1Pkg "crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -18,6 +19,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	myrand "github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/go-resty/resty/v2"
@@ -388,6 +391,10 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 	var finish int64 = 0
 	var i int64
 	var byteSize int64
+
+	// 额外计算 SHA-1 piece hash 用于生成 torrent
+	pieceSHA1Hashes := make([]byte, 0, int(count)*20)
+
 	for i = 1; i <= count; i++ {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -404,6 +411,10 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 		finish += int64(n)
 		md5Bytes := getMd5(byteData)
 		md5Base64 := base64.StdEncoding.EncodeToString(md5Bytes)
+
+		// 计算 SHA-1 piece hash
+		sha1Hash := sha1Pkg.Sum(byteData)
+		pieceSHA1Hashes = append(pieceSHA1Hashes, sha1Hash[:]...)
 		var resp UploadUrlsResp
 		res, err = d.uploadRequest("/person/getMultiUploadUrls", map[string]string{
 			"partInfo":     fmt.Sprintf("%s-%s", strconv.FormatInt(i, 10), md5Base64),
@@ -439,7 +450,49 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 		"lazyCheck":    "1",
 		"opertype":     "3",
 	}, nil)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 生成 torrent 文件（异步，不影响上传结果）
+	capturedDstDir := dstDir
+	capturedFileName := file.GetName()
+	capturedFileSize := fileSize
+	capturedFileMd5Hex := fileMd5Hex
+	capturedMd5s := md5s
+	go func() {
+		fileMD5Upper := strings.ToUpper(capturedFileMd5Hex)
+		torrentData, err := GenerateTorrent(capturedFileName, capturedFileSize, fileMD5Upper, capturedMd5s, DEFAULT, pieceSHA1Hashes)
+		if err != nil {
+			log.Warnf("生成 torrent 失败: %v", err)
+			return
+		}
+		infoHash, _ := GetInfoHashHex(torrentData)
+		torrentName := capturedFileName + ".cas.torrent"
+		log.Infof("已生成 torrent: %s (info_hash: %s, size: %d bytes)",
+			torrentName, infoHash, len(torrentData))
+
+		// 将 torrent 文件上传到同一目录
+		torrentFileStream := &stream.FileStream{
+			Ctx: context.Background(),
+			Obj: &model.Object{
+				Name:     torrentName,
+				Size:     int64(len(torrentData)),
+				IsFolder: false,
+			},
+			Reader:   bytes.NewReader(torrentData),
+			Mimetype: "application/x-bittorrent",
+		}
+		uploadErr := d.oldUpload(capturedDstDir, torrentFileStream)
+		if uploadErr != nil {
+			log.Warnf("上传 torrent 文件失败: %v", uploadErr)
+		} else {
+			log.Infof("torrent 文件已上传: %s", torrentName)
+			op.Cache.DeleteDirectory(d, capturedDstDir.GetPath())
+		}
+	}()
+
+	return nil
 }
 
 func (d *Cloud189) getCapacityInfo(ctx context.Context) (*CapacityResp, error) {

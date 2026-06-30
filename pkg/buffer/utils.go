@@ -5,16 +5,12 @@ import (
 	"io"
 )
 
-type WriteAtSeekerProvider interface{ GetWriteAtSeeker() WriteAtSeeker }
-
 func WriteAtSeekerOf(b Block) WriteAtSeeker {
 	if p, ok := b.(WriteAtSeekerProvider); ok {
 		return p.GetWriteAtSeeker()
 	}
 	return io.NewOffsetWriter(b, 0)
 }
-
-type ReadAtSeekerProvider interface{ GetReadAtSeeker() ReadAtSeeker }
 
 // 将一个Block包装为ReadAtSeeker。
 // 固定大小：当前Block的Size()。
