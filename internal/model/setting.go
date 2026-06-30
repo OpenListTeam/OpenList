@@ -13,6 +13,8 @@ const (
 	S3
 	FTP
 	TRAFFIC
+	MEDIA
+	TRANSCODE
 )
 
 const (

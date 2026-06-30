@@ -66,6 +66,11 @@ func Init(e *gin.Engine) {
 	g.HEAD("/sad/:sid", middlewares.EmptyPathParse, middlewares.SharingIdParse, handles.SharingArchiveExtract)
 	g.HEAD("/sad/:sid/*path", middlewares.PathParse, middlewares.SharingIdParse, handles.SharingArchiveExtract)
 
+	// 转码播放：master/variant playlist 与切片下发；token 已包含在路径中作为鉴权
+	g.GET("/tc/:job/:token/master.m3u8", handles.TCMaster)
+	g.GET("/tc/:job/:token/:profile/playlist.m3u8", handles.TCPlaylist)
+	g.GET("/tc/:job/:token/:profile/:seg", handles.TCSegment)
+
 	api := g.Group("/api")
 	auth := api.Group("", middlewares.Auth(false))
 	webauthn := api.Group("/authn", middlewares.Authn)
@@ -101,6 +106,14 @@ func Init(e *gin.Engine) {
 	public.Any("/settings", handles.PublicSettings)
 	public.Any("/offline_download_tools", handles.OfflineDownloadTools)
 	public.Any("/archive_extensions", handles.ArchiveExtensions)
+
+	// 转码 Worker 协议端点（远程 Worker 节点对接，由共享密钥/token 鉴权，无需登录）
+	transcodeWorker := api.Group("/transcode/worker")
+	transcodeWorker.POST("/register", handles.WorkerRegister)
+	transcodeWorker.POST("/heartbeat", handles.WorkerHeartbeat)
+	transcodeWorker.POST("/claim", handles.WorkerClaim)
+	transcodeWorker.PUT("/segment", handles.WorkerSegmentUpload)
+	transcodeWorker.POST("/job/finish", handles.WorkerJobFinish)
 
 	_fs(auth.Group("/fs"))
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
@@ -186,6 +199,36 @@ func admin(g *gin.RouterGroup) {
 	scan.POST("/start", handles.StartManualScan)
 	scan.POST("/stop", handles.StopManualScan)
 	scan.GET("/progress", handles.GetManualScanProgress)
+
+	// 媒体库管理
+	mediaAdmin := g.Group("/media")
+	mediaAdmin.GET("/config/list", handles.ListMediaConfigs)
+	mediaAdmin.POST("/config/save", handles.SaveMediaConfig)
+	mediaAdmin.GET("/items", handles.ListMediaItemsAdmin)
+	mediaAdmin.POST("/items/update", handles.UpdateMediaItemAdmin)
+	mediaAdmin.POST("/items/delete", handles.DeleteMediaItemAdmin)
+	mediaAdmin.POST("/scan/start", handles.StartMediaScan)
+	mediaAdmin.GET("/scan/progress", handles.GetMediaScanProgress)
+	mediaAdmin.POST("/scrape/start", handles.StartMediaScrape)
+	mediaAdmin.GET("/scrape/stats", handles.GetMediaScrapeStats)
+	mediaAdmin.POST("/clear", handles.ClearMediaDB)
+	mediaAdmin.POST("/clear_scrape", handles.ClearMediaScrape)
+	mediaAdmin.POST("/delete_invalid", handles.DeleteInvalidMedia)
+	// 扫描路径管理
+	mediaAdmin.GET("/scan_paths", handles.ListMediaScanPaths)
+	mediaAdmin.POST("/scan_paths/create", handles.CreateMediaScanPath)
+	mediaAdmin.POST("/scan_paths/update", handles.UpdateMediaScanPath)
+	mediaAdmin.POST("/scan_paths/delete", handles.DeleteMediaScanPath)
+	mediaAdmin.POST("/scan_paths/clear", handles.ClearMediaScanPathDB)
+	// 导入 / 导出
+	mediaAdmin.GET("/export", handles.ExportMediaDB)
+	mediaAdmin.POST("/import", handles.ImportMediaDB)
+
+	// 转码管理
+	transcodeAdmin := g.Group("/transcode")
+	transcodeAdmin.GET("/workers", handles.ListTranscodeWorkers)
+	transcodeAdmin.GET("/jobs", handles.ListTranscodeJobs)
+	transcodeAdmin.POST("/cancel", handles.CancelTranscodeJob)
 }
 
 func fsAndShare(g *gin.RouterGroup) {
@@ -194,6 +237,18 @@ func fsAndShare(g *gin.RouterGroup) {
 	a := g.Group("/archive")
 	a.Any("/meta", handles.FsArchiveMetaSplit)
 	a.Any("/list", handles.FsArchiveListSplit)
+
+	// 媒体库公开API
+	mediaPublic := g.Group("/media")
+	mediaPublic.GET("/list", handles.PublicListMedia)
+	mediaPublic.GET("/item/:id", handles.PublicGetMedia)
+	mediaPublic.GET("/albums", handles.PublicListAlbums)
+	mediaPublic.GET("/album", handles.PublicGetAlbum)
+	mediaPublic.GET("/folders", handles.PublicListFolders)
+	mediaPublic.GET("/scan_paths", handles.PublicListScanPaths)
+
+	// 转码 - 用户态：申请播放
+	g.POST("/transcode/play", handles.TranscodePlay)
 }
 
 func _fs(g *gin.RouterGroup) {
