@@ -56,16 +56,15 @@ func (*Open123) AddURL(args *tool.AddUrlArgs) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unsupported storage driver for offline download, only 123 Open is supported")
 	}
-	ctx := context.Background()
-	if err := op.MakeDir(ctx, storage, actualPath); err != nil {
+	if err := op.MakeDir(args.Ctx, storage, actualPath); err != nil {
 		return "", err
 	}
-	parentDir, err := op.GetUnwrap(ctx, storage, actualPath)
+	parentDir, err := op.GetUnwrap(args.Ctx, storage, actualPath)
 	if err != nil {
 		return "", err
 	}
 	cb := setting.GetStr(conf.Pan123OpenOfflineDownloadCallbackUrl)
-	taskID, err := driver123Open.OfflineDownload(ctx, args.Url, parentDir, cb)
+	taskID, err := driver123Open.OfflineDownload(args.Ctx, args.Url, parentDir, cb)
 	if err != nil {
 		return "", fmt.Errorf("failed to add offline download task: %w", err)
 	}

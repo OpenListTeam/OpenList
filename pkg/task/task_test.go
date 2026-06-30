@@ -10,8 +10,9 @@ import (
 )
 
 func TestTask_Manager(t *testing.T) {
+	var next atomic.Uint64
 	tm := NewTaskManager(3, func(id *uint64) {
-		atomic.AddUint64(id, 1)
+		*id = next.Add(1)
 	})
 	id := tm.Submit(WithCancelCtx(&Task[uint64]{
 		Name: "test",
@@ -35,8 +36,9 @@ func TestTask_Manager(t *testing.T) {
 }
 
 func TestTask_Cancel(t *testing.T) {
+	var next atomic.Uint64
 	tm := NewTaskManager(3, func(id *uint64) {
-		atomic.AddUint64(id, 1)
+		*id = next.Add(1)
 	})
 	id := tm.Submit(WithCancelCtx(&Task[uint64]{
 		Name: "test",
@@ -63,8 +65,9 @@ func TestTask_Cancel(t *testing.T) {
 }
 
 func TestTask_Retry(t *testing.T) {
+	var next atomic.Uint64
 	tm := NewTaskManager(3, func(id *uint64) {
-		atomic.AddUint64(id, 1)
+		*id = next.Add(1)
 	})
 	num := 0
 	id := tm.Submit(WithCancelCtx(&Task[uint64]{

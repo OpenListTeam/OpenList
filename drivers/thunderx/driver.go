@@ -69,12 +69,15 @@ func (x *ThunderX) Init(ctx context.Context) (err error) {
 					token, err = x.Login(x.Username, x.Password)
 					if err != nil {
 						x.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
-						if token.UserID != "" {
+						if token != nil && token.UserID != "" {
 							x.SetUserID(token.UserID)
 							x.UserAgent = BuildCustomUserAgent(utils.GetMD5EncodeStr(x.Username+x.Password), ClientID, PackageName, SdkVersion, ClientVersion, PackageName, token.UserID)
 						}
 						op.MustSaveDriverStorage(x)
 					}
+				}
+				if token == nil {
+					return err
 				}
 				x.SetTokenResp(token)
 				return err
@@ -496,6 +499,9 @@ func (xc *XunLeiXCommon) SetTokenResp(tr *TokenResp) {
 
 // Request 携带Authorization和CaptchaToken的请求
 func (xc *XunLeiXCommon) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	if xc.TokenResp == nil {
+		return nil, errs.EmptyToken
+	}
 	data, err := xc.Common.Request(url, method, func(req *resty.Request) {
 		req.SetHeaders(map[string]string{
 			"Authorization":   xc.Token(),
