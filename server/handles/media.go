@@ -478,15 +478,22 @@ func StartMediaScrape(c *gin.Context) {
 	thumbnailPath := setting.GetStr(conf.MediaThumbnailPath, "/imgs")
 	storeThumbnail := setting.GetBool(conf.MediaStoreThumbnail)
 
+	var preloadedItems []model.MediaItem
+	if req.ItemID > 0 {
+		item, e := db.GetMediaItemByID(req.ItemID)
+		if e != nil {
+			common.ErrorResp(c, e, 404)
+			return
+		}
+		preloadedItems = []model.MediaItem{*item}
+	}
+
 	go func() {
 		var items []model.MediaItem
 		var err error
 
 		if req.ItemID > 0 {
-			item, e := db.GetMediaItemByID(req.ItemID)
-			if e == nil {
-				items = []model.MediaItem{*item}
-			}
+			items = preloadedItems
 		} else {
 			// limit 传 -1，GORM 不会拼接 LIMIT 子句，从而一次性取出全部未刮削条目
 			items, err = db.GetUnscrappedItems(req.MediaType, -1)
