@@ -1,8 +1,8 @@
 module github.com/OpenListTeam/OpenList/v4
 
-go 1.24.0
+go 1.25
 
-toolchain go1.24.13
+toolchain go1.25.11
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
