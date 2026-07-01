@@ -1,8 +1,6 @@
 module github.com/OpenListTeam/OpenList/v4
 
-go 1.25
-
-toolchain go1.25.11
+go 1.26
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
@@ -52,7 +50,7 @@ require (
 	github.com/henrybear327/go-proton-api v1.0.0
 	github.com/ipfs/go-ipfs-api v0.7.0
 	github.com/itsHenry35/gofakes3 v0.0.8
-	github.com/jlaffaye/ftp v0.2.1-0.20240918233326-1b970516f5d3
+	github.com/jlaffaye/ftp v0.2.1
 	github.com/json-iterator/go v1.1.12
 	github.com/kdomanski/iso9660 v0.4.0
 	github.com/maruel/natural v1.1.1
