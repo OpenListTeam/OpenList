@@ -519,27 +519,27 @@ func decodeOfflineDownloadTorrentData(encoded string) ([]byte, string, error) {
 	if strings.HasPrefix(strings.ToLower(encoded), "data:") {
 		comma := strings.Index(encoded, ",")
 		if comma < 0 {
-			return nil, "", fmt.Errorf("无效的 torrent data URL")
+			return nil, "", fmt.Errorf("invalid torrent data URL")
 		}
 		meta := strings.ToLower(encoded[:comma])
 		if !strings.Contains(meta, ";base64") {
-			return nil, "", fmt.Errorf("torrent data URL 必须使用 base64 编码")
+			return nil, "", fmt.Errorf("torrent data URL must use base64 encoding")
 		}
 		encoded = encoded[comma+1:]
 	}
 
 	if len(encoded) > maxTorrentBase64Len {
-		return nil, "", fmt.Errorf("torrent 数据过大（最大 10MB）")
+		return nil, "", fmt.Errorf("torrent data is too large, maximum size is 10MB")
 	}
 
 	torrentData, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return nil, "", fmt.Errorf("无效的 torrent Base64 编码: %w", err)
+		return nil, "", fmt.Errorf("invalid torrent base64 encoding: %w", err)
 	}
 
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
-		return nil, "", fmt.Errorf("解析 torrent 失败: %w", err)
+		return nil, "", fmt.Errorf("failed to parse torrent: %w", err)
 	}
 	if err := validateParsedTorrent(t); err != nil {
 		return nil, "", err
