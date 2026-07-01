@@ -39,6 +39,8 @@ func Init(e *gin.Engine) {
 	if conf.Conf.MaxConnections > 0 {
 		g.Use(middlewares.MaxAllowed(conf.Conf.MaxConnections))
 	}
+	// 虚拟主机路由限制：webhost 域名下阻止管理类路由（/api/admin/、/dav/、/s3/）
+	g.Use(middlewares.VhostRouteGuard)
 	WebDav(g.Group("/dav"))
 	S3(g.Group("/s3"))
 	MCP(g)
