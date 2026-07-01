@@ -16,7 +16,7 @@ jobs:
     if: github.event_name == 'issues'
     steps:
       - name: Check issue for unchecked tasks and reply
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             let comment = "";
