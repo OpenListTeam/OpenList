@@ -225,6 +225,8 @@ func _fs(g *gin.RouterGroup) {
 	g.POST("/torrent/generate", handles.GenerateTorrentForPath)
 	// Direct upload (client-side upload to storage)
 	g.POST("/get_direct_upload_info", middlewares.FsUp, handles.FsGetDirectUploadInfo)
+	// Multipart upload
+	g.PUT("/multipart", middlewares.FsUp, uploadLimiter, handles.FsMultipart)
 }
 
 func _task(g *gin.RouterGroup) {
