@@ -1,8 +1,8 @@
 module github.com/OpenListTeam/OpenList/v4
 
-go 1.24.0
+go 1.25
 
-toolchain go1.24.13
+toolchain go1.25.11
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
@@ -18,10 +18,10 @@ require (
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0
 	github.com/SheltonZhu/115driver v1.3.3
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
-	github.com/antchfx/htmlquery v1.3.5
-	github.com/antchfx/xpath v1.3.5
+	github.com/antchfx/htmlquery v1.3.6
+	github.com/antchfx/xpath v1.3.6
 	github.com/avast/retry-go v3.0.0+incompatible
-	github.com/aws/aws-sdk-go v1.55.7
+	github.com/aws/aws-sdk-go v1.55.8
 	github.com/blevesearch/bleve/v2 v2.5.2
 	github.com/bmatcuk/doublestar/v4 v4.9.1
 	github.com/caarlos0/env/v9 v9.0.0
@@ -70,7 +70,7 @@ require (
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	github.com/t3rm1n4l/go-mega v0.0.0-20241213151442-a19cff0ec7b5
+	github.com/t3rm1n4l/go-mega v0.0.0-20251120131202-6845944c051c
 	github.com/tchap/go-patricia/v2 v2.3.3
 	github.com/u2takey/ffmpeg-go v0.5.0
 	github.com/upyun/go-sdk/v3 v3.0.4
