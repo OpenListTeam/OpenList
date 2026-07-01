@@ -17,6 +17,7 @@ type fileItem struct {
 	UpdatedAt    string `json:"updated_at"`
 	CreatedAt    string `json:"created_at"`
 	DownloadURL  string `json:"download_url"`
+	Thumbnail    string `json:"thumbnail"`
 }
 
 func (f fileItem) ModTime() time.Time {
@@ -89,11 +90,14 @@ func (f fileItem) toObj() model.Obj {
 	if f.Type == "folder" {
 		size = 0
 	}
-	return &model.Object{
-		ID:       f.FileID,
-		Name:     f.Name,
-		Size:     size,
-		Modified: f.ModTime(),
-		IsFolder: f.Type == "folder",
+	return &model.ObjThumb{
+		Object: model.Object{
+			ID:       f.FileID,
+			Name:     f.Name,
+			Size:     size,
+			Modified: f.ModTime(),
+			IsFolder: f.Type == "folder",
+		},
+		Thumbnail: model.Thumbnail{Thumbnail: f.Thumbnail},
 	}
 }

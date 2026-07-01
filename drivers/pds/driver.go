@@ -55,7 +55,7 @@ func (d *PDS) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	marker := ""
 	for {
 		var resp listFilesResp
-		err := d.client.post(ctx, "/v2/file/list", map[string]any{
+		err := d.client.post(ctx, "/v2/file/list", withFilePreviewParams(map[string]any{
 			"drive_id":               d.DriveID,
 			"parent_file_id":         parentID,
 			"limit":                  100,
@@ -63,9 +63,8 @@ func (d *PDS) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 			"order_by":               "updated_at",
 			"order_direction":        "DESC",
 			"fields":                 "*",
-			"url_expire_sec":         7200,
 			"include_handover_drive": true,
-		}, &resp)
+		}), &resp)
 		if err != nil {
 			return nil, err
 		}

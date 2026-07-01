@@ -9,6 +9,14 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
+func withFilePreviewParams(params map[string]any) map[string]any {
+	params["url_expire_sec"] = 7200
+	params["image_thumbnail_process"] = "image/resize,w_400/format,jpeg"
+	params["image_url_process"] = "image/resize,w_1920/format,jpeg"
+	params["video_thumbnail_process"] = "video/snapshot,t_0,f_jpg,ar_auto,w_300"
+	return params
+}
+
 func (d *PDS) fileID(obj model.Obj) string {
 	if obj == nil {
 		return d.RootFolderID
@@ -34,10 +42,10 @@ func withParentPath(parentPath string, obj model.Obj) model.Obj {
 
 func (d *PDS) getFile(ctx context.Context, fileID string) (fileItem, error) {
 	var item fileItem
-	err := d.client.post(ctx, "/v2/file/get", map[string]any{
+	err := d.client.post(ctx, "/v2/file/get", withFilePreviewParams(map[string]any{
 		"drive_id": d.DriveID,
 		"file_id":  fileID,
-	}, &item)
+	}), &item)
 	return item, err
 }
 
@@ -78,12 +86,12 @@ func (d *PDS) getByPath(ctx context.Context, rawPath string) (model.Obj, error) 
 
 func (d *PDS) findChild(ctx context.Context, parentID, name string) (fileItem, error) {
 	var resp listFilesResp
-	err := d.client.post(ctx, "/v2/file/search", map[string]any{
+	err := d.client.post(ctx, "/v2/file/search", withFilePreviewParams(map[string]any{
 		"drive_id": d.DriveID,
 		"query":    "parent_file_id = \"" + parentID + "\" and name = \"" + escapeQueryValue(name) + "\"",
 		"limit":    10,
 		"fields":   "*",
-	}, &resp)
+	}), &resp)
 	if err != nil {
 		return fileItem{}, err
 	}
