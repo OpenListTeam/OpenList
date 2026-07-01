@@ -387,6 +387,40 @@ func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	return srcObjs, dstObjs, nil
 }
 
+func (d *Alias) getMoveObjsDirect(ctx context.Context, tmpSrcObjs, dstObjs BalancedObjs) (BalancedObjs, BalancedObjs, error) {
+	// 按挂载点分组目标目录
+	dstByMount := make(map[string][]model.Obj)
+	for _, o := range dstObjs {
+		storage, e := fs.GetStorage(o.GetPath(), &fs.GetStoragesArgs{})
+		if e != nil {
+			continue
+		}
+		mp := storage.GetStorage().MountPath
+		dstByMount[mp] = append(dstByMount[mp], o)
+	}
+
+	srcs := make(BalancedObjs, 0, len(tmpSrcObjs))
+	dsts := make(BalancedObjs, 0)
+
+	for _, src := range tmpSrcObjs {
+		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
+		if e != nil {
+			continue
+		}
+		mp := storage.GetStorage().MountPath
+		if dstList, ok := dstByMount[mp]; ok && len(dstList) > 0 {
+			srcs = append(srcs, src)
+			dsts = append(dsts, dstList[0])
+			if len(dstList) == 1 {
+				delete(dstByMount, mp)
+			} else {
+				dstByMount[mp] = dstList[1:]
+			}
+		}
+	}
+	return srcs, dsts, nil
+}
+
 func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (BalancedObjs, BalancedObjs, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
@@ -398,6 +432,10 @@ func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllRWP))
 	if err != nil {
 		return nil, nil, err
+	}
+	// MoveDirect: 源后端数少于目标后端数时，只在同后端上 move，跳过其他后端
+	if d.MoveDirect && len(tmpSrcObjs) < len(dstObjs) {
+		return d.getMoveObjsDirect(ctx, tmpSrcObjs, dstObjs)
 	}
 	if len(tmpSrcObjs) < len(dstObjs) {
 		return nil, nil, ErrNotEnoughSrcObjs
