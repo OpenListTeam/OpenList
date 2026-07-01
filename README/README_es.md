@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
 
-  <p><em>OpenList is a resilient, long-term governance, community-driven fork of AList — built to defend open source against trust-based attacks.</em></p>
+  <p><em>OpenList es un fork de AList resiliente, con gobernanza a largo plazo e impulsado por la comunidad, creado para defender el código abierto frente a ataques basados en la confianza.</em></p>
 
   <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
   <a href="https://github.com/OpenListTeam/OpenList/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OpenListTeam/OpenList" alt="License" /></a>
@@ -14,41 +14,24 @@
 
 ---
 
-- English | [中文](./README/README_cn.md) | [日本語](./README/README_ja.md) | [Dutch](./README/README_nl.md) | [한국어](./README/README_ko.md) | [Deutsch](./README/README_de.md) | [Русский](./README/README_ru.md) | [Français](./README/README_fr.md) | [Español](./README/README_es.md) | [العربية](./README/README_ar.md)
+- [English](../README.md) | [中文](./README_cn.md) | [日本語](./README_ja.md) | [Dutch](./README_nl.md) | [한국어](./README_ko.md) | [Deutsch](./README_de.md) | [Русский](./README_ru.md) | [Français](./README_fr.md) | Español | [العربية](./README_ar.md)
 
-- [Contributing](./CONTRIBUTING.md)
-- [CODE OF CONDUCT](./CODE_OF_CONDUCT.md)
-- [LICENSE](./LICENSE)
+- [Contributing](../CONTRIBUTING.md)
+- [CODE OF CONDUCT](../CODE_OF_CONDUCT.md)
+- [LICENSE](../LICENSE)
 
-## Disclaimer
+## Aviso legal
 
-OpenList is an open-source project independently maintained by the OpenList Team, following the AGPL-3.0 license and committed to maintaining complete code openness and modification transparency.
+OpenList is an open-source project independently maintained by the OpenList Team under the AGPL-3.0 license, with a commitment to code openness and modification transparency.
 
-We have noticed the emergence of some third-party projects in the community with names similar to this project, such as OpenListApp/OpenListApp, as well as some paid proprietary software using the same or similar naming. To avoid user confusion, we hereby declare:
-
-- OpenList has no official association with any third-party derivative projects.
+OpenList has no official association with third-party derivative projects that use similar names, including OpenListApp/OpenListApp or paid proprietary software using the same or similar names.
 
 - All software, code, and services of this project are maintained by the OpenList Team and are freely available on GitHub.
+- Project documentation and API services primarily rely on charitable resources provided by Cloudflare. There are currently no paid plans or commercial deployments.
+- Downstream projects should not use the "OpenList" name for impersonation or commercial confusion, and must not distribute OpenList-based code as closed source in violation of the AGPL license.
+- This software is provided "as is" without warranties. Please comply with applicable laws and regulations when using it.
 
-- Project documentation and API services primarily rely on charitable resources provided by Cloudflare. There are currently no paid plans or commercial deployments, and the use of existing features does not involve any costs.
-
-We respect the community's rights to free use and derivative development, but we also strongly urge downstream projects:
-
-- Should not use the "OpenList" name for impersonation promotion or commercial gain;
-
-- Must not distribute OpenList-based code in a closed-source manner or violate AGPL license terms.
-
-To better maintain healthy ecosystem development, we recommend:
-
-- Clearly indicate the project source and choose appropriate open-source licenses in accordance with the open-source spirit;
-
-- If involving commercial use, please avoid using "OpenList" or any confusing naming as the project name;
-
-- If you need to use materials located under OpenListTeam/Logo, you may modify and use them under compliance with the agreement.
-
-Thank you for your support and understanding of the OpenList project.
-
-## Features
+## Características
 
 - [x] Multiple storages
   - [x] Local storage
@@ -81,7 +64,7 @@ Thank you for your support and understanding of the OpenList project.
   - [x] [Baidu photo](https://photo.baidu.com)
   - [x] [SMB](https://en.wikipedia.org/wiki/Server_Message_Block)
   - [x] [115](https://115.com)
-  - [X] [Cloudreve](https://cloudreve.org)
+  - [x] [Cloudreve](https://cloudreve.org)
   - [x] [Dropbox](https://www.dropbox.com)
   - [x] [FeijiPan](https://www.feijipan.com)
   - [x] [dogecloud](https://www.dogecloud.com/product/oss)
@@ -99,23 +82,16 @@ Thank you for your support and understanding of the OpenList project.
 - [x] Easy to deploy and out-of-the-box
 - [x] File preview (PDF, markdown, code, plain text, ...)
 - [x] Image preview in gallery mode
-- [x] Video and audio preview, support lyrics and subtitles
-- [x] Office documents preview (docx, pptx, xlsx, ...)
+- [x] Video and audio preview, with lyrics and subtitles support
+- [x] Office document preview (docx, pptx, xlsx, ...)
 - [x] `README.md` preview rendering
 - [x] File permalink copy and direct file download
-- [x] Dark mode
-- [x] I18n
-- [x] Protected routes (password protection and authentication)
-- [x] WebDAV
-- [x] Docker Deploy
-- [x] Cloudflare Workers proxy
-- [x] File/Folder package download
-- [x] Web upload(Can allow visitors to upload), delete, mkdir, rename, move and copy
-- [x] Offline download
-- [x] Copy files between two storage
-- [x] Multi-thread downloading acceleration for single-thread download/stream
+- [x] Dark mode and i18n
+- [x] Protected routes, WebDAV, Docker deploy, and Cloudflare Workers proxy
+- [x] File/folder package download and web upload operations
+- [x] Offline download, cross-storage copy, and multi-thread download acceleration
 
-## Document
+## Documentación
 
 - 📘 [Docs](https://doc.oplist.org)
 - 🌏 [CN Mirror](https://doc.oplist.org.cn)
@@ -127,15 +103,15 @@ Thank you for your support and understanding of the OpenList project.
 - 🌎 [Global Demo](https://demo.oplist.org)
 - 🇨🇳 [CN Demo](https://demo.oplist.org.cn)
 
-## Discussion
+## Discusión
 
-Please refer to [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) for raising general questions, ***Issues* is for bug reports and feature requests only.**
+Please refer to [Discussions](https://github.com/OpenListTeam/OpenList/discussions) for general questions; Issues are for bug reports and feature requests only.
 
-## Sponsor
+## Patrocinador
 
 [![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
 
-## Donors
+## Donantes
 
 Thanks to the following donors for their generous support:
 
@@ -143,33 +119,18 @@ Thanks to the following donors for their generous support:
 - 爱发电用户_7jTh
 - suka
 
-## License
+## Licencia
 
-The `OpenList` is open-source software licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) license.
+OpenList is open-source software licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) license.
 
-## Disclaimer
-
-- This project is a free and open-source software designed to facilitate file sharing via net disks, primarily intended to support the downloading and learning of the Go programming language.
-- Please comply with all applicable laws and regulations when using this software. Any form of misuse is strictly prohibited.
-- The software is based on official SDKs or APIs without any modification, disruption, or interference with their behavior.
-- It only performs HTTP 302 redirects or traffic forwarding, and does not intercept, store, or tamper with any user data.
-- This project is not affiliated with any official platform or service provider.
-- The software is provided "as is", without any warranties of any kind, either express or implied, including but not limited to warranties of merchantability or fitness for a particular purpose.
-- The maintainers are not liable for any direct or indirect damages arising from the use of, or inability to use, this software.
-- You are solely responsible for any risks associated with using this software, including but not limited to account bans or download speed limitations.
-- This project is licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) License. Please see the [LICENSE](./LICENSE) file for details.
-
-## Contact Us
+## Contacto
 
 - [@GitHub](https://github.com/OpenListTeam)
 - [Telegram Group](https://t.me/OpenListTeam)
 - [Telegram Channel](https://t.me/OpenListOfficial)
 
-## Contributors
+## Colaboradores
 
-We sincerely thank the author [Xhofe](https://github.com/Xhofe) of the original project [AlistGo/alist](https://github.com/AlistGo/alist) and all other contributors.
-
-Thanks goes to these wonderful people:
+We sincerely thank [Xhofe](https://github.com/Xhofe), author of the original project [AlistGo/alist](https://github.com/AlistGo/alist), and all other contributors.
 
 [![Contributors](https://contrib.rocks/image?repo=OpenListTeam/OpenList)](https://github.com/OpenListTeam/OpenList/graphs/contributors)
-

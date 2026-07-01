@@ -166,10 +166,11 @@ type FamilyInfoResp struct {
 /*文件部分*/
 // 文件
 type Cloud189File struct {
-	ID   String `json:"id"`
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Md5  string `json:"md5"`
+	ID       String `json:"id"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Md5      string `json:"md5"`
+	ParentID string `json:"-"` // 由 getFiles 设置，不从 JSON 解析
 
 	LastOpTime Time `json:"lastOpTime"`
 	CreateDate Time `json:"createDate"`

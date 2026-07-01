@@ -25,6 +25,16 @@ When drafting the pull request:
 - Do not invent testing results.
 - Do not claim validation, verification, or review steps that were not actually performed.
 
+## Automated Contributions
+
+Fully automated contributions are not considered equivalent to normal community participation.
+
+A contribution may be considered fully automated if it is submitted through an automated agent, or if the submitting account participates in project discussions through an automated agent, without meaningful human review or intervention.
+
+When making this determination, maintainers may consider the overall behavior of the account, including but not limited to disclosed agent usage, interaction patterns, response characteristics, and other available evidence. No single factor is determinative.
+
+Maintainers reserve the right to accept, reject, modify, or reimplement any contribution independently of any action taken against the submitting account. Acceptance of a contribution does not imply acceptance of the submitting account or its contribution method. If an account is determined to be primarily operated through automated processes, we may need to restrict its future participation in contributions until that determination is rescinded.
+
 ## Git Commits
 
 When creating commits, follow the repository `git-commit` skill rules:
