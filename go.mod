@@ -98,6 +98,7 @@ require (
 	github.com/ProtonMail/go-srp v0.0.7 // indirect
 	github.com/PuerkitoBio/goquery v1.10.3 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.4.5 // indirect
+	github.com/Xhofe/go-cache v0.0.0-20240804043513-b1a71927bc21 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/bradenaw/juniper v0.15.3 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
