@@ -289,7 +289,7 @@ BuildRelease() {
 BuildLoongGLIBC() {
   local target_abi="$2"
   local output_file="$1"
-  local oldWorldGoVersion="1.25.11"
+  local oldWorldGoVersion="1.26.4"
   local loong_tags
   loong_tags=$(GetBuildTagsForTarget "linux-loong64")
   
