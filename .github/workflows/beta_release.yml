@@ -115,7 +115,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.11"
+          go-version: "1.26.4"
 
       - name: Setup web
         run: bash build.sh dev web
