@@ -59,14 +59,14 @@ require (
 	github.com/meilisearch/meilisearch-go v0.32.0
 	github.com/mholt/archives v0.1.3
 	github.com/natefinch/lumberjack v2.0.0+incompatible
-	github.com/ncw/swift/v2 v2.0.4
+	github.com/ncw/swift/v2 v2.0.5
 	github.com/pkg/errors v0.9.1
-	github.com/pkg/sftp v1.13.9
+	github.com/pkg/sftp v1.13.10
 	github.com/pquerna/otp v1.5.0
 	github.com/quic-go/quic-go v0.54.1
 	github.com/rclone/rclone v1.70.3
 	github.com/shirou/gopsutil/v4 v4.25.5
-	github.com/sirupsen/logrus v1.9.3
+	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
