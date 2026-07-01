@@ -3,6 +3,7 @@ package lanzou
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -18,7 +19,7 @@ type LanZou struct {
 	uid string
 	vei string
 
-	flag int32
+	flag atomic.Int32
 }
 
 func (d *LanZou) Config() driver.Config {
@@ -117,7 +118,7 @@ func (d *LanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 	return &model.Link{
 		URL: dfile.Url,
 		Header: http.Header{
-			"User-Agent": []string{base.UserAgent},
+			"User-Agent": {d.UserAgent},
 		},
 		Expiration: &exp,
 	}, nil

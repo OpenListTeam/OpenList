@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -68,6 +69,9 @@ func (d *Pan115) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		return nil, err
 	}
 	userAgent := args.Header.Get("User-Agent")
+	if userAgent == "" {
+		userAgent = base.UserAgent
+	}
 	downloadInfo, err := d.client.DownloadWithUA(file.(*FileObj).PickCode, userAgent)
 	if err != nil {
 		return nil, err
