@@ -460,6 +460,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 	if model.ObjHasMask(srcRawObj, model.NoRename) {
 		return errors.WithStack(errs.PermissionDenied)
 	}
+	oldName := srcRawObj.GetName()
 	srcObj := model.UnwrapObjName(srcRawObj)
 
 	var newObj model.Obj
@@ -477,19 +478,19 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 
 	dirKey := Key(storage, stdpath.Dir(srcPath))
 	if !srcRawObj.IsDir() {
-		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, srcRawObj.GetName()))
+		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, oldName))
 		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstName))
 	}
 	if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(dirKey); exist {
 			if srcRawObj.IsDir() {
-				Cache.deleteDirectoryTree(stdpath.Join(dirKey, srcRawObj.GetName()))
+				Cache.deleteDirectoryTree(stdpath.Join(dirKey, oldName))
 			}
 			if newObj == nil {
 				newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
 			}
 			newObj = wrapObjName(storage, newObj)
-			cache.UpdateObject(srcRawObj.GetName(), newObj)
+			cache.UpdateObject(oldName, newObj)
 		}
 	}
 
@@ -778,7 +779,7 @@ func GetDirectUploadTools(storage driver.Driver) []string {
 	return du.GetDirectUploadTools()
 }
 
-func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64) (any, error) {
+func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64, overwrite bool) (any, error) {
 	du, ok := storage.(driver.DirectUploader)
 	if !ok {
 		return nil, errors.WithStack(errs.NotImplement)
@@ -788,9 +789,15 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 	}
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	dstPath := stdpath.Join(dstDirPath, dstName)
-	_, err := Get(ctx, storage, dstPath)
-	if err == nil {
-		return nil, errors.WithStack(errs.ObjectAlreadyExists)
+	var err error
+	if !overwrite {
+		_, err = Get(ctx, storage, dstPath)
+		if err == nil {
+			return nil, errors.WithStack(errs.ObjectAlreadyExists)
+		}
+		if !errs.IsObjectNotFound(err) {
+			return nil, errors.WithMessage(err, "failed to check if object exists")
+		}
 	}
 	err = MakeDir(ctx, storage, dstDirPath)
 	if err != nil {

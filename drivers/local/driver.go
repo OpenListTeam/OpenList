@@ -389,6 +389,9 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 	if err != nil {
 		return err
 	}
+	if !obj.IsDir() {
+		d.removeThumbCache(obj.GetPath())
+	}
 	if obj.IsDir() {
 		if d.directoryMap.Has(obj.GetPath()) {
 			d.directoryMap.DeleteDirNode(obj.GetPath())

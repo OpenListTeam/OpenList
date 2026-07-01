@@ -101,7 +101,7 @@ func (d *Pan123Share) Link(ctx context.Context, file model.Obj, args model.LinkA
 		}
 
 		log.Debug("download url: ", u_)
-		res, err := base.NoRedirectClient.R().SetHeader("Referer", "https://www.123pan.com/").Get(u_)
+		res, err := base.NoRedirectClient.R().SetHeader("Referer", "https://yun.123pan.com/").Get(u_)
 		if err != nil {
 			return nil, err
 		}
