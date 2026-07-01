@@ -48,7 +48,17 @@ func Init(mode string) error {
 }
 
 func Search(ctx context.Context, req model.SearchReq) ([]model.SearchNode, int64, error) {
+	if instance == nil {
+		return nil, 0, errs.SearchNotAvailable
+	}
 	return instance.Search(ctx, req)
+}
+
+func Get(ctx context.Context, parent string) ([]model.SearchNode, error) {
+	if instance == nil {
+		return nil, errs.SearchNotAvailable
+	}
+	return instance.Get(ctx, parent)
 }
 
 func Index(ctx context.Context, parent string, obj model.Obj) error {
