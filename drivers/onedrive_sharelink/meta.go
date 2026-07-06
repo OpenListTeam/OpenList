@@ -11,16 +11,21 @@ type Addition struct {
 	driver.RootPath
 	ShareLinkURL       string `json:"url" required:"true"`
 	ShareLinkPassword  string `json:"password"`
+	DisableDiskUsage   bool   `json:"disable_disk_usage" default:"false"`
+	EnableDirectUpload bool   `json:"enable_direct_upload" default:"false" help:"Allow uploading directly to OneDrive without going through OpenList"`
 	IsSharepoint       bool
 	downloadLinkPrefix string
 	Headers            http.Header
 	HeaderTime         int64
+	DriveURL           string
+	DriveAccessToken   string
+	DriveTokenTime     int64
+	driveRootPath      string
 }
 
 var config = driver.Config{
 	Name:        "Onedrive Sharelink",
-	OnlyProxy:   true,
-	NoUpload:    true,
+	LocalSort:   true,
 	DefaultRoot: "/",
 }
 

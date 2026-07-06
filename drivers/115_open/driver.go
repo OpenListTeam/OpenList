@@ -2,6 +2,7 @@ package _115_open
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	stdpath "path"
@@ -14,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -169,6 +171,9 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = stdpath.Join(d.parentPath, path)
 	resp, err := d.client.GetFolderInfoByPath(ctx, path)
 	if err != nil {
+		if errors.Is(err, sdk.ErrObjectNotFound) {
+			return nil, errs.ObjectNotFound
+		}
 		return nil, err
 	}
 	return &Obj{
@@ -199,18 +204,15 @@ func (d *Open115) MakeDir(ctx context.Context, parentDir model.Obj, dirName stri
 	}, nil
 }
 
-func (d *Open115) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+func (d *Open115) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
+		return err
 	}
 	_, err := d.client.Move(ctx, &sdk.MoveReq{
 		FileIDs: srcObj.GetID(),
 		ToCid:   dstDir.GetID(),
 	})
-	if err != nil {
-		return nil, err
-	}
-	return srcObj, nil
+	return err
 }
 
 func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
@@ -218,7 +220,7 @@ func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 		return nil, err
 	}
 	_, err := d.client.UpdateFile(ctx, &sdk.UpdateFileReq{
-		FileID:  srcObj.GetID(),
+		FileID:   srcObj.GetID(),
 		FileName: newName,
 	})
 	if err != nil {
@@ -227,23 +229,21 @@ func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 	obj, ok := srcObj.(*Obj)
 	if ok {
 		obj.Fn = newName
+		return srcObj, nil
 	}
-	return srcObj, nil
+	return nil, nil
 }
 
-func (d *Open115) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+func (d *Open115) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
+		return err
 	}
 	_, err := d.client.Copy(ctx, &sdk.CopyReq{
 		PID:     dstDir.GetID(),
 		FileID:  srcObj.GetID(),
 		NoDupli: "1",
 	})
-	if err != nil {
-		return nil, err
-	}
-	return srcObj, nil
+	return err
 }
 
 func (d *Open115) Remove(ctx context.Context, obj model.Obj) error {

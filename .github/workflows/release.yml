@@ -44,14 +44,15 @@ jobs:
           swap-storage: true
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.25.0'
+          go-version: '1.26.4'
 
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: true
 
       - name: Install dependencies
         if: matrix.target-platform == ''
@@ -69,9 +70,9 @@ jobs:
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Upload assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/compress/*
-          prerelease: false
-          tag_name: ${{ github.event.release.tag_name }}
-
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for file in build/compress/*; do
+            gh release upload "${{ github.event.release.tag_name }}" "$file" --clobber
+          done

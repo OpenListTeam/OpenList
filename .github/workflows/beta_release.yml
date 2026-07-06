@@ -40,15 +40,18 @@ jobs:
           npx changelogithub --output CHANGELOG.md
 
       - name: Upload assets to beta release
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: CHANGELOG.md
-          files: CHANGELOG.md
-          prerelease: true
-          tag_name: beta
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view beta; then
+            gh release create beta --prerelease --notes-file CHANGELOG.md
+          else
+            gh release edit beta --prerelease --notes-file CHANGELOG.md
+          fi
+          gh release upload beta "CHANGELOG.md" --clobber
 
       - name: Upload assets to github artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: beta changelog
           path: ${{ github.workspace }}/CHANGELOG.md
@@ -110,9 +113,9 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: "1.25.0"
+          go-version: "1.26.4"
 
       - name: Setup web
         run: bash build.sh dev web
@@ -121,7 +124,7 @@ jobs:
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Build
-        uses: OpenListTeam/cgo-actions@v1.2.2
+        uses: OpenListTeam/cgo-actions@v1.2.5
         with:
           targets: ${{ matrix.target }}
           flags: ${{ matrix.flags || '-ldflags=' }}
@@ -164,13 +167,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # See above
       - name: Upload assets to beta release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/compress/*
-          prerelease: true
-          tag_name: beta
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for file in build/compress/*; do
+            gh release upload beta "$file" --clobber
+          done
 
       - name: Clean illegal characters from matrix.target
         id: clean_target_name
@@ -182,7 +185,7 @@ jobs:
           echo "cleaned_target=$CLEANED_TARGET" >> $GITHUB_ENV
 
       - name: Upload assets to github artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: beta builds for ${{ env.cleaned_target }}
           path: ${{ github.workspace }}/build/compress/*

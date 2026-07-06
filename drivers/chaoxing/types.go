@@ -105,44 +105,82 @@ func (ios *int_str) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// 时间戳同样存在字符串/数字两种形式，且毫秒级时间戳会超出 int32 范围，需用 int64 解析
+// 超星 API 返回的 uploadDate 有三种格式：
+// 1. 数字时间戳：1780191356415
+// 2. 字符串时间戳："1780191356415"
+// 3. 日期字符串："2024-11-06 07:49"
+type int64_str int64
+
+func (ios *int64_str) UnmarshalJSON(data []byte) error {
+	// 去除引号
+	str := string(bytes.Trim(data, "\""))
+
+	// 尝试直接解析为数字（处理格式 1 和 2）
+	intValue, err := strconv.ParseInt(str, 10, 64)
+	if err == nil {
+		*ios = int64_str(intValue)
+		return nil
+	}
+
+	// 尝试解析日期字符串（处理格式 3）
+	// 支持格式："2024-11-06 07:49" 或 "2024-11-06 07:49:30"
+	layouts := []string{
+		"2006-01-02 15:04",
+		"2006-01-02 15:04:05",
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, str); err == nil {
+			// 转换为毫秒时间戳
+			*ios = int64_str(t.UnixMilli())
+			return nil
+		}
+	}
+
+	// 所有格式都失败，返回 0（避免因时间格式问题导致整个解析失败）
+	*ios = 0
+	return nil
+}
+
 type File struct {
 	Cataid  int `json:"cataid"`
 	Cfid    int `json:"cfid"`
 	Content struct {
-		Cfid             int     `json:"cfid"`
-		Pid              int     `json:"pid"`
-		FolderName       string  `json:"folderName"`
-		ShareType        int     `json:"shareType"`
-		Preview          string  `json:"preview"`
-		Filetype         string  `json:"filetype"`
-		PreviewURL       string  `json:"previewUrl"`
-		IsImg            bool    `json:"isImg"`
-		ParentPath       string  `json:"parentPath"`
-		Icon             string  `json:"icon"`
-		Suffix           string  `json:"suffix"`
-		Duration         int     `json:"duration"`
-		Pantype          string  `json:"pantype"`
-		Puid             int_str `json:"puid"`
-		Filepath         string  `json:"filepath"`
-		Crc              string  `json:"crc"`
-		Isfile           bool    `json:"isfile"`
-		Residstr         string  `json:"residstr"`
-		ObjectID         string  `json:"objectId"`
-		Extinfo          string  `json:"extinfo"`
-		Thumbnail        string  `json:"thumbnail"`
-		Creator          int     `json:"creator"`
-		ResTypeValue     int     `json:"resTypeValue"`
-		UploadDateFormat string  `json:"uploadDateFormat"`
-		DisableOpt       bool    `json:"disableOpt"`
-		DownPath         string  `json:"downPath"`
-		Sort             int     `json:"sort"`
-		Topsort          int     `json:"topsort"`
-		Restype          string  `json:"restype"`
-		Size             int_str `json:"size"`
-		UploadDate       int64   `json:"uploadDate"`
-		FileSize         string  `json:"fileSize"`
-		Name             string  `json:"name"`
-		FileID           string  `json:"fileId"`
+		Cfid             int       `json:"cfid"`
+		Pid              int       `json:"pid"`
+		FolderName       string    `json:"folderName"`
+		ShareType        int       `json:"shareType"`
+		Preview          string    `json:"preview"`
+		Filetype         string    `json:"filetype"`
+		PreviewURL       string    `json:"previewUrl"`
+		IsImg            bool      `json:"isImg"`
+		ParentPath       string    `json:"parentPath"`
+		Icon             string    `json:"icon"`
+		Suffix           string    `json:"suffix"`
+		Duration         int       `json:"duration"`
+		Pantype          string    `json:"pantype"`
+		Puid             int_str   `json:"puid"`
+		Filepath         string    `json:"filepath"`
+		Crc              string    `json:"crc"`
+		Isfile           bool      `json:"isfile"`
+		Residstr         string    `json:"residstr"`
+		ObjectID         string    `json:"objectId"`
+		Extinfo          string    `json:"extinfo"`
+		Thumbnail        string    `json:"thumbnail"`
+		Creator          int       `json:"creator"`
+		ResTypeValue     int       `json:"resTypeValue"`
+		UploadDateFormat string    `json:"uploadDateFormat"`
+		DisableOpt       bool      `json:"disableOpt"`
+		DownPath         string    `json:"downPath"`
+		Sort             int       `json:"sort"`
+		Topsort          int       `json:"topsort"`
+		Restype          string    `json:"restype"`
+		Size             int_str   `json:"size"`
+		UploadDate       int64_str `json:"uploadDate"`
+		FileSize         string    `json:"fileSize"`
+		Name             string    `json:"name"`
+		FileID           string    `json:"fileId"`
 	} `json:"content"`
 	CreatorID  int    `json:"creatorId"`
 	DesID      string `json:"des_id"`
@@ -265,7 +303,7 @@ func fileToObj(f File) *model.Object {
 			IsFolder: true,
 		}
 	}
-	paserTime := time.UnixMilli(f.Content.UploadDate)
+	paserTime := time.UnixMilli(int64(f.Content.UploadDate))
 	return &model.Object{
 		ID:       fmt.Sprintf("%d$%s", f.ID, f.Content.FileID),
 		Name:     f.Content.Name,
