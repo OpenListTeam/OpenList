@@ -81,10 +81,21 @@ func (t *TransferTask) Run() error {
 				Closers:  utils.NewClosers(r),
 			}
 			if downloadSize < 0 {
-				if _, err := s.CacheFullAndWriter(nil, nil); err != nil {
+ 				cache, err := s.CacheFullAndWriter(nil, nil)
+ 				if err != nil {
 					return err
 				}
-				t.setKnownSize(s.GetSize())
+ 				size, err := cache.Seek(0, os.SEEK_END)
+ 				if err != nil {
+ 					return err
+ 				}
+ 				if _, err := cache.Seek(0, os.SEEK_SET); err != nil {
+ 					return err
+ 				}
+ 				if obj, ok := s.Obj.(*model.Object); ok {
+ 					obj.Size = size
+ 				}
+ 				t.setKnownSize(size)
 			}
 			if err := op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress); err != nil {
 				return err
