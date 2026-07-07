@@ -82,7 +82,7 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 	if streamPut {
 		if fileSize <= 0 {
 			start, end, err := http_range.ParseContentRange(resp.Header.Get("Content-Range"))
-			if err == nil && end >= start {
+			if err == nil && start == 0 && end >= start {
 				fileSize = end - start + 1
 			}
 		}
