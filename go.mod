@@ -55,7 +55,7 @@ require (
 	github.com/jlaffaye/ftp v0.2.1-0.20240918233326-1b970516f5d3
 	github.com/json-iterator/go v1.1.12
 	github.com/kdomanski/iso9660 v0.4.0
-	github.com/maruel/natural v1.1.1
+	github.com/maruel/natural v1.3.0
 	github.com/meilisearch/meilisearch-go v0.32.0
 	github.com/mholt/archives v0.1.5
 	github.com/natefinch/lumberjack v2.0.0+incompatible
