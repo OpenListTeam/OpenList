@@ -97,14 +97,13 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 	if model.IsIPBlocked(ip) {
 		return nil, errors.New("Access denied: IP is blacklisted")
 	}
-	if !model.ShouldSkipAuthRateLimit(ip) {
-		maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
-		lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
-		count, ok := model.LoginCache.Get(ip)
-		if model.IsAuthRateLimitExceeded(count, maxRetries) {
-			model.LoginCache.Expire(ip, lockDuration)
-			return nil, errors.New(model.TooManyAttempts)
-		}
+	maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
+	lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
+	skipLimit := model.ShouldSkipAuthRateLimit(ip)
+	count, _ := model.LoginCache.Get(ip)
+	if !skipLimit && model.IsAuthRateLimitExceeded(count, maxRetries) {
+		model.LoginCache.Expire(ip, lockDuration)
+		return nil, errors.New(model.TooManyAttempts)
 	}
 	pass := string(password)
 	userObj, err := op.GetUserByName(conn.User())
@@ -117,11 +116,15 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 		userObj, err = tryLdapLoginAndRegister(conn.User(), pass)
 	}
 	if err != nil {
-		model.LoginCache.Set(ip, count+1)
+		if !skipLimit {
+			model.LoginCache.Set(ip, count+1)
+		}
 		return nil, err
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
-		model.LoginCache.Set(ip, count+1)
+		if !skipLimit {
+			model.LoginCache.Set(ip, count+1)
+		}
 		return nil, errors.New("user is not allowed to access via SFTP")
 	}
 	model.LoginCache.Del(ip)

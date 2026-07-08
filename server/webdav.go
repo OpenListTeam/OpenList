@@ -62,22 +62,21 @@ func WebDAVAuth(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	// check count of login
-	if !model.ShouldSkipAuthRateLimit(ip) {
-		maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
-		lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
-		count, cok := model.LoginCache.Get(ip)
-		if model.IsAuthRateLimitExceeded(count, maxRetries) {
-			if c.Request.Method == "OPTIONS" {
-				common.GinAppendValues(c, conf.UserKey, guest)
-				c.Next()
-				return
-			}
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
-			model.LoginCache.Expire(ip, lockDuration)
+	// rate limiting
+	maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
+	lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
+	skipLimit := model.ShouldSkipAuthRateLimit(ip)
+	count, _ := model.LoginCache.Get(ip)
+	if !skipLimit && model.IsAuthRateLimitExceeded(count, maxRetries) {
+		if c.Request.Method == "OPTIONS" {
+			common.GinAppendValues(c, conf.UserKey, guest)
+			c.Next()
 			return
 		}
+		c.Status(http.StatusTooManyRequests)
+		c.Abort()
+		model.LoginCache.Expire(ip, lockDuration)
+		return
 	}
 	username, password, ok := c.Request.BasicAuth()
 	if !ok {
@@ -116,7 +115,9 @@ func WebDAVAuth(c *gin.Context) {
 			c.Next()
 			return
 		}
-		model.LoginCache.Set(ip, count+1)
+		if !skipLimit {
+			model.LoginCache.Set(ip, count+1)
+		}
 		c.Status(http.StatusUnauthorized)
 		c.Abort()
 		return

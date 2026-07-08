@@ -118,14 +118,13 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 	if model.IsIPBlocked(ip) {
 		return nil, errors.New("Access denied: IP is blacklisted")
 	}
-	if !model.ShouldSkipAuthRateLimit(ip) {
-		maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
-		lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
-		count, ok := model.LoginCache.Get(ip)
-		if model.IsAuthRateLimitExceeded(count, maxRetries) {
-			model.LoginCache.Expire(ip, lockDuration)
-			return nil, errors.New(model.TooManyAttempts)
-		}
+	maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
+	lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
+	skipLimit := model.ShouldSkipAuthRateLimit(ip)
+	count, _ := model.LoginCache.Get(ip)
+	if !skipLimit && model.IsAuthRateLimitExceeded(count, maxRetries) {
+		model.LoginCache.Expire(ip, lockDuration)
+		return nil, errors.New(model.TooManyAttempts)
 	}
 	var userObj *model.User
 	var err error
@@ -145,12 +144,16 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 			userObj, err = tryLdapLoginAndRegister(user, pass)
 		}
 		if err != nil {
-			model.LoginCache.Set(ip, count+1)
+			if !skipLimit {
+				model.LoginCache.Set(ip, count+1)
+			}
 			return nil, err
 		}
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
-		model.LoginCache.Set(ip, count+1)
+		if !skipLimit {
+			model.LoginCache.Set(ip, count+1)
+		}
 		return nil, errors.New("user is not allowed to access via FTP")
 	}
 	model.LoginCache.Del(ip)
