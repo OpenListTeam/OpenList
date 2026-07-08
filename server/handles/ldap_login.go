@@ -1,6 +1,8 @@
 package handles
 
 import (
+	"time"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -27,19 +29,29 @@ func LoginLdap(c *gin.Context) {
 		return
 	}
 
-	// check count of login
+	// check blacklist
 	ip := c.ClientIP()
-	count, ok := model.LoginCache.Get(ip)
-	if ok && count >= model.DefaultMaxAuthRetries {
-		common.ErrorStrResp(c, "Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later.", 429)
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
+	if model.IsIPBlocked(ip) {
+		common.ErrorStrResp(c, "Access denied: IP is blacklisted", 403)
+		return
+	}
+	// rate limiting
+	maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
+	lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
+	skipLimit := model.ShouldSkipAuthRateLimit(ip)
+	count, _ := model.LoginCache.Get(ip)
+	if !skipLimit && model.IsAuthRateLimitExceeded(count, maxRetries) {
+		common.ErrorStrResp(c, model.TooManyAttempts, 429)
+		model.LoginCache.Expire(ip, lockDuration)
 		return
 	}
 
 	err = common.HandleLdapLogin(req.Username, req.Password)
 	if err != nil {
 		if errors.Is(err, common.ErrFailedLdapAuth) {
-			model.LoginCache.Set(ip, count+1)
+			if !skipLimit {
+				model.LoginCache.Set(ip, count+1)
+			}
 			common.ErrorResp(c, err, 400)
 		} else {
 			common.ErrorResp(c, err, 500)
@@ -51,7 +63,9 @@ func LoginLdap(c *gin.Context) {
 		user, err = common.LdapRegister(req.Username)
 		if err != nil {
 			common.ErrorResp(c, err, 400)
-			model.LoginCache.Set(ip, count+1)
+			if !skipLimit {
+				model.LoginCache.Set(ip, count+1)
+			}
 			return
 		}
 	}

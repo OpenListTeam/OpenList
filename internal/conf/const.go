@@ -10,12 +10,16 @@ const (
 
 const (
 	// site
-	VERSION      = "version"
-	SiteTitle    = "site_title"
-	Announcement = "announcement"
-	AllowIndexed = "allow_indexed"
-	AllowMounted = "allow_mounted"
-	RobotsTxt    = "robots_txt"
+	VERSION               = "version"
+	SiteTitle             = "site_title"
+	Announcement          = "announcement"
+	AllowIndexed          = "allow_indexed"
+	AllowMounted          = "allow_mounted"
+	RobotsTxt             = "robots_txt"
+	AuthLoginMaxRetries   = "auth_login_max_retries"
+	AuthLoginLockDuration = "auth_login_lock_duration"
+	AuthLoginIPWhitelist  = "auth_login_ip_whitelist"
+	AuthLoginIPBlacklist  = "auth_login_ip_blacklist"
 
 	Logo                           = "logo" // multi-lines text, L1: light, EOL: dark
 	Favicon                        = "favicon"

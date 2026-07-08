@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -114,10 +115,17 @@ func (d *FtpMainDriver) ClientDisconnected(cc ftpserver.ClientContext) {
 
 func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) (ftpserver.ClientDriver, error) {
 	ip := cc.RemoteAddr().String()
-	count, ok := model.LoginCache.Get(ip)
-	if ok && count >= model.DefaultMaxAuthRetries {
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
-		return nil, errors.New("Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later.")
+	if model.IsIPBlocked(ip) {
+		return nil, errors.New("Access denied: IP is blacklisted")
+	}
+	if !model.ShouldSkipAuthRateLimit(ip) {
+		maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
+		lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
+		count, ok := model.LoginCache.Get(ip)
+		if model.IsAuthRateLimitExceeded(count, maxRetries) {
+			model.LoginCache.Expire(ip, lockDuration)
+			return nil, errors.New(model.TooManyAttempts)
+		}
 	}
 	var userObj *model.User
 	var err error

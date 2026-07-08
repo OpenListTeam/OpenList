@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"net"
 	"regexp"
 	"strings"
 
@@ -83,6 +84,12 @@ var settingItemHooks = map[string]SettingItemHook{
 		conf.SlicesMap[conf.IgnoreDirectLinkParams] = strings.Split(item.Value, ",")
 		return nil
 	},
+	conf.AuthLoginIPWhitelist: func(item *model.SettingItem) error {
+		return updateAuthLoginIPNets(item.Value, &conf.AuthLoginIPNets)
+	},
+	conf.AuthLoginIPBlacklist: func(item *model.SettingItem) error {
+		return updateAuthLoginIPNets(item.Value, &conf.AuthLoginIPBlackNets)
+	},
 }
 
 func RegisterSettingItemHook(key string, hook SettingItemHook) {
@@ -109,4 +116,35 @@ func callStorageHooks(typ string, storage driver.Driver) {
 
 func RegisterStorageHook(hook StorageHook) {
 	storageHooks = append(storageHooks, hook)
+}
+
+func updateAuthLoginIPNets(value string, dst *[]*net.IPNet) error {
+	if value == "" {
+		*dst = nil
+		return nil
+	}
+	lines := strings.Split(value, "\n")
+	var nets []*net.IPNet
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// try as CIDR first, if no "/" present, append /32 for single IP
+		if !strings.Contains(line, "/") {
+			if strings.Contains(line, ":") {
+				line = line + "/128"
+			} else {
+				line = line + "/32"
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(line)
+		if err != nil {
+			log.Errorf("failed to parse IP list entry %q: %v", line, err)
+			continue
+		}
+		nets = append(nets, ipNet)
+	}
+	*dst = nets
+	return nil
 }

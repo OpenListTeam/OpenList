@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/base64"
 	"image/png"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
@@ -41,25 +43,37 @@ func LoginHash(c *gin.Context) {
 }
 
 func loginHash(c *gin.Context, req *LoginReq) {
-	// check count of login
+	// check blacklist
 	ip := c.ClientIP()
-	count, ok := model.LoginCache.Get(ip)
-	if ok && count >= model.DefaultMaxAuthRetries {
+	if model.IsIPBlocked(ip) {
+		common.ErrorStrResp(c, "Access denied: IP is blacklisted", 403)
+		return
+	}
+	// rate limiting
+	maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
+	lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
+	skipLimit := model.ShouldSkipAuthRateLimit(ip)
+	count, _ := model.LoginCache.Get(ip)
+	if !skipLimit && model.IsAuthRateLimitExceeded(count, maxRetries) {
 		common.ErrorStrResp(c, model.TooManyAttempts, 429)
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
+		model.LoginCache.Expire(ip, lockDuration)
 		return
 	}
 	// check username
 	user, err := op.GetUserByName(req.Username)
 	if err != nil {
 		common.ErrorStrResp(c, model.InvalidUsernameOrPassword, 401)
-		model.LoginCache.Set(ip, count+1)
+		if !skipLimit {
+			model.LoginCache.Set(ip, count+1)
+		}
 		return
 	}
 	// validate password hash
 	if err := user.ValidatePwdStaticHash(req.Password); err != nil {
 		common.ErrorStrResp(c, model.InvalidUsernameOrPassword, 401)
-		model.LoginCache.Set(ip, count+1)
+		if !skipLimit {
+			model.LoginCache.Set(ip, count+1)
+		}
 		return
 	}
 	// check 2FA
@@ -67,7 +81,9 @@ func loginHash(c *gin.Context, req *LoginReq) {
 		if !totp.Validate(req.OtpCode, user.OtpSecret) {
 			// 402 - need opt
 			common.ErrorStrResp(c, model.Invalid2FACode, 402)
-			model.LoginCache.Set(ip, count+1)
+			if !skipLimit {
+				model.LoginCache.Set(ip, count+1)
+			}
 			return
 		}
 	}

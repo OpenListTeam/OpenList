@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -113,6 +114,10 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.AllowIndexed, Value: "false", Type: conf.TypeBool, Group: model.SITE},
 		{Key: conf.AllowMounted, Value: "true", Type: conf.TypeBool, Group: model.SITE},
 		{Key: conf.RobotsTxt, Value: "User-agent: *\nAllow: /", Type: conf.TypeText, Group: model.SITE},
+		{Key: conf.AuthLoginMaxRetries, Value: strconv.Itoa(model.DefaultMaxAuthRetries), Type: conf.TypeNumber, Group: model.SITE, Flag: model.PRIVATE, Help: "Max login retry attempts per IP. Set to -1 to disable rate limiting."},
+		{Key: conf.AuthLoginLockDuration, Value: strconv.Itoa(int(model.DefaultLockDuration / time.Minute)), Type: conf.TypeNumber, Group: model.SITE, Flag: model.PRIVATE, Help: "Lock duration in minutes after exceeding max retries."},
+		{Key: conf.AuthLoginIPWhitelist, Value: "", Type: conf.TypeText, Group: model.SITE, Flag: model.PRIVATE, Help: "Whitelisted IPs or CIDR ranges, one per line. IPs in this list are exempt from login rate limiting."},
+		{Key: conf.AuthLoginIPBlacklist, Value: "", Type: conf.TypeText, Group: model.SITE, Flag: model.PRIVATE, Help: "Blacklisted IPs or CIDR ranges, one per line. Login from these IPs will be denied."},
 		// style settings
 		{Key: conf.Logo, Value: "https://res.oplist.org/logo/logo.svg", MigrationValue: "https://cdn.oplist.org/gh/OpenListTeam/Logo@main/logo.svg", Type: conf.TypeText, Group: model.STYLE},
 		{Key: conf.Favicon, Value: "https://res.oplist.org/logo/logo.svg", MigrationValue: "https://cdn.oplist.org/gh/OpenListTeam/Logo@main/logo.svg", Type: conf.TypeString, Group: model.STYLE},

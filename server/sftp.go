@@ -94,10 +94,17 @@ func (d *SftpDriver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, erro
 
 func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 	ip := conn.RemoteAddr().String()
-	count, ok := model.LoginCache.Get(ip)
-	if ok && count >= model.DefaultMaxAuthRetries {
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
-		return nil, errors.New("Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later.")
+	if model.IsIPBlocked(ip) {
+		return nil, errors.New("Access denied: IP is blacklisted")
+	}
+	if !model.ShouldSkipAuthRateLimit(ip) {
+		maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
+		lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
+		count, ok := model.LoginCache.Get(ip)
+		if model.IsAuthRateLimitExceeded(count, maxRetries) {
+			model.LoginCache.Expire(ip, lockDuration)
+			return nil, errors.New(model.TooManyAttempts)
+		}
 	}
 	pass := string(password)
 	userObj, err := op.GetUserByName(conn.User())

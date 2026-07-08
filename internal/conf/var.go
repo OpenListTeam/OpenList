@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"net"
 	"net/url"
 	"regexp"
 	"sync"
@@ -23,6 +24,8 @@ var (
 var SlicesMap = make(map[string][]string)
 var FilenameCharMap = make(map[string]string)
 var PrivacyReg []*regexp.Regexp
+var AuthLoginIPNets      []*net.IPNet
+var AuthLoginIPBlackNets []*net.IPNet
 
 var (
 	// 在HybridCache中使用[]byte缓存数据流的限制，内存为Go自动管理，直到GC
@@ -64,6 +67,32 @@ func SendStoragesLoadedSignal() {
 		close(storagesLoadSignal)
 	}
 	storagesLoadMu.Unlock()
+}
+
+// IsIPWhitelisted checks if the given IP is within any of the configured whitelist CIDR ranges.
+func IsIPWhitelisted(ipStr string) bool {
+	return isIPInNets(ipStr, AuthLoginIPNets)
+}
+
+// IsIPBlacklisted checks if the given IP is within any of the configured blacklist CIDR ranges.
+func IsIPBlacklisted(ipStr string) bool {
+	return isIPInNets(ipStr, AuthLoginIPBlackNets)
+}
+
+func isIPInNets(ipStr string, nets []*net.IPNet) bool {
+	if len(nets) == 0 {
+		return false
+	}
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	for _, ipNet := range nets {
+		if ipNet.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 func ResetStoragesLoadSignal() {
 	storagesLoadMu.Lock()

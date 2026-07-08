@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -48,20 +49,35 @@ func ServeWebDAV(c *gin.Context) {
 }
 
 func WebDAVAuth(c *gin.Context) {
-	// check count of login
+	// check blacklist
 	ip := c.ClientIP()
 	guest, _ := op.GetGuest()
-	count, cok := model.LoginCache.Get(ip)
-	if cok && count >= model.DefaultMaxAuthRetries {
+	if model.IsIPBlocked(ip) {
 		if c.Request.Method == "OPTIONS" {
 			common.GinAppendValues(c, conf.UserKey, guest)
 			c.Next()
 			return
 		}
-		c.Status(http.StatusTooManyRequests)
+		c.Status(http.StatusForbidden)
 		c.Abort()
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
 		return
+	}
+	// check count of login
+	if !model.ShouldSkipAuthRateLimit(ip) {
+		maxRetries := setting.GetInt(conf.AuthLoginMaxRetries, model.DefaultMaxAuthRetries)
+		lockDuration := time.Duration(setting.GetInt(conf.AuthLoginLockDuration, int(model.DefaultLockDuration/time.Minute))) * time.Minute
+		count, cok := model.LoginCache.Get(ip)
+		if model.IsAuthRateLimitExceeded(count, maxRetries) {
+			if c.Request.Method == "OPTIONS" {
+				common.GinAppendValues(c, conf.UserKey, guest)
+				c.Next()
+				return
+			}
+			c.Status(http.StatusTooManyRequests)
+			c.Abort()
+			model.LoginCache.Expire(ip, lockDuration)
+			return
+		}
 	}
 	username, password, ok := c.Request.BasicAuth()
 	if !ok {
