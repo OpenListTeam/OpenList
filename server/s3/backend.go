@@ -1,9 +1,9 @@
 // Credits: https://pkg.go.dev/github.com/rclone/rclone@v1.65.2/cmd/serve/s3
 // Package s3 implements a fake s3 server for openlist
 package s3
-
 import (
 	"context"
+	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -32,6 +32,9 @@ var (
 	emptyPrefix = &gofakes3.Prefix{}
 	timeFormat  = "Mon, 2 Jan 2006 15:04:05 GMT"
 )
+
+// etagMetaKey is the suffix appended to the file path for storing ETag in b.meta.
+const etagMetaKey = "\x00etag"
 
 // s3Backend implements the gofacess3.Backend interface to make an S3
 // backend for gofakes3
@@ -120,7 +123,6 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 	}
 
 	size := node.GetSize()
-	// hash := getFileHashByte(fobj)
 
 	meta := map[string]string{
 		"Last-Modified": node.ModTime().Format(timeFormat),
@@ -134,9 +136,14 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 		}
 	}
 
+	var hash []byte
+	if val, ok := b.meta.Load(fp + etagMetaKey); ok {
+		hash, _ = hex.DecodeString(val.(string))
+	}
+
 	return &gofakes3.Object{
-		Name: objectName,
-		// Hash:     hash,
+		Name:     objectName,
+		Hash:     hash,
 		Metadata: meta,
 		Size:     size,
 		Contents: noOpReadCloser{},
@@ -209,10 +216,15 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		}
 	}
 
+	var hash []byte
+	if val, ok := b.meta.Load(fp + etagMetaKey); ok {
+		hash, _ = hex.DecodeString(val.(string))
+	}
+
 	return &gofakes3.Object{
 		// Name: gofakes3.URLEncode(objectName),
-		Name: objectName,
-		// Hash:     "",
+		Name:     objectName,
+		Hash:     hash,
 		Metadata: meta,
 		Size:     size,
 		Range:    rnge,
@@ -296,9 +308,12 @@ func (b *s3Backend) PutObject(
 	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
 		return result, errs.IgnoredSystemFile
 	}
+	// Compute MD5 hash of the object body for ETag
+	hash := md5.New()
+	teeReader := io.TeeReader(input, hash)
 	stream := &stream.FileStream{
 		Obj:      &obj,
-		Reader:   input,
+		Reader:   teeReader,
 		Mimetype: meta["Content-Type"],
 	}
 
@@ -306,6 +321,10 @@ func (b *s3Backend) PutObject(
 	if err != nil {
 		return result, err
 	}
+
+	// Store the computed ETag (hex-encoded MD5) for later HeadObject/GetObject
+	etagHex := hex.EncodeToString(hash.Sum(nil))
+	b.meta.Store(fp+etagMetaKey, etagHex)
 
 	// if err := stream.Close(); err != nil {
 	// 	// remove file when close error occurred (FsPutErr)
@@ -360,6 +379,7 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	}
 
 	fs.Remove(ctx, fp)
+	b.meta.Delete(fp + etagMetaKey)
 	return nil
 }
 
