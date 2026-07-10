@@ -161,6 +161,12 @@ const (
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
+
+	// login lock
+	LoginLockDuration  = "login_lock_duration"
+	LoginMaxRetries    = "login_max_retries"
+	LoginIPWhitelist   = "login_ip_whitelist"
+	LoginIPBlacklist   = "login_ip_blacklist"
 )
 
 const (

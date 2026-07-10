@@ -1,6 +1,8 @@
 package handles
 
 import (
+	"time"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -27,19 +29,31 @@ func LoginLdap(c *gin.Context) {
 		return
 	}
 
-	// check count of login
+	// check login lock
 	ip := c.ClientIP()
-	count, ok := model.LoginCache.Get(ip)
-	if ok && count >= model.DefaultMaxAuthRetries {
-		common.ErrorStrResp(c, "Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later.", 429)
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
+	maxRetries := setting.GetInt(conf.LoginMaxRetries, model.DefaultMaxAuthRetries)
+	lockDuration := time.Duration(setting.GetInt(conf.LoginLockDuration, model.DefaultLockDurationMinutes)) * time.Minute
+
+	// check IP blacklist
+	blacklist := model.ParseIPList(setting.GetStr(conf.LoginIPBlacklist))
+	if model.IsIPBlacklisted(ip, blacklist) {
+		common.ErrorStrResp(c, model.TooManyAttempts, 429)
+		return
+	}
+
+	// check IP whitelist (bypasses lock)
+	whitelist := model.ParseIPList(setting.GetStr(conf.LoginIPWhitelist))
+	if !model.IsIPWhitelisted(ip, whitelist) && model.CheckLoginLocked(ip, maxRetries, lockDuration) {
+		common.ErrorStrResp(c, model.TooManyAttempts, 429)
 		return
 	}
 
 	err = common.HandleLdapLogin(req.Username, req.Password)
 	if err != nil {
 		if errors.Is(err, common.ErrFailedLdapAuth) {
-			model.LoginCache.Set(ip, count+1)
+			if !model.IsIPWhitelisted(ip, whitelist) {
+				model.RecordLoginAttempt(ip)
+			}
 			common.ErrorResp(c, err, 400)
 		} else {
 			common.ErrorResp(c, err, 500)
@@ -51,7 +65,9 @@ func LoginLdap(c *gin.Context) {
 		user, err = common.LdapRegister(req.Username)
 		if err != nil {
 			common.ErrorResp(c, err, 400)
-			model.LoginCache.Set(ip, count+1)
+			if !model.IsIPWhitelisted(ip, whitelist) {
+				model.RecordLoginAttempt(ip)
+			}
 			return
 		}
 	}
@@ -63,5 +79,5 @@ func LoginLdap(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c, gin.H{"token": token})
-	model.LoginCache.Del(ip)
+	model.ClearLoginAttempts(ip)
 }
