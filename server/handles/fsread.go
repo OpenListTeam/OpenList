@@ -211,6 +211,27 @@ func isEncrypt(meta *model.Meta, path string) bool {
 	return true
 }
 
+var heifExts = map[string]bool{
+	"heic": true,
+	"heif": true,
+	"avif": true,
+	"vvc":  true,
+	"avc":  true,
+}
+
+func isHeif(name string) bool {
+	return heifExts[utils.Ext(name)]
+}
+
+func heifThumbURL(parent string, obj model.Obj, sign string) string {
+	fullPath := stdpath.Join(parent, obj.GetName())
+	query := ""
+	if sign != "" {
+		query = "?sign=" + sign
+	}
+	return fmt.Sprintf("/t%s%s", utils.EncodePath(fullPath, true), query)
+}
+
 func pagination(objs []model.Obj, req *model.PageReq) (int, []model.Obj) {
 	pageIndex, pageSize := req.Page, req.PerPage
 	total := len(objs)
@@ -229,6 +250,9 @@ func toObjsResp(objs []model.Obj, parent string, encrypt bool) []ObjResp {
 	var resp []ObjResp
 	for _, obj := range objs {
 		thumb, _ := model.GetThumb(obj)
+		if !obj.IsDir() && isHeif(obj.GetName()) {
+			thumb = heifThumbURL(parent, obj, common.Sign(obj, parent, encrypt))
+		}
 		mountDetails, _ := model.GetStorageDetails(obj)
 		resp = append(resp, ObjResp{
 			Name:         obj.GetName(),
@@ -355,6 +379,9 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	}
 	parentMeta, _ := op.GetNearestMeta(parentPath)
 	thumb, _ := model.GetThumb(obj)
+	if !obj.IsDir() && isHeif(obj.GetName()) {
+		thumb = heifThumbURL(parentPath, obj, common.Sign(obj, parentPath, isEncrypt(meta, reqPath)))
+	}
 	mountDetails, _ := model.GetStorageDetails(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{
