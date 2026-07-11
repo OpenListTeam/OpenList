@@ -49,6 +49,11 @@ const (
 
 func (d *S3) getClient(clientType int) *s3.S3 {
 	client := s3.New(d.Session)
+	if d.UserAgent != "" {
+		client.Handlers.Build.PushBack(func(r *request.Request) {
+			r.HTTPRequest.Header.Set("User-Agent", d.UserAgent)
+		})
+	}
 	if clientType == ClientTypeLink && d.CustomHost != "" {
 		client.Handlers.Build.PushBack(func(r *request.Request) {
 			if r.HTTPRequest.Method != http.MethodGet {
