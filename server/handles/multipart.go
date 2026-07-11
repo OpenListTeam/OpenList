@@ -32,11 +32,8 @@ func multipartChunkSize(requested int64) int64 {
 		ceiling = multipartMinChunkSize
 	}
 	size := ceiling
-	if requested > 0 && requested < size {
-		size = requested
-	}
-	if size < multipartMinChunkSize {
-		size = multipartMinChunkSize
+	if requested > 0 && requested < ceiling {
+		size = max(requested, multipartMinChunkSize)
 	}
 	return size
 }
