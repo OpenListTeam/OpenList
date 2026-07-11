@@ -193,7 +193,7 @@ func (d *S3) Remove(ctx context.Context, obj model.Obj) error {
 	if obj.IsDir() {
 		return d.removeDir(ctx, obj.GetPath())
 	}
-	return d.removeFile(obj.GetPath())
+	return d.removeFile(ctx, obj.GetPath())
 }
 
 func (d *S3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
