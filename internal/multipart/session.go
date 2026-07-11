@@ -79,7 +79,6 @@ type Session struct {
 	Mimetype  string
 	Modified  time.Time
 	Hashes    map[*utils.HashType]string
-	Overwrite bool
 	Creator   *model.User
 
 	mu       sync.Mutex
@@ -161,7 +160,6 @@ type InitReq struct {
 	Mimetype  string
 	Modified  time.Time
 	Hashes    map[*utils.HashType]string
-	Overwrite bool
 }
 
 // Manager owns all live sessions. Sessions are in-memory only (aligned with
@@ -346,7 +344,6 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 		Mimetype:  req.Mimetype,
 		Modified:  req.Modified,
 		Hashes:    req.Hashes,
-		Overwrite: req.Overwrite,
 		Creator:   req.User,
 		state:     StateReceiving,
 	}

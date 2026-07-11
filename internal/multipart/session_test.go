@@ -46,7 +46,6 @@ func initReq(user *model.User, size, chunkSize int64) InitReq {
 		ChunkSize: chunkSize,
 		Mimetype:  "application/octet-stream",
 		Modified:  time.Unix(1700000000, 0),
-		Overwrite: true,
 	}
 }
 

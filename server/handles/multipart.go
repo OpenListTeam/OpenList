@@ -125,7 +125,6 @@ func MultipartInit(c *gin.Context) {
 		Mimetype:  mimetype,
 		Modified:  getLastModified(c),
 		Hashes:    h,
-		Overwrite: overwrite,
 	})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
