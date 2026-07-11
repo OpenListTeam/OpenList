@@ -39,6 +39,8 @@ github.com/OpenListTeam/115-sdk-go v0.2.5 h1:E4O7GZmEXlGnouZ/e9//xU7NepT9JJkWtnF
 github.com/OpenListTeam/115-sdk-go v0.2.5/go.mod h1:cfvitk2lwe6036iNi2h+iNxwxWDifKZsSvNtrur5BqU=
 github.com/OpenListTeam/go-cache v0.1.0 h1:eV2+FCP+rt+E4OCJqLUW7wGccWZNJMV0NNkh+uChbAI=
 github.com/OpenListTeam/go-cache v0.1.0/go.mod h1:AHWjKhNK3LE4rorVdKyEALDHoeMnP8SjiNyfVlB+Pz4=
+github.com/OpenListTeam/gofakes3 v0.8.0 h1:Y+Stbb29qfDUrGYmK0Tqzk8c0QXwK4Pkmk6lG5zpWwk=
+github.com/OpenListTeam/gofakes3 v0.8.0/go.mod h1:DsJxAVrGCaleujFKrAYyGAjB5FtbPVF8IwAFYZ6pBKM=
 github.com/OpenListTeam/gsync v0.1.0 h1:ywzGybOvA3lW8K1BUjKZ2IUlT2FSlzPO4DOazfYXjcs=
 github.com/OpenListTeam/gsync v0.1.0/go.mod h1:h/Rvv9aX/6CdW/7B8di3xK3xNV8dUg45Fehrd/ksZ9s=
 github.com/OpenListTeam/reflink v0.0.0-20260701021214-78760eaeafef h1:67uGHancMF/abMrnkc8abVUWQiG73Wk5d8CKt3RzkFo=
@@ -427,8 +429,6 @@ github.com/ipfs/go-cid v0.5.0 h1:goEKKhaGm0ul11IHA7I6p1GmKz8kEYniqFopaB5Otwg=
 github.com/ipfs/go-cid v0.5.0/go.mod h1:0L7vmeNXpQpUS9vt+yEARkJ8rOg43DF3iPgn4GIN0mk=
 github.com/ipfs/go-ipfs-api v0.7.0 h1:CMBNCUl0b45coC+lQCXEVpMhwoqjiaCwUIrM+coYW2Q=
 github.com/ipfs/go-ipfs-api v0.7.0/go.mod h1:AIxsTNB0+ZhkqIfTZpdZ0VR/cpX5zrXjATa3prSay3g=
-github.com/itsHenry35/gofakes3 v0.0.8 h1:1AgOl04IgoUV5r/WSK7ycnvwfpgharYLfVTmnzk5miw=
-github.com/itsHenry35/gofakes3 v0.0.8/go.mod h1:gQwOJ7LoH5QSpCVmjzC6oKp+MS71utLS7GHtonsvD0c=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
