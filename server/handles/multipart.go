@@ -19,23 +19,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	multipartMinChunkSize = int64(1) << 20  // 1MB
-	multipartMaxChunkSize = int64(90) << 20 // keep chunk requests safely under Cloudflare's 100MB body cap
-)
+const multipartMinChunkSize = int64(1) << 20 // 1MB
 
-// multipartChunkSize resolves the effective chunk size: the client may suggest
-// one, the admin setting provides the default, and both are clamped.
+// multipartChunkSize resolves the effective chunk size. The admin setting is
+// the ceiling: a client may suggest a smaller chunk via X-Chunk-Size but never
+// a larger one — the server buffers a window of several chunks per session, so
+// an unbounded client suggestion would translate directly into server-side
+// disk usage.
 func multipartChunkSize(requested int64) int64 {
-	size := int64(setting.GetInt(conf.MultipartChunkSize, 10)) << 20
-	if requested > 0 {
+	ceiling := int64(setting.GetInt(conf.MultipartChunkSize, 10)) << 20
+	if ceiling < multipartMinChunkSize {
+		ceiling = multipartMinChunkSize
+	}
+	size := ceiling
+	if requested > 0 && requested < size {
 		size = requested
 	}
 	if size < multipartMinChunkSize {
 		size = multipartMinChunkSize
-	}
-	if size > multipartMaxChunkSize {
-		size = multipartMaxChunkSize
 	}
 	return size
 }
@@ -152,7 +153,7 @@ func MultipartChunk(c *gin.Context) {
 	// as a network error and which poisons its connection pool. A rejected
 	// chunk gets resent anyway, so draining costs no extra round trip. The
 	// drain is bounded so a malformed request cannot pin the handler.
-	limit := multipartMaxChunkSize + 64*1024
+	limit := multipartChunkSize(0) + 64*1024
 	if snap.ChunkSize > 0 {
 		limit = snap.ChunkSize + 64*1024
 	}
