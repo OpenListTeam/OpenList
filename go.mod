@@ -14,7 +14,7 @@ require (
 	github.com/OpenListTeam/tache v0.2.2
 	github.com/OpenListTeam/times v0.1.0
 	github.com/OpenListTeam/wopan-sdk-go v0.1.5
-	github.com/ProtonMail/go-crypto v1.3.0
+	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0
 	github.com/SheltonZhu/115driver v1.3.3
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
@@ -155,7 +155,7 @@ require (
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/charmbracelet/x/ansi v0.11.5 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
-	github.com/cloudflare/circl v1.6.1 // indirect
+	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
