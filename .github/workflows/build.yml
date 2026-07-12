@@ -27,7 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - uses: benjlevesque/short-sha@v3.0
+      - uses: benjlevesque/short-sha@dbe07338b37c456ce06d23409b35a56a7815eef4 # v4.0
         id: short-sha
 
       - name: Setup Go
