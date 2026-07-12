@@ -31,7 +31,7 @@ require (
 	github.com/city404/v6-public-rpc-proto/go v0.0.0-20240817070657-90f8e24b653e
 	github.com/cloudsoda/go-smb2 v0.0.0-20260701064823-d8c5600d73b8
 	github.com/coreos/go-oidc v2.3.0+incompatible
-	github.com/deckarep/golang-set/v2 v2.8.0
+	github.com/deckarep/golang-set/v2 v2.9.0
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/disintegration/imaging v1.6.2
 	github.com/dlclark/regexp2 v1.12.0
@@ -134,6 +134,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/stangelandcl/ppmd v0.1.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	go.mongodb.org/mongo-driver v1.17.4 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
