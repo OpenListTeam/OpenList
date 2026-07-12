@@ -711,6 +711,9 @@ func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string)
 	}
 
 	if d.getAccount() == "" {
+		if res.PresentURL != "" {
+			return &model.Link{URL: res.PresentURL}, nil
+		}
 		return nil, fmt.Errorf("139 share download requires account authentication")
 	}
 
