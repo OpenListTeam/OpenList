@@ -2,12 +2,15 @@ package _139
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -35,6 +38,72 @@ type Yun139 struct {
 	ProviderRoot      string
 }
 
+type shareRef struct {
+	LinkID   string
+	Password string
+	NodeID   string
+}
+
+const multiShareRefPrefix = "shares:"
+
+func encodeShareRef(linkID, password, nodeID string) string {
+	return url.PathEscape(linkID) + "|" + url.PathEscape(password) + "|" + url.PathEscape(nodeID)
+}
+
+func decodeShareRef(id string) (shareRef, bool) {
+	parts := strings.SplitN(id, "|", 3)
+	if len(parts) != 3 {
+		return shareRef{}, false
+	}
+	linkID, err1 := url.PathUnescape(parts[0])
+	password, err2 := url.PathUnescape(parts[1])
+	nodeID, err3 := url.PathUnescape(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil || linkID == "" {
+		return shareRef{}, false
+	}
+	return shareRef{LinkID: linkID, Password: password, NodeID: nodeID}, true
+}
+
+func encodeShareRefs(refs []shareRef) string {
+	if len(refs) == 1 {
+		ref := refs[0]
+		return encodeShareRef(ref.LinkID, ref.Password, ref.NodeID)
+	}
+	data, err := utils.Json.Marshal(refs)
+	if err != nil {
+		return ""
+	}
+	return multiShareRefPrefix + base64.RawURLEncoding.EncodeToString(data)
+}
+
+func decodeShareRefs(id string) ([]shareRef, bool) {
+	if !strings.HasPrefix(id, multiShareRefPrefix) {
+		ref, ok := decodeShareRef(id)
+		if !ok {
+			return nil, false
+		}
+		return []shareRef{ref}, true
+	}
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(id, multiShareRefPrefix))
+	if err != nil {
+		return nil, false
+	}
+	var refs []shareRef
+	if err = utils.Json.Unmarshal(data, &refs); err != nil || len(refs) == 0 {
+		return nil, false
+	}
+	return refs, true
+}
+
+func (d *Yun139) shareRootEntries() []shareRef {
+	entries := d.shareEntries()
+	refs := make([]shareRef, 0, len(entries))
+	for _, entry := range entries {
+		refs = append(refs, shareRef{LinkID: entry.LinkID, Password: entry.Password, NodeID: "root"})
+	}
+	return refs
+}
+
 func (d *Yun139) Config() driver.Config {
 	return config
 }
@@ -44,6 +113,26 @@ func (d *Yun139) GetAddition() driver.Additional {
 }
 
 func (d *Yun139) Init(ctx context.Context) error {
+	if d.Addition.Type == MetaShare {
+		if len(d.Addition.RootFolderID) == 0 {
+			d.RootFolderID = "root"
+		}
+		d.LinkID = d.Addition.LinkID
+		if d.ref == nil && (d.Authorization != "" || (d.Username != "" && d.Password != "")) {
+			if len(d.Authorization) == 0 {
+				log.Infof("139yun: authorization is empty, trying to login with password.")
+				newAuth, err := d.loginWithPassword()
+				log.Debugf("newAuth: Ok: %s", newAuth)
+				if err != nil {
+					return fmt.Errorf("login with password failed: %w", err)
+				}
+			}
+			if err := d.refreshToken(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if d.ref == nil {
 		if len(d.Authorization) == 0 {
 			if d.Username != "" && d.Password != "" {
@@ -122,6 +211,13 @@ func (d *Yun139) Init(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+	case MetaShare:
+		if len(d.Addition.RootFolderID) == 0 {
+			d.RootFolderID = "root"
+		}
+		if len(d.shareEntries()) == 0 {
+			return fmt.Errorf("link_id is empty")
+		}
 	case MetaFamily:
 		// Attempt to obtain data.path as the root via a query and persist it.
 		root, err := d.getFamilyRootPath(d.CloudID)
@@ -152,6 +248,45 @@ func (d *Yun139) InitReference(storage driver.Driver) error {
 	return errs.NotSupport
 }
 
+func (d *Yun139) Get(ctx context.Context, path string) (model.Obj, error) {
+	if d.Addition.Type != MetaShare {
+		return nil, errs.NotImplement
+	}
+	if path == "/" {
+		return &model.Object{ID: "root", Name: "root", IsFolder: true, Path: "/"}, nil
+	}
+	if obj, err := d.shareGetObj(path); err == nil {
+		return obj, nil
+	}
+	return nil, errs.ObjectNotFound
+}
+
+func (d *Yun139) shareEntries() []struct{ LinkID, Password string } {
+	raw := strings.TrimSpace(d.LinkID)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';'
+	})
+	entries := make([]struct{ LinkID, Password string }, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		entry := struct{ LinkID, Password string }{LinkID: part}
+		if linkID, password, ok := strings.Cut(part, "#"); ok {
+			entry.LinkID = strings.TrimSpace(linkID)
+			entry.Password = strings.TrimSpace(password)
+		}
+		if entry.LinkID != "" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
 func (d *Yun139) Drop(ctx context.Context) error {
 	if d.cron != nil {
 		d.cron.Stop()
@@ -170,12 +305,23 @@ func (d *Yun139) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 		return d.familyGetFiles(dir.GetID())
 	case MetaGroup:
 		return d.groupGetFiles(dir.GetID())
+	case MetaShare:
+		if dir.GetID() == "root" {
+			return d.shareGetMergedFiles(d.shareRootEntries())
+		}
+		if refs, ok := decodeShareRefs(dir.GetID()); ok {
+			return d.shareGetMergedFiles(refs)
+		}
+		return d.shareGetFilesWithRef(shareRef{LinkID: d.LinkID, NodeID: dir.GetID()}, dir.GetID())
 	default:
 		return nil, errs.NotImplement
 	}
 }
 
 func (d *Yun139) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	if file.IsDir() {
+		return nil, errs.NotFile
+	}
 	var url string
 	var err error
 	switch d.Addition.Type {
@@ -187,6 +333,11 @@ func (d *Yun139) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		url, err = d.familyGetLink(file.GetID(), file.GetPath())
 	case MetaGroup:
 		url, err = d.groupGetLink(file.GetID(), file.GetPath())
+	case MetaShare:
+		if refs, ok := decodeShareRefs(file.GetID()); ok && len(refs) > 0 {
+			return d.shareGetLinkWithRef(refs[0], refs[0].NodeID, args.Type)
+		}
+		return d.shareGetLinkWithRef(shareRef{LinkID: d.LinkID, NodeID: "root"}, file.GetID(), args.Type)
 	default:
 		return nil, errs.NotImplement
 	}

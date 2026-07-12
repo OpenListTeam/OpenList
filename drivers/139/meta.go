@@ -12,7 +12,8 @@ type Addition struct {
 	Password      string `json:"password" required:"true" secret:"true"`
 	MailCookies   string `json:"mail_cookies" required:"true" type:"text" help:"Cookies from mail.139.com used for login authentication."`
 	driver.RootID
-	Type                 string `json:"type" type:"select" options:"personal_new,family,group,personal" default:"personal_new"`
+	Type                 string `json:"type" type:"select" options:"personal_new,family,group,personal,share" default:"personal_new"`
+	LinkID               string `json:"link_id" type:"text" help:"Multiple shares are separated by commas or new lines. Use link_id#password for password-protected shares."`
 	CloudID              string `json:"cloud_id"`
 	UserDomainID         string `json:"user_domain_id" help:"ud_id in Cookie, fill in to show disk usage"`
 	CustomUploadPartSize int64  `json:"custom_upload_part_size" type:"number" default:"0" help:"0 for auto"`
