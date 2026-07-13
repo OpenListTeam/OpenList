@@ -203,7 +203,7 @@ func (d *BunnyStorage) toObj(parentPath string, item bunnyObject) model.Obj {
 	}
 }
 
-func canonicalQuery(values url.Values) string {
+func canonicalQuery(values url.Values) (string, error) {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		if key == "token" || key == "expires" {
@@ -215,9 +215,16 @@ func canonicalQuery(values url.Values) string {
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
 		vals := values[key]
-		parts = append(parts, key+"="+strings.Join(vals, ""))
+		if len(vals) > 1 {
+			return "", fmt.Errorf("duplicate query parameter %q is not supported", key)
+		}
+		value := ""
+		if len(vals) == 1 {
+			value = vals[0]
+		}
+		parts = append(parts, key+"="+value)
 	}
-	return strings.Join(parts, "&")
+	return strings.Join(parts, "&"), nil
 }
 
 func (d *BunnyStorage) signCDNURL(rawURL string, clientIP string) (string, time.Duration, error) {
@@ -235,8 +242,11 @@ func (d *BunnyStorage) signCDNURLAt(rawURL string, clientIP string, now time.Tim
 		return "", 0, err
 	}
 	query := u.Query()
-	parameterData := canonicalQuery(query)
-	signaturePath, err := url.QueryUnescape(u.EscapedPath())
+	parameterData, err := canonicalQuery(query)
+	if err != nil {
+		return "", 0, err
+	}
+	signaturePath, err := url.PathUnescape(u.EscapedPath())
 	if err != nil {
 		signaturePath = u.Path
 	}

@@ -174,6 +174,62 @@ func TestSignCDNURLUsesDecodedPathForSHA256(t *testing.T) {
 	}
 }
 
+func TestSignCDNURLTreatsPlusAsLiteralPathCharacter(t *testing.T) {
+	driver := &BunnyStorage{
+		Addition: Addition{
+			CDNTokenKey:   "secret",
+			SignURLExpire: 1,
+		},
+	}
+	now := time.Unix(1700000000, 0)
+	literal, _, err := driver.signCDNURLAt("https://zone.b-cdn.net/a+b.mp4", "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _, err := driver.signCDNURLAt("https://zone.b-cdn.net/a%2Bb.mp4", "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	space, _, err := driver.signCDNURLAt("https://zone.b-cdn.net/a%20b.mp4", "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	literalURL, err := url.Parse(literal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedURL, err := url.Parse(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spaceURL, err := url.Parse(space)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := literalURL.Query().Get("token"), encodedURL.Query().Get("token"); got != want {
+		t.Fatalf("literal plus token = %q, encoded plus token = %q", got, want)
+	}
+	if got, notWant := literalURL.Query().Get("token"), spaceURL.Query().Get("token"); got == notWant {
+		t.Fatalf("literal plus token = %q, space token should differ", got)
+	}
+}
+
+func TestSignCDNURLRejectsDuplicateQueryParameters(t *testing.T) {
+	driver := &BunnyStorage{
+		Addition: Addition{
+			CDNTokenKey:   "secret",
+			SignURLExpire: 1,
+		},
+	}
+	_, _, err := driver.signCDNURLAt("https://zone.b-cdn.net/video.mp4?quality=high&quality=low", "", time.Unix(1700000000, 0))
+	if err == nil {
+		t.Fatal("expected duplicate query parameters to be rejected")
+	}
+	if got, want := err.Error(), `duplicate query parameter "quality" is not supported`; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 func TestParseBunnyTimeSupportsFractionalSecondsWithoutTimezone(t *testing.T) {
 	fallback := time.Unix(1, 0)
 	got := parseBunnyTime("2023-03-21T13:38:31.693", fallback)
