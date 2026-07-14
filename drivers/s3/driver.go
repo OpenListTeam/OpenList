@@ -193,7 +193,7 @@ func (d *S3) Remove(ctx context.Context, obj model.Obj) error {
 	if obj.IsDir() {
 		return d.removeDir(ctx, obj.GetPath())
 	}
-	return d.removeFile(obj.GetPath())
+	return d.removeFile(ctx, obj.GetPath())
 }
 
 func (d *S3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
@@ -249,7 +249,15 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 // implements driver.Getter interface
 func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 	// try to get object as a file using HeadObject
-	path = stdpath.Join(d.GetRootPath(), path)
+	rootPath := d.GetRootPath()
+	// Avoid double-prepending root path when path already contains it.
+	// This happens when obj.GetPath() from a previous Get call is passed back
+	// to op.List → op.Get → d.Get.
+	if rootPath != "/" && utils.IsSubPath(rootPath, path) {
+		// path already includes the root prefix
+	} else {
+		path = stdpath.Join(rootPath, path)
+	}
 	key := getKey(path, false)
 	headInput := &s3.HeadObjectInput{
 		Bucket: &d.Bucket,

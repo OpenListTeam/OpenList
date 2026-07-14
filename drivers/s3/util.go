@@ -49,6 +49,11 @@ const (
 
 func (d *S3) getClient(clientType int) *s3.S3 {
 	client := s3.New(d.Session)
+	if d.UserAgent != "" {
+		client.Handlers.Build.PushBack(func(r *request.Request) {
+			r.HTTPRequest.Header.Set("User-Agent", d.UserAgent)
+		})
+	}
 	if clientType == ClientTypeLink && d.CustomHost != "" {
 		client.Handlers.Build.PushBack(func(r *request.Request) {
 			if r.HTTPRequest.Method != http.MethodGet {
@@ -223,7 +228,7 @@ func (d *S3) copyFile(ctx context.Context, src string, dst string) error {
 		CopySource: aws.String(encodedKey),
 		Key:        &dstKey,
 	}
-	_, err := d.client.CopyObject(input)
+	_, err := d.client.CopyObjectWithContext(ctx, input)
 	return err
 }
 
@@ -257,23 +262,23 @@ func (d *S3) removeDir(ctx context.Context, src string) error {
 		if obj.IsDir() {
 			err = d.removeDir(ctx, cSrc)
 		} else {
-			err = d.removeFile(cSrc)
+			err = d.removeFile(ctx, cSrc)
 		}
 		if err != nil {
 			return err
 		}
 	}
-	_ = d.removeFile(path.Join(src, getPlaceholderName(d.Placeholder)))
-	_ = d.removeFile(path.Join(src, d.Placeholder))
+	_ = d.removeFile(ctx, path.Join(src, getPlaceholderName(d.Placeholder)))
+	_ = d.removeFile(ctx, path.Join(src, d.Placeholder))
 	return nil
 }
 
-func (d *S3) removeFile(src string) error {
+func (d *S3) removeFile(ctx context.Context, src string) error {
 	key := getKey(src, false)
 	input := &s3.DeleteObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &key,
 	}
-	_, err := d.client.DeleteObject(input)
+	_, err := d.client.DeleteObjectWithContext(ctx, input)
 	return err
 }
