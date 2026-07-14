@@ -218,13 +218,22 @@ func (y *Cloud189TV) getFiles(ctx context.Context, fileId string, isFamily bool)
 		if resp.FileListAO.Count == 0 {
 			break
 		}
+		
+		FolderCount := len(resp.FileListAO.FolderList) // 当前文件夹总数
+        FileCount := len(resp.FileListAO.FileList) // 当前文件总数
+        PageCount := FolderCount + FileCount // 当前页数总数
 
-		for i := 0; i < len(resp.FileListAO.FolderList); i++ {
+		for i := 0; i < FolderCount; i++ {
 			res = append(res, &resp.FileListAO.FolderList[i])
 		}
-		for i := 0; i < len(resp.FileListAO.FileList); i++ {
+		for i := 0; i < FileCount; i++ {
 			res = append(res, &resp.FileListAO.FileList[i])
 		}
+		
+		// 文件数量小于130则跳出
+		if PageCount < 130 {
+            break
+        }
 	}
 	return res, nil
 }
