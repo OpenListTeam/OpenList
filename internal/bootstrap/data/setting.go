@@ -203,6 +203,8 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.SSOClientSecret, Value: "", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE},
 		{Key: conf.SSOOIDCUsernameKey, Value: "name", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE},
 		{Key: conf.SSOOIDCSubjectKey, Value: "", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE, Help: `OIDC claim used as the SSO ID (recommended: sub); leave empty to use oidc username key for compatibility`},
+		{Key: conf.SSOOIDCPKCEEnabled, Value: "false", Type: conf.TypeBool, Group: model.SSO, Flag: model.PRIVATE, Help: `Use an S256 PKCE challenge for OIDC authorization code flows; the provider application must support PKCE`},
+		{Key: conf.SSOOIDCNonceEnabled, Value: "false", Type: conf.TypeBool, Group: model.SSO, Flag: model.PRIVATE, Help: `Send a nonce in OIDC authorization requests and verify it in ID tokens`},
 		{Key: conf.SSOOrganizationName, Value: "", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE},
 		{Key: conf.SSOApplicationName, Value: "", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE},
 		{Key: conf.SSOEndpointName, Value: "", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE},

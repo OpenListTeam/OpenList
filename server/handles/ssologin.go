@@ -29,8 +29,10 @@ const stateLength = 16
 const stateExpire = time.Minute * 5
 
 type ssoState struct {
-	Method   string
-	ClientIP string
+	Method       string
+	ClientIP     string
+	PKCEVerifier string
+	Nonce        string
 }
 
 var stateCache = internalcache.NewKeyedCache[ssoState](stateExpire)
@@ -39,15 +41,18 @@ func keyState(clientID, state string) string {
 	return fmt.Sprintf("%s_%s", clientID, state)
 }
 
-func generateState(clientID, method, clientIP string) string {
+func generateState(clientID string, value ssoState) string {
 	state := random.String(stateLength)
-	stateCache.Set(keyState(clientID, state), ssoState{Method: method, ClientIP: clientIP})
+	stateCache.Set(keyState(clientID, state), value)
 	return state
 }
 
-func consumeState(clientID, state, method, clientIP string) bool {
+func consumeState(clientID, state, method, clientIP string) (ssoState, bool) {
 	value, ok := stateCache.Pop(keyState(clientID, state))
-	return ok && value.Method == method && value.ClientIP == clientIP
+	if !ok || value.Method != method || value.ClientIP != clientIP {
+		return ssoState{}, false
+	}
+	return value, true
 }
 
 func ssoRedirectUri(c *gin.Context, useCompatibility bool, method string) string {
@@ -163,8 +168,18 @@ func SSOLoginRedirect(c *gin.Context) {
 			common.ErrorStrResp(c, err.Error(), 400)
 			return
 		}
-		state := generateState(clientId, method, c.ClientIP())
-		c.Redirect(http.StatusFound, oauth2Config.AuthCodeURL(state))
+		loginState := ssoState{Method: method, ClientIP: c.ClientIP()}
+		authOptions := make([]oauth2.AuthCodeOption, 0, 2)
+		if setting.GetBool(conf.SSOOIDCPKCEEnabled) {
+			loginState.PKCEVerifier = oauth2.GenerateVerifier()
+			authOptions = append(authOptions, oauth2.S256ChallengeOption(loginState.PKCEVerifier))
+		}
+		if setting.GetBool(conf.SSOOIDCNonceEnabled) {
+			loginState.Nonce = random.String(32)
+			authOptions = append(authOptions, oidc.Nonce(loginState.Nonce))
+		}
+		state := generateState(clientId, loginState)
+		c.Redirect(http.StatusFound, oauth2Config.AuthCodeURL(state, authOptions...))
 		return
 	default:
 		common.ErrorStrResp(c, "invalid platform", 400)
@@ -251,12 +266,17 @@ func OIDCLoginCallback(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if !consumeState(clientId, c.Query("state"), method, c.ClientIP()) {
+	loginState, ok := consumeState(clientId, c.Query("state"), method, c.ClientIP())
+	if !ok {
 		common.ErrorStrResp(c, "incorrect or expired state parameter", 400)
 		return
 	}
 
-	oauth2Token, err := oauth2Config.Exchange(c, c.Query("code"))
+	exchangeOptions := make([]oauth2.AuthCodeOption, 0, 1)
+	if loginState.PKCEVerifier != "" {
+		exchangeOptions = append(exchangeOptions, oauth2.VerifierOption(loginState.PKCEVerifier))
+	}
+	oauth2Token, err := oauth2Config.Exchange(c, c.Query("code"), exchangeOptions...)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -272,6 +292,10 @@ func OIDCLoginCallback(c *gin.Context) {
 	idToken, err := verifier.Verify(c, rawIDToken)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
+		return
+	}
+	if loginState.Nonce != "" && idToken.Nonce != loginState.Nonce {
+		common.ErrorStrResp(c, "OIDC ID token nonce does not match authorization request", 400)
 		return
 	}
 	var idTokenClaims json.RawMessage
