@@ -12,7 +12,9 @@ type Addition struct {
 	Token          string `json:"token" type:"string" required:"false" help:"GitHub token, if you want to access private repositories or increase the rate limit"`
 	ShowSourceCode bool   `json:"show_source_code" type:"bool" default:"false" help:"show Source code (zip/tar.gz)"`
 	ShowAllVersion bool   `json:"show_all_version" type:"bool" default:"false" help:"show all versions"`
-	GitHubProxy    string `json:"gh_proxy" type:"string" default:"" help:"GitHub proxy, e.g. https://ghproxy.net/github.com or https://gh-proxy.com/github.com "`
+	PerPage        int    `json:"per_page" type:"number" default:"30" help:"releases per page (max 100), only works when show all versions"`
+	MaxPage        int    `json:"max_page" type:"number" default:"0" help:"max pages to fetch (0 = unlimited), only works when show all versions"`
+	GitHubProxy    string `json:"gh_proxy" type:"string" default:"" help:"GitHub proxy, e.g. https://ghproxy.net/https://github.com or https://gh-proxy.com/https://github.com"`
 }
 
 var config = driver.Config{
