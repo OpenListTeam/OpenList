@@ -2,6 +2,7 @@ package handles
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenListTeam/go-cache"
-
+	internalcache "github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -29,21 +29,26 @@ import (
 const stateLength = 16
 const stateExpire = time.Minute * 5
 
-var stateCache = cache.NewMemCache[string](cache.WithShards[string](stateLength))
+type ssoState struct {
+	Method   string
+	ClientIP string
+}
 
-func _keyState(clientID, state string) string {
+var stateCache = internalcache.NewKeyedCache[ssoState](stateExpire)
+
+func keyState(clientID, state string) string {
 	return fmt.Sprintf("%s_%s", clientID, state)
 }
 
-func generateState(clientID, ip string) string {
+func generateState(clientID, method, clientIP string) string {
 	state := random.String(stateLength)
-	stateCache.Set(_keyState(clientID, state), ip, cache.WithEx[string](stateExpire))
+	stateCache.Set(keyState(clientID, state), ssoState{Method: method, ClientIP: clientIP})
 	return state
 }
 
-func verifyState(clientID, ip, state string) bool {
-	value, ok := stateCache.Get(_keyState(clientID, state))
-	return ok && value == ip
+func consumeState(clientID, state, method, clientIP string) bool {
+	value, ok := stateCache.Pop(keyState(clientID, state))
+	return ok && value.Method == method && value.ClientIP == clientIP
 }
 
 func ssoRedirectUri(c *gin.Context, useCompatibility bool, method string) string {
@@ -52,6 +57,64 @@ func ssoRedirectUri(c *gin.Context, useCompatibility bool, method string) string
 	} else {
 		return common.GetApiUrl(c) + "/api/auth/sso_callback" + "?method=" + method
 	}
+}
+
+func ssoCallbackOrigin(c *gin.Context) (string, error) {
+	baseURL, err := url.Parse(common.GetApiUrl(c))
+	if err != nil {
+		return "", fmt.Errorf("invalid API URL: %w", err)
+	}
+	if baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") {
+		return "", errors.New("invalid API URL origin")
+	}
+	return (&url.URL{Scheme: baseURL.Scheme, Host: baseURL.Host}).String(), nil
+}
+
+func respondSSOCallback(c *gin.Context, key, value string) error {
+	targetOrigin, err := ssoCallbackOrigin(c)
+	if err != nil {
+		return err
+	}
+	message, err := json.Marshal(map[string]string{key: value})
+	if err != nil {
+		return fmt.Errorf("marshal SSO callback message: %w", err)
+	}
+	targetOriginJSON, err := json.Marshal(targetOrigin)
+	if err != nil {
+		return fmt.Errorf("marshal SSO callback origin: %w", err)
+	}
+
+	html := fmt.Sprintf(`<!DOCTYPE html>
+		<html lang="en">
+			<head>
+				<meta charset="utf-8">
+				<meta name="robots" content="noindex">
+			</head>
+			<body>
+				<script>
+				if (window.opener) {
+					window.opener.postMessage(%s, %s);
+				}
+				window.close();
+				</script>
+			</body>
+		</html>`, message, targetOriginJSON)
+	c.Header("Cache-Control", "no-store")
+	c.Header("Referrer-Policy", "no-referrer")
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+	return nil
+}
+
+func redirectSSOCallback(c *gin.Context, targetPath, key, value string) error {
+	targetURL, err := url.Parse(common.GetApiUrl(c) + targetPath)
+	if err != nil {
+		return fmt.Errorf("invalid SSO callback redirect URL: %w", err)
+	}
+	query := targetURL.Query()
+	query.Set(key, value)
+	targetURL.RawQuery = query.Encode()
+	c.Redirect(http.StatusFound, targetURL.String())
+	return nil
 }
 
 func SSOLoginRedirect(c *gin.Context) {
@@ -101,7 +164,7 @@ func SSOLoginRedirect(c *gin.Context) {
 			common.ErrorStrResp(c, err.Error(), 400)
 			return
 		}
-		state := generateState(clientId, c.ClientIP())
+		state := generateState(clientId, method, c.ClientIP())
 		c.Redirect(http.StatusFound, oauth2Config.AuthCodeURL(state))
 		return
 	default:
@@ -201,7 +264,7 @@ func OIDCLoginCallback(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if !verifyState(clientId, c.ClientIP(), c.Query("state")) {
+	if !consumeState(clientId, c.Query("state"), method, c.ClientIP()) {
 		common.ErrorStrResp(c, "incorrect or expired state parameter", 400)
 		return
 	}
@@ -236,18 +299,14 @@ func OIDCLoginCallback(c *gin.Context) {
 	}
 	if method == "get_sso_id" {
 		if useCompatibility {
-			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+userID)
+			if err := redirectSSOCallback(c, "/@manage", "sso_id", userID); err != nil {
+				common.ErrorResp(c, err, 500)
+			}
 			return
 		}
-		html := fmt.Sprintf(`<!DOCTYPE html>
-				<head></head>
-				<body>
-				<script>
-				window.opener.postMessage({"sso_id": "%s"}, "*")
-				window.close()
-				</script>
-				</body>`, userID)
-		c.Data(200, "text/html; charset=utf-8", []byte(html))
+		if err := respondSSOCallback(c, "sso_id", userID); err != nil {
+			common.ErrorResp(c, err, 500)
+		}
 		return
 	}
 	if method == "sso_get_token" {
@@ -265,18 +324,14 @@ func OIDCLoginCallback(c *gin.Context) {
 			return
 		}
 		if useCompatibility {
-			c.Redirect(302, common.GetApiUrl(c)+"/@login?token="+token)
+			if err := redirectSSOCallback(c, "/@login", "token", token); err != nil {
+				common.ErrorResp(c, err, 500)
+			}
 			return
 		}
-		html := fmt.Sprintf(`<!DOCTYPE html>
-				<head></head>
-				<body>
-				<script>
-				window.opener.postMessage({"token":"%s"}, "*")
-				window.close()
-				</script>
-				</body>`, token)
-		c.Data(200, "text/html; charset=utf-8", []byte(html))
+		if err := respondSSOCallback(c, "token", token); err != nil {
+			common.ErrorResp(c, err, 500)
+		}
 		return
 	}
 }
@@ -403,18 +458,14 @@ func SSOLoginCallback(c *gin.Context) {
 	}
 	if argument == "get_sso_id" {
 		if usecompatibility {
-			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+userID)
+			if err := redirectSSOCallback(c, "/@manage", "sso_id", userID); err != nil {
+				common.ErrorResp(c, err, 500)
+			}
 			return
 		}
-		html := fmt.Sprintf(`<!DOCTYPE html>
-				<head></head>
-				<body>
-				<script>
-				window.opener.postMessage({"sso_id": "%s"}, "*")
-				window.close()
-				</script>
-				</body>`, userID)
-		c.Data(200, "text/html; charset=utf-8", []byte(html))
+		if err := respondSSOCallback(c, "sso_id", userID); err != nil {
+			common.ErrorResp(c, err, 500)
+		}
 		return
 	}
 	username := utils.Json.Get(resp.Body(), usernameField).ToString()
@@ -432,16 +483,12 @@ func SSOLoginCallback(c *gin.Context) {
 		return
 	}
 	if usecompatibility {
-		c.Redirect(302, common.GetApiUrl(c)+"/@login?token="+token)
+		if err := redirectSSOCallback(c, "/@login", "token", token); err != nil {
+			common.ErrorResp(c, err, 500)
+		}
 		return
 	}
-	html := fmt.Sprintf(`<!DOCTYPE html>
-							<head></head>
-							<body>
-							<script>
-							window.opener.postMessage({"token":"%s"}, "*")
-							window.close()
-							</script>
-							</body>`, token)
-	c.Data(200, "text/html; charset=utf-8", []byte(html))
+	if err := respondSSOCallback(c, "token", token); err != nil {
+		common.ErrorResp(c, err, 500)
+	}
 }
