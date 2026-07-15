@@ -1,7 +1,6 @@
 package handles
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -234,18 +233,6 @@ func autoRegister(username, userID string, err error) (*model.User, error) {
 	return user, nil
 }
 
-func parseJWT(p string) ([]byte, error) {
-	parts := strings.Split(p, ".")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("oidc: malformed jwt, expected 3 parts got %d", len(parts))
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("oidc: malformed jwt payload: %v", err)
-	}
-	return payload, nil
-}
-
 func OIDCLoginCallback(c *gin.Context) {
 	useCompatibility := setting.GetBool(conf.SSOCompatibilityMode)
 	method := c.Query("method")
@@ -282,19 +269,50 @@ func OIDCLoginCallback(c *gin.Context) {
 	verifier := provider.Verifier(&oidc.Config{
 		ClientID: clientId,
 	})
-	_, err = verifier.Verify(c, rawIDToken)
+	idToken, err := verifier.Verify(c, rawIDToken)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	payload, err := parseJWT(rawIDToken)
-	if err != nil {
+	var idTokenClaims json.RawMessage
+	if err = idToken.Claims(&idTokenClaims); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	userID := utils.Json.Get(payload, setting.GetStr(conf.SSOOIDCUsernameKey, "name")).ToString()
+
+	usernameKey := setting.GetStr(conf.SSOOIDCUsernameKey, "name")
+	subjectKey := setting.GetStr(conf.SSOOIDCSubjectKey)
+	if subjectKey == "" {
+		// Preserve the identity mapping used before a separate subject key was available.
+		subjectKey = usernameKey
+	}
+	userID := utils.Json.Get(idTokenClaims, subjectKey).ToString()
+	username := utils.Json.Get(idTokenClaims, usernameKey).ToString()
+	if userID == "" || username == "" {
+		userInfo, userInfoErr := provider.UserInfo(c, oauth2.StaticTokenSource(oauth2Token))
+		if userInfoErr == nil {
+			if userInfo.Subject != idToken.Subject {
+				common.ErrorStrResp(c, "OIDC userinfo subject does not match ID token subject", 400)
+				return
+			}
+			var userInfoClaims json.RawMessage
+			if err = userInfo.Claims(&userInfoClaims); err != nil {
+				common.ErrorResp(c, err, 400)
+				return
+			}
+			if userID == "" {
+				userID = utils.Json.Get(userInfoClaims, subjectKey).ToString()
+			}
+			if username == "" {
+				username = utils.Json.Get(userInfoClaims, usernameKey).ToString()
+			}
+		} else if userID == "" {
+			common.ErrorResp(c, fmt.Errorf("failed to get OIDC userinfo: %w", userInfoErr), 400)
+			return
+		}
+	}
 	if userID == "" {
-		common.ErrorStrResp(c, "cannot get username from OIDC provider", 400)
+		common.ErrorStrResp(c, "cannot get subject from OIDC provider", 400)
 		return
 	}
 	if method == "get_sso_id" {
@@ -312,7 +330,7 @@ func OIDCLoginCallback(c *gin.Context) {
 	if method == "sso_get_token" {
 		user, err := db.GetUserBySSOID(userID)
 		if err != nil {
-			user, err = autoRegister(userID, userID, err)
+			user, err = autoRegister(username, userID, err)
 			if err != nil {
 				common.ErrorResp(c, err, 400)
 				return

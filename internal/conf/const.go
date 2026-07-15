@@ -105,6 +105,7 @@ const (
 	SSOLoginEnabled      = "sso_login_enabled"
 	SSOLoginPlatform     = "sso_login_platform"
 	SSOOIDCUsernameKey   = "sso_oidc_username_key"
+	SSOOIDCSubjectKey    = "sso_oidc_subject_key"
 	SSOOrganizationName  = "sso_organization_name"
 	SSOApplicationName   = "sso_application_name"
 	SSOEndpointName      = "sso_endpoint_name"
