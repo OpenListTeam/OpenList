@@ -184,6 +184,7 @@ func (y *Cloud189TV) getFiles(ctx context.Context, fileId string, isFamily bool)
 	}
 	fullUrl += "/listFiles.action"
 
+    pageSize := 130  // 每一页返回的文件数量
 	res := make([]model.Obj, 0, 130)
 	for pageNum := 1; ; pageNum++ {
 		var resp Cloud189FilesResp
@@ -195,7 +196,7 @@ func (y *Cloud189TV) getFiles(ctx context.Context, fileId string, isFamily bool)
 				"mediaAttr":  "0",
 				"iconOption": "5",
 				"pageNum":    fmt.Sprint(pageNum),
-				"pageSize":   "130",
+				"pageSize":   fmt.Sprint(pageSize),
 			})
 			if isFamily {
 				r.SetQueryParams(map[string]string{
@@ -230,8 +231,8 @@ func (y *Cloud189TV) getFiles(ctx context.Context, fileId string, isFamily bool)
 			res = append(res, &resp.FileListAO.FileList[i])
 		}
 		
-		// 文件数量小于130则跳出
-		if PageCount < 130 {
+		// 文件数量小于设定数量时跳出
+		if PageCount < pageSize {
             break
         }
 	}

@@ -195,9 +195,10 @@ func (y *Cloud189PC) put(ctx context.Context, url string, headers map[string]str
 }
 
 func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool) ([]model.Obj, error) {
+    pageSize := 1000  // 每一页返回的文件数量
 	res := make([]model.Obj, 0, 100)
 	for pageNum := 1; ; pageNum++ {
-		resp, err := y.getFilesWithPage(ctx, fileId, isFamily, pageNum, 1000, y.OrderBy, y.OrderDirection)
+		resp, err := y.getFilesWithPage(ctx, fileId, isFamily, pageNum, pageSize, y.OrderBy, y.OrderDirection)
 		if err != nil {
 			return nil, err
 		}
@@ -218,8 +219,8 @@ func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool)
 			res = append(res, &resp.FileListAO.FileList[i])
 		}
 		
-		// 当前文件数量小于1000则跳出
-		if PageCount < 1000 {
+		// 当前文件数量小于设定数量则跳出
+		if PageCount < pageSize {
             break
         }
 	}
