@@ -547,6 +547,72 @@ func (d *Yun139) shareGetFiles(pCaID string) ([]model.Obj, error) {
 	return d.shareGetFilesWithRef(shareRef{LinkID: d.Addition.LinkID, NodeID: pCaID}, pCaID)
 }
 
+type shareRef struct {
+	LinkID   string
+	Password string
+	NodeID   string
+}
+
+const multiShareRefPrefix = "shares:"
+
+func encodeShareRef(linkID, password, nodeID string) string {
+	return url.PathEscape(linkID) + "|" + url.PathEscape(password) + "|" + url.PathEscape(nodeID)
+}
+
+func decodeShareRef(id string) (shareRef, bool) {
+	parts := strings.SplitN(id, "|", 3)
+	if len(parts) != 3 {
+		return shareRef{}, false
+	}
+	linkID, err1 := url.PathUnescape(parts[0])
+	password, err2 := url.PathUnescape(parts[1])
+	nodeID, err3 := url.PathUnescape(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil || linkID == "" {
+		return shareRef{}, false
+	}
+	return shareRef{LinkID: linkID, Password: password, NodeID: nodeID}, true
+}
+
+func encodeShareRefs(refs []shareRef) string {
+	if len(refs) == 1 {
+		ref := refs[0]
+		return encodeShareRef(ref.LinkID, ref.Password, ref.NodeID)
+	}
+	data, err := utils.Json.Marshal(refs)
+	if err != nil {
+		return ""
+	}
+	return multiShareRefPrefix + base64.RawURLEncoding.EncodeToString(data)
+}
+
+func decodeShareRefs(id string) ([]shareRef, bool) {
+	if !strings.HasPrefix(id, multiShareRefPrefix) {
+		ref, ok := decodeShareRef(id)
+		if !ok {
+			return nil, false
+		}
+		return []shareRef{ref}, true
+	}
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(id, multiShareRefPrefix))
+	if err != nil {
+		return nil, false
+	}
+	var refs []shareRef
+	if err = utils.Json.Unmarshal(data, &refs); err != nil || len(refs) == 0 {
+		return nil, false
+	}
+	return refs, true
+}
+
+func (d *Yun139) shareRootEntries() []shareRef {
+	entries := d.shareEntries()
+	refs := make([]shareRef, 0, len(entries))
+	for _, entry := range entries {
+		refs = append(refs, shareRef{LinkID: entry.LinkID, Password: entry.Password, NodeID: "root"})
+	}
+	return refs
+}
+
 func (d *Yun139) shareGetFilesWithRef(ref shareRef, pCaID string) ([]model.Obj, error) {
 	if ref.NodeID == "" {
 		ref.NodeID = "root"

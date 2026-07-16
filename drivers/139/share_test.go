@@ -7,14 +7,14 @@ import (
 func TestShareEntriesAndRefEncoding(t *testing.T) {
 	d := &Yun139{Addition: Addition{
 		Type:   MetaShare,
-		LinkID: "2w2KLTrz2Y8bd,2uR1zFho3YNcj,2w2KLzpSwt57p#f95e",
+		LinkID: "share-a,share-b,share-c#pass",
 	}}
 
 	entries := d.shareEntries()
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 share entries, got %d", len(entries))
 	}
-	if entries[2].LinkID != "2w2KLzpSwt57p" || entries[2].Password != "f95e" {
+	if entries[2].LinkID != "share-c" || entries[2].Password != "pass" {
 		t.Fatalf("unexpected password share entry: %+v", entries[2])
 	}
 
