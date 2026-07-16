@@ -21,7 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -219,19 +219,15 @@ func (d *Pan123) Put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 			o.BaseEndpoint = aws.String(resp.Data.EndPoint)
 			o.UsePathStyle = true
 		})
-		uploader := manager.NewUploader(s3Client)
-		if file.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
-			uploader.PartSize = file.GetSize() / int64(manager.MaxUploadParts-1)
-		}
-		input := &s3.PutObjectInput{
+		tmClient := transfermanager.New(s3Client)
+		_, err = tmClient.UploadObject(ctx, &transfermanager.UploadObjectInput{
 			Bucket: &resp.Data.Bucket,
 			Key:    &resp.Data.Key,
 			Body: driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
 				Reader:         file,
 				UpdateProgress: up,
 			}),
-		}
-		_, err = uploader.Upload(ctx, input)
+		})
 		if err != nil {
 			return err
 		}

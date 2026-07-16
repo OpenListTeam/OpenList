@@ -21,7 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -530,11 +530,9 @@ func (xc *XunLeiBrowserCommon) Put(ctx context.Context, dstDir model.Obj, stream
 		}, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(param.Endpoint)
 		})
-		uploader := manager.NewUploader(s3Client)
-		if stream.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
-			uploader.PartSize = stream.GetSize() / int64(manager.MaxUploadParts-1)
-		}
-		_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+		tmClient := transfermanager.New(s3Client)
+
+		_, err = tmClient.UploadObject(ctx, &transfermanager.UploadObjectInput{
 			Bucket:  aws.String(param.Bucket),
 			Key:     aws.String(param.Key),
 			Expires: aws.Time(param.Expiration),

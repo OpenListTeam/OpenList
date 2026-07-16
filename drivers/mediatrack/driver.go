@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
@@ -184,11 +184,13 @@ func (d *MediaTrack) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 	if err != nil {
 		return err
 	}
-	uploader := manager.NewUploader(s3Client)
-	if file.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
-		uploader.PartSize = file.GetSize() / int64(manager.MaxUploadParts-1)
-	}
-	input := &s3.PutObjectInput{
+	tmClient := transfermanager.New(s3Client, func(o *transfermanager.Options) {
+		if file.GetSize() > int64(8*utils.MB)*10000 {
+			o.PartSizeBytes = file.GetSize() / 9999
+		}
+	})
+
+	_, err = tmClient.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: &resp.Data.Bucket,
 		Key:    &resp.Data.Object,
 		Body: driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
@@ -198,8 +200,7 @@ func (d *MediaTrack) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 			},
 			UpdateProgress: up,
 		}),
-	}
-	_, err = uploader.Upload(ctx, input)
+	})
 	if err != nil {
 		return err
 	}

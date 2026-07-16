@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -248,11 +248,13 @@ func (d *Teambition) newUpload(ctx context.Context, dstDir model.Obj, stream mod
 	if err != nil {
 		return err
 	}
-	uploader := manager.NewUploader(s3Client)
-	if stream.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
-		uploader.PartSize = stream.GetSize() / int64(manager.MaxUploadParts-1)
-	}
-	input := &s3.PutObjectInput{
+	tmClient := transfermanager.New(s3Client, func(o *transfermanager.Options) {
+		if stream.GetSize() > int64(8*utils.MB)*10000 {
+			o.PartSizeBytes = stream.GetSize() / 9999
+		}
+	})
+
+	_, err = tmClient.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket:             &uploadToken.Upload.Bucket,
 		Key:                &uploadToken.Upload.Key,
 		ContentDisposition: &uploadToken.Upload.ContentDisposition,
@@ -261,8 +263,7 @@ func (d *Teambition) newUpload(ctx context.Context, dstDir model.Obj, stream mod
 			Reader:         stream,
 			UpdateProgress: up,
 		}),
-	}
-	_, err = uploader.Upload(ctx, input)
+	})
 	if err != nil {
 		return err
 	}

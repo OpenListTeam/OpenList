@@ -20,7 +20,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -212,14 +212,15 @@ func (d *S3) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *S3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
-	uploader := manager.NewUploader(d.client)
-	if s.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
-		uploader.PartSize = s.GetSize() / int64(manager.MaxUploadParts-1)
-	}
 	key := getKey(stdpath.Join(dstDir.GetPath(), s.GetName()), false)
 	contentType := s.GetMimetype()
 	log.Debugln("key:", key)
-	input := &s3.PutObjectInput{
+	tmClient := transfermanager.New(d.client, func(o *transfermanager.Options) {
+		if s.GetSize() > int64(8*utils.MB)*10000 {
+			o.PartSizeBytes = s.GetSize() / 9999
+		}
+	})
+	_, err := tmClient.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &key,
 		Body: driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
@@ -227,8 +228,7 @@ func (d *S3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up
 			UpdateProgress: up,
 		}),
 		ContentType: &contentType,
-	}
-	_, err := uploader.Upload(ctx, input)
+	})
 	return err
 }
 

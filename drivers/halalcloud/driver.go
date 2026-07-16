@@ -15,11 +15,12 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/city404/v6-public-rpc-proto/go/v6/common"
 	pbPublicUser "github.com/city404/v6-public-rpc-proto/go/v6/user"
 	pubUserFile "github.com/city404/v6-public-rpc-proto/go/v6/userfile"
@@ -381,14 +382,15 @@ func (d *HalalCloud) put(ctx context.Context, dstDir model.Obj, fileStream model
 		o.BaseEndpoint = aws.String(result.Endpoint)
 		o.UsePathStyle = true
 	})
-	uploader := manager.NewUploader(s3Client, func(u *manager.Uploader) {
-		u.Concurrency = d.uploadThread
+	tmClient := transfermanager.New(s3Client, func(o *transfermanager.Options) {
+		if fileStream.GetSize() > int64(8*utils.MB)*10000 {
+			o.PartSizeBytes = fileStream.GetSize() / 9999
+		}
+		o.Concurrency = d.uploadThread
 	})
-	if fileStream.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
-		uploader.PartSize = fileStream.GetSize() / int64(manager.MaxUploadParts-1)
-	}
+
 	reader := driver.NewLimitedUploadStream(ctx, fileStream)
-	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+	_, err = tmClient.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(result.Bucket),
 		Key:    aws.String(result.Key),
 		Body:   io.TeeReader(reader, driver.NewProgress(fileStream.GetSize(), up)),
