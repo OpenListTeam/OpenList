@@ -16,10 +16,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/city404/v6-public-rpc-proto/go/v6/common"
 	pbPublicUser "github.com/city404/v6-public-rpc-proto/go/v6/user"
 	pubUserFile "github.com/city404/v6-public-rpc-proto/go/v6/userfile"
@@ -373,24 +373,22 @@ func (d *HalalCloud) put(ctx context.Context, dstDir model.Obj, fileStream model
 	u, _ := url.Parse(result.Endpoint)
 	u.Host = "s3." + u.Host
 	result.Endpoint = u.String()
-	s, err := session.NewSession(&aws.Config{
+	s3Client := s3.NewFromConfig(aws.Config{
 		HTTPClient:       base.HttpClient,
-		Credentials:      credentials.NewStaticCredentials(result.AccessKey, result.SecretKey, result.Token),
-		Region:           aws.String(result.Region),
-		Endpoint:         aws.String(result.Endpoint),
-		S3ForcePathStyle: aws.Bool(true),
+		Credentials:      credentials.NewStaticCredentialsProvider(result.AccessKey, result.SecretKey, result.Token),
+		Region:           result.Region,
+	}, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(result.Endpoint)
+		o.UsePathStyle = true
 	})
-	if err != nil {
-		return nil, err
-	}
-	uploader := s3manager.NewUploader(s, func(u *s3manager.Uploader) {
+	uploader := manager.NewUploader(s3Client, func(u *manager.Uploader) {
 		u.Concurrency = d.uploadThread
 	})
-	if fileStream.GetSize() > s3manager.MaxUploadParts*s3manager.DefaultUploadPartSize {
-		uploader.PartSize = fileStream.GetSize() / (s3manager.MaxUploadParts - 1)
+	if fileStream.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
+		uploader.PartSize = fileStream.GetSize() / int64(manager.MaxUploadParts-1)
 	}
 	reader := driver.NewLimitedUploadStream(ctx, fileStream)
-	_, err = uploader.UploadWithContext(ctx, &s3manager.UploadInput{
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(result.Bucket),
 		Key:    aws.String(result.Key),
 		Body:   io.TeeReader(reader, driver.NewProgress(fileStream.GetSize(), up)),

@@ -14,10 +14,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
@@ -171,12 +171,12 @@ func (d *MediaTrack) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 		return err
 	}
 	credential := resp.Data.Credentials
-	cfg := &aws.Config{
-		Credentials: credentials.NewStaticCredentials(credential.TmpSecretID, credential.TmpSecretKey, credential.Token),
-		Region:      &resp.Data.Region,
-		Endpoint:    aws.String("cos.accelerate.myqcloud.com"),
-	}
-	s, err := session.NewSession(cfg)
+	s3Client := s3.NewFromConfig(aws.Config{
+		Credentials: credentials.NewStaticCredentialsProvider(credential.TmpSecretID, credential.TmpSecretKey, credential.Token),
+		Region:      resp.Data.Region,
+	}, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String("cos.accelerate.myqcloud.com")
+	})
 	if err != nil {
 		return err
 	}
@@ -184,11 +184,11 @@ func (d *MediaTrack) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 	if err != nil {
 		return err
 	}
-	uploader := s3manager.NewUploader(s)
-	if file.GetSize() > s3manager.MaxUploadParts*s3manager.DefaultUploadPartSize {
-		uploader.PartSize = file.GetSize() / (s3manager.MaxUploadParts - 1)
+	uploader := manager.NewUploader(s3Client)
+	if file.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
+		uploader.PartSize = file.GetSize() / int64(manager.MaxUploadParts-1)
 	}
-	input := &s3manager.UploadInput{
+	input := &s3.PutObjectInput{
 		Bucket: &resp.Data.Bucket,
 		Key:    &resp.Data.Object,
 		Body: driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
@@ -199,7 +199,7 @@ func (d *MediaTrack) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 			UpdateProgress: up,
 		}),
 	}
-	_, err = uploader.UploadWithContext(ctx, input)
+	_, err = uploader.Upload(ctx, input)
 	if err != nil {
 		return err
 	}

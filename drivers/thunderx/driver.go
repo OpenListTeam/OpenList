@@ -17,10 +17,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	hash_extend "github.com/OpenListTeam/OpenList/v4/pkg/utils/hash"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -400,22 +400,19 @@ func (xc *XunLeiXCommon) Put(ctx context.Context, dstDir model.Obj, file model.F
 	param := resp.Resumable.Params
 	if resp.UploadType == UPLOAD_TYPE_RESUMABLE {
 		param.Endpoint = strings.TrimLeft(param.Endpoint, param.Bucket+".")
-		s, err := session.NewSession(&aws.Config{
-			Credentials: credentials.NewStaticCredentials(param.AccessKeyID, param.AccessKeySecret, param.SecurityToken),
-			Region:      aws.String("xunlei"),
-			Endpoint:    aws.String(param.Endpoint),
+		s3Client := s3.NewFromConfig(aws.Config{
+			Credentials: credentials.NewStaticCredentialsProvider(param.AccessKeyID, param.AccessKeySecret, param.SecurityToken),
+			Region:      "xunlei",
+		}, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(param.Endpoint)
 		})
-		if err != nil {
-			return err
+		uploader := manager.NewUploader(s3Client)
+		if file.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
+			uploader.PartSize = file.GetSize() / int64(manager.MaxUploadParts-1)
 		}
-		uploader := s3manager.NewUploader(s)
-		if file.GetSize() > s3manager.MaxUploadParts*s3manager.DefaultUploadPartSize {
-			uploader.PartSize = file.GetSize() / (s3manager.MaxUploadParts - 1)
-		}
-		_, err = uploader.UploadWithContext(ctx, &s3manager.UploadInput{
-			Bucket:  aws.String(param.Bucket),
-			Key:     aws.String(param.Key),
-			Expires: aws.Time(param.Expiration),
+		_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(param.Bucket),
+			Key:    aws.String(param.Key),
 			Body: driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
 				Reader:         file,
 				UpdateProgress: up,

@@ -16,11 +16,11 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/smithy-go"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -28,10 +28,10 @@ import (
 type S3 struct {
 	model.Storage
 	Addition
-	Session            *session.Session
-	client             *s3.S3
-	linkClient         *s3.S3
-	directUploadClient *s3.S3
+	cfg                aws.Config
+	client             *s3.Client
+	linkClient         *s3.Client
+	directUploadClient *s3.Client
 
 	config driver.Config
 	cron   *cron.Cron
@@ -81,9 +81,9 @@ func (d *S3) Drop(ctx context.Context) error {
 
 func (d *S3) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	if d.ListObjectVersion == "v2" {
-		return d.listV2(dir.GetPath(), args)
+		return d.listV2(ctx, dir.GetPath(), args)
 	}
-	return d.listV1(dir.GetPath(), args)
+	return d.listV1(ctx, dir.GetPath(), args)
 }
 
 func (d *S3) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
@@ -103,18 +103,27 @@ func (d *S3) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*mo
 		input.ResponseContentDisposition = &disposition
 	}
 
-	req, _ := d.linkClient.GetObjectRequest(input)
-	if req == nil {
-		return nil, fmt.Errorf("failed to create GetObject request")
+	presignClient := s3.NewPresignClient(d.linkClient)
+	if presignClient == nil {
+		return nil, fmt.Errorf("failed to create PresignClient")
 	}
 	var link model.Link
 	var err error
 	if d.CustomHost != "" {
 		if d.EnableCustomHostPresign {
-			link.URL, err = req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+			result, presignErr := presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(time.Hour*time.Duration(d.SignURLExpire)))
+			if presignErr != nil {
+				return nil, fmt.Errorf("failed to presign link URL: %w", presignErr)
+			}
+			link.URL = result.URL
 		} else {
-			err = req.Build()
-			link.URL = req.HTTPRequest.URL.String()
+			// Use a long-lived presigned URL with the custom host
+			// The middleware will set the custom host on the request
+			result, presignErr := presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(365*24*time.Hour))
+			if presignErr != nil {
+				return nil, fmt.Errorf("failed to generate link URL: %w", presignErr)
+			}
+			link.URL = result.URL
 		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate link URL: %w", err)
@@ -143,11 +152,17 @@ func (d *S3) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*mo
 		}
 	} else {
 		if common.ShouldProxy(d, fileName) {
-			err = req.Sign()
-			link.URL = req.HTTPRequest.URL.String()
-			link.Header = req.HTTPRequest.Header
+			result, presignErr := presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(time.Hour*time.Duration(d.SignURLExpire)))
+			if presignErr != nil {
+				return nil, fmt.Errorf("failed to sign link URL: %w", presignErr)
+			}
+			link.URL = result.URL
 		} else {
-			link.URL, err = req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+			result, presignErr := presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(time.Hour*time.Duration(d.SignURLExpire)))
+			if presignErr != nil {
+				return nil, fmt.Errorf("failed to presign link URL: %w", presignErr)
+			}
+			link.URL = result.URL
 		}
 	}
 	if err != nil {
@@ -197,14 +212,14 @@ func (d *S3) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *S3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
-	uploader := s3manager.NewUploader(d.Session)
-	if s.GetSize() > s3manager.MaxUploadParts*s3manager.DefaultUploadPartSize {
-		uploader.PartSize = s.GetSize() / (s3manager.MaxUploadParts - 1)
+	uploader := manager.NewUploader(d.client)
+	if s.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
+		uploader.PartSize = s.GetSize() / int64(manager.MaxUploadParts-1)
 	}
 	key := getKey(stdpath.Join(dstDir.GetPath(), s.GetName()), false)
 	contentType := s.GetMimetype()
 	log.Debugln("key:", key)
-	input := &s3manager.UploadInput{
+	input := &s3.PutObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &key,
 		Body: driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
@@ -213,7 +228,7 @@ func (d *S3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up
 		}),
 		ContentType: &contentType,
 	}
-	_, err := uploader.UploadWithContext(ctx, input)
+	_, err := uploader.Upload(ctx, input)
 	return err
 }
 
@@ -229,19 +244,16 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 		return nil, errs.NotImplement
 	}
 	path := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
-	req, _ := d.directUploadClient.PutObjectRequest(&s3.PutObjectInput{
+	presignClient := s3.NewPresignClient(d.directUploadClient)
+	result, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &path,
-	})
-	if req == nil {
-		return nil, fmt.Errorf("failed to create PutObject request")
-	}
-	link, err := req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+	}, s3.WithPresignExpires(time.Hour*time.Duration(d.SignURLExpire)))
 	if err != nil {
 		return nil, err
 	}
 	return &model.HttpDirectUploadInfo{
-		UploadURL: link,
+		UploadURL: result.URL,
 		Method:    "PUT",
 	}, nil
 }
@@ -263,7 +275,7 @@ func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 		Bucket: &d.Bucket,
 		Key:    &key,
 	}
-	headOutput, err := d.client.HeadObjectWithContext(ctx, headInput)
+	headOutput, err := d.client.HeadObject(ctx, headInput)
 	if err == nil {
 		// Object exists as a file
 		fileName := stdpath.Base(path)
@@ -274,23 +286,23 @@ func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 			Path:     path,
 		}, nil
 	}
-	var awsErr awserr.Error
-	if errors.As(err, &awsErr) && awsErr.Code() != "NotFound" {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) && apiErr.ErrorCode() != "NotFound" {
 		return nil, errors.WithMessage(err, "failed to head object")
 	}
 
 	// If HeadObject fails with 404, check if it's a directory
 	prefix := getKey(path, true)
-	var contents []*s3.Object
-	var commonPrefixes []*s3.CommonPrefix
+	var contents []types.Object
+	var commonPrefixes []types.CommonPrefix
 	switch d.ListObjectVersion {
 	case "v1":
 		listInput := &s3.ListObjectsInput{
 			Bucket:  &d.Bucket,
 			Prefix:  &prefix,
-			MaxKeys: aws.Int64(1), // Only need to check if at least one object exists
+			MaxKeys: aws.Int32(1),
 		}
-		listResult, err := d.client.ListObjectsWithContext(ctx, listInput)
+		listResult, err := d.client.ListObjects(ctx, listInput)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed to list objects with prefix")
 		}
@@ -300,9 +312,9 @@ func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 		listInput := &s3.ListObjectsV2Input{
 			Bucket:  &d.Bucket,
 			Prefix:  &prefix,
-			MaxKeys: aws.Int64(1),
+			MaxKeys: aws.Int32(1),
 		}
-		listResult, err := d.client.ListObjectsV2WithContext(ctx, listInput)
+		listResult, err := d.client.ListObjectsV2(ctx, listInput)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed to list objects v2 with prefix")
 		}

@@ -11,18 +11,17 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	log "github.com/sirupsen/logrus"
 )
 
 // do others that not defined in Driver interface
 
 func (d *S3) initSession() error {
-	var err error
 	accessKeyID, secretAccessKey, sessionToken := d.AccessKeyID, d.SecretAccessKey, d.SessionToken
 	if d.config.Name == "Doge" {
 		credentialsTmp, err := getCredentials(d.AccessKeyID, d.SecretAccessKey)
@@ -31,14 +30,11 @@ func (d *S3) initSession() error {
 		}
 		accessKeyID, secretAccessKey, sessionToken = credentialsTmp.AccessKeyId, credentialsTmp.SecretAccessKey, credentialsTmp.SessionToken
 	}
-	cfg := &aws.Config{
-		Credentials:      credentials.NewStaticCredentials(accessKeyID, secretAccessKey, sessionToken),
-		Region:           &d.Region,
-		Endpoint:         &d.Endpoint,
-		S3ForcePathStyle: aws.Bool(d.ForcePathStyle),
+	d.cfg = aws.Config{
+		Credentials: credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, sessionToken),
+		Region:      d.Region,
 	}
-	d.Session, err = session.NewSession(cfg)
-	return err
+	return nil
 }
 
 const (
@@ -47,43 +43,75 @@ const (
 	ClientTypeDirectUpload
 )
 
-func (d *S3) getClient(clientType int) *s3.S3 {
-	client := s3.New(d.Session)
-	if d.UserAgent != "" {
-		client.Handlers.Build.PushBack(func(r *request.Request) {
-			r.HTTPRequest.Header.Set("User-Agent", d.UserAgent)
+func (d *S3) getClient(clientType int) *s3.Client {
+	return s3.NewFromConfig(d.cfg, func(o *s3.Options) {
+		o.UsePathStyle = d.ForcePathStyle
+		o.BaseEndpoint = aws.String(d.Endpoint)
+		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+			// User-Agent middleware
+			if d.UserAgent != "" {
+				if err := stack.Build.Add(middleware.BuildMiddlewareFunc("SetUserAgent",
+					func(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
+						req, ok := in.Request.(*smithyhttp.Request)
+						if !ok {
+							return next.HandleBuild(ctx, in)
+						}
+						req.Header.Set("User-Agent", d.UserAgent)
+						return next.HandleBuild(ctx, in)
+					},
+				), middleware.After); err != nil {
+					return err
+				}
+			}
+			// CustomHost middleware
+			if clientType == ClientTypeLink && d.CustomHost != "" {
+				if err := stack.Build.Add(middleware.BuildMiddlewareFunc("SetCustomHost",
+					func(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
+						req, ok := in.Request.(*smithyhttp.Request)
+						if !ok {
+							return next.HandleBuild(ctx, in)
+						}
+						if req.Method == http.MethodGet {
+							split := strings.SplitN(d.CustomHost, "://", 2)
+							if len(split) > 1 && utils.SliceContains([]string{"http", "https"}, split[0]) {
+								req.URL.Scheme = split[0]
+								req.URL.Host = split[1]
+							} else {
+								req.URL.Host = d.CustomHost
+							}
+						}
+						return next.HandleBuild(ctx, in)
+					},
+				), middleware.After); err != nil {
+					return err
+				}
+			}
+			// DirectUploadHost middleware
+			if clientType == ClientTypeDirectUpload && d.DirectUploadHost != "" {
+				if err := stack.Build.Add(middleware.BuildMiddlewareFunc("SetDirectUploadHost",
+					func(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
+						req, ok := in.Request.(*smithyhttp.Request)
+						if !ok {
+							return next.HandleBuild(ctx, in)
+						}
+						if req.Method == http.MethodPut {
+							split := strings.SplitN(d.DirectUploadHost, "://", 2)
+							if len(split) > 1 && utils.SliceContains([]string{"http", "https"}, split[0]) {
+								req.URL.Scheme = split[0]
+								req.URL.Host = split[1]
+							} else {
+								req.URL.Host = d.DirectUploadHost
+							}
+						}
+						return next.HandleBuild(ctx, in)
+					},
+				), middleware.After); err != nil {
+					return err
+				}
+			}
+			return nil
 		})
-	}
-	if clientType == ClientTypeLink && d.CustomHost != "" {
-		client.Handlers.Build.PushBack(func(r *request.Request) {
-			if r.HTTPRequest.Method != http.MethodGet {
-				return
-			}
-			//判断CustomHost是否以http://或https://开头
-			split := strings.SplitN(d.CustomHost, "://", 2)
-			if utils.SliceContains([]string{"http", "https"}, split[0]) {
-				r.HTTPRequest.URL.Scheme = split[0]
-				r.HTTPRequest.URL.Host = split[1]
-			} else {
-				r.HTTPRequest.URL.Host = d.CustomHost
-			}
-		})
-	}
-	if clientType == ClientTypeDirectUpload && d.DirectUploadHost != "" {
-		client.Handlers.Build.PushBack(func(r *request.Request) {
-			if r.HTTPRequest.Method != http.MethodPut {
-				return
-			}
-			split := strings.SplitN(d.DirectUploadHost, "://", 2)
-			if utils.SliceContains([]string{"http", "https"}, split[0]) {
-				r.HTTPRequest.URL.Scheme = split[0]
-				r.HTTPRequest.URL.Host = split[1]
-			} else {
-				r.HTTPRequest.URL.Host = d.DirectUploadHost
-			}
-		})
-	}
-	return client
+	})
 }
 
 func getKey(path string, dir bool) string {
@@ -103,7 +131,7 @@ func getPlaceholderName(placeholder string) string {
 	return placeholder
 }
 
-func (d *S3) listV1(dirPath string, args model.ListArgs) ([]model.Obj, error) {
+func (d *S3) listV1(ctx context.Context, dirPath string, args model.ListArgs) ([]model.Obj, error) {
 	prefix := getKey(dirPath, true)
 	log.Debugf("list: %s", prefix)
 	files := make([]model.Obj, 0)
@@ -115,7 +143,7 @@ func (d *S3) listV1(dirPath string, args model.ListArgs) ([]model.Obj, error) {
 			Prefix:    &prefix,
 			Delimiter: aws.String("/"),
 		}
-		listObjectsResult, err := d.client.ListObjects(input)
+		listObjectsResult, err := d.client.ListObjects(ctx, input)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +182,7 @@ func (d *S3) listV1(dirPath string, args model.ListArgs) ([]model.Obj, error) {
 	return files, nil
 }
 
-func (d *S3) listV2(dirPath string, args model.ListArgs) ([]model.Obj, error) {
+func (d *S3) listV2(ctx context.Context, dirPath string, args model.ListArgs) ([]model.Obj, error) {
 	prefix := getKey(dirPath, true)
 	files := make([]model.Obj, 0)
 	var continuationToken, startAfter *string
@@ -166,7 +194,7 @@ func (d *S3) listV2(dirPath string, args model.ListArgs) ([]model.Obj, error) {
 			Delimiter:         aws.String("/"),
 			StartAfter:        startAfter,
 		}
-		listObjectsResult, err := d.client.ListObjectsV2(input)
+		listObjectsResult, err := d.client.ListObjectsV2(ctx, input)
 		if err != nil {
 			return nil, err
 		}
@@ -197,7 +225,7 @@ func (d *S3) listV2(dirPath string, args model.ListArgs) ([]model.Obj, error) {
 			}
 			files = append(files, &file)
 		}
-		if !aws.BoolValue(listObjectsResult.IsTruncated) {
+		if !aws.ToBool(listObjectsResult.IsTruncated) {
 			break
 		}
 		if listObjectsResult.NextContinuationToken != nil {
@@ -228,7 +256,7 @@ func (d *S3) copyFile(ctx context.Context, src string, dst string) error {
 		CopySource: aws.String(encodedKey),
 		Key:        &dstKey,
 	}
-	_, err := d.client.CopyObjectWithContext(ctx, input)
+	_, err := d.client.CopyObject(ctx, input)
 	return err
 }
 
@@ -279,6 +307,6 @@ func (d *S3) removeFile(ctx context.Context, src string) error {
 		Bucket: &d.Bucket,
 		Key:    &key,
 	}
-	_, err := d.client.DeleteObjectWithContext(ctx, input)
+	_, err := d.client.DeleteObject(ctx, input)
 	return err
 }

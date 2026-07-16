@@ -14,10 +14,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -237,22 +237,22 @@ func (d *Teambition) newUpload(ctx context.Context, dstDir model.Obj, stream mod
 	if err != nil {
 		return err
 	}
-	cfg := &aws.Config{
-		Credentials: credentials.NewStaticCredentials(
+	s3Client := s3.NewFromConfig(aws.Config{
+		Credentials: credentials.NewStaticCredentialsProvider(
 			uploadToken.Sdk.Credentials.AccessKeyId, uploadToken.Sdk.Credentials.SecretAccessKey, uploadToken.Sdk.Credentials.SessionToken),
-		Region:           &uploadToken.Sdk.Region,
-		Endpoint:         &uploadToken.Sdk.Endpoint,
-		S3ForcePathStyle: &uploadToken.Sdk.S3ForcePathStyle,
-	}
-	ss, err := session.NewSession(cfg)
+		Region: uploadToken.Sdk.Region,
+	}, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(uploadToken.Sdk.Endpoint)
+		o.UsePathStyle = uploadToken.Sdk.S3ForcePathStyle
+	})
 	if err != nil {
 		return err
 	}
-	uploader := s3manager.NewUploader(ss)
-	if stream.GetSize() > s3manager.MaxUploadParts*s3manager.DefaultUploadPartSize {
-		uploader.PartSize = stream.GetSize() / (s3manager.MaxUploadParts - 1)
+	uploader := manager.NewUploader(s3Client)
+	if stream.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
+		uploader.PartSize = stream.GetSize() / int64(manager.MaxUploadParts-1)
 	}
-	input := &s3manager.UploadInput{
+	input := &s3.PutObjectInput{
 		Bucket:             &uploadToken.Upload.Bucket,
 		Key:                &uploadToken.Upload.Key,
 		ContentDisposition: &uploadToken.Upload.ContentDisposition,
@@ -262,7 +262,7 @@ func (d *Teambition) newUpload(ctx context.Context, dstDir model.Obj, stream mod
 			UpdateProgress: up,
 		}),
 	}
-	_, err = uploader.UploadWithContext(ctx, input)
+	_, err = uploader.Upload(ctx, input)
 	if err != nil {
 		return err
 	}

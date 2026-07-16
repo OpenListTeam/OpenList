@@ -18,10 +18,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -212,21 +212,18 @@ func (d *Pan123) Put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 		err = d.newUpload(ctx, &resp, file, up)
 		return err
 	} else {
-		cfg := &aws.Config{
-			Credentials:      credentials.NewStaticCredentials(resp.Data.AccessKeyId, resp.Data.SecretAccessKey, resp.Data.SessionToken),
-			Region:           aws.String("123pan"),
-			Endpoint:         aws.String(resp.Data.EndPoint),
-			S3ForcePathStyle: aws.Bool(true),
+		s3Client := s3.NewFromConfig(aws.Config{
+			Credentials: credentials.NewStaticCredentialsProvider(resp.Data.AccessKeyId, resp.Data.SecretAccessKey, resp.Data.SessionToken),
+			Region:      "123pan",
+		}, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(resp.Data.EndPoint)
+			o.UsePathStyle = true
+		})
+		uploader := manager.NewUploader(s3Client)
+		if file.GetSize() > int64(manager.MaxUploadParts)*manager.DefaultUploadPartSize {
+			uploader.PartSize = file.GetSize() / int64(manager.MaxUploadParts-1)
 		}
-		s, err := session.NewSession(cfg)
-		if err != nil {
-			return err
-		}
-		uploader := s3manager.NewUploader(s)
-		if file.GetSize() > s3manager.MaxUploadParts*s3manager.DefaultUploadPartSize {
-			uploader.PartSize = file.GetSize() / (s3manager.MaxUploadParts - 1)
-		}
-		input := &s3manager.UploadInput{
+		input := &s3.PutObjectInput{
 			Bucket: &resp.Data.Bucket,
 			Key:    &resp.Data.Key,
 			Body: driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
@@ -234,7 +231,7 @@ func (d *Pan123) Put(ctx context.Context, dstDir model.Obj, file model.FileStrea
 				UpdateProgress: up,
 			}),
 		}
-		_, err = uploader.UploadWithContext(ctx, input)
+		_, err = uploader.Upload(ctx, input)
 		if err != nil {
 			return err
 		}
