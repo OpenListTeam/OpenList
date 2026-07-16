@@ -15,7 +15,8 @@ require (
 	github.com/OpenListTeam/times v0.1.0
 	github.com/OpenListTeam/wopan-sdk-go v0.1.5
 	github.com/ProtonMail/go-crypto v1.4.1
-	github.com/ProtonMail/gopenpgp/v2 v2.10.0
+	github.com/ProtonMail/gopenpgp/v2 v2.9.0
+	github.com/ProtonMail/gopenpgp/v3 v3.4.1
 	github.com/SheltonZhu/115driver v1.3.4
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/antchfx/htmlquery v1.3.6
