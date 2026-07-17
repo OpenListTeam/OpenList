@@ -9,6 +9,8 @@ import (
 	"net/url"
 	stdpath "path"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -28,6 +30,7 @@ type Alias struct {
 	rootOrder []string
 	pathMap   map[string][]string
 	root      model.Obj
+	cache     aliasCache
 }
 
 func (d *Alias) Config() driver.Config {
@@ -39,6 +42,7 @@ func (d *Alias) GetAddition() driver.Additional {
 }
 
 func (d *Alias) Init(ctx context.Context) error {
+	d.cache.init()
 	paths := strings.Split(d.Paths, "\n")
 	d.rootOrder = make([]string, 0, len(paths))
 	d.pathMap = make(map[string][]string)
@@ -100,6 +104,7 @@ func (d *Alias) Drop(ctx context.Context) error {
 	d.rootOrder = nil
 	d.pathMap = nil
 	d.root = nil
+	d.cache.clear()
 	return nil
 }
 
@@ -116,55 +121,50 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	if len(roots) == 0 {
 		return nil, errs.ObjectNotFound
 	}
+	ttl := d.cacheTTL()
+	if cached, ok := d.cache.getResolved(path, ttl); ok {
+		if cached.hasObj {
+			d.prefetchParentList(ctx, path, sub, roots, &cached.obj)
+			return d.buildBalancedObj(ctx, sub, cached.paths[0], &cached.obj, cached.paths[1:], cached.skipped), nil
+		}
+		obj, err := d.getFromResolvedPaths(ctx, sub, cached)
+		if err == nil {
+			d.prefetchParentList(ctx, path, sub, roots, obj)
+			return obj, nil
+		}
+		d.cache.deleteResolved(path)
+	}
+	if ttl > 0 {
+		if resolved, ok := d.getResolvedFromSearchIndex(ctx, roots, sub); ok {
+			rawPath := resolved.paths[0]
+			if resolved.hasObj {
+				d.cache.setResolved(path, resolved, ttl, d.cacheMaxEntries())
+				d.prefetchParentList(ctx, path, sub, roots, &resolved.obj)
+				return d.buildBalancedObj(ctx, sub, rawPath, &resolved.obj, resolved.paths[1:], resolved.skipped), nil
+			}
+			obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
+			if err == nil {
+				resolved = newAliasResolved(resolved.paths, resolved.skipped, obj)
+				d.cache.setResolved(path, resolved, ttl, d.cacheMaxEntries())
+				d.prefetchParentList(ctx, path, sub, roots, obj)
+				return d.buildBalancedObj(ctx, sub, rawPath, obj, resolved.paths[1:], resolved.skipped), nil
+			}
+		}
+	}
 	for idx, root := range roots {
 		rawPath := stdpath.Join(root, sub)
 		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
 		if err != nil {
 			continue
 		}
-		mask := model.GetObjMask(obj) &^ model.Temp
-		if sub == "" {
-			// 根目录
-			mask |= model.Locked | model.Virtual
+		resolvedPaths := make([]string, 0, len(roots)-idx)
+		for _, root := range roots[idx:] {
+			resolvedPaths = append(resolvedPaths, stdpath.Join(root, sub))
 		}
-		ret := model.Object{
-			Path:     rawPath,
-			Name:     obj.GetName(),
-			Size:     obj.GetSize(),
-			Modified: obj.ModTime(),
-			IsFolder: obj.IsDir(),
-			HashInfo: obj.GetHash(),
-			Mask:     mask,
-		}
-		obj = &ret
-		if d.ProviderPassThrough && !obj.IsDir() {
-			if storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{}); err == nil {
-				obj = &model.ObjectProvider{
-					Object: ret,
-					Provider: model.Provider{
-						Provider: storage.Config().Name,
-					},
-				}
-			}
-		}
-
-		roots = roots[idx+1:]
-		var objs BalancedObjs
-		if idx > 0 {
-			objs = make(BalancedObjs, 0, len(roots)+2)
-		} else {
-			objs = make(BalancedObjs, 0, len(roots)+1)
-		}
-		objs = append(objs, obj)
-		if idx > 0 {
-			objs = append(objs, nil)
-		}
-		for _, d := range roots {
-			objs = append(objs, &tempObj{model.Object{
-				Path: stdpath.Join(d, sub),
-			}})
-		}
-		return objs, nil
+		resolved := newAliasResolved(resolvedPaths, idx > 0, obj)
+		d.cache.setResolved(path, resolved, ttl, d.cacheMaxEntries())
+		d.prefetchParentList(ctx, path, sub, roots, obj)
+		return d.buildBalancedObj(ctx, sub, rawPath, obj, resolved.paths[1:], resolved.skipped), nil
 	}
 	return nil, errs.ObjectNotFound
 }
@@ -174,25 +174,54 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	if !ok {
 		return d.listRoot(ctx, args.WithStorageDetails && d.DetailsPassThrough, args.Refresh), nil
 	}
-
-	// 因为alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
-	// 所以这里对象不会传回到alias，也就不需要返回BalancedObjs了
-	objMap := make(map[string]model.Obj)
+	withDetails := args.WithStorageDetails && d.DetailsPassThrough
+	dirPaths := make([]string, 0, len(dirs))
 	for _, dir := range dirs {
 		if dir == nil {
 			continue
 		}
-		dirPath := dir.GetPath()
-		tmp, err := fs.List(ctx, dirPath, &fs.ListArgs{
-			NoLog:              true,
-			Refresh:            args.Refresh,
-			WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
-		})
-		if err != nil {
+		dirPaths = append(dirPaths, dir.GetPath())
+	}
+	ttl := d.cacheTTL()
+	cacheKey := d.cache.listKey(dirPaths, withDetails)
+	if !args.Refresh {
+		if objs, ok := d.cache.getList(cacheKey, ttl); ok {
+			return objs, nil
+		}
+	} else {
+		d.cache.deleteList(cacheKey)
+		if prefix := d.aliasInternalPath(args.ReqPath); prefix != "" {
+			d.cache.deleteResolvedPrefix(prefix)
+		}
+	}
+
+	objs, cacheable := d.listAliasDirs(ctx, args.ReqPath, dirs, dirPaths, args)
+	if cacheable {
+		d.cache.setList(cacheKey, objs, ttl, d.cacheMaxEntries())
+	}
+	return objs, nil
+}
+
+func (d *Alias) listAliasDirs(ctx context.Context, reqPath string, dirs []model.Obj, dirPaths []string, args model.ListArgs) ([]model.Obj, bool) {
+	// 因为alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
+	// 所以这里对象不会传回到alias，也就不需要返回BalancedObjs了
+	objMap := make(map[string]model.Obj)
+	resolveMap := make(map[string]aliasResolved)
+	listResults, cacheable := d.listBackendDirs(ctx, dirPaths, args)
+	for dirIndex, tmp := range listResults {
+		if tmp == nil {
 			continue
 		}
+		dirPath := dirPaths[dirIndex]
 		for _, obj := range tmp {
 			name := obj.GetName()
+			childPath := stdpath.Join(dirPath, name)
+			if resolved, exists := resolveMap[name]; exists {
+				resolved.paths = append(resolved.paths, childPath)
+				resolveMap[name] = resolved
+			} else {
+				resolveMap[name] = newAliasResolved([]string{childPath}, dirIndex > 0, obj)
+			}
 			if _, exists := objMap[name]; exists {
 				continue
 			}
@@ -203,6 +232,7 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 				Size:     obj.GetSize(),
 				Modified: obj.ModTime(),
 				IsFolder: obj.IsDir(),
+				HashInfo: obj.GetHash(),
 				Mask:     mask,
 			}
 			var objRet model.Obj
@@ -238,7 +268,136 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			model.ExtractFolder(objs, sort.ExtractFolder)
 		}
 	}
-	return objs, nil
+	if cacheable {
+		d.cacheResolvedChildren(reqPath, resolveMap)
+	}
+	return objs, cacheable
+}
+
+func (d *Alias) prefetchParentList(ctx context.Context, reqPath, sub string, roots []string, obj model.Obj) {
+	ttl := d.cacheTTL()
+	if ttl <= 0 || obj == nil || obj.IsDir() || len(roots) == 0 || sub == "" {
+		return
+	}
+	parentReqPath := stdpath.Dir(utils.FixAndCleanPath(reqPath))
+	if parentReqPath == "." || parentReqPath == "/" {
+		return
+	}
+	parentSub := stdpath.Dir(sub)
+	if parentSub == "." {
+		parentSub = ""
+	}
+	parentResolved, ok := d.cache.getResolved(parentReqPath, ttl)
+	if !ok {
+		if parentSub == "" {
+			parentResolved = aliasResolved{paths: cloneStrings(roots)}
+			ok = true
+		} else if resolved, hit := d.getResolvedFromSearchIndex(ctx, roots, parentSub); hit {
+			parentResolved = resolved
+			ok = true
+		}
+	}
+	if !ok {
+		paths := make([]string, 0, len(roots))
+		for _, root := range roots {
+			paths = append(paths, stdpath.Join(root, parentSub))
+		}
+		parentResolved = aliasResolved{paths: paths}
+	}
+	if len(parentResolved.paths) == 0 {
+		return
+	}
+	d.cache.setResolved(parentReqPath, parentResolved, ttl, d.cacheMaxEntries())
+	dirPaths := cloneStrings(parentResolved.paths)
+	cacheKey := d.cache.listKey(dirPaths, false)
+	if _, ok := d.cache.getList(cacheKey, ttl); ok {
+		return
+	}
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		args := model.ListArgs{
+			ReqPath: parentReqPath,
+		}
+		dirs := aliasDirsFromPaths(dirPaths)
+		objs, cacheable := d.listAliasDirs(bgCtx, parentReqPath, dirs, dirPaths, args)
+		if cacheable {
+			d.cache.setList(cacheKey, objs, ttl, d.cacheMaxEntries())
+		}
+	}()
+}
+
+func aliasDirsFromPaths(paths []string) []model.Obj {
+	dirs := make([]model.Obj, 0, len(paths))
+	for _, path := range paths {
+		dirs = append(dirs, &model.Object{
+			Name:     stdpath.Base(path),
+			Path:     path,
+			IsFolder: true,
+		})
+	}
+	return dirs
+}
+
+func (d *Alias) listBackendDirs(ctx context.Context, dirPaths []string, args model.ListArgs) ([][]model.Obj, bool) {
+	results := make([][]model.Obj, len(dirPaths))
+	cacheable := true
+	concurrency := d.listConcurrency(len(dirPaths))
+	if concurrency <= 1 {
+		for i, dirPath := range dirPaths {
+			tmp, err := fs.List(ctx, dirPath, &fs.ListArgs{
+				NoLog:              true,
+				Refresh:            args.Refresh,
+				WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
+			})
+			if err == nil {
+				results[i] = tmp
+			} else if !errs.IsNotFoundError(err) {
+				cacheable = false
+			}
+		}
+		return results, cacheable
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	sem := make(chan struct{}, concurrency)
+	for i, dirPath := range dirPaths {
+		wg.Add(1)
+		go func(i int, dirPath string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			tmp, err := fs.List(ctx, dirPath, &fs.ListArgs{
+				NoLog:              true,
+				Refresh:            args.Refresh,
+				WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
+			})
+			if err == nil {
+				results[i] = tmp
+			} else if !errs.IsNotFoundError(err) {
+				mu.Lock()
+				cacheable = false
+				mu.Unlock()
+			}
+		}(i, dirPath)
+	}
+	wg.Wait()
+	return results, cacheable
+}
+
+func (d *Alias) listConcurrency(total int) int {
+	if total <= 1 {
+		return 1
+	}
+	concurrency := d.AliasListConcurrency
+	if concurrency <= 1 {
+		return 1
+	}
+	if concurrency > total {
+		return total
+	}
+	return concurrency
 }
 
 func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
@@ -359,6 +518,7 @@ func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, e
 }
 
 func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+	defer d.cache.clear()
 	objs, err := d.getWriteObjs(ctx, parentDir)
 	if err == nil {
 		for _, obj := range objs {
@@ -369,6 +529,7 @@ func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 }
 
 func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
+	defer d.cache.clear()
 	srcs, dsts, err := d.getMoveObjs(ctx, srcObj, dstDir)
 	if err == nil {
 		for i, dst := range dsts {
@@ -386,6 +547,7 @@ func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
+	defer d.cache.clear()
 	objs, err := d.getWriteObjs(ctx, srcObj)
 	if err == nil {
 		for _, obj := range objs {
@@ -396,6 +558,7 @@ func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 }
 
 func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
+	defer d.cache.clear()
 	srcs, dsts, err := d.getCopyObjs(ctx, srcObj, dstDir)
 	if err == nil {
 		for i, src := range srcs {
@@ -408,6 +571,7 @@ func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Alias) Remove(ctx context.Context, obj model.Obj) error {
+	defer d.cache.clear()
 	objs, err := d.getWriteObjs(ctx, obj)
 	if err == nil {
 		for _, obj := range objs {
@@ -418,6 +582,7 @@ func (d *Alias) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
+	defer d.cache.clear()
 	objs, err := d.getPutObjs(ctx, dstDir)
 	if err == nil {
 		if len(objs) == 1 {
@@ -456,6 +621,7 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 }
 
 func (d *Alias) PutURL(ctx context.Context, dstDir model.Obj, name, url string) error {
+	defer d.cache.clear()
 	objs, err := d.getPutObjs(ctx, dstDir)
 	if err == nil {
 		for _, obj := range objs {
@@ -516,6 +682,7 @@ func (d *Alias) Extract(ctx context.Context, obj model.Obj, args model.ArchiveIn
 }
 
 func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) error {
+	defer d.cache.clear()
 	srcs, dsts, err := d.getCopyObjs(ctx, srcObj, dstDir)
 	if err == nil {
 		for i, src := range srcs {
