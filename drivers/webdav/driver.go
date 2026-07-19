@@ -129,8 +129,8 @@ func (d *WebDav) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer
 
 // implements driver.Getter interface
 func (d *WebDav) Get(ctx context.Context, _path string) (model.Obj, error) {
-	fullPath := path.Join(d.GetRootPath(), _path)
-	info, err := d.client.Stat(fullPath)
+	_path = path.Join(d.GetRootPath(), _path)
+	info, err := d.client.Stat(_path)
 	if err != nil {
 		if gowebdav.IsErrNotFound(err) {
 			return nil, errs.ObjectNotFound
@@ -140,8 +140,8 @@ func (d *WebDav) Get(ctx context.Context, _path string) (model.Obj, error) {
 		// (301/302), which the underlying golang http client mishandles for non-GET
 		// methods. Retry once with a trailing slash so directories resolve
 		// correctly. Files succeed on the first attempt and are left untouched.
-		if !strings.HasSuffix(fullPath, "/") {
-			info, err = d.client.Stat(fullPath + "/")
+		if !strings.HasSuffix(_path, "/") {
+			info, err = d.client.Stat(_path + "/")
 		}
 		if err != nil {
 			if gowebdav.IsErrNotFound(err) {
