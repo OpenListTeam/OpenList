@@ -31,9 +31,7 @@ func (d *SMB) getLastConnTime() time.Time {
 
 func (d *SMB) initFS(ctx context.Context) error {
 	_, err, _ := singleflight.AnyGroup.Do(fmt.Sprintf("SMB.initFS:%p", d), func() (any, error) {
-		d.connMu.Lock()
-		defer d.connMu.Unlock()
-		return nil, d.initFSLocked(ctx)
+		return nil, d._initFS(ctx)
 	})
 	return err
 }
@@ -95,14 +93,6 @@ func (d *SMB) closeFSLocked() error {
 		d.conn = nil
 	}
 	d.cleanLastConnTime()
-	return err
-}
-
-func (d *SMB) checkConn(ctx context.Context) error {
-	_, release, err := d.acquireConn(ctx)
-	if release != nil {
-		release()
-	}
 	return err
 }
 
