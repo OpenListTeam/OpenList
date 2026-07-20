@@ -2,6 +2,7 @@ package handles
 
 import (
 	"context"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -55,18 +56,38 @@ func UpdateIndex(c *gin.Context) {
 	}
 	go func() {
 		ctx := context.Background()
+		progress, err := search.Progress()
+		if err != nil {
+			log.Errorf("get index progress error: %+v", err)
+			progress = &model.IndexProgress{}
+		}
 		for _, path := range req.Paths {
-			err := search.Del(ctx, path)
+			err = search.Del(ctx, path)
 			if err != nil {
 				log.Errorf("delete index on %s error: %+v", path, err)
 				return
 			}
 		}
-		err := search.BuildIndex(context.Background(), req.Paths,
+		err = search.BuildIndex(context.Background(), req.Paths,
 			conf.SlicesMap[conf.IgnorePaths], req.MaxDepth, false)
 		if err != nil {
 			log.Errorf("update index error: %+v", err)
+			now := time.Now()
+			search.WriteProgress(&model.IndexProgress{
+				ObjCount:     progress.ObjCount,
+				IsDone:       true,
+				LastDoneTime: &now,
+				Error:        err.Error(),
+			})
+			return
 		}
+		now := time.Now()
+		search.WriteProgress(&model.IndexProgress{
+			ObjCount:     progress.ObjCount,
+			IsDone:       true,
+			LastDoneTime: &now,
+			Error:        "",
+		})
 	}()
 	common.SuccessResp(c)
 }

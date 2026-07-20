@@ -1,0 +1,215 @@
+name: Container Registry Cleanup
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'The name of the package to clean up'
+        required: true
+        default: 'openlist-git'
+      owner:
+        description: 'The owner of the package (user or organization)'
+        required: false
+        default: 'openlistteam'
+      older_than:
+        description: 'Delete untagged images older than this many days'
+        required: false
+        default: '-1'
+      untagged_timestamp_tolerance:
+        description: 'Tolerance in milliseconds for untagged images close to tagged ones'
+        required: false
+        # We do this because multi-arch docker containers will be pushed as separate untagged images 
+        # to the container registry and GitHub cannot recognize them as part of a tagged image. 
+        # Setting this option large enough prevents accidental deletion of one of these images.
+        # Here we set it to 10 seconds
+        default: '10000'
+      token:
+        description: 'GitHub token with permissions to delete packages (leave empty to use default GITHUB_TOKEN)'
+        required: false
+        default: ''
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-slim 
+    
+    steps:
+      - name: Check inputs and tools
+        id: setup
+        shell: bash
+        run: |
+          PACKAGE="${{ github.event.inputs.package || 'openlist-git' }}"
+          OLDER="${{ github.event.inputs.older_than || '-1' }}"
+          TOLERANCE_VAL="${{ github.event.inputs.untagged_timestamp_tolerance || '10000' }}"
+          TOKEN_INPUT="${{ github.event.inputs.token || '' }}"
+          OWNER="${{ github.event.inputs.owner || 'openlistteam' }}"
+
+          echo "package_name=$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "older_than=$OLDER" >> "$GITHUB_OUTPUT"
+          echo "tolerance=$TOLERANCE_VAL" >> "$GITHUB_OUTPUT"
+          echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
+
+          if [[ -z "$TOKEN_INPUT" ]]; then
+            echo "::notice:: No token provided, using GITHUB_TOKEN instead."
+            echo "token=${{ secrets.GITHUB_TOKEN }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::add-mask::$TOKEN_INPUT"
+            echo "token=$TOKEN_INPUT" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [[ -z "$PACKAGE" || -z "$OWNER" || ( -z "$TOKEN_INPUT" && -z "${{ secrets.GITHUB_TOKEN }}" ) ]]; then
+            echo "::error:: Missing required inputs (package, token, or owner context)."
+            exit 1
+          fi
+
+          command -v curl >/dev/null 2>&1 || { echo "::error::curl is required but not installed."; exit 1; }
+          command -v jq >/dev/null 2>&1 || { echo "::error::jq is required but not installed."; exit 1; }
+
+      - name: Determine owner type (user or organization)
+        id: owner_type
+        shell: bash
+        run: |
+          OWNER="${{ steps.setup.outputs.owner }}"
+          TOKEN="${{ steps.setup.outputs.token }}"
+
+          TYPE=$(curl -s -H "Authorization: token $TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/users/${OWNER}" | jq -r '.type')
+
+          if [[ "$TYPE" == "Organization" ]]; then
+            OWNER_PATH="orgs"
+          else
+            OWNER_PATH="users"
+          fi
+
+          echo "owner_path=$OWNER_PATH" >> "$GITHUB_OUTPUT"
+          echo "Detected owner type: $TYPE (using /${OWNER_PATH}/)"
+
+      - name: Access all versions from GitHub
+        id: fetch
+        shell: bash
+        run: |
+          PACKAGE_NAME="${{ steps.setup.outputs.package_name }}"
+          OWNER="${{ steps.setup.outputs.owner }}"
+          TOKEN="${{ steps.setup.outputs.token }}"
+          OWNER_PATH="${{ steps.owner_type.outputs.owner_path }}"
+
+          BASE_URL="https://api.github.com/${OWNER_PATH}/${OWNER}/packages/container/${PACKAGE_NAME}/versions"
+          URL="${BASE_URL}?per_page=100"
+          TEMP_FILE="/tmp/all_versions.ndjson"
+
+          > "$TEMP_FILE"
+          PAGE=1
+          while [[ -n "$URL" && $PAGE -le 10 ]]; do
+            echo "Fetching: $URL"
+            
+            curl -s -H "Authorization: token $TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                -D headers.txt \
+                "$URL" > page.json
+            
+            jq -c '.[]' page.json >> "$TEMP_FILE"
+            
+            URL=$(grep -i '^link:' headers.txt | grep -o '<[^>]*>;\s*rel="next"' | sed 's/<\(.*\)>.*/\1/' || true)
+            PAGE=$((PAGE + 1))
+          done
+          rm -f headers.txt page.json
+
+          echo "temp_file=$TEMP_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Filter untagged versions
+        id: filter
+        shell: bash
+        run: |
+          OLDER_THAN="${{ steps.setup.outputs.older_than }}"
+          TOLERANCE="${{ steps.setup.outputs.tolerance }}"
+          TEMP_FILE="${{ steps.fetch.outputs.temp_file }}"
+
+          TO_DELETE=$(jq -c -s \
+            --arg older_than "$OLDER_THAN" \
+            --arg tolerance "$TOLERANCE" \
+            '
+              def abs: if . < 0 then -. else . end;
+              def to_ms: sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime * 1000;
+
+              . as $all |
+              ($older_than | tonumber) as $older_than_val |
+              ($tolerance | tonumber) as $tolerance_val |
+              now as $now |
+              (if $older_than_val > 0 then ($now - ($older_than_val * 86400)) * 1000 else 0 end) as $cutoff_ms |
+
+              [ $all[] | select((.metadata.container.tags // []) | length > 0) | .created_at | to_ms ] as $tagged_times |
+
+              $all[] |
+              select((.metadata.container.tags // []) | length == 0) |
+              . as $item |
+              (.created_at | to_ms) as $created_ms |
+
+              (if $older_than_val > 0 then $created_ms < $cutoff_ms else true end) as $pass_age |
+              
+              (if $tolerance_val <= 0 then true 
+              else [ $tagged_times[] | select(($created_ms - .) | abs < $tolerance_val) ] | length == 0 
+              end) as $pass_tolerance |
+
+              select($pass_age and $pass_tolerance) |
+              {id, name}
+            ' "$TEMP_FILE")
+          
+          rm -f "$TEMP_FILE"
+
+          if [[ -z "$TO_DELETE" ]]; then
+            DELETE_COUNT=0
+          else
+            DELETE_COUNT=$(echo "$TO_DELETE" | wc -l | tr -d ' ')
+          fi
+          
+          echo "Found $DELETE_COUNT untagged images no longer necessary"
+
+          {
+            echo 'to_delete<<EOF'
+            echo "$TO_DELETE"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          
+          echo "delete_count=$DELETE_COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Delete untagged versions
+        id: delete
+        shell: bash
+        run: |
+          PACKAGE_NAME="${{ steps.setup.outputs.package_name }}"
+          OWNER="${{ steps.setup.outputs.owner }}"
+          TOKEN="${{ steps.setup.outputs.token }}"
+          OWNER_PATH="${{ steps.owner_type.outputs.owner_path }}"
+          DELETE_COUNT="${{ steps.filter.outputs.delete_count }}"
+          TO_DELETE='${{ steps.filter.outputs.to_delete }}'
+
+          if [[ "$DELETE_COUNT" -gt 0 && -n "$TO_DELETE" ]]; then
+            while IFS= read -r item; do
+              [[ -z "$item" ]] && continue
+
+              # $item 是完整的单行 JSON，如 {"id":123,"name":"sha256:..."}
+              ID=$(echo "$item" | jq -r '.id')
+              NAME=$(echo "$item" | jq -r '.name')
+
+              DELETE_URL="https://api.github.com/${OWNER_PATH}/${OWNER}/packages/container/${PACKAGE_NAME}/versions/${ID}"
+              
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                -H "Authorization: token $TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "$DELETE_URL")
+              
+              if [[ "$HTTP_CODE" == "204" ]]; then
+                echo "Deleted untagged container image '${NAME}'"
+              else
+                echo "::warning:: Failed to delete ${NAME} (ID: ${ID}). HTTP Status: ${HTTP_CODE}"
+              fi
+            done <<< "$TO_DELETE"
+          else
+            echo "No images to delete."
+          fi
+
+          echo "Cleanup completed."

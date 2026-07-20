@@ -120,7 +120,10 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	if err != nil {
 		return nil, err
 	}
-	ts, ts_str, _ := getTimestamp(d.conf.secret)
+	ts, tsStr, err := getTimestamp(d.conf.secret)
+	if err != nil {
+		return nil, err
+	}
 
 	params := []string{
 		"uuid=" + url.QueryEscape(d.UUID),
@@ -129,9 +132,9 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 		"devModel=chrome",
 		"devVersion=" + url.QueryEscape(d.conf.devVersion),
 		"appVersion=",
-		"timestamp=" + ts_str,
+		"timestamp=" + tsStr,
 		"appToken=" + url.QueryEscape(d.Token),
-		"enable=0",
+		"enable=1",
 	}
 
 	downloadId, err := mopan.AesEncrypt([]byte(fmt.Sprintf("%s|%s", file.GetID(), d.userID)), d.conf.secret)
@@ -149,10 +152,12 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	u.RawQuery = strings.Join(params, "&")
 	realURL := u.String()
 	// get the url after redirect
-	req := base.NoRedirectClient.R()
-
+	req := base.NoRedirectClient.R().SetContext(ctx)
 	req.SetHeaders(map[string]string{
-		"Referer": d.conf.site + "/",
+		"Origin":          d.conf.site,
+		"Referer":         d.conf.site + "/",
+		"Accept-Encoding": "gzip",
+		"Accept-Language": "zh-CN,zh;q=0.9,en-US,en;q=0.8",
 	})
 	if d.Addition.Ip != "" {
 		req.SetHeader("X-Forwarded-For", d.Addition.Ip)
@@ -162,10 +167,13 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode() == 302 {
-		realURL = res.Header().Get("location")
+	location := res.Header().Get("location")
+	if location != "" && utils.SliceContains([]int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect}, res.StatusCode()) {
+		realURL = location
+	} else if res.StatusCode() == http.StatusOK && location != "" {
+		realURL = location
 	} else {
-		return nil, fmt.Errorf("redirect failed, status: %d, msg: %s", res.StatusCode(), utils.Json.Get(res.Body(), "msg").ToString())
+		return nil, fmt.Errorf("redirect failed, status: %d, location: %s, msg: %s", res.StatusCode(), location, utils.Json.Get(res.Body(), "msg").ToString())
 	}
 	link := model.Link{URL: realURL}
 	return &link, nil

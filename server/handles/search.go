@@ -2,7 +2,6 @@ package handles
 
 import (
 	"path"
-	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -51,7 +50,7 @@ func Search(c *gin.Context) {
 	}
 	var filteredNodes []model.SearchNode
 	for _, node := range nodes {
-		if !strings.HasPrefix(node.Parent, user.BasePath) {
+		if !utils.IsSubPath(user.BasePath, node.Parent) {
 			continue
 		}
 		meta, err := op.GetNearestMeta(node.Parent)

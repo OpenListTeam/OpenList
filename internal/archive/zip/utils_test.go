@@ -3,12 +3,18 @@ package zip
 import (
 	"testing"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/stretchr/testify/require"
 )
+
+func TestZipAcceptsLivpExtension(t *testing.T) {
+	_, ok := tool.Tools[".livp"]
+	require.True(t, ok)
+}
 
 func setNonEFSZipEncoding(value string) {
 	op.Cache.SetSetting(conf.NonEFSZipEncoding, &model.SettingItem{
