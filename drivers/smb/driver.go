@@ -45,7 +45,8 @@ func (d *SMB) Init(ctx context.Context) error {
 }
 
 func (d *SMB) Drop(ctx context.Context) error {
-	return d.closeFS()
+	_ = d.closeFS()
+	return nil
 }
 
 func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
