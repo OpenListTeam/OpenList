@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/local"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -242,4 +243,79 @@ func TestMultipartAbort(t *testing.T) {
 	if err := b.AbortMultipartUpload(ctx, "mp", "abort.txt", "nope"); err != nil {
 		t.Fatalf("abort unknown upload returned error: %+v", err)
 	}
+}
+
+func TestMultipartReapExpired(t *testing.T) {
+	ctx := context.Background()
+	b, _ := setupMultipartBackend(t)
+
+	// An active upload (fresh lastActivity) must be kept.
+	freshID, err := b.CreateMultipartUpload(ctx, "mp", "fresh.txt", nil)
+	if err != nil {
+		t.Fatalf("create fresh upload: %+v", err)
+	}
+
+	// An abandoned upload (stale lastActivity) must be reaped.
+	staleID, err := b.CreateMultipartUpload(ctx, "mp", "stale.txt", nil)
+	if err != nil {
+		t.Fatalf("create stale upload: %+v", err)
+	}
+	if _, err := b.UploadPart(ctx, "mp", "stale.txt", staleID, 1, 3, strings.NewReader("abc")); err != nil {
+		t.Fatalf("upload stale part: %+v", err)
+	}
+	staleState, _ := b.uploads.Load(staleID)
+	staleDir := staleState.(*multipartState).dir
+	if _, err := os.Stat(staleDir); err != nil {
+		t.Fatalf("stale temp dir missing: %+v", err)
+	}
+
+	// Force the stale upload's lastActivity well into the past.
+	ttl := 30 * time.Minute
+	now := time.Now()
+	staleState.(*multipartState).mu.Lock()
+	staleState.(*multipartState).lastActivity = now.Add(-2 * ttl)
+	staleState.(*multipartState).mu.Unlock()
+
+	b.reapExpired(now, ttl)
+
+	if _, ok := b.uploads.Load(staleID); ok {
+		t.Fatal("stale upload still tracked after reap")
+	}
+	if _, err := os.Stat(staleDir); !os.IsNotExist(err) {
+		t.Fatalf("stale temp dir still exists after reap (err=%v)", err)
+	}
+	if _, ok := b.uploads.Load(freshID); !ok {
+		t.Fatal("fresh upload was reaped, should have been kept")
+	}
+}
+
+func TestMultipartCleanupStaleDirs(t *testing.T) {
+	b, _ := setupMultipartBackend(t)
+
+	tempDir := conf.Conf.TempDir
+	staleDir, err := os.MkdirTemp(tempDir, multipartDirPrefix+"*")
+	if err != nil {
+		t.Fatalf("mkdir stale dir: %v", err)
+	}
+	freshDir, err := os.MkdirTemp(tempDir, multipartDirPrefix+"*")
+	if err != nil {
+		t.Fatalf("mkdir fresh dir: %v", err)
+	}
+	// Age the stale dir beyond the TTL; leave the fresh dir young.
+	ttl := 30 * time.Minute
+	now := time.Now()
+	past := now.Add(-2 * ttl)
+	if err := os.Chtimes(staleDir, past, past); err != nil {
+		t.Fatalf("chtimes stale dir: %v", err)
+	}
+
+	b.cleanupStaleDirs(now, ttl)
+
+	if _, err := os.Stat(staleDir); !os.IsNotExist(err) {
+		t.Fatalf("stale dir should have been removed (err=%v)", err)
+	}
+	if _, err := os.Stat(freshDir); err != nil {
+		t.Fatalf("fresh dir should have been kept (err=%v)", err)
+	}
+	_ = os.RemoveAll(freshDir)
 }
