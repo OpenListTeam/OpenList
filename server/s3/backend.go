@@ -45,11 +45,13 @@ type s3Backend struct {
 
 // newBackend creates a new SimpleBucketBackend.
 func newBackend() gofakes3.Backend {
-	return &s3Backend{
+	b := &s3Backend{
 		meta:    new(sync.Map),
 		uploads: new(sync.Map),
 		listDir: getDirEntries,
 	}
+	b.startReaper()
+	return b
 }
 
 // ListBuckets always returns the default bucket.

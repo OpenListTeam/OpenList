@@ -43,11 +43,12 @@ type multipartPart struct {
 // the parts map is guarded by mu. Each part is written to its own file inside
 // dir, so concurrent UploadPart calls for different part numbers are safe.
 type multipartState struct {
-	bucket  string
-	object  string
-	meta    map[string]string
-	dir     string
-	created time.Time
+	bucket       string
+	object       string
+	meta         map[string]string
+	dir          string
+	created      time.Time
+	lastActivity time.Time // updated under mu on create and each part upload
 
 	mu    sync.Mutex
 	parts map[int]*multipartPart
@@ -72,13 +73,15 @@ func (b *s3Backend) CreateMultipartUpload(ctx context.Context, bucket, object st
 	}
 
 	uploadID := gofakes3.UploadID(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	now := time.Now()
 	state := &multipartState{
-		bucket:  bucket,
-		object:  object,
-		meta:    meta,
-		dir:     dir,
-		created: time.Now(),
-		parts:   map[int]*multipartPart{},
+		bucket:       bucket,
+		object:       object,
+		meta:         meta,
+		dir:          dir,
+		created:      now,
+		lastActivity: now,
+		parts:        map[int]*multipartPart{},
 	}
 
 	b.uploads.Store(uploadID, state)
@@ -135,6 +138,7 @@ func (b *s3Backend) UploadPart(ctx context.Context, bucket, object string, uploa
 	md5hex := hex.EncodeToString(hash.Sum(nil))
 	etag := fmt.Sprintf("%q", md5hex)
 
+	now := time.Now()
 	state.mu.Lock()
 	if old := state.parts[partNumber]; old != nil && old.path != partPath {
 		_ = os.Remove(old.path)
@@ -143,8 +147,9 @@ func (b *s3Backend) UploadPart(ctx context.Context, bucket, object string, uploa
 		path:    partPath,
 		size:    n,
 		md5hex:  md5hex,
-		updated: time.Now(),
+		updated: now,
 	}
+	state.lastActivity = now
 	state.mu.Unlock()
 
 	partFailed = false
@@ -269,4 +274,106 @@ func (b *s3Backend) removeUpload(uploadID gofakes3.UploadID) {
 func (p *multipartPart) md5Bytes() []byte {
 	b, _ := hex.DecodeString(p.md5hex)
 	return b
+}
+
+// Defaults for reaping abandoned multipart uploads. A client that never sends
+// CompleteMultipartUpload or AbortMultipartUpload would otherwise leave part
+// files on disk forever; the reaper drops uploads inactive for longer than the
+// TTL.
+const (
+	defaultMultipartTTL = 24 * time.Hour
+	multipartDirPrefix  = "s3-multipart-"
+)
+
+// multipartTTL returns the configured max idle time for an upload before the
+// reaper reclaims it. It parses conf.Conf.S3.MultipartTTL as a Go duration
+// (e.g. "24h", "30m"); an empty or invalid value falls back to the default.
+func multipartTTL() time.Duration {
+	if v := conf.Conf.S3.MultipartTTL; v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultMultipartTTL
+}
+
+// reapInterval derives the reaper tick interval from the TTL: a quarter of the
+// TTL, clamped to [10s, 1h].
+func reapInterval(ttl time.Duration) time.Duration {
+	d := ttl / 4
+	if d < 10*time.Second {
+		d = 10 * time.Second
+	}
+	if d > time.Hour {
+		d = time.Hour
+	}
+	return d
+}
+
+// startReaper removes leftover part directories from a previous process crash
+// and then launches a background goroutine that periodically reclaims uploads
+// inactive for longer than the TTL. The goroutine runs for the lifetime of the
+// process; NewServer is called once at startup, so there is one reaper per
+// backend instance.
+func (b *s3Backend) startReaper() {
+	b.cleanupStaleDirs(time.Now(), multipartTTL())
+	interval := reapInterval(multipartTTL())
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for now := range ticker.C {
+			b.reapExpired(now, multipartTTL())
+		}
+	}()
+}
+
+// reapExpired removes uploads whose lastActivity is older than ttl. It is safe
+// to call concurrently with UploadPart/Complete/Abort: each candidate is
+// re-checked under its own lock and removed atomically via removeUpload.
+func (b *s3Backend) reapExpired(now time.Time, ttl time.Duration) {
+	b.uploads.Range(func(key, val any) bool {
+		state := val.(*multipartState)
+		state.mu.Lock()
+		expired := now.Sub(state.lastActivity) > ttl
+		state.mu.Unlock()
+		if !expired {
+			return true
+		}
+		b.removeUpload(key.(gofakes3.UploadID))
+		log.Infof("s3 multipart: reaped abandoned upload %s (%s/%s)", key, state.bucket, state.object)
+		return true
+	})
+}
+
+// cleanupStaleDirs removes s3-multipart-* directories under TempDir that are
+// older than ttl. This reclaims part files left behind by a previous process
+// crash; dirs younger than ttl are left alone so a concurrently-starting
+// sibling backend instance is never disturbed.
+func (b *s3Backend) cleanupStaleDirs(now time.Time, ttl time.Duration) {
+	tempDir := conf.Conf.TempDir
+	if tempDir == "" {
+		tempDir = os.TempDir()
+	}
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		return
+	}
+	cutoff := now.Add(-ttl)
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), multipartDirPrefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(tempDir, e.Name())); err != nil {
+			log.Warnf("s3 multipart: failed to clean up stale dir %s: %v", e.Name(), err)
+		} else {
+			log.Infof("s3 multipart: removed stale multipart dir %s", e.Name())
+		}
+	}
 }
