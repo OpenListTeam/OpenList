@@ -200,12 +200,17 @@ func (d *Open115) getFromParent(ctx context.Context, path, id string) (model.Obj
 		}
 		parentInfo, err := d.client.GetFolderInfoByPath(ctx, parent)
 		if err != nil {
-			if isObjectNotFound(err) {
-				return nil, errs.ObjectNotFound
+			if !isObjectNotFound(err) {
+				return nil, err
 			}
-			return nil, err
+			parentObj, err := d.getFromParent(ctx, parent, "")
+			if err != nil {
+				return nil, err
+			}
+			parentID = parentObj.GetID()
+		} else {
+			parentID = parentInfo.FileID
 		}
-		parentID = parentInfo.FileID
 	}
 	files, err := d.List(ctx, &Obj{Fid: parentID, Fc: "0"}, model.ListArgs{})
 	if err != nil {
