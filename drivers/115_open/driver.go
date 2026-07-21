@@ -2,7 +2,6 @@ package _115_open
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	stdpath "path"
@@ -171,19 +170,53 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = stdpath.Join(d.parentPath, path)
 	resp, err := d.client.GetFolderInfoByPath(ctx, path)
 	if err != nil {
-		if errors.Is(err, sdk.ErrObjectNotFound) {
-			return nil, errs.ObjectNotFound
+		if isObjectNotFound(err) {
+			return d.getFromParent(ctx, path, "")
 		}
 		return nil, err
 	}
-	return &Obj{
+	obj := &Obj{
 		Fid:  resp.FileID,
 		Fn:   resp.FileName,
 		Fc:   resp.FileCategory,
 		Sha1: resp.Sha1,
 		Pc:   resp.PickCode,
 		FS:   resp.SizeByte,
-	}, nil
+		Upt:  parseTime(resp.UTime),
+		UpPt: parseTime(resp.PTime),
+	}
+	if !obj.IsDir() && (obj.GetSize() <= 0 || obj.ModTime().Unix() <= 0) {
+		return d.getFromParent(ctx, path, obj.GetID())
+	}
+	return obj, nil
+}
+
+func (d *Open115) getFromParent(ctx context.Context, path, id string) (model.Obj, error) {
+	parent, name := stdpath.Split(path)
+	parentID := d.GetRootId()
+	if stdpath.Clean(parent) != stdpath.Clean(d.parentPath) {
+		if err := d.WaitLimit(ctx); err != nil {
+			return nil, err
+		}
+		parentInfo, err := d.client.GetFolderInfoByPath(ctx, parent)
+		if err != nil {
+			if isObjectNotFound(err) {
+				return nil, errs.ObjectNotFound
+			}
+			return nil, err
+		}
+		parentID = parentInfo.FileID
+	}
+	files, err := d.List(ctx, &Obj{Fid: parentID, Fc: "0"}, model.ListArgs{})
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		if (id != "" && file.GetID() == id) || (id == "" && file.GetName() == name) {
+			return file, nil
+		}
+	}
+	return nil, errs.ObjectNotFound
 }
 
 func (d *Open115) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
