@@ -195,6 +195,7 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 func (d *Open115) getFromParent(ctx context.Context, path, id string) (model.Obj, error) {
 	path = stdpath.Clean(path)
 	parent, name := stdpath.Split(path)
+	parent = stdpath.Clean(parent)
 	parentID := d.GetRootId()
 	if stdpath.Clean(parent) != stdpath.Clean(d.parentPath) {
 		if err := d.WaitLimit(ctx); err != nil {
