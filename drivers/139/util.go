@@ -2,7 +2,6 @@ package _139
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -48,6 +47,10 @@ func (d *Yun139) isFamily() bool {
 
 func (d *Yun139) isGroup() bool {
 	return d.Type == MetaGroup
+}
+
+func (d *Yun139) isShare() bool {
+	return d.Type == MetaShare
 }
 
 func encodeURIComponent(str string) string {
@@ -493,15 +496,9 @@ func (d *Yun139) groupGetLink(contentId string, path string) (string, error) {
 	return jsoniter.Get(res, "data", "downloadURL").ToString(), nil
 }
 
-func (d *Yun139) sharePost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
-	crypto := NewYunCrypto()
-	encryptedBody, err := crypto.Encrypt(data)
-	if err != nil {
-		return nil, err
-	}
+var shareAesKeyHex = hex.EncodeToString([]byte("PVGDwmcvfs1uV3d1"))
 
-	url := "https://share-kd-njs.yun.139.com" + pathname
-	req := base.RestyClient.R()
+func (d *Yun139) shareHeaders() map[string]string {
 	auth := d.getAuthorization()
 	if auth != "" && !strings.HasPrefix(strings.ToLower(auth), "basic ") {
 		auth = "Basic " + auth
@@ -510,7 +507,7 @@ func (d *Yun139) sharePost(pathname string, data interface{}, resp interface{}) 
 		"User-Agent":        "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
 		"Accept":            "application/json, text/plain, */*",
 		"Content-Type":      "application/json;charset=UTF-8",
-		"X-Deviceinfo":      "||9|12.27.0|firefox|140.0|12b780037221ab547c682223327dc9cd||linux unknow|1920X526|zh-CN|||",
+		"X-Deviceinfo":      "||9|12.27.0|firefox|140.0|||linux unknow|1920X526|zh-CN|||",
 		"hcy-cool-flag":     "1",
 		"CMS-DEVICE":        "default",
 		"x-m4c-caller":      "PC",
@@ -521,30 +518,12 @@ func (d *Yun139) sharePost(pathname string, data interface{}, resp interface{}) 
 	if auth != "" {
 		headers["Authorization"] = auth
 	}
-	req.SetHeaders(headers)
-	req.SetBody(encryptedBody)
-
-	res, err := req.Post(url)
-	if err != nil {
-		return nil, err
-	}
-
-	decryptedText, err := crypto.Decrypt(res.String())
-	if err != nil {
-		log.Errorf("[139Share] Decryption failed, raw response: %s", res.String())
-		return nil, fmt.Errorf("decryption failed: %v, raw: %s", err, res.String())
-	}
-
-	if resp != nil {
-		if err = utils.Json.Unmarshal([]byte(decryptedText), resp); err != nil {
-			return nil, err
-		}
-	}
-	return []byte(decryptedText), nil
+	return headers
 }
 
-func (d *Yun139) shareGetFiles(pCaID string) ([]model.Obj, error) {
-	return d.shareGetFilesWithRef(shareRef{LinkID: d.Addition.LinkID, NodeID: pCaID}, pCaID)
+func (d *Yun139) sharePost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
+	url := "https://share-kd-njs.yun.139.com/yun-share" + pathname
+	return d.yun139EncryptedRequest(url, data, d.shareHeaders(), shareAesKeyHex, resp)
 }
 
 type shareRef struct {
@@ -604,6 +583,32 @@ func decodeShareRefs(id string) ([]shareRef, bool) {
 	return refs, true
 }
 
+func (d *Yun139) shareEntries() []struct{ LinkID, Password string } {
+	raw := strings.TrimSpace(d.LinkID)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';'
+	})
+	entries := make([]struct{ LinkID, Password string }, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		entry := struct{ LinkID, Password string }{LinkID: part}
+		if linkID, password, ok := strings.Cut(part, "#"); ok {
+			entry.LinkID = strings.TrimSpace(linkID)
+			entry.Password = strings.TrimSpace(password)
+		}
+		if entry.LinkID != "" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
 func (d *Yun139) shareRootEntries() []shareRef {
 	entries := d.shareEntries()
 	refs := make([]shareRef, 0, len(entries))
@@ -629,7 +634,7 @@ func (d *Yun139) shareGetFilesWithRef(ref shareRef, pCaID string) ([]model.Obj, 
 		},
 	}
 	var resp ShareListResp
-	_, err := d.sharePost("/yun-share/richlifeApp/devapp/IOutLink/getOutLinkInfoV6", data, &resp)
+	_, err := d.sharePost("/richlifeApp/devapp/IOutLink/getOutLinkInfoV6", data, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -749,10 +754,6 @@ func (d *Yun139) shareGetObj(reqPath string) (model.Obj, error) {
 	return currentObj, nil
 }
 
-func (d *Yun139) shareGetLink(coID string, linkType string) (*model.Link, error) {
-	return d.shareGetLinkWithRef(shareRef{LinkID: d.Addition.LinkID, NodeID: "root"}, coID, linkType)
-}
-
 func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string) (*model.Link, error) {
 	data := base.Json{
 		"getContentInfoFromOutLinkReq": base.Json{
@@ -763,7 +764,7 @@ func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string)
 		},
 	}
 	var resp ShareContentInfoResp
-	body, err := d.sharePost("/yun-share/richlifeApp/devapp/IOutLink/getContentInfoFromOutLink", data, &resp)
+	body, err := d.sharePost("/richlifeApp/devapp/IOutLink/getContentInfoFromOutLink", data, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -794,7 +795,7 @@ func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string)
 		},
 	}
 	var downloadResp ShareDownloadResp
-	downloadBody, err := d.sharePost("/yun-share/richlifeApp/devapp/IOutLink/dlFromOutLinkV3", downloadReq, &downloadResp)
+	downloadBody, err := d.sharePost("/richlifeApp/devapp/IOutLink/dlFromOutLinkV3", downloadReq, &downloadResp)
 	if err != nil {
 		return nil, err
 	}
@@ -1367,71 +1368,6 @@ func aesCbcDecrypt(ciphertext []byte, key []byte, iv []byte) ([]byte, error) {
 	mode := cipher.NewCBCDecrypter(block, iv)
 	mode.CryptBlocks(decrypted, ciphertext)
 	return pkcs7_unpad(decrypted)
-}
-
-type YunCrypto struct {
-	Key       []byte
-	BlockSize int
-}
-
-func NewYunCrypto() *YunCrypto {
-	return &YunCrypto{
-		Key:       []byte("PVGDwmcvfs1uV3d1"),
-		BlockSize: aes.BlockSize,
-	}
-}
-
-func (y *YunCrypto) Encrypt(data interface{}) (string, error) {
-	jsonData, err := utils.Json.Marshal(data)
-	if err != nil {
-		return "", err
-	}
-	iv := make([]byte, y.BlockSize)
-	if _, err := io.ReadFull(crypto_rand.Reader, iv); err != nil {
-		return "", err
-	}
-	ciphertext, err := aesCbcEncrypt(jsonData, y.Key, iv)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(append(iv, ciphertext...)), nil
-}
-
-func (y *YunCrypto) Decrypt(b64Data string) (string, error) {
-	b64Data = strings.Join(strings.Fields(b64Data), "")
-	raw, err := base64.StdEncoding.DecodeString(b64Data)
-	if err != nil {
-		return "", err
-	}
-	if len(raw) < y.BlockSize {
-		return "", errors.New("data too short")
-	}
-	iv := raw[:y.BlockSize]
-	ciphertext := raw[y.BlockSize:]
-	decrypted, err := aesCbcDecrypt(ciphertext, y.Key, iv)
-	if err != nil {
-		if len(ciphertext)%aes.BlockSize != 0 {
-			return "", err
-		}
-		block, blockErr := aes.NewCipher(y.Key)
-		if blockErr != nil {
-			return "", blockErr
-		}
-		decrypted = make([]byte, len(ciphertext))
-		cipher.NewCBCDecrypter(block, iv).CryptBlocks(decrypted, ciphertext)
-		decrypted = []byte(strings.TrimSpace(string(decrypted)))
-	}
-	if len(decrypted) > 2 && decrypted[0] == 0x1f && decrypted[1] == 0x8b {
-		reader, err := gzip.NewReader(bytes.NewReader(decrypted))
-		if err == nil {
-			defer reader.Close()
-			unzipped, err := io.ReadAll(reader)
-			if err == nil {
-				return string(unzipped), nil
-			}
-		}
-	}
-	return string(decrypted), nil
 }
 
 // sortedJsonStringify 对 JSON 对象进行排序并字符串化。
