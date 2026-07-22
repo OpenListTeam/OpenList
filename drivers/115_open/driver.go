@@ -186,13 +186,14 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 		Upt:  parseTime(resp.UTime),
 		UpPt: parseTime(resp.PTime),
 	}
-	if !obj.IsDir() && (obj.GetSize() <= 0 || obj.ModTime().Unix() <= 0) {
+	if !obj.IsDir() && obj.ModTime().Unix() <= 0 {
 		return d.getFromParent(ctx, path, obj.GetID())
 	}
 	return obj, nil
 }
 
 func (d *Open115) getFromParent(ctx context.Context, path, id string) (model.Obj, error) {
+	path = stdpath.Clean(path)
 	parent, name := stdpath.Split(path)
 	parentID := d.GetRootId()
 	if stdpath.Clean(parent) != stdpath.Clean(d.parentPath) {

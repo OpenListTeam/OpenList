@@ -37,8 +37,8 @@ github.com/OpenListTeam/115-sdk-go v0.2.4 h1:dVoEz3Pm996n/ZCuRckQvz36w938uNHjPrS
 github.com/OpenListTeam/115-sdk-go v0.2.4/go.mod h1:cfvitk2lwe6036iNi2h+iNxwxWDifKZsSvNtrur5BqU=
 github.com/OpenListTeam/115-sdk-go v0.2.5 h1:E4O7GZmEXlGnouZ/e9//xU7NepT9JJkWtnF3O/VSb08=
 github.com/OpenListTeam/115-sdk-go v0.2.5/go.mod h1:cfvitk2lwe6036iNi2h+iNxwxWDifKZsSvNtrur5BqU=
-github.com/OpenListTeam/115-sdk-go v0.2.6-0.20260722041919-7799bb98e739 h1:LD8k4PvtmA0QDMAX5DSYh+bTwSaMbfXOZd8XWzKV530=
-github.com/OpenListTeam/115-sdk-go v0.2.6-0.20260722041919-7799bb98e739/go.mod h1:cfvitk2lwe6036iNi2h+iNxwxWDifKZsSvNtrur5BqU=
+github.com/OpenListTeam/115-sdk-go v0.2.6 h1:ehXyStvncvn4qRBuknor3kyGZtUmHc0+stjF2ByVdFo=
+github.com/OpenListTeam/115-sdk-go v0.2.6/go.mod h1:cfvitk2lwe6036iNi2h+iNxwxWDifKZsSvNtrur5BqU=
 github.com/OpenListTeam/go-cache v0.1.0 h1:eV2+FCP+rt+E4OCJqLUW7wGccWZNJMV0NNkh+uChbAI=
 github.com/OpenListTeam/go-cache v0.1.0/go.mod h1:AHWjKhNK3LE4rorVdKyEALDHoeMnP8SjiNyfVlB+Pz4=
 github.com/OpenListTeam/gsync v0.1.0 h1:ywzGybOvA3lW8K1BUjKZ2IUlT2FSlzPO4DOazfYXjcs=
