@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -137,8 +138,16 @@ func (d *WebDav) Get(ctx context.Context, _path string) (model.Obj, error) {
 		return nil, err
 	}
 
+	name := info.Name()
+	if name == "" {
+		// gowebdav's Stat derives the name from the WebDAV `displayname`
+		// property, which some servers leave empty. Fall
+		// back to the path basename so the object keeps a usable name.
+		name = path.Base(strings.TrimSuffix(_path, "/"))
+	}
+
 	return &model.Object{
-		Name:     info.Name(),
+		Name:     name,
 		Size:     info.Size(),
 		Modified: info.ModTime(),
 		IsFolder: info.IsDir(),

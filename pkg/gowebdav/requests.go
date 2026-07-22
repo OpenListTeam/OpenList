@@ -41,6 +41,16 @@ func (c *Client) req(method, path string, body io.Reader, intercept func(*http.R
 		return nil, err
 	}
 
+	return c.redirectReq(method, path, r, retryBuf, canRetry, intercept, 0)
+}
+
+// maxRedirects bounds how many times a request is redirected to avoid loops.
+const maxRedirects = 10
+
+// redirectReq applies the client headers, authentication and interceptors to
+// the given request, performs it, and handles redirects and authentication
+// challenges. r may already carry an absolute URL when following a redirect.
+func (c *Client) redirectReq(method, path string, r *http.Request, retryBuf io.Reader, canRetry bool, intercept func(*http.Request), redirects int) (req *http.Response, err error) {
 	for k, vals := range c.headers {
 		for _, v := range vals {
 			r.Header.Add(k, v)
@@ -66,6 +76,48 @@ func (c *Client) req(method, path string, body io.Reader, intercept func(*http.R
 	rs, err := c.c.Do(r)
 	if err != nil {
 		return nil, err
+	}
+
+	// Some WebDAV servers respond to a request issued on a collection
+	// without a trailing slash with a redirect (301/302). The standard
+	// library client mishandles redirects for non-GET methods: it
+	// downgrades them to GET and drops the request body, which breaks
+	// methods such as PROPFIND. Follow the redirect ourselves while
+	// preserving the original method and request body.
+	if rs.StatusCode == http.StatusMovedPermanently || rs.StatusCode == http.StatusFound ||
+		rs.StatusCode == http.StatusTemporaryRedirect || rs.StatusCode == http.StatusPermanentRedirect {
+		loc := rs.Header.Get("Location")
+		if loc != "" && redirects < maxRedirects {
+			rs.Body.Close()
+			u, err := r.URL.Parse(loc)
+			if err != nil {
+				return nil, err
+			}
+			// Skip a self-redirect (Location points back to the same URL) to
+			// avoid an immediate loop; the maxRedirects counter still bounds
+			// any longer redirect chains.
+			if u.String() == r.URL.String() {
+				return rs, nil
+			}
+			var newBody io.Reader
+			if retryBuf != nil {
+				if sk, ok := retryBuf.(io.Seeker); ok {
+					if _, err = sk.Seek(0, io.SeekStart); err != nil {
+						return nil, err
+					}
+				}
+				newBody = retryBuf
+			} else if method != http.MethodGet && method != http.MethodHead {
+				// Body is not re-readable (e.g. an unbuffered PUT), so we
+				// cannot follow the redirect with the payload intact.
+				return rs, nil
+			}
+			r, err = http.NewRequest(method, u.String(), newBody)
+			if err != nil {
+				return nil, err
+			}
+			return c.redirectReq(method, path, r, retryBuf, canRetry, intercept, redirects+1)
+		}
 	}
 
 	if rs.StatusCode == 401 && auth.Type() == "NoAuth" {

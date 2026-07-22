@@ -62,7 +62,15 @@ func (n *NoAuth) Authorize(req *http.Request, method string, path string) {
 
 // NewClient creates a new instance of client
 func NewClient(uri, user, pw string) *Client {
-	return &Client{FixSlash(uri), make(http.Header), nil, &http.Client{}, sync.Mutex{}, &NoAuth{user, pw}}
+	c := &Client{FixSlash(uri), make(http.Header), nil, &http.Client{}, sync.Mutex{}, &NoAuth{user, pw}}
+	// Disable the standard library's automatic redirect handling: for
+	// non-GET methods it downgrades the request to GET and drops the body,
+	// which breaks WebDAV methods such as PROPFIND. Redirects are followed
+	// manually in redirectReq while preserving the method and body.
+	c.c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return c
 }
 
 // SetHeader lets us set arbitrary headers for a given client
