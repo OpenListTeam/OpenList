@@ -149,7 +149,7 @@ require (
 )
 
 require (
-	github.com/OpenListTeam/115-sdk-go v0.2.5
+	github.com/OpenListTeam/115-sdk-go v0.2.6-0.20260722041919-7799bb98e739
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/blevesearch/go-faiss v1.0.25 // indirect

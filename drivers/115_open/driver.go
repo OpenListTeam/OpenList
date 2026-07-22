@@ -2,6 +2,7 @@ package _115_open
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	stdpath "path"
@@ -170,7 +171,7 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = stdpath.Join(d.parentPath, path)
 	resp, err := d.client.GetFolderInfoByPath(ctx, path)
 	if err != nil {
-		if isObjectNotFound(err) {
+		if errors.Is(err, sdk.ErrObjectNotFound) {
 			return d.getFromParent(ctx, path, "")
 		}
 		return nil, err
@@ -200,7 +201,7 @@ func (d *Open115) getFromParent(ctx context.Context, path, id string) (model.Obj
 		}
 		parentInfo, err := d.client.GetFolderInfoByPath(ctx, parent)
 		if err != nil {
-			if !isObjectNotFound(err) {
+			if !errors.Is(err, sdk.ErrObjectNotFound) {
 				return nil, err
 			}
 			parentObj, err := d.getFromParent(ctx, parent, "")
