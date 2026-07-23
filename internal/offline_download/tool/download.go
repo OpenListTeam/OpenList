@@ -25,6 +25,8 @@ type DownloadTask struct {
 	TempDir           string       `json:"temp_dir"`
 	DeletePolicy      DeletePolicy `json:"delete_policy"`
 	Toolname          string       `json:"toolname"`
+	FileName          string       `json:"file_name,omitempty"`
+	FileSize          int64        `json:"file_size,omitempty"`
 	Status            string       `json:"-"`
 	Signal            chan int     `json:"-"`
 	GID               string       `json:"-"`
@@ -154,8 +156,12 @@ func (t *DownloadTask) Update() (bool, error) {
 		return false, nil
 	}
 	t.callStatusRetried = 0
+	totalBytes := max(info.FileSize, info.TotalBytes)
+	t.SetFileInfo(info.FileName, totalBytes)
+	if totalBytes > 0 {
+		t.SetTotalBytes(totalBytes)
+	}
 	t.SetProgress(info.Progress)
-	t.SetTotalBytes(info.TotalBytes)
 	t.Status = fmt.Sprintf("[%s]: %s", t.tool.Name(), info.Status)
 	if info.NewGID != "" {
 		log.Debugf("followen by: %+v", info.NewGID)
@@ -214,6 +220,26 @@ func (t *DownloadTask) Transfer() error {
 
 func (t *DownloadTask) GetName() string {
 	return fmt.Sprintf("download %s to (%s)", t.Url, t.DstDirPath)
+}
+
+func (t *DownloadTask) SetFileInfo(fileName string, fileSize int64) {
+	if fileName != "" {
+		t.FileName = fileName
+	}
+	if fileSize > 0 {
+		t.FileSize = fileSize
+	}
+}
+
+func (t *DownloadTask) GetFileName() string {
+	return t.FileName
+}
+
+func (t *DownloadTask) GetFileSize() int64 {
+	if t.FileSize > 0 {
+		return t.FileSize
+	}
+	return t.GetTotalBytes()
 }
 
 func (t *DownloadTask) GetStatus() string {
