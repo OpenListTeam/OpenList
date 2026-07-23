@@ -24,6 +24,7 @@ require (
 	github.com/aws/aws-sdk-go v1.55.8
 	github.com/blevesearch/bleve/v2 v2.5.2
 	github.com/bmatcuk/doublestar/v4 v4.9.1
+	github.com/caarlos0/env/v11 v11.4.1
 	github.com/caarlos0/env/v9 v9.0.0
 	github.com/charmbracelet/bubbles v0.21.1
 	github.com/charmbracelet/bubbletea v1.3.10
