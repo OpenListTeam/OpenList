@@ -67,7 +67,7 @@ Dank u voor uw ondersteuning en begrip
   - [x] [MediaFire](https://www.mediafire.com)
   - [x] [Mediatrack](https://www.mediatrack.cn)
   - [x] [ProtonDrive](https://proton.me/drive)
-  - [x] [139yun](https://yun.139.com) (Persoonlijk, Familie, Groep)
+  - [x] [139yun](https://yun.139.com) (Persoonlijk, Familie, Groep, Delen)
   - [x] [YandexDisk](https://disk.yandex.com)
   - [x] [BaiduNetdisk](http://pan.baidu.com)
   - [x] [Terabox](https://www.terabox.com/main)
