@@ -3,6 +3,7 @@ package s3
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path"
@@ -17,6 +18,13 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	log "github.com/sirupsen/logrus"
+)
+
+const (
+	maxCopyObjectSize   int64 = 5 * 1000 * 1000 * 1000
+	defaultCopyPartSize int64 = 100 * 1024 * 1024
+	maxCopyPartSize     int64 = 5 * 1024 * 1024 * 1024
+	maxCopyParts        int64 = 10000
 )
 
 // do others that not defined in Driver interface
@@ -212,17 +220,20 @@ func (d *S3) listV2(dirPath string, args model.ListArgs) ([]model.Obj, error) {
 	return files, nil
 }
 
-func (d *S3) copy(ctx context.Context, src string, dst string, isDir bool) error {
+func (d *S3) copy(ctx context.Context, src string, dst string, size int64, isDir bool) error {
 	if isDir {
 		return d.copyDir(ctx, src, dst)
 	}
-	return d.copyFile(ctx, src, dst)
+	return d.copyFile(ctx, src, dst, size)
 }
 
-func (d *S3) copyFile(ctx context.Context, src string, dst string) error {
+func (d *S3) copyFile(ctx context.Context, src string, dst string, size int64) error {
 	srcKey := getKey(src, false)
 	dstKey := getKey(dst, false)
 	encodedKey := strings.ReplaceAll(url.PathEscape(d.Bucket+"/"+srcKey), "+", "%2B")
+	if size > maxCopyObjectSize {
+		return d.copyFileMultipart(ctx, srcKey, dstKey, encodedKey, size)
+	}
 	input := &s3.CopyObjectInput{
 		Bucket:     &d.Bucket,
 		CopySource: aws.String(encodedKey),
@@ -230,6 +241,106 @@ func (d *S3) copyFile(ctx context.Context, src string, dst string) error {
 	}
 	_, err := d.client.CopyObjectWithContext(ctx, input)
 	return err
+}
+
+func (d *S3) copyFileMultipart(ctx context.Context, srcKey, dstKey, encodedKey string, size int64) (err error) {
+	head, err := d.client.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: &d.Bucket,
+		Key:    &srcKey,
+	})
+	if err != nil {
+		return err
+	}
+	if head.ContentLength != nil {
+		size = *head.ContentLength
+	}
+	partSize, err := getCopyPartSize(size)
+	if err != nil {
+		return err
+	}
+	createInput := &s3.CreateMultipartUploadInput{
+		Bucket:                  &d.Bucket,
+		Key:                     &dstKey,
+		CacheControl:            head.CacheControl,
+		ContentDisposition:      head.ContentDisposition,
+		ContentEncoding:         head.ContentEncoding,
+		ContentLanguage:         head.ContentLanguage,
+		ContentType:             head.ContentType,
+		Metadata:                head.Metadata,
+		WebsiteRedirectLocation: head.WebsiteRedirectLocation,
+	}
+	if head.Expires != nil {
+		if expires, parseErr := http.ParseTime(*head.Expires); parseErr == nil {
+			createInput.Expires = &expires
+		}
+	}
+	created, err := d.client.CreateMultipartUploadWithContext(ctx, createInput)
+	if err != nil {
+		return err
+	}
+	uploadID := aws.StringValue(created.UploadId)
+	if uploadID == "" {
+		return errors.New("create multipart upload returned an empty upload ID")
+	}
+	completed := false
+	defer func() {
+		if completed {
+			return
+		}
+		_, abortErr := d.client.AbortMultipartUploadWithContext(context.WithoutCancel(ctx), &s3.AbortMultipartUploadInput{
+			Bucket:   &d.Bucket,
+			Key:      &dstKey,
+			UploadId: &uploadID,
+		})
+		if abortErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to abort multipart copy: %w", abortErr))
+		}
+	}()
+
+	parts := make([]*s3.CompletedPart, 0, (size+partSize-1)/partSize)
+	for start, partNumber := int64(0), int64(1); start < size; start, partNumber = start+partSize, partNumber+1 {
+		end := min(start+partSize, size) - 1
+		copied, copyErr := d.client.UploadPartCopyWithContext(ctx, &s3.UploadPartCopyInput{
+			Bucket:          &d.Bucket,
+			CopySource:      &encodedKey,
+			CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
+			Key:             &dstKey,
+			PartNumber:      &partNumber,
+			UploadId:        &uploadID,
+		})
+		if copyErr != nil {
+			return copyErr
+		}
+		if copied.CopyPartResult == nil || aws.StringValue(copied.CopyPartResult.ETag) == "" {
+			return fmt.Errorf("multipart copy part %d returned an empty ETag", partNumber)
+		}
+		parts = append(parts, &s3.CompletedPart{
+			ETag:       copied.CopyPartResult.ETag,
+			PartNumber: &partNumber,
+		})
+	}
+
+	_, err = d.client.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   &d.Bucket,
+		Key:      &dstKey,
+		UploadId: &uploadID,
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: parts,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	completed = true
+	return nil
+}
+
+func getCopyPartSize(size int64) (int64, error) {
+	partSize := max(defaultCopyPartSize, (size-1)/maxCopyParts+1)
+	if partSize > maxCopyPartSize {
+		return 0, fmt.Errorf("object size %d exceeds multipart copy limit", size)
+	}
+	return partSize, nil
 }
 
 func (d *S3) copyDir(ctx context.Context, src string, dst string) error {
@@ -243,7 +354,7 @@ func (d *S3) copyDir(ctx context.Context, src string, dst string) error {
 		if obj.IsDir() {
 			err = d.copyDir(ctx, cSrc, cDst)
 		} else {
-			err = d.copyFile(ctx, cSrc, cDst)
+			err = d.copyFile(ctx, cSrc, cDst, obj.GetSize())
 		}
 		if err != nil {
 			return err
