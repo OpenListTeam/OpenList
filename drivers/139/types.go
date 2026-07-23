@@ -9,6 +9,7 @@ const (
 	MetaFamily      string = "family"
 	MetaGroup       string = "group"
 	MetaPersonalNew string = "personal_new"
+	MetaShare       string = "share"
 )
 
 type BaseResp struct {
@@ -283,6 +284,56 @@ type PersonalUploadUrlResp struct {
 		UploadId  string             `json:"uploadId"`
 		PartInfos []PersonalPartInfo `json:"partInfos"`
 	}
+}
+
+type ShareCatalog struct {
+	CaID   string `json:"caId"`
+	CaName string `json:"caName"`
+	UdTime string `json:"udTime"`
+}
+
+type ShareContent struct {
+	CoID        string `json:"coId"`
+	CoName      string `json:"coName"`
+	CoSize      int64  `json:"coSize"`
+	CoType      int    `json:"coType"`
+	UdTime      string `json:"udTime"`
+	CoPath      string `json:"coPath"`
+	PresentURL  string `json:"presentURL"`
+	DownloadURL string `json:"downloadURL"`
+}
+
+type ShareListResp struct {
+	BaseResp
+	Data struct {
+		LKName string         `json:"lkName"`
+		Passwd string         `json:"password"`
+		CaLst  []ShareCatalog `json:"caLst"`
+		CoLst  []ShareContent `json:"coLst"`
+	} `json:"data"`
+}
+
+type ShareContentInfo struct {
+	PresentURL  string `json:"presentURL"`
+	DownloadURL string `json:"cdnDownLoadUrl"`
+}
+
+type ShareDownloadResp struct {
+	BaseResp
+	Data struct {
+		DownloadURL string `json:"downloadURL"`
+		RedrURL     string `json:"redrUrl"`
+		ExtInfo     struct {
+			CDNDownloadURL string `json:"cdnDownloadUrl"`
+		} `json:"extInfo"`
+	} `json:"data"`
+}
+
+type ShareContentInfoResp struct {
+	BaseResp
+	Data struct {
+		ContentInfo ShareContentInfo `json:"contentInfo"`
+	} `json:"data"`
 }
 
 type QueryRoutePolicyResp struct {
