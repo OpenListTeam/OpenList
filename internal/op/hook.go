@@ -2,7 +2,9 @@ package op
 
 import (
 	"context"
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -81,6 +83,17 @@ var settingItemHooks = map[string]SettingItemHook{
 	},
 	conf.IgnoreDirectLinkParams: func(item *model.SettingItem) error {
 		conf.SlicesMap[conf.IgnoreDirectLinkParams] = strings.Split(item.Value, ",")
+		return nil
+	},
+	conf.MultipartChunkSize: func(item *model.SettingItem) error {
+		size, err := strconv.Atoi(strings.TrimSpace(item.Value))
+		if err != nil || size < 1 {
+			// deliberately a plain error: SaveSettings formats hook errors
+			// with %+v, which would dump a full stack trace into the UI
+			// notification for stack-carrying errors
+			return fmt.Errorf("multipart chunk size must be a positive integer (MB), got %q", item.Value)
+		}
+		item.Value = strconv.Itoa(size)
 		return nil
 	},
 }
