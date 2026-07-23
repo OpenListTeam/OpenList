@@ -75,10 +75,10 @@ func (br *PipeBuffer) Read(p []byte) (int, error) {
 	off := br.offR
 	block := br.block
 	br.ioWg.Add(1)
+	defer br.ioWg.Done()
 	br.rw.Unlock()
 
 	n, err := block.ReadAt(p[:min(len(p), canRead)], int64(off))
-	br.ioWg.Done()
 
 	br.rw.Lock()
 	br.offR += n
@@ -113,10 +113,10 @@ func (br *PipeBuffer) Write(p []byte) (int, error) {
 	off := br.offW
 	block := br.block
 	br.ioWg.Add(1)
+	defer br.ioWg.Done()
 	br.rw.Unlock()
 
 	n, err := block.WriteAt(p[:min(canWrite, len(p))], int64(off))
-	br.ioWg.Done()
 
 	br.rw.Lock()
 	br.offW += n
@@ -136,6 +136,7 @@ func (br *PipeBuffer) Write(p []byte) (int, error) {
 }
 
 func (br *PipeBuffer) Reset(limit int) error {
+	br.ioWg.Wait()
 	br.rw.Lock()
 	defer br.rw.Unlock()
 	if br.block == nil {
