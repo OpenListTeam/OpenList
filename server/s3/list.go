@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itsHenry35/gofakes3"
+	"github.com/OpenListTeam/gofakes3"
 	log "github.com/sirupsen/logrus"
 )
 

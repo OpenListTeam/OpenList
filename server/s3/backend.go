@@ -23,7 +23,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/itsHenry35/gofakes3"
+	"github.com/OpenListTeam/gofakes3"
 	"github.com/ncw/swift/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -33,17 +33,23 @@ var (
 	timeFormat  = "Mon, 2 Jan 2006 15:04:05 GMT"
 )
 
-// s3Backend implements the gofacess3.Backend interface to make an S3
-// backend for gofakes3
+// s3Backend implements the gofakes3.Backend interface to make an S3
+// backend for gofakes3. It also implements gofakes3.MultipartBackend so that
+// multipart uploads are streamed to local temp files part-by-part and
+// assembled into storage on completion, instead of being buffered in memory.
 type s3Backend struct {
-	meta *sync.Map
+	meta    *sync.Map
+	uploads *sync.Map // map[gofakes3.UploadID]*multipartState
 }
 
 // newBackend creates a new SimpleBucketBackend.
 func newBackend() gofakes3.Backend {
-	return &s3Backend{
-		meta: new(sync.Map),
+	b := &s3Backend{
+		meta:    new(sync.Map),
+		uploads: new(sync.Map),
 	}
+	b.startReaper()
+	return b
 }
 
 // ListBuckets always returns the default bucket.
@@ -232,9 +238,20 @@ func (b *s3Backend) PutObject(
 	meta map[string]string,
 	input io.Reader, size int64,
 ) (result gofakes3.PutObjectResult, err error) {
+	return result, b.putStream(ctx, bucketName, objectName, meta, input, size)
+}
+
+// putStream stores the given object into the underlying storage. It is shared
+// by PutObject and the multipart-upload Complete step so both paths apply the
+// same directory creation, metadata and ignore rules.
+func (b *s3Backend) putStream(
+	ctx context.Context, bucketName, objectName string,
+	meta map[string]string,
+	input io.Reader, size int64,
+) error {
 	bucket, err := getBucketByName(bucketName)
 	if err != nil {
-		return result, err
+		return err
 	}
 	bucketPath := bucket.Path
 
@@ -260,15 +277,15 @@ func (b *s3Backend) PutObject(
 			log.Debugf("reqPath: %s not found and objectName contains /, need to makeDir", reqPath)
 			err = fs.MakeDir(ctx, reqPath)
 			if err != nil {
-				return result, errors.WithMessagef(err, "failed to makeDir, reqPath: %s", reqPath)
+				return errors.WithMessagef(err, "failed to makeDir, reqPath: %s", reqPath)
 			}
 		} else {
-			return result, gofakes3.KeyNotFound(objectName)
+			return gofakes3.KeyNotFound(objectName)
 		}
 	}
 
 	if isDir {
-		return result, nil
+		return nil
 	}
 
 	var ti time.Time
@@ -294,7 +311,7 @@ func (b *s3Backend) PutObject(
 	}
 	// Check if system file should be ignored
 	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
-		return result, errs.IgnoredSystemFile
+		return errs.IgnoredSystemFile
 	}
 	stream := &stream.FileStream{
 		Obj:      &obj,
@@ -304,18 +321,12 @@ func (b *s3Backend) PutObject(
 
 	err = fs.PutDirectly(ctx, reqPath, stream)
 	if err != nil {
-		return result, err
+		return err
 	}
-
-	// if err := stream.Close(); err != nil {
-	// 	// remove file when close error occurred (FsPutErr)
-	// 	_ = fs.Remove(ctx, fp)
-	// 	return result, err
-	// }
 
 	b.meta.Store(fp, meta)
 
-	return result, nil
+	return nil
 }
 
 // DeleteMulti deletes multiple objects in a single request.
