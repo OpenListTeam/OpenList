@@ -3,9 +3,11 @@ package smb
 import (
 	"context"
 	"errors"
+	"net"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -20,7 +22,11 @@ type SMB struct {
 	lastConnTime atomic.Int64
 	model.Storage
 	Addition
-	fs *smb2.Share
+	connMu    sync.Mutex
+	activeOps int
+	conn      net.Conn
+	session   *smb2.Session
+	fs        *smb2.Share
 }
 
 func (d *SMB) Config() driver.Config {
@@ -39,18 +45,18 @@ func (d *SMB) Init(ctx context.Context) error {
 }
 
 func (d *SMB) Drop(ctx context.Context) error {
-	if d.fs != nil {
-		_ = d.fs.Umount()
-	}
+	_ = d.closeFS()
 	return nil
 }
 
 func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	if err := d.checkConn(ctx); err != nil {
+	fs, release, err := d.acquireConn(ctx)
+	if err != nil {
 		return nil, err
 	}
+	defer release()
 	fullPath := dir.GetPath()
-	rawFiles, err := d.fs.ReadDir(fullPath)
+	rawFiles, err := fs.ReadDir(fullPath)
 	if err != nil {
 		d.cleanLastConnTime()
 		return nil, err
@@ -73,11 +79,18 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 }
 
 func (d *SMB) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	if err := d.checkConn(ctx); err != nil {
+	fs, release, err := d.acquireConn(ctx)
+	if err != nil {
 		return nil, err
 	}
+	needRelease := true
+	defer func() {
+		if needRelease {
+			release()
+		}
+	}()
 	fullPath := file.GetPath()
-	remoteFile, err := d.fs.Open(fullPath)
+	remoteFile, err := fs.Open(fullPath)
 	if err != nil {
 		d.cleanLastConnTime()
 		return nil, err
@@ -88,19 +101,25 @@ func (d *SMB) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		Limiter: stream.ServerDownloadLimit,
 		Ctx:     ctx,
 	}
+	needRelease = false
 	return &model.Link{
-		RangeReader:      stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
-		SyncClosers:      utils.NewSyncClosers(remoteFile),
+		RangeReader: stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
+		SyncClosers: utils.NewSyncClosers(remoteFile, utils.CloseFunc(func() error {
+			release()
+			return nil
+		})),
 		RequireReference: true,
 	}, nil
 }
 
 func (d *SMB) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	if err := d.checkConn(ctx); err != nil {
+	fs, release, err := d.acquireConn(ctx)
+	if err != nil {
 		return err
 	}
+	defer release()
 	fullPath := filepath.Join(parentDir.GetPath(), dirName)
-	err := d.fs.MkdirAll(fullPath, 0700)
+	err = fs.MkdirAll(fullPath, 0700)
 	if err != nil {
 		d.cleanLastConnTime()
 		return err
@@ -110,12 +129,14 @@ func (d *SMB) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) 
 }
 
 func (d *SMB) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	if err := d.checkConn(ctx); err != nil {
+	fs, release, err := d.acquireConn(ctx)
+	if err != nil {
 		return err
 	}
+	defer release()
 	srcPath := srcObj.GetPath()
 	dstPath := filepath.Join(dstDir.GetPath(), srcObj.GetName())
-	err := d.fs.Rename(srcPath, dstPath)
+	err = fs.Rename(srcPath, dstPath)
 	if err != nil {
 		d.cleanLastConnTime()
 		return err
@@ -125,12 +146,14 @@ func (d *SMB) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *SMB) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	if err := d.checkConn(ctx); err != nil {
+	fs, release, err := d.acquireConn(ctx)
+	if err != nil {
 		return err
 	}
+	defer release()
 	srcPath := srcObj.GetPath()
 	dstPath := filepath.Join(filepath.Dir(srcPath), newName)
-	err := d.fs.Rename(srcPath, dstPath)
+	err = fs.Rename(srcPath, dstPath)
 	if err != nil {
 		d.cleanLastConnTime()
 		return err
@@ -140,12 +163,13 @@ func (d *SMB) Rename(ctx context.Context, srcObj model.Obj, newName string) erro
 }
 
 func (d *SMB) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	if err := d.checkConn(ctx); err != nil {
+	_, release, err := d.acquireConn(ctx)
+	if err != nil {
 		return err
 	}
+	defer release()
 	srcPath := srcObj.GetPath()
 	dstPath := filepath.Join(dstDir.GetPath(), srcObj.GetName())
-	var err error
 	if srcObj.IsDir() {
 		err = d.CopyDir(srcPath, dstPath)
 	} else {
@@ -160,15 +184,16 @@ func (d *SMB) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *SMB) Remove(ctx context.Context, obj model.Obj) error {
-	if err := d.checkConn(ctx); err != nil {
+	fs, release, err := d.acquireConn(ctx)
+	if err != nil {
 		return err
 	}
-	var err error
+	defer release()
 	fullPath := obj.GetPath()
 	if obj.IsDir() {
-		err = d.fs.RemoveAll(fullPath)
+		err = fs.RemoveAll(fullPath)
 	} else {
-		err = d.fs.Remove(fullPath)
+		err = fs.Remove(fullPath)
 	}
 	if err != nil {
 		d.cleanLastConnTime()
@@ -179,11 +204,13 @@ func (d *SMB) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	if err := d.checkConn(ctx); err != nil {
+	fs, release, err := d.acquireConn(ctx)
+	if err != nil {
 		return err
 	}
+	defer release()
 	fullPath := filepath.Join(dstDir.GetPath(), stream.GetName())
-	out, err := d.fs.Create(fullPath)
+	out, err := fs.Create(fullPath)
 	if err != nil {
 		d.cleanLastConnTime()
 		return err
@@ -192,7 +219,7 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	defer func() {
 		_ = out.Close()
 		if errors.Is(err, context.Canceled) {
-			_ = d.fs.Remove(fullPath)
+			_ = fs.Remove(fullPath)
 		}
 	}()
 	err = utils.CopyWithCtx(ctx, out, driver.NewLimitedUploadStream(ctx, stream), stream.GetSize(), up)
@@ -203,13 +230,16 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 }
 
 func (d *SMB) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	if err := d.checkConn(ctx); err != nil {
-		return nil, err
-	}
-	stat, err := d.fs.Statfs(d.RootFolderPath)
+	fs, release, err := d.acquireConn(ctx)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
+	stat, err := fs.Statfs(d.RootFolderPath)
+	if err != nil {
+		return nil, err
+	}
+	d.updateLastConnTime()
 	total := int64(stat.BlockSize() * stat.TotalBlockCount())
 	free := int64(stat.BlockSize() * stat.AvailableBlockCount())
 	return &model.StorageDetails{
