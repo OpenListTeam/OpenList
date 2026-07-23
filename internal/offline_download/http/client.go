@@ -80,15 +80,21 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 	}
 	fileSize := resp.ContentLength
 	if streamPut {
-		if fileSize == 0 {
-			start, end, _ := http_range.ParseContentRange(resp.Header.Get("Content-Range"))
-			fileSize = start + end
+		if fileSize <= 0 {
+			start, end, err := http_range.ParseContentRange(resp.Header.Get("Content-Range"))
+			if err == nil && start == 0 && end >= start {
+				fileSize = end - start + 1
+			}
 		}
-		task.SetTotalBytes(fileSize)
+		if fileSize > 0 {
+			task.SetTotalBytes(fileSize)
+		}
 		task.TempDir = filename
 		return nil
 	}
-	task.SetTotalBytes(fileSize)
+	if fileSize > 0 {
+		task.SetTotalBytes(fileSize)
+	}
 	// save to temp dir
 	if err := os.MkdirAll(task.TempDir, os.ModePerm); err != nil {
 		return err
@@ -104,7 +110,16 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 	}
 	defer file.Close()
 	err = utils.CopyWithCtx(task.Ctx(), file, resp.Body, fileSize, task.SetProgress)
-	return err
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	task.SetTotalBytes(info.Size())
+	task.SetProgress(100)
+	return nil
 }
 
 func init() {
