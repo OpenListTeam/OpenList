@@ -1,7 +1,7 @@
 ### Default image is base. You can add other support by modifying BASE_IMAGE_TAG. The following parameters are supported: base (default), aria2, ffmpeg, aio
 ARG BASE_IMAGE_TAG=base
 
-FROM alpine:edge AS builder
+FROM alpine:edge@sha256:9a341ff2287c54b86425cbee0141114d811ae69d88a36019087be6d896cef241 AS builder
 LABEL stage=go-builder
 WORKDIR /app/
 RUN apk add --no-cache bash curl jq gcc git go musl-dev
