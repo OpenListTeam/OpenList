@@ -16,9 +16,12 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -175,7 +178,7 @@ func (d *S3) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *S3) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	err := d.copy(ctx, srcObj.GetPath(), stdpath.Join(stdpath.Dir(srcObj.GetPath()), newName), srcObj.IsDir())
+	err := d.copy(ctx, srcObj.GetPath(), stdpath.Join(stdpath.Dir(srcObj.GetPath()), newName), srcObj.GetSize(), srcObj.IsDir())
 	if err != nil {
 		return err
 	}
@@ -183,14 +186,14 @@ func (d *S3) Rename(ctx context.Context, srcObj model.Obj, newName string) error
 }
 
 func (d *S3) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	return d.copy(ctx, srcObj.GetPath(), stdpath.Join(dstDir.GetPath(), srcObj.GetName()), srcObj.IsDir())
+	return d.copy(ctx, srcObj.GetPath(), stdpath.Join(dstDir.GetPath(), srcObj.GetName()), srcObj.GetSize(), srcObj.IsDir())
 }
 
 func (d *S3) Remove(ctx context.Context, obj model.Obj) error {
 	if obj.IsDir() {
 		return d.removeDir(ctx, obj.GetPath())
 	}
-	return d.removeFile(obj.GetPath())
+	return d.removeFile(ctx, obj.GetPath())
 }
 
 func (d *S3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
@@ -243,4 +246,82 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 	}, nil
 }
 
+// implements driver.Getter interface
+func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
+	// try to get object as a file using HeadObject
+	rootPath := d.GetRootPath()
+	// Avoid double-prepending root path when path already contains it.
+	// This happens when obj.GetPath() from a previous Get call is passed back
+	// to op.List → op.Get → d.Get.
+	if rootPath != "/" && utils.IsSubPath(rootPath, path) {
+		// path already includes the root prefix
+	} else {
+		path = stdpath.Join(rootPath, path)
+	}
+	key := getKey(path, false)
+	headInput := &s3.HeadObjectInput{
+		Bucket: &d.Bucket,
+		Key:    &key,
+	}
+	headOutput, err := d.client.HeadObjectWithContext(ctx, headInput)
+	if err == nil {
+		// Object exists as a file
+		fileName := stdpath.Base(path)
+		return &model.Object{
+			Name:     fileName,
+			Size:     *headOutput.ContentLength,
+			Modified: *headOutput.LastModified,
+			Path:     path,
+		}, nil
+	}
+	var awsErr awserr.Error
+	if errors.As(err, &awsErr) && awsErr.Code() != "NotFound" {
+		return nil, errors.WithMessage(err, "failed to head object")
+	}
+
+	// If HeadObject fails with 404, check if it's a directory
+	prefix := getKey(path, true)
+	var contents []*s3.Object
+	var commonPrefixes []*s3.CommonPrefix
+	switch d.ListObjectVersion {
+	case "v1":
+		listInput := &s3.ListObjectsInput{
+			Bucket:  &d.Bucket,
+			Prefix:  &prefix,
+			MaxKeys: aws.Int64(1), // Only need to check if at least one object exists
+		}
+		listResult, err := d.client.ListObjectsWithContext(ctx, listInput)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to list objects with prefix")
+		}
+		contents = listResult.Contents
+		commonPrefixes = listResult.CommonPrefixes
+	case "v2":
+		listInput := &s3.ListObjectsV2Input{
+			Bucket:  &d.Bucket,
+			Prefix:  &prefix,
+			MaxKeys: aws.Int64(1),
+		}
+		listResult, err := d.client.ListObjectsV2WithContext(ctx, listInput)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to list objects v2 with prefix")
+		}
+		contents = listResult.Contents
+		commonPrefixes = listResult.CommonPrefixes
+	default:
+		return nil, fmt.Errorf("unsupported ListObjectVersion: %s", d.ListObjectVersion)
+	}
+	if len(contents) > 0 || len(commonPrefixes) > 0 {
+		dirName := stdpath.Base(path)
+		return &model.Object{
+			Name:     dirName,
+			Modified: d.Modified,
+			IsFolder: true,
+			Path:     path,
+		}, nil
+	}
+	return nil, errs.ObjectNotFound
+}
+
 var _ driver.Driver = (*S3)(nil)
+var _ driver.Getter = (*S3)(nil)

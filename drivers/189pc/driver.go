@@ -87,7 +87,12 @@ func (y *Cloud189PC) Init(ctx context.Context) (err error) {
 		}
 
 		// 先尝试用Token刷新，之后尝试登陆
-		if y.Addition.RefreshToken != "" {
+		if y.Addition.AccessToken != "" {
+			y.tokenInfo = &AppSessionResp{AccessToken: y.Addition.AccessToken, RefreshToken: y.Addition.RefreshToken}
+			if err = y.refreshSession(); err != nil {
+				return err
+			}
+		} else if y.Addition.RefreshToken != "" {
 			y.tokenInfo = &AppSessionResp{RefreshToken: y.Addition.RefreshToken}
 			if err = y.refreshToken(); err != nil {
 				return err
@@ -257,6 +262,16 @@ func (y *Cloud189PC) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.
 	if err = y.WaitBatchTask("MOVE", resp.TaskID, time.Millisecond*400); err != nil {
 		return nil, err
 	}
+
+	// 跟随移动 torrent 文件
+	if !srcObj.IsDir() {
+		var srcFolderId string
+		if f, ok := srcObj.(*Cloud189File); ok {
+			srcFolderId = f.ParentID
+		}
+		y.torrentFollowMove(srcFolderId, srcObj.GetName(), dstDir)
+	}
+
 	return srcObj, nil
 }
 
@@ -271,29 +286,41 @@ func (y *Cloud189PC) Rename(ctx context.Context, srcObj model.Obj, newName strin
 		queryParam["familyId"] = y.FamilyID
 	}
 
-	var newObj model.Obj
-	switch f := srcObj.(type) {
+	switch srcObj.(type) {
 	case *Cloud189File:
 		fullUrl += "/renameFile.action"
 		queryParam["fileId"] = srcObj.GetID()
 		queryParam["destFileName"] = newName
-		newObj = &Cloud189File{Icon: f.Icon} // 复用预览
 	case *Cloud189Folder:
 		fullUrl += "/renameFolder.action"
 		queryParam["folderId"] = srcObj.GetID()
 		queryParam["destFolderName"] = newName
-		newObj = &Cloud189Folder{}
 	default:
 		return nil, errs.NotSupport
 	}
-
+	var resp RenameResp
 	_, err := y.request(fullUrl, method, func(req *resty.Request) {
 		req.SetContext(ctx).SetQueryParams(queryParam)
-	}, nil, newObj, isFamily)
+	}, nil, &resp, isFamily)
 	if err != nil {
+		if code, ok := resp.ResCode.(string); ok && code == "FileAlreadyExists" {
+			return nil, errs.ObjectAlreadyExists
+		}
 		return nil, err
 	}
-	return newObj, nil
+
+	// 跟随重命名 torrent 文件
+	if f, ok := srcObj.(*Cloud189File); ok {
+		y.torrentFollowRename(f.ParentID, srcObj.GetName(), newName)
+	}
+
+	switch f := srcObj.(type) {
+	case *Cloud189File:
+		return resp.toFile(f), nil
+	case *Cloud189Folder:
+		return resp.toFolder(), nil
+	}
+	return nil, errs.NotSupport
 }
 
 func (y *Cloud189PC) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
@@ -308,7 +335,20 @@ func (y *Cloud189PC) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err != nil {
 		return err
 	}
-	return y.WaitBatchTask("COPY", resp.TaskID, time.Second)
+	if err = y.WaitBatchTask("COPY", resp.TaskID, time.Second); err != nil {
+		return err
+	}
+
+	// 跟随复制 torrent 文件
+	if !srcObj.IsDir() {
+		var srcFolderId string
+		if f, ok := srcObj.(*Cloud189File); ok {
+			srcFolderId = f.ParentID
+		}
+		y.torrentFollowCopy(srcFolderId, srcObj.GetName(), dstDir)
+	}
+
+	return nil
 }
 
 func (y *Cloud189PC) Remove(ctx context.Context, obj model.Obj) error {
@@ -332,6 +372,7 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 
 	// 响应时间长,按需启用
 	if y.Addition.RapidUpload && !stream.IsForceStreamUpload() {
+		// 尝试妙传
 		if newObj, err := y.RapidUpload(ctx, dstDir, stream, isFamily, overwrite); err == nil {
 			return newObj, nil
 		}
@@ -340,10 +381,11 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	uploadMethod := y.UploadMethod
 	if stream.IsForceStreamUpload() {
 		uploadMethod = "stream"
-	}
-
-	// 旧版上传家庭云也有限制
-	if uploadMethod == "old" {
+	} else if y.Addition.RapidUpload && stream.GetFile() != nil {
+		// 文件流支持随机读取，走FastUpload计算MD5并尝试秒传
+		uploadMethod = "rapid"
+	} else if uploadMethod == "old" {
+		// 旧版上传家庭云也有限制
 		return y.OldUpload(ctx, dstDir, stream, up, isFamily, overwrite)
 	}
 

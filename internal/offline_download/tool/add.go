@@ -2,9 +2,11 @@ package tool
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	stdpath "path"
 	"path/filepath"
+	"strings"
 
 	_115 "github.com/OpenListTeam/OpenList/v4/drivers/115"
 	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
@@ -67,9 +69,27 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	}
 	// try putting url
 	if args.Tool == "SimpleHttp" {
+		if isSimpleHttpSchemeUnsupported(args.URL) {
+			return nil, fmt.Errorf("SimpleHttp tool does not support this URL scheme, please use aria2 or other tools for magnet/ed2k links")
+		}
 		err = tryPutUrl(ctx, args.DstDirPath, args.URL)
 		if err == nil || !errors.Is(err, errs.NotImplement) {
 			return nil, err
+		}
+		// Fallback to creating a download task when storage lacks native PutURL support.
+	}
+
+	// ed2k 链接自动路由：如果当前工具不支持 ed2k，自动尝试使用迅雷系工具
+	if isEd2kURL(args.URL) {
+		if !isEd2kCapableTool(args.Tool) {
+			// 尝试找到一个可用的支持 ed2k 的工具
+			fallbackTool, fallbackName := findEd2kCapableTool()
+			if fallbackTool != nil {
+				// 使用找到的迅雷工具替代
+				args.Tool = fallbackName
+			} else {
+				return nil, fmt.Errorf("ed2k protocol is not supported by %s. Please configure and use Thunder/ThunderX/ThunderBrowser for ed2k links", args.Tool)
+			}
 		}
 	}
 
@@ -170,4 +190,49 @@ func tryPutUrl(ctx context.Context, path, urlStr string) error {
 		dstName = "UnnamedURL"
 	}
 	return fs.PutURL(ctx, path, dstName, urlStr)
+}
+
+func isSimpleHttpSchemeUnsupported(urlStr string) bool {
+	u, err := url.Parse(strings.TrimSpace(urlStr))
+	if err != nil || u.Scheme == "" {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	return scheme != "http" && scheme != "https"
+}
+
+// isEd2kURL 检测 URL 是否为 ed2k 协议
+func isEd2kURL(urlStr string) bool {
+	return strings.HasPrefix(strings.ToLower(urlStr), "ed2k://")
+}
+
+// ed2kCapableTools 支持 ed2k 协议的工具列表（迅雷系）
+var ed2kCapableTools = []string{"Thunder", "ThunderX", "ThunderBrowser"}
+
+// isEd2kCapableTool 检查工具是否支持 ed2k 协议
+func isEd2kCapableTool(toolName string) bool {
+	for _, t := range ed2kCapableTools {
+		if t == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+// findEd2kCapableTool 查找一个可用的支持 ed2k 的工具
+func findEd2kCapableTool() (Tool, string) {
+	for _, name := range ed2kCapableTools {
+		t, err := Tools.Get(name)
+		if err != nil {
+			continue
+		}
+		if t.IsReady() {
+			return t, name
+		}
+		// 尝试初始化
+		if _, err := t.Init(); err == nil && t.IsReady() {
+			return t, name
+		}
+	}
+	return nil, ""
 }

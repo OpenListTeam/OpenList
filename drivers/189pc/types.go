@@ -166,10 +166,11 @@ type FamilyInfoResp struct {
 /*文件部分*/
 // 文件
 type Cloud189File struct {
-	ID   String `json:"id"`
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Md5  string `json:"md5"`
+	ID       String `json:"id"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Md5      string `json:"md5"`
+	ParentID string `json:"-"` // 由 getFiles 设置，不从 JSON 解析
 
 	LastOpTime Time `json:"lastOpTime"`
 	CreateDate Time `json:"createDate"`
@@ -426,4 +427,42 @@ type CapacityResp struct {
 		UsedSize  int64 `json:"usedSize"`
 	} `json:"familyCapacityInfo"`
 	TotalSize uint64 `json:"totalSize"`
+}
+
+type RenameResp struct {
+	ResMsg      string `json:"res_message"`
+	CreateDate  Time   `json:"createDate"`
+	FileCate    int    `json:"fileCata"`
+	ID          String `json:"id"`
+	LastOpTime  Time   `json:"lastOpTime"`
+	MD5         string `json:"md5"`
+	MediaType   int    `json:"mediaType"`
+	Name        string `json:"name"`
+	Oeientation int    `json:"orientation"`
+	ParentID    int64  `json:"parentId"`
+	Rev         string `json:"rev"`
+	Size        int64  `json:"size"`
+	ResCode     any    `json:"res_code"` // int or string
+}
+
+func (r *RenameResp) toFile(f *Cloud189File) *Cloud189File {
+	return &Cloud189File{
+		ID:         r.ID,
+		Name:       r.Name,
+		Size:       r.Size,
+		Md5:        r.MD5,
+		LastOpTime: r.LastOpTime,
+		CreateDate: r.CreateDate,
+		Icon:       f.Icon,
+	}
+}
+
+func (r *RenameResp) toFolder() *Cloud189Folder {
+	return &Cloud189Folder{
+		ID:         r.ID,
+		Name:       r.Name,
+		ParentID:   r.ParentID,
+		LastOpTime: r.LastOpTime,
+		CreateDate: r.CreateDate,
+	}
 }

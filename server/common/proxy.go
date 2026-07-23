@@ -59,6 +59,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 	defer res.Body.Close()
 
 	maps.Copy(w.Header(), res.Header)
+	w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(file.GetName()))
 	w.WriteHeader(res.StatusCode)
 	if r.Method == http.MethodHead {
 		return nil

@@ -2,7 +2,6 @@ package handles
 
 import (
 	"path"
-	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -44,27 +43,22 @@ func Search(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	nodes, total, err := search.Search(c, req.SearchReq)
+	nodes, total, err := search.SearchFiltered(c, req.SearchReq, func(node model.SearchNode) bool {
+		if !utils.IsSubPath(user.BasePath, node.Parent) {
+			return false
+		}
+		meta, err := op.GetNearestMeta(node.Parent)
+		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+			return false
+		}
+		return common.CanAccess(user, meta, path.Join(node.Parent, node.Name), req.Password)
+	})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	var filteredNodes []model.SearchNode
-	for _, node := range nodes {
-		if !strings.HasPrefix(node.Parent, user.BasePath) {
-			continue
-		}
-		meta, err := op.GetNearestMeta(node.Parent)
-		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			continue
-		}
-		if !common.CanAccess(user, meta, path.Join(node.Parent, node.Name), req.Password) {
-			continue
-		}
-		filteredNodes = append(filteredNodes, node)
-	}
 	common.SuccessResp(c, common.PageResp{
-		Content: utils.MustSliceConvert(filteredNodes, nodeToSearchResp),
+		Content: utils.MustSliceConvert(nodes, nodeToSearchResp),
 		Total:   total,
 	})
 }

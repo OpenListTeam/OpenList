@@ -91,6 +91,16 @@ func GetSharingUnwrapPath(sharing *model.Sharing, path string) (unwrapPath strin
 	if len(sharing.Files) == 0 {
 		return "", errors.New("cannot get actual path of an invalid sharing")
 	}
+	// Re-validate that the shared paths are still within the creator's current
+	// BasePath. This prevents access to files that fell out-of-scope after the
+	// creator's BasePath was changed by an admin.
+	if sharing.Creator != nil && !sharing.Creator.IsAdmin() {
+		for _, f := range sharing.Files {
+			if !utils.IsSubPath(sharing.Creator.BasePath, f) {
+				return "", errors.Errorf("sharing path [%s] is outside the creator's base path", f)
+			}
+		}
+	}
 	if len(sharing.Files) == 1 {
 		return stdpath.Join(sharing.Files[0], path), nil
 	}
@@ -131,6 +141,15 @@ func UpdateSharing(sharing *model.Sharing, skipMarshal ...bool) (err error) {
 	}
 	sharingCache.Del(sharing.ID)
 	return db.UpdateSharing(sharing.SharingDB)
+}
+
+func UpdateSharingId(sharing *model.Sharing, newId string) error {
+	sharingCache.Del(sharing.ID)
+	if err := db.UpdateSharingId(sharing.ID, newId); err != nil {
+		return err
+	}
+	sharing.ID = newId
+	return nil
 }
 
 func DeleteSharing(sid string) error {
