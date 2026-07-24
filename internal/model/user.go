@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -32,10 +34,91 @@ const (
 
 var LoginCache = cache.NewMemCache[int]()
 
-var (
-	DefaultLockDuration   = time.Minute * 5
-	DefaultMaxAuthRetries = 5
-)
+const DefaultLockDurationMinutes = 5
+const DefaultMaxAuthRetries = 5
+
+// CheckLoginLocked checks if the IP has exceeded the max retry limit.
+// If locked, it refreshes the lock expiry and returns true.
+// maxRetries <= 0 means the lock feature is disabled.
+func CheckLoginLocked(ip string, maxRetries int, lockDuration time.Duration) bool {
+	if maxRetries <= 0 {
+		return false
+	}
+	count, ok := LoginCache.Get(ip)
+	if ok && count >= maxRetries {
+		LoginCache.Expire(ip, lockDuration)
+		return true
+	}
+	return false
+}
+
+// RecordLoginAttempt records a failed login attempt for the IP and returns the new count.
+func RecordLoginAttempt(ip string) int {
+	count, _ := LoginCache.Get(ip)
+	LoginCache.Set(ip, count+1)
+	return count + 1
+}
+
+// ClearLoginAttempts clears the login attempt counter for the given IP.
+func ClearLoginAttempts(ip string) {
+	LoginCache.Del(ip)
+}
+
+// IsIPWhitelisted returns true if the given IP matches any entry in the whitelist.
+// The whitelist supports single IPs and CIDR notation (e.g., 192.168.1.0/24).
+func IsIPWhitelisted(ip string, whitelist []string) bool {
+	return matchIPList(ip, whitelist)
+}
+
+// IsIPBlacklisted returns true if the given IP matches any entry in the blacklist.
+// The blacklist supports single IPs and CIDR notation (e.g., 10.0.0.0/8).
+func IsIPBlacklisted(ip string, blacklist []string) bool {
+	return matchIPList(ip, blacklist)
+}
+
+// matchIPList checks if the given IP matches any entry in the list.
+func matchIPList(ip string, list []string) bool {
+	if len(list) == 0 {
+		return false
+	}
+	parsedIP := net.ParseIP(strings.TrimSpace(ip))
+	if parsedIP == nil {
+		return false
+	}
+	for _, entry := range list {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			_, cidr, err := net.ParseCIDR(entry)
+			if err == nil && cidr.Contains(parsedIP) {
+				return true
+			}
+		} else {
+			if entry == ip {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ParseIPList parses a newline-separated string into a slice of IP/CIDR entries.
+func ParseIPList(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	lines := strings.Split(raw, "\n")
+	var result []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return result
+}
 
 type User struct {
 	ID       uint   `json:"id" gorm:"primaryKey"`                      // unique key

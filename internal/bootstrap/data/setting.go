@@ -249,6 +249,12 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.StreamMaxClientUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerDownloadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
+
+		// login lock settings
+		{Key: conf.LoginLockDuration, Value: "5", Type: conf.TypeNumber, Group: model.SITE, Flag: model.PRIVATE},
+		{Key: conf.LoginMaxRetries, Value: "5", Type: conf.TypeNumber, Group: model.SITE, Flag: model.PRIVATE},
+		{Key: conf.LoginIPWhitelist, Value: "", Type: conf.TypeText, Group: model.SITE, Flag: model.PRIVATE},
+		{Key: conf.LoginIPBlacklist, Value: "", Type: conf.TypeText, Group: model.SITE, Flag: model.PRIVATE},
 	}
 	additionalSettingItems := tool.Tools.Items()
 	// 固定顺序
