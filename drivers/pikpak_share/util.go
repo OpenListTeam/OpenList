@@ -1,14 +1,12 @@
 package pikpak_share
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
-	"encoding/hex"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -16,17 +14,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/go-resty/resty/v2"
 )
-
-var AndroidAlgorithms = []string{
-	"SOP04dGzk0TNO7t7t9ekDbAmx+eq0OI1ovEx",
-	"nVBjhYiND4hZ2NCGyV5beamIr7k6ifAsAbl",
-	"Ddjpt5B/Cit6EDq2a6cXgxY9lkEIOw4yC1GDF28KrA",
-	"VVCogcmSNIVvgV6U+AochorydiSymi68YVNGiz",
-	"u5ujk5sM62gpJOsB/1Gu/zsfgfZO",
-	"dXYIiBOAHZgzSruaQ2Nhrqc2im",
-	"z5jUTBSIpBN9g4qSJGlidNAutX6",
-	"KJE2oveZ34du/g1tiimm",
-}
 
 var WebAlgorithms = []string{
 	"C9qPpZLN8ucRTaTiUMWYS9cQvWOE",
@@ -46,71 +33,93 @@ var WebAlgorithms = []string{
 	"NhXXU9rg4XXdzo7u5o",
 }
 
-var PCAlgorithms = []string{
-	"KHBJ07an7ROXDoK7Db",
-	"G6n399rSWkl7WcQmw5rpQInurc1DkLmLJqE",
-	"JZD1A3M4x+jBFN62hkr7VDhkkZxb9g3rWqRZqFAAb",
-	"fQnw/AmSlbbI91Ik15gpddGgyU7U",
-	"/Dv9JdPYSj3sHiWjouR95NTQff",
-	"yGx2zuTjbWENZqecNI+edrQgqmZKP",
-	"ljrbSzdHLwbqcRn",
-	"lSHAsqCkGDGxQqqwrVu",
-	"TsWXI81fD1",
-	"vk7hBjawK/rOSrSWajtbMk95nfgf3",
-}
-
 const (
-	AndroidClientID      = "YNxT9w7GMdWvEOKa"
-	AndroidClientSecret  = "dbw2OtmVEeuUvIptb1Coyg"
-	AndroidClientVersion = "1.53.2"
-	AndroidPackageName   = "com.pikcloud.pikpak"
-	AndroidSdkVersion    = "2.0.6.206003"
-	WebClientID          = "YUMx5nI8ZU8Ap8pm"
-	WebClientSecret      = "dbw2OtmVEeuUvIptb1Coyg"
-	WebClientVersion     = "2.0.0"
-	WebPackageName       = "mypikpak.com"
-	WebSdkVersion        = "8.0.3"
-	PCClientID           = "YvtoWO6GNHiuCl7x"
-	PCClientSecret       = "1NIH5R1IEe2pAxZE3hv3uA"
-	PCClientVersion      = "undefined" // 2.6.11.4955
-	PCPackageName        = "mypikpak.com"
-	PCSdkVersion         = "8.0.3"
+	WebClientID      = "YUMx5nI8ZU8Ap8pm"
+	WebClientSecret  = "dbw2OtmVEeuUvIptb1Coyg"
+	WebClientVersion = "2.0.0"
+	WebPackageName   = "mypikpak.com"
 )
 
-func (d *PikPakShare) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
-	req.SetHeaders(map[string]string{
-		"User-Agent":      d.GetUserAgent(),
-		"X-Client-ID":     d.GetClientID(),
-		"X-Device-ID":     d.GetDeviceID(),
-		"X-Captcha-Token": d.GetCaptchaToken(),
-	})
+func genDeviceID() string {
+	base := []byte("xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx")
+	random := make([]byte, len(base))
+	if _, err := rand.Read(random); err != nil {
+		return utils.GetMD5EncodeStr(fmt.Sprintf("%d", time.Now().UnixNano()))
+	}
+	for i, char := range base {
+		switch char {
+		case 'x':
+			base[i] = "0123456789abcdef"[random[i]&0x0f]
+		case 'y':
+			base[i] = "0123456789abcdef"[random[i]&0x03|0x08]
+		}
+	}
+	return string(base)
+}
 
-	if callback != nil {
-		callback(req)
-	}
-	if resp != nil {
-		req.SetResult(resp)
-	}
-	var e ErrResp
-	req.SetError(&e)
-	res, err := req.Execute(method, url)
-	if err != nil {
-		return nil, err
-	}
-	switch e.ErrorCode {
+type requestRetryAction uint8
+
+const (
+	requestRetryNone requestRetryAction = iota
+	requestRetryCaptcha
+	maxSharePassRefreshesPerProgress = 8
+)
+
+func classifyRequestError(errResp *ErrResp) (requestRetryAction, error) {
+	switch errResp.ErrorCode {
 	case 0:
-		return res.Body(), nil
-	case 9: // 验证码token过期
-		if err = d.RefreshCaptchaToken(GetAction(method, url), ""); err != nil {
+		return requestRetryNone, nil
+	case 9:
+		return requestRetryCaptcha, nil
+	case 10:
+		return requestRetryNone, errors.New(errResp.ErrorDescription)
+	default:
+		return requestRetryNone, errors.New(errResp.Error())
+	}
+}
+
+func isPassCodeErrorStatus(status string) bool {
+	return status == "PASS_CODE_EMPTY" || status == "PASS_CODE_ERROR"
+}
+
+func (d *PikPakShare) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	reqAction := GetAction(method, url)
+	for attempts := 0; attempts < 3; attempts++ {
+		captchaToken, err := d.ensureCaptchaToken(reqAction, "")
+		if err != nil {
 			return nil, err
 		}
-		return d.request(url, method, callback, resp)
-	case 10: // 操作频繁
-		return nil, errors.New(e.ErrorDescription)
-	default:
-		return nil, errors.New(e.Error())
+		req := base.RestyClient.R()
+		req.SetHeaders(map[string]string{
+			"User-Agent":      d.GetUserAgent(),
+			"X-Client-ID":     d.GetClientID(),
+			"X-Device-ID":     d.GetDeviceID(),
+			"X-Captcha-Token": captchaToken,
+		})
+
+		if callback != nil {
+			callback(req)
+		}
+		if resp != nil {
+			req.SetResult(resp)
+		}
+		var e ErrResp
+		req.SetError(&e)
+		res, err := req.Execute(method, url)
+		if err != nil {
+			return nil, err
+		}
+
+		retryAction, err := classifyRequestError(&e)
+		if err != nil {
+			return nil, err
+		}
+		if retryAction == requestRetryNone {
+			return res.Body(), nil
+		}
+		d.Common.invalidateCaptchaTokenIfMatch(captchaToken, reqAction)
 	}
+	return nil, errors.New("request retry limit exceeded")
 }
 
 func (d *PikPakShare) getSharePassToken() error {
@@ -127,17 +136,20 @@ func (d *PikPakShare) getSharePassToken() error {
 	if err != nil {
 		return err
 	}
-	d.PassCodeToken = resp.PassCodeToken
+	d.SetPassCodeToken(resp.PassCodeToken)
 	return nil
 }
 
 func (d *PikPakShare) getFiles(id string) ([]File, error) {
 	res := make([]File, 0)
 	pageToken := "first"
+	pagesFetched := 0
+	passRefreshesByProgress := make(map[int]int)
 	for pageToken != "" {
 		if pageToken == "first" {
 			pageToken = ""
 		}
+		currentPassCodeToken := d.GetPassCodeToken()
 		query := map[string]string{
 			"parent_id":       id,
 			"share_id":        d.ShareId,
@@ -146,7 +158,7 @@ func (d *PikPakShare) getFiles(id string) ([]File, error) {
 			"limit":           "100",
 			"filters":         `{"phase":{"eq":"PHASE_TYPE_COMPLETE"},"trashed":{"eq":false}}`,
 			"page_token":      pageToken,
-			"pass_code_token": d.PassCodeToken,
+			"pass_code_token": currentPassCodeToken,
 		}
 		var resp ShareResp
 		_, err := d.request("https://api-drive.mypikpak.net/drive/v1/share/detail", http.MethodGet, func(req *resty.Request) {
@@ -156,17 +168,36 @@ func (d *PikPakShare) getFiles(id string) ([]File, error) {
 			return nil, err
 		}
 		if resp.ShareStatus != "OK" {
-			if resp.ShareStatus == "PASS_CODE_EMPTY" || resp.ShareStatus == "PASS_CODE_ERROR" {
-				err = d.getSharePassToken()
-				if err != nil {
-					return nil, err
-				}
-				return d.getFiles(id)
+			if !isPassCodeErrorStatus(resp.ShareStatus) {
+				return nil, errors.New(resp.ShareStatusText)
 			}
-			return nil, errors.New(resp.ShareStatusText)
+			latestPassCodeToken := d.GetPassCodeToken()
+			if latestPassCodeToken != "" && latestPassCodeToken != currentPassCodeToken {
+				res = make([]File, 0)
+				pageToken = "first"
+				pagesFetched = 0
+				continue
+			}
+			passRefreshesByProgress[pagesFetched]++
+			if passRefreshesByProgress[pagesFetched] > maxSharePassRefreshesPerProgress {
+				return nil, fmt.Errorf("share pass code token retry limit exceeded after %d fetched pages", pagesFetched)
+			}
+
+			if err = d.getSharePassToken(); err != nil {
+				return nil, err
+			}
+			newPassCodeToken := d.GetPassCodeToken()
+			if newPassCodeToken == "" {
+				return nil, errors.New(resp.ShareStatusText)
+			}
+			res = make([]File, 0)
+			pageToken = "first"
+			pagesFetched = 0
+			continue
 		}
 		pageToken = resp.NextPageToken
 		res = append(res, resp.Files...)
+		pagesFetched++
 	}
 	return res, nil
 }
@@ -176,9 +207,14 @@ func GetAction(method string, url string) string {
 	return method + ":" + urlpath
 }
 
+type captchaState struct {
+	Token  string
+	Expiry time.Time
+}
+
 type Common struct {
-	client       *resty.Client
-	CaptchaToken string
+	client        *resty.Client
+	captchaStates map[string]captchaState
 	// 必要值,签名相关
 	ClientID      string
 	ClientSecret  string
@@ -187,6 +223,8 @@ type Common struct {
 	Algorithms    []string
 	DeviceID      string
 	UserAgent     string
+	stateMu       sync.RWMutex
+	refreshMu     sync.Mutex
 	// 验证码token刷新成功回调
 	RefreshCTokenCk func(token string)
 }
@@ -195,16 +233,18 @@ func (c *Common) SetUserAgent(userAgent string) {
 	c.UserAgent = userAgent
 }
 
-func (c *Common) SetCaptchaToken(captchaToken string) {
-	c.CaptchaToken = captchaToken
-}
-
 func (c *Common) SetDeviceID(deviceID string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
 	c.DeviceID = deviceID
 }
 
-func (c *Common) GetCaptchaToken() string {
-	return c.CaptchaToken
+func (c *Common) captchaTokenForAction(action string) (string, bool) {
+	token, expiry, _ := c.captchaSnapshot(action)
+	if !hasValidCaptchaToken(token, expiry) {
+		return "", false
+	}
+	return token, true
 }
 
 func (c *Common) GetClientID() string {
@@ -216,78 +256,82 @@ func (c *Common) GetUserAgent() string {
 }
 
 func (c *Common) GetDeviceID() string {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
 	return c.DeviceID
 }
 
-func generateDeviceSign(deviceID, packageName string) string {
-
-	signatureBase := fmt.Sprintf("%s%s%s%s", deviceID, packageName, "1", "appkey")
-
-	sha1Hash := sha1.New()
-	sha1Hash.Write([]byte(signatureBase))
-	sha1Result := sha1Hash.Sum(nil)
-
-	sha1String := hex.EncodeToString(sha1Result)
-
-	md5Hash := md5.New()
-	md5Hash.Write([]byte(sha1String))
-	md5Result := md5Hash.Sum(nil)
-
-	md5String := hex.EncodeToString(md5Result)
-
-	deviceSign := fmt.Sprintf("div101.%s%s", deviceID, md5String)
-
-	return deviceSign
+func (c *Common) captchaSnapshot(action string) (token string, expiry time.Time, deviceID string) {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	state := c.captchaStates[action]
+	return state.Token, state.Expiry, c.DeviceID
 }
 
-func BuildCustomUserAgent(deviceID, clientID, appName, sdkVersion, clientVersion, packageName, userID string) string {
-	deviceSign := generateDeviceSign(deviceID, packageName)
-	var sb strings.Builder
-
-	sb.WriteString(fmt.Sprintf("ANDROID-%s/%s ", appName, clientVersion))
-	sb.WriteString("protocolVersion/200 ")
-	sb.WriteString("accesstype/ ")
-	sb.WriteString(fmt.Sprintf("clientid/%s ", clientID))
-	sb.WriteString(fmt.Sprintf("clientversion/%s ", clientVersion))
-	sb.WriteString("action_type/ ")
-	sb.WriteString("networktype/WIFI ")
-	sb.WriteString("sessionid/ ")
-	sb.WriteString(fmt.Sprintf("deviceid/%s ", deviceID))
-	sb.WriteString("providername/NONE ")
-	sb.WriteString(fmt.Sprintf("devicesign/%s ", deviceSign))
-	sb.WriteString("refresh_token/ ")
-	sb.WriteString(fmt.Sprintf("sdkversion/%s ", sdkVersion))
-	sb.WriteString(fmt.Sprintf("datetime/%d ", time.Now().UnixMilli()))
-	sb.WriteString(fmt.Sprintf("usrno/%s ", userID))
-	sb.WriteString(fmt.Sprintf("appname/android-%s ", appName))
-	sb.WriteString(fmt.Sprintf("session_origin/ "))
-	sb.WriteString(fmt.Sprintf("grant_type/ "))
-	sb.WriteString(fmt.Sprintf("appid/ "))
-	sb.WriteString(fmt.Sprintf("clientip/ "))
-	sb.WriteString(fmt.Sprintf("devicename/Xiaomi_M2004j7ac "))
-	sb.WriteString(fmt.Sprintf("osversion/13 "))
-	sb.WriteString(fmt.Sprintf("platformversion/10 "))
-	sb.WriteString(fmt.Sprintf("accessmode/ "))
-	sb.WriteString(fmt.Sprintf("devicemodel/M2004J7AC "))
-
-	return sb.String()
+func (c *Common) setCaptchaState(action, token string, expiry time.Time) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if token == "" {
+		delete(c.captchaStates, action)
+		return
+	}
+	if c.captchaStates == nil {
+		c.captchaStates = make(map[string]captchaState)
+	}
+	c.captchaStates[action] = captchaState{Token: token, Expiry: expiry}
 }
 
-// RefreshCaptchaToken 刷新验证码token
-func (d *PikPakShare) RefreshCaptchaToken(action, userID string) error {
+func (c *Common) invalidateCaptchaToken() {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	clear(c.captchaStates)
+}
+
+func (c *Common) invalidateCaptchaTokenIfMatch(expectedToken, expectedAction string) bool {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	state, ok := c.captchaStates[expectedAction]
+	if !ok || state.Token != expectedToken {
+		return false
+	}
+	delete(c.captchaStates, expectedAction)
+	return true
+}
+
+func hasValidCaptchaToken(token string, expiry time.Time) bool {
+	if token == "" {
+		return false
+	}
+	if expiry.IsZero() {
+		return true
+	}
+	return time.Now().Before(expiry.Add(-10 * time.Second))
+}
+
+func (d *PikPakShare) captchaMetas(userID string) map[string]string {
 	metas := map[string]string{
 		"client_version": d.ClientVersion,
 		"package_name":   d.PackageName,
 		"user_id":        userID,
 	}
 	metas["timestamp"], metas["captcha_sign"] = d.Common.GetCaptchaSign()
-	return d.refreshCaptchaToken(action, metas)
+	return metas
+}
+
+// RefreshCaptchaToken 刷新验证码token
+func (d *PikPakShare) RefreshCaptchaToken(action, userID string) error {
+	_, err := d.ensureCaptchaToken(action, userID)
+	return err
+}
+
+func (d *PikPakShare) ensureCaptchaToken(action, userID string) (string, error) {
+	return d.refreshCaptchaToken(action, d.captchaMetas(userID))
 }
 
 // GetCaptchaSign 获取验证码签名
 func (c *Common) GetCaptchaSign() (timestamp, sign string) {
 	timestamp = fmt.Sprint(time.Now().UnixMilli())
-	str := fmt.Sprint(c.ClientID, c.ClientVersion, c.PackageName, c.DeviceID, timestamp)
+	str := fmt.Sprint(c.ClientID, c.ClientVersion, c.PackageName, c.GetDeviceID(), timestamp)
 	for _, algorithm := range c.Algorithms {
 		str = utils.GetMD5EncodeStr(str + algorithm)
 	}
@@ -295,36 +339,55 @@ func (c *Common) GetCaptchaSign() (timestamp, sign string) {
 	return
 }
 
-// refreshCaptchaToken 刷新CaptchaToken
-func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string) error {
+func (d *PikPakShare) initCaptchaToken(action string, metas map[string]string, oldToken, deviceID string) (ErrResp, CaptchaTokenResponse, error) {
+	e := ErrResp{}
+	resp := CaptchaTokenResponse{}
 	param := CaptchaTokenRequest{
 		Action:       action,
-		CaptchaToken: d.GetCaptchaToken(),
+		CaptchaToken: oldToken,
 		ClientID:     d.ClientID,
-		DeviceID:     d.GetDeviceID(),
+		DeviceID:     deviceID,
 		Meta:         metas,
 	}
-	var e ErrResp
-	var resp CaptchaTokenResponse
-	_, err := d.request("https://user.mypikpak.net/v1/shield/captcha/init", http.MethodPost, func(req *resty.Request) {
-		req.SetError(&e).SetBody(param)
-	}, &resp)
+	req := base.RestyClient.R().
+		SetHeaders(map[string]string{
+			"User-Agent":  d.GetUserAgent(),
+			"X-Client-ID": d.GetClientID(),
+			"X-Device-ID": deviceID,
+		}).
+		SetError(&e).
+		SetResult(&resp).
+		SetBody(param)
+	_, err := req.Execute(http.MethodPost, "https://user.mypikpak.net/v1/shield/captcha/init")
+	return e, resp, err
+}
 
+// refreshCaptchaToken 刷新CaptchaToken
+func (d *PikPakShare) refreshCaptchaToken(action string, metas map[string]string) (string, error) {
+	d.Common.refreshMu.Lock()
+	defer d.Common.refreshMu.Unlock()
+
+	oldToken, expiry, deviceID := d.Common.captchaSnapshot(action)
+	if hasValidCaptchaToken(oldToken, expiry) {
+		return oldToken, nil
+	}
+	e, resp, err := d.initCaptchaToken(action, metas, oldToken, deviceID)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if e.IsError() {
-		return errors.New(e.Error())
+		return "", &e
 	}
 
 	//if resp.Url != "" {
 	//	return fmt.Errorf(`need verify: <a target="_blank" href="%s">Click Here</a>`, resp.Url)
 	//}
 
-	if d.Common.RefreshCTokenCk != nil {
-		d.Common.RefreshCTokenCk(resp.CaptchaToken)
+	d.Common.setCaptchaState(action, resp.CaptchaToken, resp.Expiry())
+	refreshCTokenCk := d.Common.RefreshCTokenCk
+	if refreshCTokenCk != nil {
+		refreshCTokenCk(resp.CaptchaToken)
 	}
-	d.Common.SetCaptchaToken(resp.CaptchaToken)
-	return nil
+	return resp.CaptchaToken, nil
 }
