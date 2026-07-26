@@ -1,7 +1,9 @@
 package handles
 
 import (
+	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -29,6 +31,19 @@ type TaskInfo struct {
 	TotalBytes  int64       `json:"total_bytes"`
 	Error       string      `json:"error"`
 }
+
+type TaskPathReq struct {
+	Path string `json:"path"`
+}
+
+type TaskPathResult struct {
+	Count int `json:"count"`
+}
+
+var errEmptyTaskPath = errors.New("path is required")
+
+// taskDoneStates are the terminal states of a task.
+var taskDoneStates = []tache.State{tache.StateCanceled, tache.StateFailed, tache.StateSucceeded}
 
 func getTaskInfo[T task.TaskExtensionInfo](task T) TaskInfo {
 	errMsg := ""
@@ -75,6 +90,36 @@ func getUserInfo(c *gin.Context) (bool, uint, bool) {
 	} else {
 		return false, 0, false
 	}
+}
+
+func getUser(c *gin.Context) (*model.User, bool) {
+	if user, ok := c.Request.Context().Value(conf.UserKey).(*model.User); ok {
+		return user, true
+	}
+	return nil, false
+}
+
+func resolveTaskPathPrefix(user *model.User, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errEmptyTaskPath
+	}
+	if user.IsAdmin() {
+		return utils.FixAndCleanPath(raw), nil
+	}
+	return user.JoinPath(raw)
+}
+
+func taskOwnedBy[T task.TaskExtensionInfo](t T, isAdmin bool, uid uint) bool {
+	if isAdmin {
+		return true
+	}
+	creator := t.GetCreator()
+	return creator != nil && creator.ID == uid
+}
+
+func taskMatchesPathPrefix[T task.TaskWithPaths](t T, prefix string) bool {
+	return task.MatchTaskPath(t.GetSrcPath(), t.GetDstPath(), prefix)
 }
 
 func getTargetedHandler[T task.TaskExtensionInfo](manager task.Manager[T], callback func(c *gin.Context, task T)) gin.HandlerFunc {
@@ -124,7 +169,81 @@ func getBatchHandler[T task.TaskExtensionInfo](manager task.Manager[T], callback
 	}
 }
 
-func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manager[T]) {
+type pathBatchOp[T task.TaskWithPaths] struct {
+	filter func(t T) bool
+	apply  func(m task.Manager[T], t T)
+}
+
+func applyPathBatch[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool, uid uint, prefix string, op pathBatchOp[T]) int {
+	tasks := manager.GetByCondition(func(t T) bool {
+		return taskOwnedBy(t, isAdmin, uid) && taskMatchesPathPrefix(t, prefix) && op.filter(t)
+	})
+	count := 0
+	for _, t := range tasks {
+		op.apply(manager, t)
+		count++
+	}
+	return count
+}
+
+func getPathBatchHandler[T task.TaskWithPaths](manager task.Manager[T], op pathBatchOp[T]) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		user, ok := getUser(c)
+		if !ok {
+			common.ErrorStrResp(c, "user invalid", 401)
+			return
+		}
+		var req TaskPathReq
+		if err := c.ShouldBind(&req); err != nil {
+			common.ErrorStrResp(c, "invalid request format", 400)
+			return
+		}
+		prefix, err := resolveTaskPathPrefix(user, req.Path)
+		if err != nil {
+			common.ErrorStrResp(c, err.Error(), 400)
+			return
+		}
+		count := applyPathBatch(manager, user.IsAdmin(), user.ID, prefix, op)
+		common.SuccessResp(c, TaskPathResult{Count: count})
+	}
+}
+
+func deleteByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
+	return getPathBatchHandler(manager, pathBatchOp[T]{
+		filter: func(T) bool { return true },
+		apply: func(m task.Manager[T], t T) {
+			// cancel first so running/pending work stops, then remove from manager
+			if !argsContains(t.GetState(), taskDoneStates...) {
+				m.Cancel(t.GetID())
+			}
+			m.Remove(t.GetID())
+		},
+	})
+}
+
+func cancelByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
+	return getPathBatchHandler(manager, pathBatchOp[T]{
+		filter: func(t T) bool {
+			return !argsContains(t.GetState(), taskDoneStates...)
+		},
+		apply: func(m task.Manager[T], t T) {
+			m.Cancel(t.GetID())
+		},
+	})
+}
+
+func retryByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
+	return getPathBatchHandler(manager, pathBatchOp[T]{
+		filter: func(t T) bool {
+			return t.GetState() == tache.StateFailed
+		},
+		apply: func(m task.Manager[T], t T) {
+			m.Retry(t.GetID())
+		},
+	})
+}
+
+func taskRoute[T task.TaskWithPaths](g *gin.RouterGroup, manager task.Manager[T]) {
 	g.GET("/undone", func(c *gin.Context) {
 		isAdmin, uid, ok := getUserInfo(c)
 		if !ok {
@@ -215,6 +334,9 @@ func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manage
 		}
 		common.SuccessResp(c)
 	})
+	g.POST("/delete_by_path", deleteByPath(manager))
+	g.POST("/cancel_by_path", cancelByPath(manager))
+	g.POST("/retry_by_path", retryByPath(manager))
 }
 
 func SetupTaskRoute(g *gin.RouterGroup) {

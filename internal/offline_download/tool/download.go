@@ -216,6 +216,14 @@ func (t *DownloadTask) GetName() string {
 	return fmt.Sprintf("download %s to (%s)", t.Url, t.DstDirPath)
 }
 
+func (t *DownloadTask) GetSrcPath() string {
+	return ""
+}
+
+func (t *DownloadTask) GetDstPath() string {
+	return t.DstDirPath
+}
+
 func (t *DownloadTask) GetStatus() string {
 	return t.Status
 }
