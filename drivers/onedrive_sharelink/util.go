@@ -235,10 +235,16 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 			return nil, err
 		}
 		template := re.FindString(string(body))
-		template = template[strings.Index(template, "templateUrl\":\"")+len("templateUrl\":\""):]
-		template = template[:strings.Index(template, "?id=")]
-		template = template[:strings.LastIndex(template, "/")]
-		downloadLinkPrefix = template + "/download.aspx?UniqueId="
+		if template == "" {
+			log.Warnf("onedrive_sharelink: templateUrl not found in page body, falling back to redirect URL parsing")
+			redirectUrlCut := redirectUrl[:strings.LastIndex(redirectUrl, "/")]
+			downloadLinkPrefix = redirectUrlCut + "/download.aspx?UniqueId="
+		} else {
+			template = template[strings.Index(template, "templateUrl\":\"")+len("templateUrl\":\""):]
+			template = template[:strings.Index(template, "?id=")]
+			template = template[:strings.LastIndex(template, "/")]
+			downloadLinkPrefix = template + "/download.aspx?UniqueId="
+		}
 		params, err := url.ParseQuery(redirectUrl[strings.Index(redirectUrl, "?")+1:])
 		if err != nil {
 			return nil, err

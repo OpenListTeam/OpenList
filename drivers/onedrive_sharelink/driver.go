@@ -132,11 +132,12 @@ func (d *OnedriveSharelink) Link(ctx context.Context, file model.Obj, args model
 		}, nil
 	}
 
+	fileName := file.GetName()
 	return &model.Link{
 		URL:    url,
 		Header: header,
 		RangeReader: rangeReaderFunc(func(ctx context.Context, hr http_range.Range) (io.ReadCloser, error) {
-			return d.rangeReadWithRefresh(ctx, url, hr)
+			return d.rangeReadWithRefresh(ctx, url, hr, fileName)
 		}),
 	}, nil
 }
@@ -615,7 +616,8 @@ var _ driver.Driver = (*OnedriveSharelink)(nil)
 
 // rangeReadWithRefresh tries once with current headers, and if the response
 // looks invalid (error status or html login page), it refreshes headers and retries.
-func (d *OnedriveSharelink) rangeReadWithRefresh(ctx context.Context, url string, hr http_range.Range) (io.ReadCloser, error) {
+func (d *OnedriveSharelink) rangeReadWithRefresh(ctx context.Context, url string, hr http_range.Range, fileName string) (io.ReadCloser, error) {
+	isHTMLFile := strings.HasSuffix(strings.ToLower(fileName), ".htm") || strings.HasSuffix(strings.ToLower(fileName), ".html")
 	tryOnce := func(header http.Header) (io.ReadCloser, error) {
 		h := cloneHeader(header)
 		if h == nil {
@@ -626,10 +628,25 @@ func (d *OnedriveSharelink) rangeReadWithRefresh(ctx context.Context, url string
 		if err != nil {
 			return nil, err
 		}
-		ct := strings.ToLower(resp.Header.Get("Content-Type"))
-		if strings.Contains(ct, "text/html") {
-			_ = resp.Body.Close()
-			return nil, fmt.Errorf("unexpected html response")
+		if isHTMLFile {
+			// For HTML files, detect token expiry via redirect chain:
+			// expired token → 302 → Authenticate.aspx → login.microsoftonline.com
+			if resp.Request != nil && resp.Request.URL != nil {
+				finalHost := strings.ToLower(resp.Request.URL.Hostname())
+				if strings.Contains(finalHost, "login.microsoftonline.com") ||
+					strings.Contains(finalHost, "login.live.com") ||
+					strings.Contains(finalHost, "login.microsoft.com") {
+					_ = resp.Body.Close()
+					return nil, fmt.Errorf("token expired, redirected to login page")
+				}
+			}
+		} else {
+			// For non-HTML files, text/html response indicates login page
+			ct := strings.ToLower(resp.Header.Get("Content-Type"))
+			if strings.Contains(ct, "text/html") {
+				_ = resp.Body.Close()
+				return nil, fmt.Errorf("unexpected html response")
+			}
 		}
 		return resp.Body, nil
 	}
