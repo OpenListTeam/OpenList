@@ -258,6 +258,11 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 	if err != nil {
 		return nil, err
 	}
+	// If the user configured a root_folder_path, use it as the initial root
+	// folder so the GraphQL query targets the correct subdirectory.
+	if d.RootFolderPath != "" && d.RootFolderPath != "/" {
+		rootFolder = d.RootFolderPath
+	}
 	log.Debugln("rootFolder:", rootFolder)
 	// Extract the relative path up to and including "Documents"
 	relativePath := strings.Split(rootFolder, "Documents")[0] + "Documents"
