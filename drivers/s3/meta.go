@@ -23,6 +23,8 @@ type Addition struct {
 	AddFilenameToDisposition bool   `json:"add_filename_to_disposition" help:"Add filename to Content-Disposition header."`
 	EnableDirectUpload       bool   `json:"enable_direct_upload" default:"false"`
 	DirectUploadHost         string `json:"direct_upload_host" required:"false"`
+	DirectUploadMaxParts     int64  `json:"direct_upload_max_parts" type:"number" default:"10000" help:"Maximum number of parts for frontend multipart upload. Set to 1 to disable multipart upload."`
+	DirectUploadMinPartSize  int64  `json:"direct_upload_min_part_size" type:"number" default:"104857600" help:"Minimum part size for frontend multipart upload, in bytes."`
 	UserAgent                string `json:"user_agent" required:"false" default:"" help:"Custom User-Agent for S3 requests."`
 }
 

@@ -25,6 +25,10 @@ const (
 	defaultCopyPartSize int64 = 100 * 1024 * 1024
 	maxCopyPartSize     int64 = 5 * 1024 * 1024 * 1024
 	maxCopyParts        int64 = 10000
+
+	minMultipartUploadPartSize     int64 = 5 * 1024 * 1024
+	defaultMultipartUploadPartSize int64 = 100 * 1024 * 1024
+	maxMultipartUploadPartSize     int64 = 5 * 1024 * 1024 * 1024
 )
 
 // do others that not defined in Driver interface
@@ -79,7 +83,9 @@ func (d *S3) getClient(clientType int) *s3.S3 {
 	}
 	if clientType == ClientTypeDirectUpload && d.DirectUploadHost != "" {
 		client.Handlers.Build.PushBack(func(r *request.Request) {
-			if r.HTTPRequest.Method != http.MethodPut {
+			switch r.HTTPRequest.Method {
+			case http.MethodPut, http.MethodPost, http.MethodDelete:
+			default:
 				return
 			}
 			split := strings.SplitN(d.DirectUploadHost, "://", 2)
@@ -100,6 +106,24 @@ func getKey(path string, dir bool) string {
 		path += "/"
 	}
 	return path
+}
+
+func getMultipartUploadPartSize(size, maxParts, chunkSize int64) (int64, error) {
+	if maxParts <= 1 {
+		if size > maxMultipartUploadPartSize {
+			return 0, fmt.Errorf("object size %d exceeds direct upload limit", size)
+		}
+		return size, nil
+	}
+	maxParts = min(maxParts, maxCopyParts)
+	if size > maxMultipartUploadPartSize*maxParts {
+		return 0, fmt.Errorf("object size %d exceeds multipart upload limit", size)
+	}
+	if chunkSize <= 0 {
+		chunkSize = defaultMultipartUploadPartSize
+	}
+	chunkSize = min(chunkSize, maxMultipartUploadPartSize)
+	return max(chunkSize, (size+maxParts-1)/maxParts, minMultipartUploadPartSize), nil
 }
 
 var defaultPlaceholderName = ".openlist"
