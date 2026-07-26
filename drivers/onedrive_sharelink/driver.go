@@ -132,11 +132,12 @@ func (d *OnedriveSharelink) Link(ctx context.Context, file model.Obj, args model
 		}, nil
 	}
 
+	fileName := file.GetName()
 	return &model.Link{
 		URL:    url,
 		Header: header,
 		RangeReader: rangeReaderFunc(func(ctx context.Context, hr http_range.Range) (io.ReadCloser, error) {
-			return d.rangeReadWithRefresh(ctx, url, hr)
+			return d.rangeReadWithRefresh(ctx, url, hr, fileName)
 		}),
 	}, nil
 }
@@ -614,8 +615,11 @@ func parsePageContext(body []byte) (*pageContextInfo, error) {
 var _ driver.Driver = (*OnedriveSharelink)(nil)
 
 // rangeReadWithRefresh tries once with current headers, and if the response
-// looks invalid (error status or html login page), it refreshes headers and retries.
-func (d *OnedriveSharelink) rangeReadWithRefresh(ctx context.Context, url string, hr http_range.Range) (io.ReadCloser, error) {
+// looks invalid (login page, error page), it refreshes headers and retries.
+// For HTML files: checks redirect chain for login pages and sharepointerror header.
+// For non-HTML files: checks Content-Type for text/html (indicates login page).
+func (d *OnedriveSharelink) rangeReadWithRefresh(ctx context.Context, url string, hr http_range.Range, fileName string) (io.ReadCloser, error) {
+	isHTMLFile := strings.HasSuffix(strings.ToLower(fileName), ".htm") || strings.HasSuffix(strings.ToLower(fileName), ".html")
 	tryOnce := func(header http.Header) (io.ReadCloser, error) {
 		h := cloneHeader(header)
 		if h == nil {
@@ -626,10 +630,30 @@ func (d *OnedriveSharelink) rangeReadWithRefresh(ctx context.Context, url string
 		if err != nil {
 			return nil, err
 		}
-		ct := strings.ToLower(resp.Header.Get("Content-Type"))
-		if strings.Contains(ct, "text/html") {
-			_ = resp.Body.Close()
-			return nil, fmt.Errorf("unexpected html response")
+		if isHTMLFile {
+			// For HTML files, detect problematic responses that should trigger retry:
+			// 1. Redirect chain to MS login page → token expired
+			// 2. sharepointerror response header → SharePoint error page
+			if resp.Request != nil && resp.Request.URL != nil {
+				finalHost := strings.ToLower(resp.Request.URL.Hostname())
+				if strings.Contains(finalHost, "login.microsoftonline.com") ||
+					strings.Contains(finalHost, "login.live.com") ||
+					strings.Contains(finalHost, "login.microsoft.com") {
+					_ = resp.Body.Close()
+					return nil, fmt.Errorf("token expired, redirected to login page")
+				}
+			}
+			if hasSharepointError(resp.Header) {
+				_ = resp.Body.Close()
+				return nil, fmt.Errorf("sharepoint error page")
+			}
+		} else {
+			// For non-HTML files, text/html response indicates login page
+			ct := strings.ToLower(resp.Header.Get("Content-Type"))
+			if strings.Contains(ct, "text/html") {
+				_ = resp.Body.Close()
+				return nil, fmt.Errorf("unexpected html response")
+			}
 		}
 		return resp.Body, nil
 	}
@@ -661,6 +685,17 @@ func cloneHeader(header http.Header) http.Header {
 		return nil
 	}
 	return header.Clone()
+}
+
+// hasSharepointError checks if the response headers contain the sharepointerror
+// header, which SharePoint sets on error pages (e.g. invalid UniqueId).
+func hasSharepointError(header http.Header) bool {
+	for key := range header {
+		if strings.EqualFold(key, "sharepointerror") {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *OnedriveSharelink) resolveDirectDownloadURL(ctx context.Context, file model.Obj, rawURL string, header http.Header) (string, error) {
