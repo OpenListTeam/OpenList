@@ -37,13 +37,17 @@ type TaskPathReq struct {
 }
 
 type TaskPathResult struct {
-	Count int `json:"count"`
+	Matched   int `json:"matched"`
+	Processed int `json:"processed"`
 }
 
 var errEmptyTaskPath = errors.New("path is required")
+var errImplicitRootTaskPath = errors.New("root path must be specified explicitly as /")
 
 // taskDoneStates are the terminal states of a task.
 var taskDoneStates = []tache.State{tache.StateCanceled, tache.StateFailed, tache.StateSucceeded}
+
+const taskDeleteWaitTimeout = 30 * time.Second
 
 func getTaskInfo[T task.TaskExtensionInfo](task T) TaskInfo {
 	errMsg := ""
@@ -104,10 +108,20 @@ func resolveTaskPathPrefix(user *model.User, raw string) (string, error) {
 	if raw == "" {
 		return "", errEmptyTaskPath
 	}
+	var resolved string
+	var err error
 	if user.IsAdmin() {
-		return utils.FixAndCleanPath(raw), nil
+		resolved = utils.FixAndCleanPath(raw)
+	} else {
+		resolved, err = user.JoinPath(raw)
 	}
-	return user.JoinPath(raw)
+	if err != nil {
+		return "", err
+	}
+	if resolved == "/" && raw != "/" {
+		return "", errImplicitRootTaskPath
+	}
+	return resolved, nil
 }
 
 func taskOwnedBy[T task.TaskExtensionInfo](t T, isAdmin bool, uid uint) bool {
@@ -171,22 +185,79 @@ func getBatchHandler[T task.TaskExtensionInfo](manager task.Manager[T], callback
 
 type pathBatchOp[T task.TaskWithPaths] struct {
 	filter func(t T) bool
-	apply  func(m task.Manager[T], t T)
+	apply  func(m task.Manager[T], t T) bool
 }
 
-func applyPathBatch[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool, uid uint, prefix string, op pathBatchOp[T]) int {
-	tasks := manager.GetByCondition(func(t T) bool {
-		return taskOwnedBy(t, isAdmin, uid) && taskMatchesPathPrefix(t, prefix) && op.filter(t)
+func matchingPathTasks[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool, uid uint, prefix string, filter func(T) bool) []T {
+	return manager.GetByCondition(func(t T) bool {
+		return taskOwnedBy(t, isAdmin, uid) && taskMatchesPathPrefix(t, prefix) && filter(t)
 	})
-	count := 0
-	for _, t := range tasks {
-		op.apply(manager, t)
-		count++
-	}
-	return count
 }
 
-func getPathBatchHandler[T task.TaskWithPaths](manager task.Manager[T], op pathBatchOp[T]) gin.HandlerFunc {
+func applyPathBatch[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool, uid uint, prefix string, op pathBatchOp[T]) TaskPathResult {
+	tasks := matchingPathTasks(manager, isAdmin, uid, prefix, op.filter)
+	result := TaskPathResult{Matched: len(tasks)}
+	for _, t := range tasks {
+		if op.apply(manager, t) {
+			result.Processed++
+		}
+	}
+	return result
+}
+
+func deletePathBatch[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool, uid uint, prefix string) TaskPathResult {
+	tasks := matchingPathTasks(manager, isAdmin, uid, prefix, func(T) bool { return true })
+	result := TaskPathResult{Matched: len(tasks)}
+	waitFor := make([]T, 0, len(tasks))
+	pending := make(map[string]struct{}, len(tasks))
+
+	// Cancel every matching task before waiting, so active operations stop in parallel.
+	for _, selected := range tasks {
+		current, ok := manager.GetByID(selected.GetID())
+		if !ok {
+			continue
+		}
+		state := current.GetState()
+		if argsContains(state, taskDoneStates...) {
+			continue
+		}
+		manager.Cancel(current.GetID())
+		if current.GetStartTime() == nil && argsContains(state, tache.StatePending, tache.StateCanceling, tache.StateWaitingRetry) {
+			pending[current.GetID()] = struct{}{}
+		} else {
+			waitFor = append(waitFor, current)
+		}
+	}
+
+	deadline := time.Now().Add(taskDeleteWaitTimeout)
+	for _, current := range waitFor {
+		for !argsContains(current.GetState(), taskDoneStates...) && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	for _, selected := range tasks {
+		current, ok := manager.GetByID(selected.GetID())
+		if !ok {
+			continue
+		}
+		state := current.GetState()
+		// A pending task becomes canceling without running. Its canceled context
+		// prevents queued execution, so it can be removed immediately. Other tasks
+		// are removed only after their worker reaches a terminal state.
+		_, wasPending := pending[current.GetID()]
+		if !argsContains(state, taskDoneStates...) && !(wasPending && state == tache.StateCanceling) {
+			continue
+		}
+		manager.Remove(current.GetID())
+		if _, exists := manager.GetByID(current.GetID()); !exists {
+			result.Processed++
+		}
+	}
+	return result
+}
+
+func getPathBatchHandler[T task.TaskWithPaths](manager task.Manager[T], execute func(task.Manager[T], bool, uint, string) TaskPathResult) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		user, ok := getUser(c)
 		if !ok {
@@ -203,44 +274,50 @@ func getPathBatchHandler[T task.TaskWithPaths](manager task.Manager[T], op pathB
 			common.ErrorStrResp(c, err.Error(), 400)
 			return
 		}
-		count := applyPathBatch(manager, user.IsAdmin(), user.ID, prefix, op)
-		common.SuccessResp(c, TaskPathResult{Count: count})
+		common.SuccessResp(c, execute(manager, user.IsAdmin(), user.ID, prefix))
+	}
+}
+
+func pathBatchExecutor[T task.TaskWithPaths](op pathBatchOp[T]) func(task.Manager[T], bool, uint, string) TaskPathResult {
+	return func(manager task.Manager[T], isAdmin bool, uid uint, prefix string) TaskPathResult {
+		return applyPathBatch(manager, isAdmin, uid, prefix, op)
 	}
 }
 
 func deleteByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
-	return getPathBatchHandler(manager, pathBatchOp[T]{
-		filter: func(T) bool { return true },
-		apply: func(m task.Manager[T], t T) {
-			// cancel first so running/pending work stops, then remove from manager
-			if !argsContains(t.GetState(), taskDoneStates...) {
-				m.Cancel(t.GetID())
-			}
-			m.Remove(t.GetID())
-		},
-	})
+	return getPathBatchHandler(manager, deletePathBatch[T])
 }
 
 func cancelByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
-	return getPathBatchHandler(manager, pathBatchOp[T]{
+	return getPathBatchHandler(manager, pathBatchExecutor(pathBatchOp[T]{
 		filter: func(t T) bool {
 			return !argsContains(t.GetState(), taskDoneStates...)
 		},
-		apply: func(m task.Manager[T], t T) {
-			m.Cancel(t.GetID())
+		apply: func(m task.Manager[T], selected T) bool {
+			current, ok := m.GetByID(selected.GetID())
+			if !ok || argsContains(current.GetState(), taskDoneStates...) {
+				return false
+			}
+			m.Cancel(current.GetID())
+			return true
 		},
-	})
+	}))
 }
 
 func retryByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
-	return getPathBatchHandler(manager, pathBatchOp[T]{
+	return getPathBatchHandler(manager, pathBatchExecutor(pathBatchOp[T]{
 		filter: func(t T) bool {
 			return t.GetState() == tache.StateFailed
 		},
-		apply: func(m task.Manager[T], t T) {
-			m.Retry(t.GetID())
+		apply: func(m task.Manager[T], selected T) bool {
+			current, ok := m.GetByID(selected.GetID())
+			if !ok || current.GetState() != tache.StateFailed {
+				return false
+			}
+			m.Retry(current.GetID())
+			return true
 		},
-	})
+	}))
 }
 
 func taskRoute[T task.TaskWithPaths](g *gin.RouterGroup, manager task.Manager[T]) {

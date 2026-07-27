@@ -1,6 +1,26 @@
 package fs
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/task"
+)
+
+type pathTestDriver struct {
+	driver.Driver
+	storage model.Storage
+}
+
+func (d *pathTestDriver) GetStorage() *model.Storage { return &d.storage }
+
+type pathTestFile struct {
+	model.FileStreamer
+	name string
+}
+
+func (f *pathTestFile) GetName() string { return f.name }
 
 func TestTaskDataGetPaths(t *testing.T) {
 	td := &TaskData{
@@ -31,20 +51,47 @@ func TestTaskDataGetPaths(t *testing.T) {
 
 func TestArchiveContentUploadTaskGetPaths(t *testing.T) {
 	t1 := &ArchiveContentUploadTask{
+		ObjName:       "report.txt",
+		InPlace:       false,
 		DstActualPath: "out",
 		DstStorageMp:  "/mount",
 	}
 	if t1.GetSrcPath() != "" {
 		t.Fatal("src should be empty")
 	}
-	if t1.GetDstPath() != "/mount/out" {
+	if t1.GetDstPath() != "/mount/out/report.txt" {
 		t.Fatalf("dst = %q", t1.GetDstPath())
+	}
+	if !task.MatchTaskPath(t1.GetSrcPath(), t1.GetDstPath(), "/mount/out/report.txt") {
+		t.Fatal("exact archive upload destination file must match")
+	}
+
+	inPlace := &ArchiveContentUploadTask{
+		ObjName:       "expanded-directory",
+		InPlace:       true,
+		DstActualPath: "out",
+		DstStorageMp:  "/mount",
+	}
+	if inPlace.GetDstPath() != "/mount/out" {
+		t.Fatalf("in-place directory task dst = %q", inPlace.GetDstPath())
 	}
 }
 
-func TestUploadTaskGetPathsNilStorage(t *testing.T) {
-	t1 := &UploadTask{}
-	if t1.GetSrcPath() != "" || t1.GetDstPath() != "" {
+func TestUploadTaskGetPaths(t *testing.T) {
+	t1 := &UploadTask{
+		storage:          &pathTestDriver{storage: model.Storage{MountPath: "/mount"}},
+		dstDirActualPath: "uploads",
+		file:             &pathTestFile{name: "photo.jpg"},
+	}
+	if t1.GetDstPath() != "/mount/uploads/photo.jpg" {
+		t.Fatalf("dst = %q", t1.GetDstPath())
+	}
+	if !task.MatchTaskPath(t1.GetSrcPath(), t1.GetDstPath(), "/mount/uploads/photo.jpg") {
+		t.Fatal("exact upload destination file must match")
+	}
+
+	nilTask := &UploadTask{}
+	if nilTask.GetSrcPath() != "" || nilTask.GetDstPath() != "" {
 		t.Fatal("nil storage upload task paths should be empty")
 	}
 }

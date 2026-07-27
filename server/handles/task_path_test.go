@@ -1,7 +1,10 @@
 package handles
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,6 +73,17 @@ func TestResolveTaskPathPrefix(t *testing.T) {
 	if _, err := resolveTaskPathPrefix(admin, "   "); err == nil {
 		t.Fatal("expected empty path error")
 	}
+	for _, ambiguousRoot := range []string{".", "//", "///", "./"} {
+		if _, err := resolveTaskPathPrefix(admin, ambiguousRoot); !errors.Is(err, errImplicitRootTaskPath) {
+			t.Fatalf("resolve %q error = %v, want %v", ambiguousRoot, err, errImplicitRootTaskPath)
+		}
+	}
+	if got, err := resolveTaskPathPrefix(admin, "/"); err != nil || got != "/" {
+		t.Fatalf("explicit root = %q, %v", got, err)
+	}
+	if got, err := resolveTaskPathPrefix(user, "."); err != nil || got != "/home/user" {
+		t.Fatalf("user base path = %q, %v", got, err)
+	}
 }
 
 func TestApplyPathBatchDeleteCancelRetry(t *testing.T) {
@@ -86,17 +100,18 @@ func TestApplyPathBatchDeleteCancelRetry(t *testing.T) {
 	falsePrefix := addPathTask(m, admin, "", "/targetx/x", tache.StatePending)
 
 	// non-admin can only touch own tasks
-	count := applyPathBatch(m, false, other.ID, "/target", pathBatchOp[*pathTestTask]{
+	result := applyPathBatch(m, false, other.ID, "/target", pathBatchOp[*pathTestTask]{
 		filter: func(*pathTestTask) bool { return true },
-		apply: func(manager task.Manager[*pathTestTask], tk *pathTestTask) {
+		apply: func(manager task.Manager[*pathTestTask], tk *pathTestTask) bool {
 			if !argsContains(tk.GetState(), taskDoneStates...) {
 				manager.Cancel(tk.GetID())
 			}
 			manager.Remove(tk.GetID())
+			return true
 		},
 	})
-	if count != 1 {
-		t.Fatalf("non-admin delete count = %d want 1", count)
+	if result != (TaskPathResult{Matched: 1, Processed: 1}) {
+		t.Fatalf("non-admin delete result = %+v", result)
 	}
 	if _, ok := m.GetByID(otherUser.GetID()); ok {
 		t.Fatal("other user matched task should be removed")
@@ -106,16 +121,17 @@ func TestApplyPathBatchDeleteCancelRetry(t *testing.T) {
 	}
 
 	// admin cancel by path: only unfinished matching
-	count = applyPathBatch(m, true, admin.ID, "/target", pathBatchOp[*pathTestTask]{
+	result = applyPathBatch(m, true, admin.ID, "/target", pathBatchOp[*pathTestTask]{
 		filter: func(tk *pathTestTask) bool {
 			return !argsContains(tk.GetState(), taskDoneStates...)
 		},
-		apply: func(manager task.Manager[*pathTestTask], tk *pathTestTask) {
+		apply: func(manager task.Manager[*pathTestTask], tk *pathTestTask) bool {
 			manager.Cancel(tk.GetID())
+			return true
 		},
 	})
-	if count != 1 {
-		t.Fatalf("cancel count = %d want 1 (pending only; failed is done-state)", count)
+	if result != (TaskPathResult{Matched: 1, Processed: 1}) {
+		t.Fatalf("cancel result = %+v", result)
 	}
 	// pending becomes canceling/canceled; failed stays failed; done stays
 	if st := matchPending.GetState(); st != tache.StateCanceling && st != tache.StateCanceled {
@@ -129,34 +145,27 @@ func TestApplyPathBatchDeleteCancelRetry(t *testing.T) {
 	}
 
 	// retry by path: only failed
-	count = applyPathBatch(m, true, admin.ID, "/target", pathBatchOp[*pathTestTask]{
+	result = applyPathBatch(m, true, admin.ID, "/target", pathBatchOp[*pathTestTask]{
 		filter: func(tk *pathTestTask) bool {
 			return tk.GetState() == tache.StateFailed
 		},
-		apply: func(manager task.Manager[*pathTestTask], tk *pathTestTask) {
+		apply: func(manager task.Manager[*pathTestTask], tk *pathTestTask) bool {
 			manager.Retry(tk.GetID())
+			return true
 		},
 	})
-	if count != 1 {
-		t.Fatalf("retry count = %d want 1", count)
+	if result != (TaskPathResult{Matched: 1, Processed: 1}) {
+		t.Fatalf("retry result = %+v", result)
 	}
 	if matchFailed.GetState() != tache.StateWaitingRetry {
 		t.Fatalf("failed after retry state = %v want waiting_retry", matchFailed.GetState())
 	}
 
 	// delete by path: cancel then remove all matching
-	count = applyPathBatch(m, true, admin.ID, "/target", pathBatchOp[*pathTestTask]{
-		filter: func(*pathTestTask) bool { return true },
-		apply: func(manager task.Manager[*pathTestTask], tk *pathTestTask) {
-			if !argsContains(tk.GetState(), taskDoneStates...) {
-				manager.Cancel(tk.GetID())
-			}
-			manager.Remove(tk.GetID())
-		},
-	})
+	result = deletePathBatch[*pathTestTask](m, true, admin.ID, "/target")
 	// matchPending, matchDstDone, matchFailed still present under /target
-	if count != 3 {
-		t.Fatalf("delete count = %d want 3", count)
+	if result != (TaskPathResult{Matched: 3, Processed: 3}) {
+		t.Fatalf("delete result = %+v", result)
 	}
 	for _, id := range []string{matchPending.GetID(), matchDstDone.GetID(), matchFailed.GetID()} {
 		if _, ok := m.GetByID(id); ok {
@@ -193,18 +202,10 @@ func TestApplyPathBatchLargeScale(t *testing.T) {
 	}
 
 	start := time.Now()
-	count := applyPathBatch(m, true, admin.ID, "/bulk", pathBatchOp[*pathTestTask]{
-		filter: func(*pathTestTask) bool { return true },
-		apply: func(manager task.Manager[*pathTestTask], tk *pathTestTask) {
-			if !argsContains(tk.GetState(), taskDoneStates...) {
-				manager.Cancel(tk.GetID())
-			}
-			manager.Remove(tk.GetID())
-		},
-	})
+	result := deletePathBatch[*pathTestTask](m, true, admin.ID, "/bulk")
 	elapsed := time.Since(start)
-	if count != matchN {
-		t.Fatalf("count = %d want %d", count, matchN)
+	if result != (TaskPathResult{Matched: matchN, Processed: matchN}) {
+		t.Fatalf("result = %+v", result)
 	}
 	remain := len(m.GetAll())
 	if remain != total-matchN {
@@ -214,6 +215,101 @@ func TestApplyPathBatchLargeScale(t *testing.T) {
 		t.Fatalf("delete %d of %d too slow: %s", matchN, total, elapsed)
 	}
 	t.Logf("deleted %d/%d tasks in %s", matchN, total, elapsed)
+}
+
+func TestApplyPathBatchDistinguishesMatchedAndProcessed(t *testing.T) {
+	ensureTaskTestConf()
+	admin := &model.User{ID: 1, Role: model.ADMIN}
+	m := newPathManager(1)
+	selected := addPathTask(m, admin, "", "/target/race", tache.StateFailed)
+
+	result := applyPathBatch(m, true, admin.ID, "/target", pathBatchOp[*pathTestTask]{
+		filter: func(*pathTestTask) bool { return true },
+		apply: func(manager task.Manager[*pathTestTask], _ *pathTestTask) bool {
+			// Simulate another request removing the task after initial matching.
+			manager.Remove(selected.GetID())
+			_, stillExists := manager.GetByID(selected.GetID())
+			return stillExists
+		},
+	})
+	if result != (TaskPathResult{Matched: 1, Processed: 0}) {
+		t.Fatalf("result = %+v, want matched=1 processed=0", result)
+	}
+}
+
+type runningPathTestTask struct {
+	pathTestTask
+	started chan struct{}
+	stopped chan struct{}
+	cleaned chan struct{}
+	active  atomic.Bool
+}
+
+func (t *runningPathTestTask) Run() error {
+	t.active.Store(true)
+	defer t.active.Store(false)
+	t.SetStartTime(time.Now())
+	close(t.started)
+	<-t.Ctx().Done()
+	close(t.stopped)
+	return context.Canceled
+}
+
+func (t *runningPathTestTask) OnFailed() {
+	// Cleanup deliberately takes time so deletePathBatch must wait for it.
+	time.Sleep(25 * time.Millisecond)
+	close(t.cleaned)
+}
+
+func TestDeletePathBatchWaitsForRunningTaskCleanup(t *testing.T) {
+	ensureTaskTestConf()
+	admin := &model.User{ID: 1, Role: model.ADMIN}
+	m := tache.NewManager[*runningPathTestTask](tache.WithWorks(1), tache.WithRunning(true))
+	running := &runningPathTestTask{
+		pathTestTask: pathTestTask{
+			TaskExtension: task.TaskExtension{Creator: admin},
+			dst:           "/target/running",
+		},
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+		cleaned: make(chan struct{}),
+	}
+	m.Add(running)
+
+	select {
+	case <-running.started:
+	case <-time.After(time.Second):
+		t.Fatal("task did not start")
+	}
+
+	result := deletePathBatch[*runningPathTestTask](m, true, admin.ID, "/target")
+	if result != (TaskPathResult{Matched: 1, Processed: 1}) {
+		t.Fatalf("result = %+v", result)
+	}
+	select {
+	case <-running.stopped:
+	default:
+		t.Fatal("task was removed before execution stopped")
+	}
+	select {
+	case <-running.cleaned:
+	default:
+		t.Fatal("task was removed before cleanup completed")
+	}
+	if _, ok := m.GetByID(running.GetID()); ok {
+		t.Fatal("cleaned task was not removed")
+	}
+
+	if running.active.Load() {
+		t.Fatal("task execution is still active after removal")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if running.active.Load() {
+		t.Fatal("task continued running in the background after removal")
+	}
+	if running.GetState() != tache.StateCanceled {
+		t.Fatalf("final state = %v, want canceled", running.GetState())
+	}
 }
 
 func TestTaskOwnedBy(t *testing.T) {

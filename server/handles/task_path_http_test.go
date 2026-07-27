@@ -56,17 +56,21 @@ func respCode(out map[string]any) int {
 	return -1
 }
 
-func respCount(t *testing.T, out map[string]any) int {
+func respResult(t *testing.T, out map[string]any) TaskPathResult {
 	t.Helper()
 	data, ok := out["data"].(map[string]any)
 	if !ok {
 		t.Fatalf("no data object in response: %v", out)
 	}
-	c, ok := data["count"].(float64)
+	matched, ok := data["matched"].(float64)
 	if !ok {
-		t.Fatalf("no count in data: %v", data)
+		t.Fatalf("no matched in data: %v", data)
 	}
-	return int(c)
+	processed, ok := data["processed"].(float64)
+	if !ok {
+		t.Fatalf("no processed in data: %v", data)
+	}
+	return TaskPathResult{Matched: int(matched), Processed: int(processed)}
 }
 
 func TestDeleteByPathHTTPEmptyPathRejected(t *testing.T) {
@@ -78,6 +82,20 @@ func TestDeleteByPathHTTPEmptyPathRejected(t *testing.T) {
 	_, out := postPath(t, r, "/task/copy/delete_by_path", `{"path":"   "}`)
 	if got := respCode(out); got != 400 {
 		t.Fatalf("empty path code = %d, want 400 (%v)", got, out)
+	}
+}
+
+func TestDeleteByPathHTTPImplicitRootRejected(t *testing.T) {
+	ensureTaskTestConf()
+	admin := &model.User{ID: 1, Role: model.ADMIN}
+	m := newPathManager(1)
+	r := buildPathRouter(m, admin)
+
+	for _, body := range []string{`{"path":"."}`, `{"path":"//"}`, `{"path":"./"}`} {
+		_, out := postPath(t, r, "/task/copy/delete_by_path", body)
+		if got := respCode(out); got != 400 {
+			t.Fatalf("implicit root %s code = %d, want 400 (%v)", body, got, out)
+		}
 	}
 }
 
@@ -111,8 +129,8 @@ func TestDeleteByPathHTTPScopedToOwnerAndBasePath(t *testing.T) {
 	if got := respCode(out); got != 200 {
 		t.Fatalf("code = %d (%v)", got, out)
 	}
-	if got := respCount(t, out); got != 1 {
-		t.Fatalf("count = %d, want 1 (only own task under base path)", got)
+	if got := respResult(t, out); got != (TaskPathResult{Matched: 1, Processed: 1}) {
+		t.Fatalf("result = %+v, want matched=1 processed=1", got)
 	}
 	if _, ok := m.GetByID(mine.GetID()); ok {
 		t.Fatal("owner task under prefix should be removed")
@@ -138,8 +156,8 @@ func TestDeleteByPathHTTPAdminNotEscapedByTraversal(t *testing.T) {
 	_, out := postPath(t, r, "/task/copy/delete_by_path", `{"path":"../../etc/secret"}`)
 	code := respCode(out)
 	if code == 200 {
-		if got := respCount(t, out); got != 0 {
-			t.Fatalf("SECURITY: traversal deleted %d task(s) outside base path", got)
+		if got := respResult(t, out); got != (TaskPathResult{}) {
+			t.Fatalf("SECURITY: traversal processed tasks outside base path: %+v", got)
 		}
 	}
 	if _, ok := m.GetByID(foreign.GetID()); !ok {
@@ -159,16 +177,16 @@ func TestCancelAndRetryByPathHTTPStateFiltering(t *testing.T) {
 	r := buildPathRouter(m, admin)
 
 	_, out := postPath(t, r, "/task/copy/cancel_by_path", `{"path":"/p"}`)
-	if got := respCount(t, out); got != 1 {
-		t.Fatalf("cancel count = %d, want 1 (pending only)", got)
+	if got := respResult(t, out); got != (TaskPathResult{Matched: 1, Processed: 1}) {
+		t.Fatalf("cancel result = %+v", got)
 	}
 	if done.GetState() != tache.StateSucceeded {
 		t.Fatalf("succeeded task altered by cancel: %v", done.GetState())
 	}
 
 	_, out = postPath(t, r, "/task/copy/retry_by_path", `{"path":"/p"}`)
-	if got := respCount(t, out); got != 1 {
-		t.Fatalf("retry count = %d, want 1 (failed only)", got)
+	if got := respResult(t, out); got != (TaskPathResult{Matched: 1, Processed: 1}) {
+		t.Fatalf("retry result = %+v", got)
 	}
 	if failed.GetState() != tache.StateWaitingRetry {
 		t.Fatalf("failed task not queued for retry: %v", failed.GetState())

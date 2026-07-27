@@ -155,7 +155,11 @@ func (t *ArchiveContentUploadTask) GetDstPath() string {
 	if t.DstStorageMp == "" {
 		return ""
 	}
-	return stdpath.Join(t.DstStorageMp, t.DstActualPath)
+	path := stdpath.Join(t.DstStorageMp, t.DstActualPath)
+	if t.InPlace {
+		return path
+	}
+	return stdpath.Join(path, t.ObjName)
 }
 
 func (t *ArchiveContentUploadTask) GetStatus() string {

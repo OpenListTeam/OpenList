@@ -36,10 +36,10 @@ func (t *UploadTask) GetSrcPath() string {
 }
 
 func (t *UploadTask) GetDstPath() string {
-	if t.storage == nil {
+	if t.storage == nil || t.file == nil {
 		return ""
 	}
-	return stdpath.Join(t.storage.GetStorage().MountPath, t.dstDirActualPath)
+	return stdpath.Join(t.storage.GetStorage().MountPath, t.dstDirActualPath, t.file.GetName())
 }
 
 func (t *UploadTask) GetStatus() string {
