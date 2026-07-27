@@ -572,14 +572,14 @@ func (d *LanZou) getFolderByShareUrl(pwd string, sharePageData string) ([]FileOr
 
 	files := make([]FileOrFolderByShareUrl, 0)
 	// vip获取文件夹
-	floders := findSubFolderReg.FindAllStringSubmatch(sharePageData, -1)
-	for _, floder := range floders {
-		if len(floder) == 3 {
+	folders := findSubFolderReg.FindAllStringSubmatch(sharePageData, -1)
+	for _, folder := range folders {
+		if len(folder) == 3 {
 			files = append(files, FileOrFolderByShareUrl{
 				// Pwd: pwd, // 子文件夹不加密
-				ID:       floder[1],
-				NameAll:  floder[2],
-				IsFloder: true,
+				ID:       folder[1],
+				NameAll:  folder[2],
+				IsFolder: true,
 			})
 		}
 	}
