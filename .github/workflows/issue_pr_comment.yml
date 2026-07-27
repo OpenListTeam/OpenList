@@ -3,7 +3,7 @@ name: Issue or PR Auto Reply
 on:
   issues:
     types: [opened]
-  pull_request:
+  pull_request_target:
     types: [opened]
 
 permissions:
