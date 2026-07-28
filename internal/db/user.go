@@ -3,7 +3,9 @@ package db
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -77,7 +79,7 @@ func UpdateAuthn(userID uint, authn string) error {
 	return db.Model(&model.User{ID: userID}).Update("authn", authn).Error
 }
 
-func RegisterAuthn(u *model.User, credential *webauthn.Credential) error {
+func RegisterAuthn(u *model.User, credential *webauthn.Credential, name string, now time.Time) error {
 	if u == nil {
 		return errors.New("user is nil")
 	}
@@ -91,13 +93,24 @@ func RegisterAuthn(u *model.User, credential *webauthn.Credential) error {
 	if err != nil {
 		return err
 	}
-	exists := current.WebAuthnCredentials()
+	exists, err := current.PasskeyCredentials()
+	if err != nil {
+		return err
+	}
 	for i := range exists {
 		if bytes.Equal(exists[i].ID, credential.ID) {
 			return errors.New("credential is already registered")
 		}
 	}
-	exists = append(exists, *credential)
+	if name == "" {
+		name = fmt.Sprintf("Passkey %d", len(exists)+1)
+	}
+	createdAt := now.UTC()
+	exists = append(exists, model.PasskeyCredential{
+		Credential: *credential,
+		Name:       name,
+		CreatedAt:  &createdAt,
+	})
 	res, err := utils.Json.Marshal(exists)
 	if err != nil {
 		return err
@@ -116,7 +129,10 @@ func RemoveAuthn(u *model.User, id string) error {
 	if err != nil {
 		return err
 	}
-	exists := current.WebAuthnCredentials()
+	exists, err := current.PasskeyCredentials()
+	if err != nil {
+		return err
+	}
 	found := false
 	for i := 0; i < len(exists); i++ {
 		idEncoded := base64.StdEncoding.EncodeToString(exists[i].ID)
@@ -136,7 +152,35 @@ func RemoveAuthn(u *model.User, id string) error {
 	return UpdateAuthn(u.ID, string(res))
 }
 
-func UpdateAuthnUsage(userID uint, credential *webauthn.Credential) error {
+func RenameAuthn(u *model.User, id, name string) error {
+	if u == nil {
+		return errors.New("user is nil")
+	}
+	passkeyMu.Lock()
+	defer passkeyMu.Unlock()
+
+	current, err := GetUserById(u.ID)
+	if err != nil {
+		return err
+	}
+	exists, err := current.PasskeyCredentials()
+	if err != nil {
+		return err
+	}
+	for i := range exists {
+		if base64.StdEncoding.EncodeToString(exists[i].ID) == id {
+			exists[i].Name = name
+			res, err := utils.Json.Marshal(exists)
+			if err != nil {
+				return err
+			}
+			return UpdateAuthn(u.ID, string(res))
+		}
+	}
+	return errors.New("credential not found or already revoked")
+}
+
+func UpdateAuthnUsage(userID uint, credential *webauthn.Credential, now time.Time) error {
 	if credential == nil {
 		return errors.New("credential is nil")
 	}
@@ -147,7 +191,10 @@ func UpdateAuthnUsage(userID uint, credential *webauthn.Credential) error {
 	if err != nil {
 		return err
 	}
-	exists := current.WebAuthnCredentials()
+	exists, err := current.PasskeyCredentials()
+	if err != nil {
+		return err
+	}
 	for i := range exists {
 		if bytes.Equal(exists[i].ID, credential.ID) {
 			storedCount := exists[i].Authenticator.SignCount
@@ -155,7 +202,9 @@ func UpdateAuthnUsage(userID uint, credential *webauthn.Credential) error {
 			if (storedCount != 0 || incomingCount != 0) && incomingCount <= storedCount {
 				return ErrPasskeyCounterDidNotAdvance
 			}
-			exists[i] = *credential
+			exists[i].Credential = *credential
+			usedAt := now.UTC()
+			exists[i].LastUsedAt = &usedAt
 			res, err := utils.Json.Marshal(exists)
 			if err != nil {
 				return err

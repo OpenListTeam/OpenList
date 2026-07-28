@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/authn"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -19,7 +22,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const maxPasskeyResponseBytes = 1 << 20
+const (
+	maxPasskeyNameLength    = 100
+	maxPasskeyResponseBytes = 1 << 20
+)
 
 func BeginAuthnLogin(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
@@ -150,7 +156,7 @@ func FinishAuthnLogin(c *gin.Context) {
 		common.ErrorStrResp(c, "passkey signature counter did not advance", 401)
 		return
 	}
-	if err = db.UpdateAuthnUsage(user.ID, credential); err != nil {
+	if err = db.UpdateAuthnUsage(user.ID, credential, time.Now()); err != nil {
 		if errors.Is(err, db.ErrPasskeyCounterDidNotAdvance) {
 			log.WithError(err).WithField("user_id", user.ID).Warn("passkey login rejected due to a concurrent counter update")
 			common.ErrorStrResp(c, err.Error(), 401)
@@ -185,6 +191,12 @@ func BeginAuthnRegistration(c *gin.Context) {
 	if !admitAuthnChallenge(c, authn.CeremonyRegistration, admissionKey) {
 		return
 	}
+	name, err := validatePasskeyName(c.Query("name"), true)
+	if err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+
 	authnInstance, err := authn.NewAuthnInstance(c)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
@@ -205,6 +217,7 @@ func BeginAuthnRegistration(c *gin.Context) {
 		Session:  *sessionData,
 		Ceremony: authn.CeremonyRegistration,
 		UserID:   user.ID,
+		Name:     name,
 	}, admissionKey)
 	if !ok {
 		return
@@ -277,7 +290,7 @@ func FinishAuthnRegistration(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	err = db.RegisterAuthn(user, credential)
+	err = db.RegisterAuthn(user, credential, challenge.Name, time.Now())
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -315,20 +328,75 @@ func DeleteAuthnLogin(c *gin.Context) {
 	common.SuccessResp(c, "Deleted Successfully")
 }
 
+func RenameAuthnLogin(c *gin.Context) {
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	var req struct {
+		ID   string `json:"id" binding:"required"`
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBind(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	name, err := validatePasskeyName(req.Name, false)
+	if err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	if err = db.RenameAuthn(user, req.ID, name); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	if err = op.DelUserCache(user.Username); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c, "Renamed Successfully")
+}
+
 func GetAuthnCredentials(c *gin.Context) {
 	type WebAuthnCredentials struct {
-		ID          []byte `json:"id"`
-		FingerPrint string `json:"fingerprint"`
+		ID          []byte     `json:"id"`
+		Name        string     `json:"name"`
+		FingerPrint string     `json:"fingerprint"`
+		CreatedAt   *time.Time `json:"created_at,omitempty"`
+		LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
-	credentials := user.WebAuthnCredentials()
+	credentials, err := user.PasskeyCredentials()
+	if err != nil {
+		log.WithError(err).Error("passkey credential list decode failed")
+		common.ErrorResp(c, err, 500)
+		return
+	}
 	res := make([]WebAuthnCredentials, 0, len(credentials))
-	for _, v := range credentials {
+	for i, v := range credentials {
+		name := v.Name
+		if name == "" {
+			name = fmt.Sprintf("Passkey %d", i+1)
+		}
 		credential := WebAuthnCredentials{
 			ID:          v.ID,
+			Name:        name,
 			FingerPrint: fmt.Sprintf("% X", v.Authenticator.AAGUID),
+			CreatedAt:   v.CreatedAt,
+			LastUsedAt:  v.LastUsedAt,
 		}
 		res = append(res, credential)
 	}
 	common.SuccessResp(c, res)
+}
+
+func validatePasskeyName(name string, optional bool) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" && optional {
+		return "", nil
+	}
+	if name == "" {
+		return "", errors.New("passkey name is required")
+	}
+	if utf8.RuneCountInString(name) > maxPasskeyNameLength {
+		return "", fmt.Errorf("passkey name must be at most %d characters", maxPasskeyNameLength)
+	}
+	return name, nil
 }

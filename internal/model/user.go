@@ -71,6 +71,13 @@ type User struct {
 	AllowLdap  bool   `json:"allow_ldap" gorm:"default:true"`
 }
 
+type PasskeyCredential struct {
+	webauthn.Credential
+	Name       string     `json:"name,omitempty"`
+	CreatedAt  *time.Time `json:"created_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
 func (u *User) IsGuest() bool {
 	return u.Role == GUEST
 }
@@ -259,12 +266,27 @@ func (u *User) WebAuthnDisplayName() string {
 }
 
 func (u *User) WebAuthnCredentials() []webauthn.Credential {
-	var res []webauthn.Credential
-	err := json.Unmarshal([]byte(u.Authn), &res)
+	passkeys, err := u.PasskeyCredentials()
 	if err != nil {
-		fmt.Println(err)
+		utils.Log.Errorf("failed to decode passkeys for user %d: %v", u.ID, err)
+		return nil
+	}
+	res := make([]webauthn.Credential, len(passkeys))
+	for i := range passkeys {
+		res[i] = passkeys[i].Credential
 	}
 	return res
+}
+
+func (u *User) PasskeyCredentials() ([]PasskeyCredential, error) {
+	var res []PasskeyCredential
+	if u.Authn == "" {
+		return res, nil
+	}
+	if err := json.Unmarshal([]byte(u.Authn), &res); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (u *User) WebAuthnIcon() string {

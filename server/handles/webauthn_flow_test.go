@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +30,6 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
-	"github.com/go-webauthn/webauthn/webauthn"
 	"gorm.io/gorm"
 )
 
@@ -79,7 +79,7 @@ func TestPasskeyHTTPHandlerLifecycle(t *testing.T) {
 func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 	router, user, token, authenticator := setupPasskeyHTTPTest(t)
 
-	wrongOriginBegin := beginRegistration(t, router, token)
+	wrongOriginBegin := beginRegistration(t, router, token, "Wrong origin")
 	wrongOrigin := performPasskeyRequest(
 		t,
 		router,
@@ -91,7 +91,7 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 	requirePasskeyResponse(t, wrongOrigin, 400, "Error validating origin")
 	requirePasskeyCredentialCount(t, user.ID, 0)
 
-	wrongRPBegin := beginRegistration(t, router, token)
+	wrongRPBegin := beginRegistration(t, router, token, "Wrong RP")
 	wrongRP := performPasskeyRequest(
 		t,
 		router,
@@ -103,7 +103,7 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 	requirePasskeyResponse(t, wrongRP, 400, "Error validating the authenticator response")
 	requirePasskeyCredentialCount(t, user.ID, 0)
 
-	missingUVBegin := beginRegistration(t, router, token)
+	missingUVBegin := beginRegistration(t, router, token, "Missing UV")
 	missingUV := performPasskeyRequest(
 		t,
 		router,
@@ -121,7 +121,7 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 	requirePasskeyResponse(t, missingUV, 400, "")
 	requirePasskeyCredentialCount(t, user.ID, 0)
 
-	registrationBegin := beginRegistration(t, router, token)
+	registrationBegin := beginRegistration(t, router, token, "MacBook Touch ID")
 	registrationBody := authenticator.registrationResponse(
 		t,
 		registrationBegin.Options.PublicKey.Challenge,
@@ -140,8 +140,10 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 	requirePasskeyResponse(t, registration, 200, "")
 
 	credentials := requirePasskeyCredentialCount(t, user.ID, 1)
-	if !bytes.Equal(credentials[0].PublicKey, authenticator.publicKey) {
-		t.Fatalf("registered credential = %#v", credentials[0])
+	if credentials[0].Name != "MacBook Touch ID" ||
+		credentials[0].CreatedAt == nil ||
+		!bytes.Equal(credentials[0].PublicKey, authenticator.publicKey) {
+		t.Fatalf("registered credential metadata = %#v", credentials[0])
 	}
 
 	registrationReplay := performPasskeyRequest(
@@ -172,7 +174,7 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 		map[string]string{"session": wrongLoginOriginBegin.Session},
 	)
 	requirePasskeyResponse(t, wrongLoginOrigin, 400, "Error validating origin")
-	requirePasskeyCounter(t, user.ID, 0)
+	requirePasskeyCounter(t, user.ID, 0, false)
 
 	wrongLoginRPBegin := beginLogin(t, router)
 	wrongLoginRP := performPasskeyRequest(
@@ -191,7 +193,7 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 		map[string]string{"session": wrongLoginRPBegin.Session},
 	)
 	requirePasskeyResponse(t, wrongLoginRP, 400, "Error validating the authenticator response")
-	requirePasskeyCounter(t, user.ID, 0)
+	requirePasskeyCounter(t, user.ID, 0, false)
 
 	missingLoginUVBegin := beginLogin(t, router)
 	missingLoginUV := performPasskeyRequest(
@@ -210,7 +212,7 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 		map[string]string{"session": missingLoginUVBegin.Session},
 	)
 	requirePasskeyResponse(t, missingLoginUV, 400, "")
-	requirePasskeyCounter(t, user.ID, 0)
+	requirePasskeyCounter(t, user.ID, 0, false)
 
 	loginBegin := beginLogin(t, router)
 	loginBody := authenticator.assertionResponse(
@@ -231,7 +233,7 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 	)
 	requirePasskeyResponse(t, login, 200, "")
 	requireResponseToken(t, login)
-	requirePasskeyCounter(t, user.ID, 1)
+	requirePasskeyCounter(t, user.ID, 1, true)
 
 	loginReplay := performPasskeyRequest(
 		t,
@@ -242,7 +244,7 @@ func testPasskeyHTTPHandlerLifecycle(t *testing.T) {
 		map[string]string{"session": loginBegin.Session},
 	)
 	requirePasskeyResponse(t, loginReplay, 400, "passkey challenge is invalid, expired, or already used")
-	requirePasskeyCounter(t, user.ID, 1)
+	requirePasskeyCounter(t, user.ID, 1, true)
 
 	revokedLoginBegin := beginLogin(t, router)
 	revoke := performPasskeyRequest(
@@ -478,13 +480,13 @@ func (a *passkeyTestAuthenticator) assertionResponse(
 	})
 }
 
-func beginRegistration(t *testing.T, router *gin.Engine, token string) passkeyBeginData {
+func beginRegistration(t *testing.T, router *gin.Engine, token, name string) passkeyBeginData {
 	t.Helper()
 	response := performPasskeyRequest(
 		t,
 		router,
 		http.MethodGet,
-		"/api/authn/webauthn_begin_registration",
+		"/api/authn/webauthn_begin_registration?name="+url.QueryEscape(name),
 		nil,
 		map[string]string{"Authorization": token},
 	)
@@ -590,24 +592,34 @@ func requirePasskeyCredentialCount(
 	t *testing.T,
 	userID uint,
 	count int,
-) []webauthn.Credential {
+) []model.PasskeyCredential {
 	t.Helper()
 	user, err := db.GetUserById(userID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials := user.WebAuthnCredentials()
+	credentials, err := user.PasskeyCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(credentials) != count {
 		t.Fatalf("credential count = %d, want %d", len(credentials), count)
 	}
 	return credentials
 }
 
-func requirePasskeyCounter(t *testing.T, userID uint, counter uint32) {
+func requirePasskeyCounter(t *testing.T, userID uint, counter uint32, used bool) {
 	t.Helper()
 	credentials := requirePasskeyCredentialCount(t, userID, 1)
-	if credentials[0].Authenticator.SignCount != counter {
-		t.Fatalf("credential counter = %d, want %d", credentials[0].Authenticator.SignCount, counter)
+	if credentials[0].Authenticator.SignCount != counter ||
+		(credentials[0].LastUsedAt != nil) != used {
+		t.Fatalf(
+			"credential usage = counter %d, last used %v; want counter %d, used %v",
+			credentials[0].Authenticator.SignCount,
+			credentials[0].LastUsedAt,
+			counter,
+			used,
+		)
 	}
 }
 

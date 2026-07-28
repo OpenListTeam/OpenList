@@ -36,6 +36,7 @@ type Challenge struct {
 	Session  webauthn.SessionData
 	Ceremony Ceremony
 	UserID   uint
+	Name     string
 	Expires  time.Time
 }
 

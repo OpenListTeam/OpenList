@@ -94,6 +94,7 @@ func Init(e *gin.Engine) {
 	passkeys.GET("/webauthn_begin_registration", handles.BeginAuthnRegistration)
 	passkeys.POST("/webauthn_finish_registration", handles.FinishAuthnRegistration)
 	passkeys.POST("/delete_authn", handles.DeleteAuthnLogin)
+	passkeys.POST("/rename_authn", handles.RenameAuthnLogin)
 	passkeys.GET("/getcredentials", handles.GetAuthnCredentials)
 
 	// no need auth

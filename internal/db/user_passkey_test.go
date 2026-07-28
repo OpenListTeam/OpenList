@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/glebarez/sqlite"
@@ -29,6 +30,7 @@ func TestPasskeyLifecyclePreservesPasswordLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	registeredAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	credential := &webauthn.Credential{
 		ID:        []byte("credential-id"),
 		PublicKey: []byte("public-key"),
@@ -36,19 +38,23 @@ func TestPasskeyLifecyclePreservesPasswordLogin(t *testing.T) {
 			SignCount: 1,
 		},
 	}
-	if err = RegisterAuthn(user, credential); err != nil {
+	if err = RegisterAuthn(user, credential, "MacBook Touch ID", registeredAt); err != nil {
 		t.Fatalf("RegisterAuthn() error = %v", err)
 	}
 	secondCredential := &webauthn.Credential{
 		ID:        []byte("credential-id-2"),
 		PublicKey: []byte("public-key-2"),
 	}
-	if err = RegisterAuthn(user, secondCredential); err != nil {
+	if err = RegisterAuthn(user, secondCredential, "", registeredAt); err != nil {
 		t.Fatalf("second RegisterAuthn() error = %v", err)
+	}
+	if err = RenameAuthn(user, "Y3JlZGVudGlhbC1pZC0y", "YubiKey"); err != nil {
+		t.Fatalf("RenameAuthn() error = %v", err)
 	}
 
 	credential.Authenticator.SignCount = 2
-	if err = UpdateAuthnUsage(user.ID, credential); err != nil {
+	usedAt := registeredAt.Add(time.Hour)
+	if err = UpdateAuthnUsage(user.ID, credential, usedAt); err != nil {
 		t.Fatalf("UpdateAuthnUsage() error = %v", err)
 	}
 
@@ -56,25 +62,31 @@ func TestPasskeyLifecyclePreservesPasswordLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	passkeys := current.WebAuthnCredentials()
-	if len(passkeys) != 2 {
-		t.Fatalf("stored credentials = %#v", passkeys)
+	passkeys, err := current.PasskeyCredentials()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if passkeys[0].Authenticator.SignCount != 2 {
-		t.Fatalf("authentication counter not persisted: %#v", passkeys[0])
+	if len(passkeys) != 2 || passkeys[0].Name != "MacBook Touch ID" || passkeys[1].Name != "YubiKey" {
+		t.Fatalf("stored passkeys = %#v", passkeys)
+	}
+	if passkeys[0].Authenticator.SignCount != 2 || passkeys[0].LastUsedAt == nil || !passkeys[0].LastUsedAt.Equal(usedAt) {
+		t.Fatalf("authentication metadata not persisted: %#v", passkeys[0])
 	}
 
 	staleCredential := *credential
 	staleCredential.Authenticator.SignCount = 1
-	if err = UpdateAuthnUsage(user.ID, &staleCredential); !errors.Is(err, ErrPasskeyCounterDidNotAdvance) {
+	if err = UpdateAuthnUsage(user.ID, &staleCredential, usedAt.Add(time.Hour)); !errors.Is(err, ErrPasskeyCounterDidNotAdvance) {
 		t.Fatalf("stale counter update error = %v, want ErrPasskeyCounterDidNotAdvance", err)
 	}
 	current, err = GetUserById(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	passkeys = current.WebAuthnCredentials()
-	if passkeys[0].Authenticator.SignCount != 2 {
+	passkeys, err = current.PasskeyCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if passkeys[0].Authenticator.SignCount != 2 || !passkeys[0].LastUsedAt.Equal(usedAt) {
 		t.Fatalf("stale counter overwrote newer authentication state: %#v", passkeys[0])
 	}
 
@@ -88,11 +100,11 @@ func TestPasskeyLifecyclePreservesPasswordLogin(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_ = UpdateAuthnUsage(user.ID, &higher)
+			_ = UpdateAuthnUsage(user.ID, &higher, usedAt)
 		}()
 		go func() {
 			defer wg.Done()
-			_ = UpdateAuthnUsage(user.ID, &lower)
+			_ = UpdateAuthnUsage(user.ID, &lower, usedAt)
 		}()
 		wg.Wait()
 
@@ -100,7 +112,10 @@ func TestPasskeyLifecyclePreservesPasswordLogin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		passkeys = current.WebAuthnCredentials()
+		passkeys, err = current.PasskeyCredentials()
+		if err != nil {
+			t.Fatal(err)
+		}
 		if passkeys[0].Authenticator.SignCount != expected {
 			t.Fatalf("concurrent counter update = %d, want %d", passkeys[0].Authenticator.SignCount, expected)
 		}
