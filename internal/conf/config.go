@@ -113,6 +113,7 @@ type MCP struct {
 type Config struct {
 	Force                 bool        `json:"force" env:"FORCE"`
 	SiteURL               string      `json:"site_url" env:"SITE_URL"`
+	PasskeyTrustedProxies []string    `json:"passkey_trusted_proxies" env:"PASSKEY_TRUSTED_PROXIES"`
 	Cdn                   string      `json:"cdn" env:"CDN"`
 	JwtSecret             string      `json:"jwt_secret" env:"JWT_SECRET"`
 	TokenExpiresIn        int         `json:"token_expires_in" env:"TOKEN_EXPIRES_IN"`
