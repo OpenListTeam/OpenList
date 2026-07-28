@@ -195,6 +195,8 @@ jobs:
           context: .
           file: Dockerfile.ci
           push: ${{ env.IMAGE_PUSH == 'true' }}
+          provenance: mode=max
+          sbom: true
           build-args: |
             BASE_IMAGE_TAG=${{ matrix.base_image_tag }}
             ${{ matrix.build_arg }}
@@ -279,6 +281,8 @@ jobs:
           context: .
           file: Dockerfile.ci
           push: ${{ env.IMAGE_PUSH == 'true' }}
+          provenance: mode=max
+          sbom: true
           build-args: |
             BASE_IMAGE_TAG=${{ matrix.base_image_tag }}
             ${{ matrix.build_arg }}
