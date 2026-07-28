@@ -7,11 +7,12 @@ import (
 )
 
 type AddUrlArgs struct {
-	Url     string
-	UID     string
-	TempDir string
-	Signal  chan int
-	Ctx     context.Context
+	Url         string
+	TorrentData []byte
+	UID         string
+	TempDir     string
+	Signal      chan int
+	Ctx         context.Context
 }
 
 type Status struct {

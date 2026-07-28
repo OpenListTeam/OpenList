@@ -35,11 +35,13 @@ const (
 	DeleteOnUploadFailed  DeletePolicy = "delete_on_upload_failed"
 	DeleteNever           DeletePolicy = "delete_never"
 	DeleteAlways          DeletePolicy = "delete_always"
+	DeleteAfterSeeding    DeletePolicy = "delete_after_seeding"
 	UploadDownloadStream  DeletePolicy = "upload_download_stream"
 )
 
 type AddURLArgs struct {
 	URL          string
+	TorrentData  []byte
 	DstDirPath   string
 	Tool         string
 	DeletePolicy DeletePolicy
@@ -55,6 +57,9 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	if storage.Config().NoUpload {
 		return nil, errors.WithStack(errs.UploadNotSupported)
 	}
+	if len(args.TorrentData) > 0 && args.Tool != "qBittorrent" {
+		return nil, fmt.Errorf("%s does not support uploaded torrent files, please submit a magnet link or use qBittorrent", args.Tool)
+	}
 	// check path is valid
 	obj, err := op.Get(ctx, storage, dstDirActualPath)
 	if err != nil {
@@ -68,7 +73,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 		}
 	}
 	// try putting url
-	if args.Tool == "SimpleHttp" {
+	if len(args.TorrentData) == 0 && args.Tool == "SimpleHttp" {
 		if isSimpleHttpSchemeUnsupported(args.URL) {
 			return nil, fmt.Errorf("SimpleHttp tool does not support this URL scheme, please use aria2 or other tools for magnet/ed2k links")
 		}
@@ -80,7 +85,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	}
 
 	// ed2k 链接自动路由：如果当前工具不支持 ed2k，自动尝试使用迅雷系工具
-	if isEd2kURL(args.URL) {
+	if len(args.TorrentData) == 0 && isEd2kURL(args.URL) {
 		if !isEd2kCapableTool(args.Tool) {
 			// 尝试找到一个可用的支持 ed2k 的工具
 			fallbackTool, fallbackName := findEd2kCapableTool()
@@ -171,6 +176,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 			ApiUrl:  common.GetApiUrl(ctx),
 		},
 		Url:          args.URL,
+		TorrentData:  args.TorrentData,
 		DstDirPath:   args.DstDirPath,
 		TempDir:      tempDir,
 		DeletePolicy: deletePolicy,

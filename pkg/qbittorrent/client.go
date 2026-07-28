@@ -15,6 +15,7 @@ import (
 
 type Client interface {
 	AddFromLink(link string, savePath string, id string) error
+	AddFromTorrent(torrentData []byte, savePath string, id string) error
 	GetInfo(id string) (TorrentInfo, error)
 	GetFiles(id string) ([]FileInfo, error)
 	Delete(id string, deleteFiles bool) error
@@ -142,6 +143,26 @@ func (c *client) post(path string, data url.Values) (*http.Response, error) {
 }
 
 func (c *client) AddFromLink(link string, savePath string, id string) error {
+	return c.addTorrent(func(writer *multipart.Writer) error {
+		return writer.WriteField("urls", link)
+	}, savePath, id, link)
+}
+
+func (c *client) AddFromTorrent(torrentData []byte, savePath string, id string) error {
+	if len(torrentData) == 0 {
+		return errors.New("empty torrent data")
+	}
+	return c.addTorrent(func(writer *multipart.Writer) error {
+		part, err := writer.CreateFormFile("torrents", id+".torrent")
+		if err != nil {
+			return err
+		}
+		_, err = part.Write(torrentData)
+		return err
+	}, savePath, id, "torrent file")
+}
+
+func (c *client) addTorrent(writeContent func(*multipart.Writer) error, savePath string, id string, description string) error {
 	err := c.checkAuthorization()
 	if err != nil {
 		return err
@@ -150,22 +171,19 @@ func (c *client) AddFromLink(link string, savePath string, id string) error {
 	buf := new(bytes.Buffer)
 	writer := multipart.NewWriter(buf)
 
-	addField := func(name string, value string) {
-		if err != nil {
-			return
-		}
-		err = writer.WriteField(name, value)
-	}
-	addField("urls", link)
-	addField("savepath", savePath)
-	addField("tags", "openlist-"+id)
-	addField("autoTMM", "false")
-	if err != nil {
+	if err := writeContent(writer); err != nil {
 		return err
 	}
-
-	err = writer.Close()
-	if err != nil {
+	if err := writer.WriteField("savepath", savePath); err != nil {
+		return err
+	}
+	if err := writer.WriteField("tags", "openlist-"+id); err != nil {
+		return err
+	}
+	if err := writer.WriteField("autoTMM", "false"); err != nil {
+		return err
+	}
+	if err := writer.Close(); err != nil {
 		return err
 	}
 
@@ -182,21 +200,17 @@ func (c *client) AddFromLink(link string, savePath string, id string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	// qBittorrent 5.2.0 returns 204 on success.
-	if resp.StatusCode != http.StatusNoContent {
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
 
-	// check result
-	body := make([]byte, 2)
-	_, err = resp.Body.Read(body)
-	if err != nil {
-		return err
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	msg := "failed to add qBittorrent task: " + description + ", status: " + resp.Status
+	if body = bytes.TrimSpace(body); len(body) > 0 {
+		msg += ", response: " + string(body)
 	}
-	if resp.StatusCode != 200 || string(body) != "Ok" {
-		return errors.New("failed to add qBittorrent task: " + link)
-	}
-	return nil
+	return errors.New(msg)
 }
 
 type TorrentStatus string
