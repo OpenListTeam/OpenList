@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	stdpath "path"
 	"regexp"
 	"strings"
@@ -179,7 +180,7 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 			remoteFullPath = stdpath.Join(d.RemotePath, path)
 			remoteObj, err = fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
 			if err != nil {
-				// 可能是 虚拟路径+开启文件夹加密：返回NotSupport让op.Get去尝试op.List查找
+				// 可能�?虚拟路径+开启文件夹加密：返回NotSupport让op.Get去尝试op.List查找
 				return nil, errs.NotSupport
 			}
 		} else if secondTry && errs.IsObjectNotFound(err) {
@@ -363,21 +364,44 @@ func (d *Crypt) Put(ctx context.Context, dstDir model.Obj, streamer model.FileSt
 		return fmt.Errorf("failed to EncryptData: %w", err)
 	}
 
+	encryptedSize := d.cipher.EncryptedSize(streamer.GetSize())
+
 	// doesn't support seekableStream, since rapid-upload is not working for encrypted data
 	streamOut := &stream.FileStream{
 		Obj: &model.Object{
 			ID:       streamer.GetID(),
 			Path:     streamer.GetPath(),
 			Name:     d.cipher.EncryptFileName(streamer.GetName()),
-			Size:     d.cipher.EncryptedSize(streamer.GetSize()),
+			Size:     encryptedSize,
 			Modified: streamer.ModTime(),
 			IsFolder: streamer.IsDir(),
 		},
-		Reader:            wrappedIn,
 		Mimetype:          "application/octet-stream",
 		ForceStreamUpload: true,
 		Exist:             streamer.GetExist(),
 	}
+
+	if d.EncryptToDisk {
+		// Encrypt to a temp file on disk so that downstream drivers receive a seekable Reader.
+		// This avoids forcing downstream drivers (e.g. quark_open) to cache the entire
+		// encrypted stream into HybridCache, which causes excessive Page Cache usage
+		// and OOM kills in memory-constrained containers.
+		tmpFile, err := utils.CreateTempFile(wrappedIn, encryptedSize)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt to temp file: %w", err)
+		}
+		streamOut.Reader = tmpFile
+		// Ensure the temp file is closed and removed after upload finishes
+		streamOut.Add(utils.CloseFunc(func() error {
+			tmpName := tmpFile.Name()
+			closeErr := tmpFile.Close()
+			removeErr := os.Remove(tmpName)
+			return errors.Join(closeErr, removeErr)
+		}))
+	} else {
+		streamOut.Reader = wrappedIn
+	}
+
 	return op.Put(ctx, remoteStorage, remoteActualPath, streamOut, up)
 }
 
