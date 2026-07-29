@@ -9,6 +9,7 @@ import (
 	"net/url"
 	stdpath "path"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -117,8 +118,12 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		return nil, errs.ObjectNotFound
 	}
 	for idx, root := range roots {
-		rawPath := stdpath.Join(root, sub)
+		rawPath := stdpath.Join(root, d.escapeFilenamePath(sub))
 		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
+		if err != nil && errs.IsObjectNotFound(err) && rawPath != stdpath.Join(root, sub) {
+			rawPath = stdpath.Join(root, sub)
+			obj, err = fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
+		}
 		if err != nil {
 			continue
 		}
@@ -129,7 +134,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 		ret := model.Object{
 			Path:     rawPath,
-			Name:     obj.GetName(),
+			Name:     d.escapeFilename(obj.GetName(), false),
 			Size:     obj.GetSize(),
 			Modified: obj.ModTime(),
 			IsFolder: obj.IsDir(),
@@ -159,9 +164,9 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		if idx > 0 {
 			objs = append(objs, nil)
 		}
-		for _, d := range roots {
+		for _, root := range roots {
 			objs = append(objs, &tempObj{model.Object{
-				Path: stdpath.Join(d, sub),
+				Path: stdpath.Join(root, d.escapeFilenamePath(sub)),
 			}})
 		}
 		return objs, nil
@@ -192,14 +197,14 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			continue
 		}
 		for _, obj := range tmp {
-			name := obj.GetName()
+			rawName, name := obj.GetName(), d.escapeFilename(obj.GetName(), false)
 			if _, exists := objMap[name]; exists {
 				continue
 			}
 			mask := model.GetObjMask(obj) &^ model.Temp
 			objRes := model.Object{
 				Name:     name,
-				Path:     stdpath.Join(dirPath, name),
+				Path:     stdpath.Join(dirPath, rawName),
 				Size:     obj.GetSize(),
 				Modified: obj.ModTime(),
 				IsFolder: obj.IsDir(),
@@ -362,7 +367,7 @@ func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 	objs, err := d.getWriteObjs(ctx, parentDir)
 	if err == nil {
 		for _, obj := range objs {
-			err = errors.Join(err, fs.MakeDir(ctx, stdpath.Join(obj.GetPath(), dirName)))
+			err = errors.Join(err, fs.MakeDir(ctx, stdpath.Join(obj.GetPath(), d.escapeFilename(dirName, true))))
 		}
 	}
 	return err
@@ -389,7 +394,7 @@ func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 	objs, err := d.getWriteObjs(ctx, srcObj)
 	if err == nil {
 		for _, obj := range objs {
-			err = errors.Join(err, fs.Rename(ctx, obj.GetPath(), newName))
+			err = errors.Join(err, fs.Rename(ctx, obj.GetPath(), d.escapeFilename(newName, true)))
 		}
 	}
 	return err
@@ -426,7 +431,7 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 				return err
 			}
 			return op.Put(ctx, storage, reqActualPath, &stream.FileStream{
-				Obj:      s,
+				Obj:      d.escapeObjName(s),
 				Mimetype: s.GetMimetype(),
 				Reader:   s,
 			}, up)
@@ -439,7 +444,7 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 			up(100 / count)
 			for i, obj := range objs {
 				err = errors.Join(err, fs.PutDirectly(ctx, obj.GetPath(), &stream.FileStream{
-					Obj:      s,
+					Obj:      d.escapeObjName(s),
 					Mimetype: s.GetMimetype(),
 					Reader:   file,
 				}))
@@ -459,7 +464,7 @@ func (d *Alias) PutURL(ctx context.Context, dstDir model.Obj, name, url string) 
 	objs, err := d.getPutObjs(ctx, dstDir)
 	if err == nil {
 		for _, obj := range objs {
-			err = errors.Join(err, fs.PutURL(ctx, obj.GetPath(), name, url))
+			err = errors.Join(err, fs.PutURL(ctx, obj.GetPath(), d.escapeFilename(name, true), url))
 		}
 		return err
 	}
@@ -574,6 +579,53 @@ func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 		}
 	}
 	return 0
+}
+
+func (d *Alias) escapeObjName(obj model.Obj) model.Obj {
+	name := d.escapeFilename(obj.GetName(), true)
+	if name == obj.GetName() {
+		return obj
+	}
+	return &model.ObjWrapName{Name: name, Obj: obj}
+}
+
+func (d *Alias) escapeFilenamePath(path string) string {
+	parts := strings.Split(path, "/")
+	for i := range parts {
+		parts[i] = d.escapeFilename(parts[i], true)
+	}
+	return strings.Join(parts, "/")
+}
+
+func (d *Alias) escapeFilename(name string, encode bool) string {
+	if !d.FilenameEscape {
+		return name
+	}
+	var protected, characters []string
+	for char := range strings.SplitSeq(d.FilenameEscapeChars, "\n") {
+		char = strings.TrimSuffix(char, "\r")
+		if char == "" {
+			continue
+		}
+		runes := []rune(char)
+		var escaped string
+		for _, unit := range utf16.Encode(runes[:1]) {
+			escaped += fmt.Sprintf("_x%04X_", unit)
+		}
+		escaped += string(runes[1:])
+		safeToken := "_x005F_" + escaped[1:]
+		if encode {
+			protected = append(protected, escaped, safeToken)
+			characters = append(characters, char, escaped)
+		} else {
+			protected = append(protected, safeToken, escaped)
+			characters = append(characters, escaped, char)
+		}
+	}
+	if len(protected) == 0 {
+		return name
+	}
+	return strings.NewReplacer(append(protected, characters...)...).Replace(name)
 }
 
 var _ driver.Driver = (*Alias)(nil)

@@ -15,6 +15,8 @@ type Addition struct {
 	DownloadPartSize     int    `json:"download_part_size" default:"0" type:"number" required:"false" help:"Need to enable proxy. Unit: KB"`
 	ProviderPassThrough  bool   `json:"provider_pass_through" type:"bool" default:"false"`
 	DetailsPassThrough   bool   `json:"details_pass_through" type:"bool" default:"false"`
+	FilenameEscape       bool   `json:"filename_escape" type:"bool" default:"false"`
+	FilenameEscapeChars  string `json:"filename_escape_chars" type:"text" help:"Strings to escape by replacing the first character with _xHHHH_ UTF-16 code units, one per line"`
 }
 
 var config = driver.Config{
