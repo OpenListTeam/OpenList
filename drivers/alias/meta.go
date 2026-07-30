@@ -17,6 +17,7 @@ type Addition struct {
 	DetailsPassThrough   bool   `json:"details_pass_through" type:"bool" default:"false"`
 	FilenameEscape       bool   `json:"filename_escape" type:"bool" default:"false"`
 	FilenameEscapeChars  string `json:"filename_escape_chars" type:"text" help:"Strings to escape by replacing the first character with _xHHHH_ UTF-16 code units, one per line"`
+	FilenameAutoRename   bool   `json:"filename_auto_rename" type:"bool" default:"false" help:"Automatically rename matching existing backend objects when listing directories"`
 }
 
 var config = driver.Config{

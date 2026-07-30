@@ -198,6 +198,12 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		}
 		for _, obj := range tmp {
 			rawName, name := obj.GetName(), d.escapeFilename(obj.GetName(), false)
+			escapedName := d.escapeFilename(name, true)
+			if d.FilenameAutoRename && escapedName != rawName {
+				if err := fs.Rename(ctx, stdpath.Join(dirPath, rawName), escapedName); err == nil {
+					rawName = escapedName
+				}
+			}
 			if _, exists := objMap[name]; exists {
 				continue
 			}
