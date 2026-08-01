@@ -2,14 +2,12 @@ package huggingface
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"os"
 	stdpath "path"
 	"strings"
 	"sync"
@@ -18,6 +16,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	netutil "github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
@@ -26,13 +26,15 @@ import (
 // hfClient is a dedicated HTTP client for HF API requests,
 // separate from base.HttpClient to avoid keep-alive connection reuse issues.
 func hfClient() *http.Client {
+	transport := &http.Transport{
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
+		DisableKeepAlives: true,
+		MaxIdleConns:      0,
+	}
+	netutil.SetProxyIfConfigured(transport)
 	return &http.Client{
-		Timeout: 30 * time.Minute,
-		Transport: &http.Transport{
-			TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
-			DisableKeepAlives: true,
-			MaxIdleConns:      0,
-		},
+		Timeout:   30 * time.Minute,
+		Transport: transport,
 	}
 }
 
@@ -103,18 +105,18 @@ func (d *HuggingFace) Link(ctx context.Context, file model.Obj, args model.LinkA
 	}, nil
 }
 
-func (d *HuggingFace) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	filePath := relativePath(stdpath.Join(dstDir.GetPath(), stream.GetName()))
-	fileName := stream.GetName()
+func (d *HuggingFace) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) error {
+	filePath := relativePath(stdpath.Join(dstDir.GetPath(), file.GetName()))
+	fileName := file.GetName()
 
-	tmp, size, sha256Hex, err := d.saveStream(ctx, stream, up)
+	cache, sha256Hex, err := stream.CacheFullAndHash(file, &up, utils.SHA256)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
 
-	sample, err := d.readSample(tmp)
+	size := file.GetSize()
+
+	sample, err := d.readSample(cache)
 	if err != nil {
 		return err
 	}
@@ -132,42 +134,13 @@ func (d *HuggingFace) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 	}
 
 	if isLFS {
-		return d.lfsUploadAndCommit(ctx, tmp, filePath, fileName, sha256Hex, size, up)
+		return d.lfsUploadAndCommit(ctx, cache, filePath, fileName, sha256Hex, size, up)
 	}
-	return d.streamCommit(ctx, tmp, filePath, fileName, size, up)
-}
-
-// saveStream writes stream to a temp file, returning the file, its size and sha256 hex.
-func (d *HuggingFace) saveStream(ctx context.Context, stream model.FileStreamer, up driver.UpdateProgress) (*os.File, int64, string, error) {
-	tmp, err := os.CreateTemp("", "hf-upload-*")
-	if err != nil {
-		return nil, 0, "", err
-	}
-	hasher := sha256.New()
-	writer := io.MultiWriter(tmp, hasher)
-	if err = utils.CopyWithCtx(ctx, writer, stream, 0, up); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return nil, 0, "", err
-	}
-	fi, err := tmp.Stat()
-	if err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return nil, 0, "", err
-	}
-	expectedSize := stream.GetSize()
-	if expectedSize > 0 && fi.Size() != expectedSize {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return nil, 0, "", fmt.Errorf("saveStream: wrote %d bytes to temp file but stream.GetSize()=%d", fi.Size(), expectedSize)
-	}
-	size := fi.Size()
-	return tmp, size, fmt.Sprintf("%x", hasher.Sum(nil)), nil
+	return d.streamCommit(ctx, cache, filePath, fileName, size, up)
 }
 
 // streamCommit streams file content as base64 via NDJSON commit API.
-func (d *HuggingFace) streamCommit(ctx context.Context, tmp *os.File, filePath, fileName string, size int64, up driver.UpdateProgress) error {
+func (d *HuggingFace) streamCommit(ctx context.Context, cache model.File, filePath, fileName string, size int64, up driver.UpdateProgress) error {
 	headerLine := fmt.Sprintf(`{"key":"header","value":{"summary":"Upload %s"}}`, fileName) + "\n"
 	filePrefix := fmt.Sprintf(`{"key":"file","value":{"path":"%s","content":"`, filePath)
 	fileSuffix := `","encoding":"base64"}}` + "\n"
@@ -177,12 +150,12 @@ func (d *HuggingFace) streamCommit(ctx context.Context, tmp *os.File, filePath, 
 
 	pr, pw := io.Pipe()
 	go func() {
-		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		if _, err := cache.Seek(0, io.SeekStart); err != nil {
 			_ = pw.CloseWithError(err)
 			return
 		}
 		encoder := base64.NewEncoder(base64.StdEncoding, pw)
-		if _, err := io.Copy(encoder, tmp); err != nil {
+		if _, err := io.Copy(encoder, cache); err != nil {
 			_ = pw.CloseWithError(err)
 			return
 		}
@@ -200,7 +173,7 @@ func (d *HuggingFace) streamCommit(ctx context.Context, tmp *os.File, filePath, 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		d.apiURL(fmt.Sprintf("/commit/%s", d.Ref)),
 		driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
-			Reader: &driver.SimpleReaderWithSize{Reader: body, Size: contentLength},
+			Reader:         &driver.SimpleReaderWithSize{Reader: body, Size: contentLength},
 			UpdateProgress: up,
 		}))
 	if err != nil {
@@ -225,7 +198,7 @@ func (d *HuggingFace) streamCommit(ctx context.Context, tmp *os.File, filePath, 
 }
 
 // lfsUploadAndCommit handles LFS file upload and NDJSON commit with lfsFile reference.
-func (d *HuggingFace) lfsUploadAndCommit(ctx context.Context, tmp *os.File, filePath, fileName, sha256Hex string, size int64, up driver.UpdateProgress) error {
+func (d *HuggingFace) lfsUploadAndCommit(ctx context.Context, cache model.File, filePath, fileName, sha256Hex string, size int64, up driver.UpdateProgress) error {
 	batchURL := fmt.Sprintf("%s/%s.git/info/lfs/objects/batch", d.repoBase(), d.RepoID)
 	batchReq := LFSBatchRequest{
 		Operation: "upload", Transfers: []string{"basic"},
@@ -261,15 +234,7 @@ func (d *HuggingFace) lfsUploadAndCommit(ctx context.Context, tmp *os.File, file
 		return d.doCommitLFS(ctx, filePath, sha256Hex, size)
 	}
 
-	// Verify temp file has the expected content before uploading to S3.
-	fi, statErr := tmp.Stat()
-	if statErr != nil {
-		return fmt.Errorf("failed to stat temp file before s3 upload: %w", statErr)
-	}
-	if fi.Size() != size {
-		return fmt.Errorf("temp file size %d does not match expected size %d: stream may have returned 0 bytes", fi.Size(), size)
-	}
-	if err = d.streamUpload(ctx, tmp, uploadAction, size, up); err != nil {
+	if err = d.streamUpload(ctx, cache, uploadAction, size, up); err != nil {
 		return err
 	}
 
@@ -297,39 +262,41 @@ var s3HTTPClientOnce sync.Once
 // s3Client returns a shared HTTP client for S3 LFS uploads.
 func s3Client() *http.Client {
 	s3HTTPClientOnce.Do(func() {
-		s3HTTPClient = &http.Client{
-			Timeout: 30 * time.Minute,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: false,
-					MinVersion:         tls.VersionTLS12,
-				},
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				ForceAttemptHTTP2:     false,
-				MaxIdleConns:          2,
-				MaxIdleConnsPerHost:   2,
-				IdleConnTimeout:       90 * time.Second,
-				ResponseHeaderTimeout: 5 * time.Minute,
-				ExpectContinueTimeout: 5 * time.Second,
+		transport := &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: false,
+				MinVersion:         tls.VersionTLS12,
 			},
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     false,
+			MaxIdleConns:          2,
+			MaxIdleConnsPerHost:   2,
+			IdleConnTimeout:       90 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Minute,
+			ExpectContinueTimeout: 5 * time.Second,
+		}
+		netutil.SetProxyIfConfigured(transport)
+		s3HTTPClient = &http.Client{
+			Timeout:   30 * time.Minute,
+			Transport: transport,
 		}
 	})
 	return s3HTTPClient
 }
 
 // streamUpload streams file content to the LFS upload URL.
-func (d *HuggingFace) streamUpload(ctx context.Context, tmp *os.File, action LFSAction, size int64, up driver.UpdateProgress) error {
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+func (d *HuggingFace) streamUpload(ctx context.Context, cache model.File, action LFSAction, size int64, up driver.UpdateProgress) error {
+	if _, err := cache.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 	// Use WithoutCancel for the body so the S3 upload completes even if ctx is canceled.
 	uploadCtx := context.WithoutCancel(ctx)
 	req, err := http.NewRequestWithContext(uploadCtx, http.MethodPut, action.Href,
 		driver.NewLimitedUploadStream(uploadCtx, &driver.ReaderUpdatingProgress{
-			Reader: &driver.SimpleReaderWithSize{Reader: tmp, Size: size},
+			Reader:         &driver.SimpleReaderWithSize{Reader: cache, Size: size},
 			UpdateProgress: up,
 		}))
 	if err != nil {
@@ -353,7 +320,7 @@ func (d *HuggingFace) streamUpload(ctx context.Context, tmp *os.File, action LFS
 	}
 	defer res.Body.Close()
 	if res.StatusCode == 501 {
-		return d.streamUploadPost(ctx, tmp, action, size, up)
+		return d.streamUploadPost(ctx, cache, action, size, up)
 	}
 	if res.StatusCode > 299 {
 		bodyBytes, _ := io.ReadAll(res.Body)
@@ -363,14 +330,14 @@ func (d *HuggingFace) streamUpload(ctx context.Context, tmp *os.File, action LFS
 }
 
 // streamUploadPost retries upload with POST when PUT returns 501.
-func (d *HuggingFace) streamUploadPost(ctx context.Context, tmp *os.File, action LFSAction, size int64, up driver.UpdateProgress) error {
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+func (d *HuggingFace) streamUploadPost(ctx context.Context, cache model.File, action LFSAction, size int64, up driver.UpdateProgress) error {
+	if _, err := cache.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 	uploadCtx := context.WithoutCancel(ctx)
 	req, err := http.NewRequestWithContext(uploadCtx, http.MethodPost, action.Href,
 		driver.NewLimitedUploadStream(uploadCtx, &driver.ReaderUpdatingProgress{
-			Reader: &driver.SimpleReaderWithSize{Reader: tmp, Size: size},
+			Reader:         &driver.SimpleReaderWithSize{Reader: cache, Size: size},
 			UpdateProgress: up,
 		}))
 	if err != nil {
@@ -486,12 +453,12 @@ func (d *HuggingFace) Remove(ctx context.Context, obj model.Obj) error {
 	return nil
 }
 
-func (d *HuggingFace) readSample(tmp *os.File) (string, error) {
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+func (d *HuggingFace) readSample(cache model.File) (string, error) {
+	if _, err := cache.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
 	buf := make([]byte, 512)
-	n, err := tmp.Read(buf)
+	n, err := cache.Read(buf)
 	if err != nil && err != io.EOF {
 		return "", err
 	}

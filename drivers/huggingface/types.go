@@ -46,10 +46,10 @@ type PreuploadFile struct {
 }
 
 type PreuploadResponseEntry struct {
-	Path        string `json:"path"`
-	UploadMode  string `json:"uploadMode"`
-	ShouldIgnore bool  `json:"shouldIgnore"`
-	OID         string `json:"oid"`
+	Path         string `json:"path"`
+	UploadMode   string `json:"uploadMode"`
+	ShouldIgnore bool   `json:"shouldIgnore"`
+	OID          string `json:"oid"`
 }
 
 type PreuploadResponse struct {
@@ -74,18 +74,18 @@ type LFSBatchRequest struct {
 }
 
 type LFSAction struct {
-	Href   string            `json:"href"`
+	Href   string                 `json:"href"`
 	Header map[string]interface{} `json:"header"`
 }
 
 type LFSBatchObject struct {
-	OID     string                `json:"oid"`
-	Size    int64                 `json:"size"`
-	Actions map[string]LFSAction  `json:"actions"`
+	OID     string               `json:"oid"`
+	Size    int64                `json:"size"`
+	Actions map[string]LFSAction `json:"actions"`
 }
 
 type LFSBatchResponse struct {
-	Transfer string          `json:"transfer"`
+	Transfer string           `json:"transfer"`
 	Objects  []LFSBatchObject `json:"objects"`
 }
 
