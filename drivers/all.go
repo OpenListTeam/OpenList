@@ -38,6 +38,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/emby"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/febbox"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/ftp"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/guangya"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/github"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/github_releases"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/google_drive"
