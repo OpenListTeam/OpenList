@@ -14,7 +14,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
+	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
 	"golang.org/x/time/rate"
 )
@@ -230,31 +233,46 @@ func (d *GuangYaPan) multipartUploadToOSS(ctx context.Context, bucket *oss.Bucke
 
 	total := file.GetSize()
 	partCount := int((total + partSize - 1) / partSize)
+
+	// Use StreamSectionReader for seekable, retryable chunk reads (hybrid cache).
+	ss, err := streamPkg.NewStreamSectionReader(file, int(partSize), &up)
+	if err != nil {
+		return err
+	}
+
 	parts := make([]oss.UploadPart, 0, partCount)
-	var uploaded int64
-	partNumber := 1
-
-	for uploaded < total {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		curPartSize := partSize
-		left := total - uploaded
-		if left < curPartSize {
-			curPartSize = left
+	for i := 0; i < partCount; i++ {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
 		}
 
-		reader := io.LimitReader(file, curPartSize)
-		part, err := bucket.UploadPart(imur, driver.NewLimitedUploadStream(ctx, reader), curPartSize, partNumber)
+		offset := int64(i) * partSize
+		length := partSize
+		if remain := total - offset; length > remain {
+			length = remain
+		}
+
+		rd, err := ss.GetSectionReader(offset, length)
 		if err != nil {
 			return err
 		}
-		parts = append(parts, part)
-		uploaded += curPartSize
-		partNumber++
-		if total > 0 {
-			up(100 * float64(uploaded) / float64(total))
+
+		var part oss.UploadPart
+		err = retry.Do(func() error {
+			rd.Seek(0, io.SeekStart)
+			var uploadErr error
+			part, uploadErr = bucket.UploadPart(imur, driver.NewLimitedUploadStream(ctx, rd), length, i+1)
+			return uploadErr
+		},
+			retry.Context(ctx),
+			retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second))
+		ss.FreeSectionReader(rd)
+		if err != nil {
+			return fmt.Errorf("failed to upload part %d: %w", i+1, err)
 		}
+		parts = append(parts, part)
 	}
 
 	_, err = bucket.CompleteMultipartUpload(imur, parts)
