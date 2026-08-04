@@ -514,7 +514,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == stdpath.Dir(srcPath) {
-		return errors.New("copy in place")
+		return errors.WithStack(errs.NotImplement)
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath, true)
 	if err != nil {

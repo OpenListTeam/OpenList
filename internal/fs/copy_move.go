@@ -114,19 +114,21 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, ds
 		if utils.IsBool(skipHook...) {
 			ctx = context.WithValue(ctx, conf.SkipHookKey, struct{}{})
 		}
-		// A named copy cannot use the driver's destination-name-independent Copy
-		// operation. Fall back to the transfer task so the target name is kept.
-		if dstName == "" {
-			if taskType == copy || taskType == merge {
-				err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
-				if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
-					return nil, err
+		if taskType == copy || taskType == merge {
+			err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
+			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
+				if err == nil && dstName != "" {
+					srcObjName := stdpath.Base(srcObjActualPath)
+					if srcObjName != dstName {
+						err = op.Rename(ctx, srcStorage, stdpath.Join(dstDirActualPath, srcObjName), dstName)
+					}
 				}
-			} else {
-				err = op.Move(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
-				if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
-					return nil, err
-				}
+				return nil, err
+			}
+		} else {
+			err = op.Move(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
+			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
+				return nil, err
 			}
 		}
 	}
