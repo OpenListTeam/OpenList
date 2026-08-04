@@ -82,10 +82,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, err = h.handleUnlock(brw, r)
 		case "PROPFIND":
 			status, err = h.handlePropfind(brw, r)
-			// if there is a error for PROPFIND, we should be as an empty folder to the client
-			if err != nil {
-				status = http.StatusNotFound
-			}
 		case "PROPPATCH":
 			status, err = h.handleProppatch(brw, r)
 		}
@@ -122,11 +118,6 @@ func (h *Handler) lock(now time.Time, root string) (token string, status int, er
 func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func(), status int, err error) {
 	hdr := r.Header.Get("If")
 	if hdr == "" {
-		// An empty If header means that the client hasn't previously created locks.
-		// Even if this client doesn't care about locks, we still need to check that
-		// the resources aren't locked by another client, so we create temporary
-		// locks that would conflict with another client's locks. These temporary
-		// locks are unlocked at the end of the HTTP request.
 		now, srcToken, dstToken := time.Now(), "", ""
 		if src != "" {
 			srcToken, status, err = h.lock(now, src)
@@ -143,7 +134,6 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 				return nil, status, err
 			}
 		}
-
 		return func() {
 			if dstToken != "" {
 				h.LockSystem.Unlock(now, dstToken)
@@ -158,7 +148,7 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 	if !ok {
 		return nil, http.StatusBadRequest, errInvalidIfHeader
 	}
-	// ih is a disjunction (OR) of ifLists, so any ifList will do.
+	user, _ := r.Context().Value(conf.UserKey).(*model.User)
 	for _, l := range ih.lists {
 		lsrc := l.resourceTag
 		if lsrc == "" {
@@ -175,6 +165,12 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 			if err != nil {
 				return nil, status, err
 			}
+			if user != nil {
+				lsrc, err = user.JoinPath(lsrc)
+				if err != nil {
+					return nil, http.StatusForbidden, err
+				}
+			}
 		}
 		release, err = h.LockSystem.Confirm(time.Now(), lsrc, dst, l.conditions...)
 		if err == ErrConfirmationFailed {
@@ -185,10 +181,6 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 		}
 		return release, 0, nil
 	}
-	// Section 10.4.1 says that "If this header is evaluated and all state lists
-	// fail, then the request must fail with a 412 (Precondition Failed) status."
-	// We follow the spec even though the cond_put_corrupt_token test case from
-	// the litmus test warns on seeing a 412 instead of a 423 (Locked).
 	return nil, http.StatusPreconditionFailed, ErrLocked
 }
 
@@ -212,9 +204,7 @@ func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) (status 
 		}
 	}
 	w.Header().Set("Allow", allow)
-	// http://www.webdav.org/specs/rfc4918.html#dav.compliance.classes
 	w.Header().Set("DAV", "1, 2")
-	// http://msdn.microsoft.com/en-au/library/cc250217.aspx
 	w.Header().Set("MS-Author-Via", "DAV")
 	return 0, nil
 }
@@ -295,12 +285,6 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if err != nil {
 		return status, err
 	}
-	release, status, err := h.confirmLocks(r, reqPath, "")
-	if err != nil {
-		return status, err
-	}
-	defer release()
-
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
 	if !user.CanRemove() {
@@ -310,6 +294,11 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	release, status, err := h.confirmLocks(r, reqPath, "")
+	if err != nil {
+		return status, err
+	}
+	defer release()
 	// TODO: return MultiStatus where appropriate.
 
 	// "godoc os RemoveAll" says that "If the path does not exist, RemoveAll
@@ -350,11 +339,6 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if reqPath == "" {
 		return http.StatusMethodNotAllowed, nil
 	}
-	release, status, err := h.confirmLocks(r, reqPath, "")
-	if err != nil {
-		return status, err
-	}
-	defer release()
 	// TODO(rost): Support the If-Match, If-None-Match headers? See bradfitz'
 	// comments in http.checkEtag.
 	ctx := r.Context()
@@ -363,6 +347,11 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	release, status, err := h.confirmLocks(r, reqPath, "")
+	if err != nil {
+		return status, err
+	}
+	defer release()
 	size := r.ContentLength
 	if size < 0 {
 		sizeStr := r.Header.Get("X-File-Size")
@@ -428,18 +417,17 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	if err != nil {
 		return status, err
 	}
-	release, status, err := h.confirmLocks(r, reqPath, "")
-	if err != nil {
-		return status, err
-	}
-	defer release()
-
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	release, status, err := h.confirmLocks(r, reqPath, "")
+	if err != nil {
+		return status, err
+	}
+	defer release()
 
 	if r.ContentLength > 0 {
 		return http.StatusUnsupportedMediaType, nil
@@ -627,6 +615,7 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 			Duration:  duration,
 			OwnerXML:  li.Owner.InnerXML,
 			ZeroDepth: depth == 0,
+			Shared:    li.Shared != nil,
 		}
 		token, err = h.LockSystem.Create(now, ld)
 		if err != nil {
@@ -758,7 +747,7 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 		}
 		var pstats []Propstat
 		if pf.Propname != nil {
-			pnames, err := propnames(ctx, h.LockSystem, info)
+			pnames, err := propnames(ctx, h.LockSystem, reqPath, info)
 			if err != nil {
 				return err
 			}
@@ -768,9 +757,9 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 			}
 			pstats = append(pstats, pstat)
 		} else if pf.Allprop != nil {
-			pstats, err = allprop(ctx, h.LockSystem, info, pf.Prop)
+			pstats, err = allprop(ctx, h.LockSystem, reqPath, info, pf.Prop)
 		} else {
-			pstats, err = props(ctx, h.LockSystem, info, pf.Prop)
+			pstats, err = props(ctx, h.LockSystem, reqPath, info, pf.Prop)
 		}
 		if err != nil {
 			return err
@@ -798,18 +787,17 @@ func (h *Handler) handleProppatch(w http.ResponseWriter, r *http.Request) (statu
 	if err != nil {
 		return status, err
 	}
-	release, status, err := h.confirmLocks(r, reqPath, "")
-	if err != nil {
-		return status, err
-	}
-	defer release()
-
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	release, status, err := h.confirmLocks(r, reqPath, "")
+	if err != nil {
+		return status, err
+	}
+	defer release()
 	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
