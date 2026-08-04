@@ -109,6 +109,8 @@ type LockDetails struct {
 	// ZeroDepth is whether the lock has zero depth. If it does not have zero
 	// depth, it has infinite depth.
 	ZeroDepth bool
+	// Shared is whether the lock may coexist with other shared locks on Root.
+	Shared bool
 }
 
 // NewMemLS returns a new in-memory LockSystem.
@@ -184,15 +186,10 @@ func (m *memLS) Confirm(now time.Time, name0, name1 string, conditions ...Condit
 	}, nil
 }
 
-// lookup returns the node n that locks the named resource, provided that n
-// matches at least one of the given conditions and that lock isn't held by
-// another party. Otherwise, it returns nil.
-//
-// n may be a parent of the named resource, if n is an infinite depth lock.
-func (m *memLS) lookup(name string, conditions ...Condition) (n *memLSNode) {
+func (m *memLS) lookup(name string, conditions ...Condition) *memLSNode {
 	// TODO: support Condition.Not and Condition.ETag.
 	for _, c := range conditions {
-		n = m.byToken[c.Token]
+		n := m.byToken[c.Token]
 		if n == nil || n.held {
 			continue
 		}
@@ -235,6 +232,14 @@ func (m *memLS) Create(now time.Time, details LockDetails) (string, error) {
 	m.collectExpiredNodes(now)
 	details.Root = slashClean(details.Root)
 
+	if details.Shared {
+		if n := m.byName[details.Root]; n != nil && n.token != "" && n.details.Shared && n.details.ZeroDepth == details.ZeroDepth && !n.held {
+			token := m.nextToken()
+			n.sharedTokens[token] = struct{}{}
+			m.byToken[token] = n
+			return token, nil
+		}
+	}
 	if !m.canCreate(details.Root, details.ZeroDepth) {
 		return "", ErrLocked
 	}
@@ -242,6 +247,9 @@ func (m *memLS) Create(now time.Time, details LockDetails) (string, error) {
 	n.token = m.nextToken()
 	m.byToken[n.token] = n
 	n.details = details
+	if details.Shared {
+		n.sharedTokens = map[string]struct{}{n.token: {}}
+	}
 	if n.details.Duration >= 0 {
 		n.expiry = now.Add(n.details.Duration)
 		heap.Push(&m.byExpiry, n)
@@ -283,6 +291,13 @@ func (m *memLS) Unlock(now time.Time, token string) error {
 	}
 	if n.held {
 		return ErrLocked
+	}
+	if n.details.Shared {
+		delete(m.byToken, token)
+		delete(n.sharedTokens, token)
+		if len(n.sharedTokens) != 0 {
+			return nil
+		}
 	}
 	m.remove(n)
 	return nil
@@ -334,7 +349,13 @@ func (m *memLS) create(name string) (ret *memLSNode) {
 }
 
 func (m *memLS) remove(n *memLSNode) {
-	delete(m.byToken, n.token)
+	if n.details.Shared {
+		for token := range n.sharedTokens {
+			delete(m.byToken, token)
+		}
+	} else {
+		delete(m.byToken, n.token)
+	}
 	n.token = ""
 	walkToRoot(n.details.Root, func(name0 string, first bool) bool {
 		x := m.byName[name0]
@@ -380,7 +401,8 @@ type memLSNode struct {
 	// if this node does not expire, or has expired.
 	byExpiryIndex int
 	// held is whether this node's lock is actively held by a Confirm call.
-	held bool
+	held         bool
+	sharedTokens map[string]struct{}
 }
 
 type byExpiry []*memLSNode
