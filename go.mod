@@ -65,7 +65,7 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/quic-go/quic-go v0.60.0
 	github.com/rclone/rclone v1.74.4
-	github.com/shirou/gopsutil/v4 v4.26.6
+	github.com/shirou/gopsutil/v4 v4.26.7
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
@@ -110,7 +110,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
 	github.com/cronokirby/saferith v0.33.1-0.20250226174546-1f11f94ce488 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/ebitengine/purego v0.10.0 // indirect
+	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/emersion/go-message v0.18.2 // indirect
 	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
