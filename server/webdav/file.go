@@ -55,21 +55,41 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
+	if _, err = fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
+		if errs.IsObjectNotFound(err) {
+			return http.StatusConflict, err
+		}
+		return http.StatusMethodNotAllowed, err
+	}
+	dstExisted := false
+	if _, err = fs.Get(ctx, dst, &fs.GetArgs{}); err == nil {
+		dstExisted = true
+		if !overwrite {
+			return http.StatusPreconditionFailed, nil
+		}
+		if err = fs.Remove(ctx, dst); err != nil {
+			return http.StatusInternalServerError, err
+		}
+	} else if !errs.IsObjectNotFound(err) {
+		return http.StatusInternalServerError, err
+	}
 	if srcDir == dstDir {
 		err = fs.Rename(ctx, src, dstName)
 	} else {
 		_, err = fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
-		if err != nil {
-			return http.StatusInternalServerError, err
-		}
-		if srcName != dstName {
+		if err == nil && srcName != dstName {
 			err = fs.Rename(ctx, path.Join(dstDir, srcName), dstName)
 		}
 	}
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	// TODO if there are no files copy, should return 204
+	if err = moveDeadProps(src, dst); err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if dstExisted {
+		return http.StatusNoContent, nil
+	}
 	return http.StatusCreated, nil
 }
 
@@ -80,6 +100,7 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int, err error) {
 	srcDir := path.Dir(src)
 	dstDir := path.Dir(dst)
+	dstName := path.Base(dst)
 	user := ctx.Value(conf.UserKey).(*model.User)
 	if !user.CanCopy() {
 		return http.StatusForbidden, nil
@@ -98,11 +119,32 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
-	_, err = fs.Copy(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
+	if _, err = fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
+		if errs.IsObjectNotFound(err) {
+			return http.StatusConflict, err
+		}
+		return http.StatusMethodNotAllowed, err
+	}
+	dstExisted := false
+	if _, err = fs.Get(ctx, dst, &fs.GetArgs{}); err == nil {
+		dstExisted = true
+		if !overwrite {
+			return http.StatusPreconditionFailed, nil
+		}
+		if err = fs.Remove(ctx, dst); err != nil {
+			return http.StatusInternalServerError, err
+		}
+	} else if !errs.IsObjectNotFound(err) {
+		return http.StatusInternalServerError, err
+	}
+
+	_, err = fs.CopyTo(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir, dstName)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	// TODO if there are no files copy, should return 204
+	if dstExisted {
+		return http.StatusNoContent, nil
+	}
 	return http.StatusCreated, nil
 }
 
