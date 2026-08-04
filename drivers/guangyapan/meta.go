@@ -24,11 +24,6 @@ type Addition struct {
 
 var config = driver.Config{
 	Name:              "GuangYaPan",
-	LocalSort:         false,
-	OnlyProxy:         false,
-	NoCache:           false,
-	NoUpload:          false,
-	NeedMs:            false,
 	DefaultRoot:       "",
 	CheckStatus:       true,
 	Alert:             "info|Two-stage SMS login: (1) fill phone_number (+ captcha_token if needed), set send_code=true and save; (2) fill verify_code and save to finish login and auto-save access_token/refresh_token.",
