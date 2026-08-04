@@ -351,16 +351,19 @@ func moveDeadProps(src, dst string) error {
 	if database == nil {
 		return errors.New("webdav property database is not initialized")
 	}
+	escapedSrc := strings.ReplaceAll(strings.ReplaceAll(src, "%", "\\%"), "_", "\\_")
+	escapedDst := strings.ReplaceAll(strings.ReplaceAll(dst, "%", "\\%"), "_", "\\_")
 	return database.Transaction(func(tx *gorm.DB) error {
+		// Clear destination subtree for overwrite MOVE.
+		if err := tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", dst, escapedDst+"/%").Delete(&model.WebDAVProperty{}).Error; err != nil {
+			return err
+		}
 		var rows []model.WebDAVProperty
-		if err := tx.Where("path = ? OR path LIKE ?", src, src+"/%").Find(&rows).Error; err != nil {
+		if err := tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", src, escapedSrc+"/%").Find(&rows).Error; err != nil {
 			return err
 		}
 		for _, row := range rows {
 			newPath := dst + strings.TrimPrefix(row.Path, src)
-			if err := tx.Where("path = ? AND namespace = ? AND name = ?", newPath, row.Namespace, row.Name).Delete(&model.WebDAVProperty{}).Error; err != nil {
-				return err
-			}
 			copy := row
 			copy.ID = 0
 			copy.Path = newPath

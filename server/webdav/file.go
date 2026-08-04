@@ -55,11 +55,13 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
-	if _, err = fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
+	if dstDirInfo, err := fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusConflict, err
 		}
 		return http.StatusMethodNotAllowed, err
+	} else if !dstDirInfo.IsDir() {
+		return http.StatusConflict, nil
 	}
 	dstExisted := false
 	if _, err = fs.Get(ctx, dst, &fs.GetArgs{}); err == nil {
@@ -119,11 +121,13 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
-	if _, err = fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
+	if dstDirInfo, err := fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusConflict, err
 		}
 		return http.StatusMethodNotAllowed, err
+	} else if !dstDirInfo.IsDir() {
+		return http.StatusConflict, nil
 	}
 	dstExisted := false
 	if _, err = fs.Get(ctx, dst, &fs.GetArgs{}); err == nil {

@@ -178,13 +178,20 @@ type propfind struct {
 }
 
 func readPropfind(r io.Reader) (pf propfind, status int, err error) {
-	body, err := io.ReadAll(r)
+	// 64KB is more than enough for a well-formed PROPFIND body.
+	const maxBody = 64 << 10
+	body, err := io.ReadAll(io.LimitReader(r, maxBody))
 	if err != nil {
 		return propfind{}, http.StatusBadRequest, err
 	}
+	// If the limit was reached, the body was too large.
+	if len(body) >= maxBody {
+		// Drain any remaining bytes so the connection stays usable.
+		_, _ = io.Copy(io.Discard, r)
+		return propfind{}, http.StatusRequestEntityTooLarge, nil
+	}
 	if len(body) == 0 {
 		// An empty body means to propfind allprop.
-		// http://www.webdav.org/specs/rfc4918.html#METHOD_PROPFIND
 		return propfind{Allprop: new(struct{})}, 0, nil
 	}
 	if hasEmptyNamespacePrefix(body) {
