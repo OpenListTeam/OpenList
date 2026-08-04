@@ -14,7 +14,7 @@ type Addition struct {
 	VerificationID string `json:"verification_id" type:"text" help:"Auto-generated after sending SMS code; do not edit manually"`
 	AccessToken    string `json:"access_token" help:"Bearer access token (optional if refresh_token is provided)"`
 	RefreshToken   string `json:"refresh_token" help:"Refresh token for auto-login/auto-refresh"`
-	ClientID       string `json:"client_id" required:"true" help:"Client ID for GuangYaPan API, must be provided"
+	ClientID       string `json:"client_id" required:"true" help:"Client ID for GuangYaPan API, must be provided"`
 	DeviceID       string `json:"device_id" help:"Optional custom device id (32 hex chars), auto-generated when empty"`
 	DeviceSign     string `json:"device_sign" help:"Optional custom X-Device-Sign header (generated from device_id when empty)"`
 	PageSize       int    `json:"page_size" type:"number" default:"100"`
