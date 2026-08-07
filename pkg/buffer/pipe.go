@@ -13,6 +13,7 @@ type PipeBuffer struct {
 	offR  int
 	offW  int
 	rw    sync.Mutex
+	ioWg  sync.WaitGroup
 	block Block
 
 	readSignal  chan struct{}
@@ -73,6 +74,8 @@ func (br *PipeBuffer) Read(p []byte) (int, error) {
 
 	off := br.offR
 	block := br.block
+	br.ioWg.Add(1)
+	defer br.ioWg.Done()
 	br.rw.Unlock()
 
 	n, err := block.ReadAt(p[:min(len(p), canRead)], int64(off))
@@ -109,6 +112,8 @@ func (br *PipeBuffer) Write(p []byte) (int, error) {
 
 	off := br.offW
 	block := br.block
+	br.ioWg.Add(1)
+	defer br.ioWg.Done()
 	br.rw.Unlock()
 
 	n, err := block.WriteAt(p[:min(canWrite, len(p))], int64(off))
@@ -131,6 +136,7 @@ func (br *PipeBuffer) Write(p []byte) (int, error) {
 }
 
 func (br *PipeBuffer) Reset(limit int) error {
+	br.ioWg.Wait()
 	br.rw.Lock()
 	defer br.rw.Unlock()
 	if br.block == nil {
@@ -147,11 +153,12 @@ func (br *PipeBuffer) Reset(limit int) error {
 
 func (br *PipeBuffer) Close() error {
 	br.rw.Lock()
-	defer br.rw.Unlock()
 	if br.block != nil {
 		br.block = nil
 		br.readPending = false
 		close(br.readSignal)
 	}
+	br.rw.Unlock()
+	br.ioWg.Wait()
 	return nil
 }

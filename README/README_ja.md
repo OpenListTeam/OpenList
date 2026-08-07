@@ -66,7 +66,7 @@ OpenListプロジェクトへのご支援とご理解をありがとうござい
   - [x] Teambition([中国](https://www.teambition.com), [国際](https://us.teambition.com))
   - [x] [Mediatrack](https://www.mediatrack.cn)
   - [x] [ProtonDrive](https://proton.me/drive)
-  - [x] [139yun](https://yun.139.com)（個人、家族、グループ）
+  - [x] [139yun](https://yun.139.com)（個人、家族、グループ、共有）
   - [x] [YandexDisk](https://disk.yandex.com)
   - [x] [BaiduNetdisk](http://pan.baidu.com)
   - [x] [Terabox](https://www.terabox.com/main)
