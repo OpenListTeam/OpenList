@@ -46,9 +46,6 @@ func (d *Wps) Init(ctx context.Context) error {
 	if !resp.IsSuccess() {
 		return fmt.Errorf("failed to check login status, status code: %d, body: %s", resp.StatusCode(), resp.String())
 	}
-	if d.login.CompanyID == 0 {
-		return fmt.Errorf("wps company id is empty, please check business account login")
-	}
 	return nil
 }
 
