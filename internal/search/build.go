@@ -225,6 +225,9 @@ func Update(ctx context.Context, parent string, objs []model.Obj) {
 		return
 	}
 
+	unlock := lockUpdate(parent)
+	defer unlock()
+
 	nodes, err := instance.Get(ctx, parent)
 	if err != nil {
 		log.Errorf("update search index error while get nodes: %+v", err)

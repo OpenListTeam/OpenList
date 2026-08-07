@@ -80,8 +80,11 @@ func (d *QuarkOrUC) MakeDir(ctx context.Context, parentDir model.Obj, dirName st
 	_, err := d.request("/file", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
 	}, nil)
-	if err == nil {
+	if err == nil || err.Error() == "file is doloading[同名冲突]" {
 		time.Sleep(time.Second)
+	}
+	if err != nil && err.Error() == "file is doloading[同名冲突]" {
+		return errs.ObjectAlreadyExists
 	}
 	return err
 }

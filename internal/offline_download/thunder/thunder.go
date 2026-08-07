@@ -64,18 +64,16 @@ func (t *Thunder) AddURL(args *tool.AddUrlArgs) (string, error) {
 		return "", fmt.Errorf("unsupported storage driver for offline download, only Thunder is supported")
 	}
 
-	ctx := context.Background()
-
-	if err := op.MakeDir(ctx, storage, actualPath); err != nil {
+	if err := op.MakeDir(args.Ctx, storage, actualPath); err != nil {
 		return "", err
 	}
 
-	parentDir, err := op.GetUnwrap(ctx, storage, actualPath)
+	parentDir, err := op.GetUnwrap(args.Ctx, storage, actualPath)
 	if err != nil {
 		return "", err
 	}
 
-	task, err := thunderDriver.OfflineDownload(ctx, args.Url, parentDir, "")
+	task, err := thunderDriver.OfflineDownload(args.Ctx, args.Url, parentDir, "")
 	if err != nil {
 		return "", fmt.Errorf("failed to add offline download task: %w", err)
 	}

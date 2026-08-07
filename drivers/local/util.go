@@ -24,6 +24,8 @@ import (
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
+const thumbPrefix = "openlist_thumb_"
+
 func isSymlinkDir(f fs.FileInfo, path string) bool {
 	if f.Mode()&os.ModeSymlink == os.ModeSymlink ||
 		(runtime.GOOS == "windows" && f.Mode()&os.ModeIrregular == os.ModeIrregular) { // os.ModeIrregular is Junction bit in Windows
@@ -110,16 +112,29 @@ func readDir(dirname string) ([]fs.FileInfo, error) {
 	return list, nil
 }
 
+func (d *Local) thumbCachePath(fullPath string) string {
+	if d.ThumbCacheFolder == "" {
+		return ""
+	}
+	return filepath.Join(d.ThumbCacheFolder, thumbPrefix+utils.GetMD5EncodeStr(fullPath)+".png")
+}
+
+func (d *Local) removeThumbCache(fullPath string) {
+	thumbPath := d.thumbCachePath(fullPath)
+	if thumbPath == "" {
+		return
+	}
+	_ = os.Remove(thumbPath)
+}
+
 func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
 	fullPath := file.GetPath()
-	thumbPrefix := "openlist_thumb_"
-	thumbName := thumbPrefix + utils.GetMD5EncodeStr(fullPath) + ".png"
 	if d.ThumbCacheFolder != "" {
 		// skip if the file is a thumbnail
 		if strings.HasPrefix(file.GetName(), thumbPrefix) {
 			return nil, &fullPath, nil
 		}
-		thumbPath := filepath.Join(d.ThumbCacheFolder, thumbName)
+		thumbPath := d.thumbCachePath(fullPath)
 		if utils.Exists(thumbPath) {
 			return nil, &thumbPath, nil
 		}
@@ -151,7 +166,7 @@ func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
 		return nil, nil, err
 	}
 	if d.ThumbCacheFolder != "" {
-		err = os.WriteFile(filepath.Join(d.ThumbCacheFolder, thumbName), buf.Bytes(), 0o666)
+		err = os.WriteFile(d.thumbCachePath(fullPath), buf.Bytes(), 0o666)
 		if err != nil {
 			return nil, nil, err
 		}

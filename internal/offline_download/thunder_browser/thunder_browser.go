@@ -63,13 +63,11 @@ func (t *ThunderBrowser) AddURL(args *tool.AddUrlArgs) (string, error) {
 		return "", err
 	}
 
-	ctx := context.Background()
-
-	if err := op.MakeDir(ctx, storage, actualPath); err != nil {
+	if err := op.MakeDir(args.Ctx, storage, actualPath); err != nil {
 		return "", err
 	}
 
-	parentDir, err := op.GetUnwrap(ctx, storage, actualPath)
+	parentDir, err := op.GetUnwrap(args.Ctx, storage, actualPath)
 	if err != nil {
 		return "", err
 	}
@@ -77,9 +75,9 @@ func (t *ThunderBrowser) AddURL(args *tool.AddUrlArgs) (string, error) {
 	var task *thunder_browser.OfflineTask
 	switch v := storage.(type) {
 	case *thunder_browser.ThunderBrowser:
-		task, err = v.OfflineDownload(ctx, args.Url, parentDir, "")
+		task, err = v.OfflineDownload(args.Ctx, args.Url, parentDir, "")
 	case *thunder_browser.ThunderBrowserExpert:
-		task, err = v.OfflineDownload(ctx, args.Url, parentDir, "")
+		task, err = v.OfflineDownload(args.Ctx, args.Url, parentDir, "")
 	default:
 		return "", fmt.Errorf("unsupported storage driver for offline download, only ThunderBrowser is supported")
 	}

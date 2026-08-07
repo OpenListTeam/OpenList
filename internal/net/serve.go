@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	gonet "net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -292,6 +293,31 @@ func NewHttpClient() *http.Client {
 
 	return &http.Client{
 		Timeout:   time.Hour * 48,
-		Transport: transport,
+		Transport: &safeTransport{base: transport},
 	}
+}
+
+type safeTransport struct {
+	base http.RoundTripper
+}
+
+func (t *safeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	host := req.URL.Hostname()
+	addrs, err := gonet.DefaultResolver.LookupIPAddr(req.Context(), host)
+	if err != nil || len(addrs) == 0 {
+		return nil, errors.Wrapf(err, "failed to resolve host: %s", host)
+	}
+	for _, addr := range addrs {
+		if isCloudMetadataIP(addr.IP) {
+			return nil, ErrCloudMetadataEndpoint
+		}
+	}
+	return t.base.RoundTrip(req)
+}
+
+var ErrCloudMetadataEndpoint = errors.New("access to cloud metadata endpoint is not allowed")
+
+func isCloudMetadataIP(ip gonet.IP) bool {
+	ip = ip.To4()
+	return ip != nil && ip[0] == 169 && ip[1] == 254 && ip[2] == 169 && ip[3] == 254
 }

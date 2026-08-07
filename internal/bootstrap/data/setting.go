@@ -34,6 +34,13 @@ func initSettings() {
 	}
 	settingMap := map[string]*model.SettingItem{}
 	for _, v := range settings {
+		if v.Key == "" {
+			err := db.DeleteSettingItemByKey(v.Key)
+			if err != nil {
+				utils.Log.Errorf("failed delete setting with empty key: %+v", err)
+			}
+			continue
+		}
 		if !isActive(v.Key) && v.Flag != model.DEPRECATED {
 			v.Flag = model.DEPRECATED
 			err = op.SaveSettingItem(&v)
@@ -242,6 +249,8 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.StreamMaxClientUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerDownloadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
+		{Key: conf.MultipartEnabled, Value: "true", Type: conf.TypeBool, Group: model.TRAFFIC, Flag: model.PUBLIC},
+		{Key: conf.MultipartChunkSize, Value: "10", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PUBLIC, Help: `chunk size of multipart upload in MB (positive integer), keep it under your CDN's request body limit; each active session buffers up to 8 chunks on the server's disk`},
 	}
 	additionalSettingItems := tool.Tools.Items()
 	// 固定顺序

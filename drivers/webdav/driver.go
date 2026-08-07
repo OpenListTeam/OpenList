@@ -10,6 +10,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/gowebdav"
@@ -125,4 +126,25 @@ func (d *WebDav) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer
 	return err
 }
 
+// implements driver.Getter interface
+func (d *WebDav) Get(ctx context.Context, _path string) (model.Obj, error) {
+	_path = path.Join(d.GetRootPath(), _path)
+	info, err := d.client.Stat(_path)
+	if err != nil {
+		if gowebdav.IsErrNotFound(err) {
+			return nil, errs.ObjectNotFound
+		}
+		return nil, err
+	}
+
+	return &model.Object{
+		Name:     info.Name(),
+		Size:     info.Size(),
+		Modified: info.ModTime(),
+		IsFolder: info.IsDir(),
+		Path:     _path,
+	}, nil
+}
+
 var _ driver.Driver = (*WebDav)(nil)
+var _ driver.Getter = (*WebDav)(nil)

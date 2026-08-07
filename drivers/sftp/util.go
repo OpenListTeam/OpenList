@@ -3,6 +3,7 @@ package sftp
 import (
 	"fmt"
 	"path"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/pkg/sftp"
@@ -39,6 +40,7 @@ func (d *SFTP) _initClient() error {
 		User:            d.Username,
 		Auth:            []ssh.AuthMethod{auth},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
 	}
 	conn, err := ssh.Dial("tcp", d.Address, config)
 	if err != nil {

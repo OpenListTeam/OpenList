@@ -48,3 +48,9 @@ body:
       label: 附加信息
       description: |
         相关的任何其他上下文或截图，或者你觉得有帮助的信息
+  - type: textarea
+    id: aigenerated
+    attributes:
+      label: AI生成内容（可选）
+      description: |
+        如果此请求是由AI辅助您提交的，请提供全部聊天记录，包括使用的模型信息。

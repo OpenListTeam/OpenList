@@ -300,9 +300,9 @@ func (c *Client) MkdirAll(path string, _ os.FileMode) (err error) {
 		return nil
 	}
 	if status == 409 {
-		paths := strings.Split(path, "/")
+		paths := strings.SplitSeq(path, "/")
 		sub := "/"
-		for _, e := range paths {
+		for e := range paths {
 			if e == "" {
 				continue
 			}

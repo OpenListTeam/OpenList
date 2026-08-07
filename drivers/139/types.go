@@ -9,6 +9,7 @@ const (
 	MetaFamily      string = "family"
 	MetaGroup       string = "group"
 	MetaPersonalNew string = "personal_new"
+	MetaShare       string = "share"
 )
 
 type BaseResp struct {
@@ -285,6 +286,56 @@ type PersonalUploadUrlResp struct {
 	}
 }
 
+type ShareCatalog struct {
+	CaID   string `json:"caId"`
+	CaName string `json:"caName"`
+	UdTime string `json:"udTime"`
+}
+
+type ShareContent struct {
+	CoID        string `json:"coId"`
+	CoName      string `json:"coName"`
+	CoSize      int64  `json:"coSize"`
+	CoType      int    `json:"coType"`
+	UdTime      string `json:"udTime"`
+	CoPath      string `json:"coPath"`
+	PresentURL  string `json:"presentURL"`
+	DownloadURL string `json:"downloadURL"`
+}
+
+type ShareListResp struct {
+	BaseResp
+	Data struct {
+		LKName string         `json:"lkName"`
+		Passwd string         `json:"password"`
+		CaLst  []ShareCatalog `json:"caLst"`
+		CoLst  []ShareContent `json:"coLst"`
+	} `json:"data"`
+}
+
+type ShareContentInfo struct {
+	PresentURL  string `json:"presentURL"`
+	DownloadURL string `json:"cdnDownLoadUrl"`
+}
+
+type ShareDownloadResp struct {
+	BaseResp
+	Data struct {
+		DownloadURL string `json:"downloadURL"`
+		RedrURL     string `json:"redrUrl"`
+		ExtInfo     struct {
+			CDNDownloadURL string `json:"cdnDownloadUrl"`
+		} `json:"extInfo"`
+	} `json:"data"`
+}
+
+type ShareContentInfoResp struct {
+	BaseResp
+	Data struct {
+		ContentInfo ShareContentInfo `json:"contentInfo"`
+	} `json:"data"`
+}
+
 type QueryRoutePolicyResp struct {
 	Success bool   `json:"success"`
 	Code    string `json:"code"`
@@ -313,20 +364,16 @@ type RefreshTokenResp struct {
 	Desc        string   `xml:"desc"`
 }
 
-type PersonalDiskInfoResp struct {
+type DiskQuotaDetail struct {
 	BaseResp
 	Data struct {
-		FreeDiskSize         string `json:"freeDiskSize"`
-		DiskSize             string `json:"diskSize"`
-		IsInfinitePicStorage *bool  `json:"isInfinitePicStorage"`
-	} `json:"data"`
-}
-
-type FamilyDiskInfoResp struct {
-	BaseResp
-	Data struct {
-		UsedSize string `json:"usedSize"`
-		DiskSize string `json:"diskSize"`
+		FreeDiskSize int64 `json:"freeDiskSize"`
+		DiskSize     int64 `json:"diskSize"`
+		// QuotaList    []struct {
+		// 	DriveType int    `json:"driveType"`
+		// 	DriveName string `json:"driveName"`
+		// 	UsedSize  int64  `json:"usedSize"`
+		// } `json:"quotaList"`
 	} `json:"data"`
 }
 

@@ -82,3 +82,9 @@ body:
       label: Reproduction Link (optional)
       description: |
         Please provide a link to a repo or page that can reproduce this issue.
+  - type: textarea
+    id: aigenerated
+    attributes:
+      label: AI Generated Content (optional)
+      description: |
+        If this issue was identified with the assistance of AI, please provide the complete chat log, including information about the model used.

@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/KirCute/zip"
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
@@ -99,6 +100,9 @@ func filterPassword(err error) error {
 
 func decodeName(name string, efs bool) string {
 	if efs {
+		return name
+	}
+	if utf8.ValidString(name) {
 		return name
 	}
 	enc, err := ianaindex.IANA.Encoding(setting.GetStr(conf.NonEFSZipEncoding))

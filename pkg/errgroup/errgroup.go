@@ -15,7 +15,7 @@ type Group struct {
 	ctx    context.Context
 	opts   []retry.Option
 
-	success uint64
+	success atomic.Uint64
 
 	wg  sync.WaitGroup
 	sem chan token
@@ -41,7 +41,7 @@ func (g *Group) done() {
 		<-g.sem
 	}
 	g.wg.Done()
-	atomic.AddUint64(&g.success, 1)
+	g.success.Add(1)
 }
 
 func (g *Group) Wait() error {
@@ -140,7 +140,7 @@ func (g *Group) SetLimit(n int) *Group {
 }
 
 func (g *Group) Success() uint64 {
-	return atomic.LoadUint64(&g.success)
+	return g.success.Load()
 }
 
 func (g *Group) Err() error {

@@ -17,7 +17,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 type MkdirOrLinkReq struct {
@@ -110,16 +109,17 @@ func FsMove(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-
-	validPaths := make([]string, 0, len(req.Names))
-	for _, name := range req.Names {
+	if !strings.HasSuffix(srcDir, "/") {
+		srcDir += "/"
+	}
+	for i, name := range req.Names {
 		// ensure req.Names is not a relative path
-		srcPath := stdpath.Join(req.SrcDir, name)
-		srcPath, err = user.JoinPath(srcPath)
-		if err != nil {
-			common.ErrorResp(c, err, 403)
-			return
+		srcPath := stdpath.Join(srcDir, name)
+		if !strings.HasPrefix(srcPath+"/", srcDir) {
+			req.Names[i] = ""
+			continue
 		}
+		req.Names[i] = srcPath
 		if !req.Overwrite {
 			base := stdpath.Base(srcPath)
 			if base == "." || base == "/" {
@@ -130,19 +130,21 @@ func FsMove(c *gin.Context) {
 				if !req.SkipExisting {
 					common.ErrorStrResp(c, fmt.Sprintf("file [%s] exists", name), 403)
 					return
-				} else {
-					continue
 				}
+				req.Names[i] = ""
+				continue
 			}
 		}
-		validPaths = append(validPaths, srcPath)
 	}
 
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
-	for i, p := range validPaths {
-		t, err := fs.Move(c.Request.Context(), p, dstDir, len(validPaths) > i+1)
+	for i, p := range req.Names {
+		if p == "" {
+			continue
+		}
+		t, err := fs.Move(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
 		if t != nil {
 			addedTasks = append(addedTasks, t)
 		}
@@ -210,15 +212,17 @@ func FsCopy(c *gin.Context) {
 		return
 	}
 
-	validPaths := make([]string, 0, len(req.Names))
-	for _, name := range req.Names {
+	if !strings.HasSuffix(srcDir, "/") {
+		srcDir += "/"
+	}
+	for i, name := range req.Names {
 		// ensure req.Names is not a relative path
-		srcPath := stdpath.Join(req.SrcDir, name)
-		srcPath, err = user.JoinPath(srcPath)
-		if err != nil {
-			common.ErrorResp(c, err, 403)
-			return
+		srcPath := stdpath.Join(srcDir, name)
+		if !strings.HasPrefix(srcPath+"/", srcDir) {
+			req.Names[i] = ""
+			continue
 		}
+		req.Names[i] = srcPath
 		if !req.Overwrite {
 			base := stdpath.Base(srcPath)
 			if base == "." || base == "/" {
@@ -230,22 +234,25 @@ func FsCopy(c *gin.Context) {
 					common.ErrorStrResp(c, fmt.Sprintf("file [%s] exists", name), 403)
 					return
 				} else if !req.Merge || !res.IsDir() {
+					req.Names[i] = ""
 					continue
 				}
 			}
 		}
-		validPaths = append(validPaths, srcPath)
 	}
 
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
-	for i, p := range validPaths {
+	for i, p := range req.Names {
+		if p == "" {
+			continue
+		}
 		var t task.TaskExtensionInfo
 		if req.Merge {
-			t, err = fs.Merge(c.Request.Context(), p, dstDir, len(validPaths) > i+1)
+			t, err = fs.Merge(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
 		} else {
-			t, err = fs.Copy(c.Request.Context(), p, dstDir, len(validPaths) > i+1)
+			t, err = fs.Copy(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
 		}
 		if t != nil {
 			addedTasks = append(addedTasks, t)
@@ -362,10 +369,12 @@ func FsRemove(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
+	if !strings.HasSuffix(reqPath, "/") {
+		reqPath += "/"
+	}
 	for i, name := range req.Names {
 		fullPath := stdpath.Join(reqPath, name)
-		if !strings.HasPrefix(fullPath+"/", reqPath+"/") {
-			log.Warnf("FsRemove: path traversal attempt skipped: %s (dir: %s)\n", name, req.Dir)
+		if !strings.HasPrefix(fullPath+"/", reqPath) {
 			req.Names[i] = ""
 			continue
 		}
@@ -417,7 +426,7 @@ func FsRemoveEmptyDirectory(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	common.GinWithValue(c, conf.MetaKey, meta)
+	common.GinAppendValues(c, conf.MetaKey, meta)
 
 	rootFiles, err := fs.List(c.Request.Context(), srcDir, &fs.ListArgs{})
 	if err != nil {

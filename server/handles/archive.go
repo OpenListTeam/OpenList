@@ -105,7 +105,7 @@ func FsArchiveMeta(c *gin.Context, req *ArchiveMetaReq, user *model.User) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	common.GinWithValue(c, conf.MetaKey, meta)
+	common.GinAppendValues(c, conf.MetaKey, meta)
 	if !common.CanAccess(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
@@ -188,7 +188,7 @@ func FsArchiveList(c *gin.Context, req *ArchiveListReq, user *model.User) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	common.GinWithValue(c, conf.MetaKey, meta)
+	common.GinAppendValues(c, conf.MetaKey, meta)
 	if !common.CanAccess(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return

@@ -64,6 +64,14 @@ func UpdateSharing(s *model.SharingDB) error {
 	return errors.WithStack(db.Save(s).Error)
 }
 
+func UpdateSharingId(oldId, newId string) error {
+	// Check if new ID already exists
+	if err := db.Where("id = ?", newId).First(&model.SharingDB{}).Error; err == nil {
+		return errors.New("sharing id already exists")
+	}
+	return errors.WithStack(db.Model(&model.SharingDB{}).Where("id = ?", oldId).Update("id", newId).Error)
+}
+
 func DeleteSharingById(id string) error {
 	s := model.SharingDB{ID: id}
 	return errors.WithStack(db.Where(s).Delete(&s).Error)

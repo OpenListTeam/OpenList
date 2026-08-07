@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	_189pc "github.com/OpenListTeam/OpenList/v4/drivers/189pc"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -17,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
@@ -201,8 +203,28 @@ func transferStdFile(t *TransferTask) error {
 	}
 	info, err := rc.Stat()
 	if err != nil {
+		rc.Close()
 		return errors.Wrapf(err, "failed to get file %s", t.SrcActualPath)
 	}
+
+	// 尝试对天翼云进行秒传（计算 MD5 + sliceMD5）
+	if rapidObj, rapidErr := tryRapidUpload189(t, rc, info.Size()); rapidErr == nil && rapidObj != nil {
+		rc.Close()
+		log.Infof("秒传成功: %s -> %s", t.SrcActualPath, t.DstStorageMp)
+		return nil
+	}
+
+	// 秒传失败或不支持，回退到普通上传
+	// 重新 seek 到文件开头
+	if _, err := rc.Seek(0, 0); err != nil {
+		rc.Close()
+		// 重新打开文件
+		rc, err = os.Open(t.SrcActualPath)
+		if err != nil {
+			return errors.Wrapf(err, "failed to reopen file %s", t.SrcActualPath)
+		}
+	}
+
 	mimetype := utils.GetMimeType(t.SrcActualPath)
 	s := &stream.FileStream{
 		Ctx: t.Ctx(),
@@ -217,7 +239,12 @@ func transferStdFile(t *TransferTask) error {
 		Closers:  utils.NewClosers(rc),
 	}
 	t.SetTotalBytes(info.Size())
-	return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress)
+	err = op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func removeStdTemp(t *TransferTask) {
@@ -340,4 +367,48 @@ func removeObjTemp(t *TransferTask) {
 	if err := op.Remove(t.Ctx(), t.SrcStorage, t.SrcActualPath); err != nil {
 		log.Errorf("failed to delete temp obj %s, error: %s", t.SrcActualPath, err.Error())
 	}
+}
+
+// tryRapidUpload189 尝试对天翼云进行秒传
+// 通过计算文件的 MD5 来尝试秒传（使用旧版接口）
+// 返回上传成功的对象和错误，如果不支持秒传则返回 nil, error
+func tryRapidUpload189(t *TransferTask, file *os.File, fileSize int64) (model.Obj, error) {
+	// 检查目标存储是否是天翼云 PC 驱动
+	cloud189PC, ok := t.DstStorage.(*_189pc.Cloud189PC)
+	if !ok {
+		return nil, fmt.Errorf("not 189pc storage")
+	}
+
+	// 计算整文件 MD5（旧接口只需要 fileMD5）
+	fileMD5, _, err := _189pc.ComputeSliceMD5sFromReader(file, torrent.DefaultPieceSize)
+	if err != nil {
+		return nil, fmt.Errorf("计算 MD5 失败: %w", err)
+	}
+
+	// 获取目标目录
+	dstDir, err := op.Get(t.Ctx(), t.DstStorage, t.DstActualPath)
+	if err != nil {
+		return nil, fmt.Errorf("获取目标目录失败: %w", err)
+	}
+
+	// 构造文件名
+	fileName := filepath.Base(t.SrcActualPath)
+
+	// 尝试秒传（使用旧接口）
+	uploadInfo, err := cloud189PC.OldUploadCreate(t.Ctx(), dstDir.GetID(), fileMD5, fileName, fmt.Sprint(fileSize), false)
+	if err != nil {
+		return nil, fmt.Errorf("创建上传任务失败: %w", err)
+	}
+
+	if uploadInfo.FileDataExists != 1 {
+		return nil, fmt.Errorf("秒传失败：云端不存在该文件")
+	}
+
+	// 秒传成功，提交
+	obj, err := cloud189PC.OldUploadCommit(t.Ctx(), uploadInfo.FileCommitUrl, uploadInfo.UploadFileId, false, true)
+	if err != nil {
+		return nil, fmt.Errorf("提交上传失败: %w", err)
+	}
+
+	return obj, nil
 }

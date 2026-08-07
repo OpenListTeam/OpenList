@@ -3,9 +3,7 @@ package pool
 import "sync"
 
 type Pool[T any] struct {
-	New    func() T
-	MaxCap int
-
+	New   func() T
 	cache []T
 	mu    sync.Mutex
 }
@@ -24,9 +22,7 @@ func (p *Pool[T]) Get() T {
 func (p *Pool[T]) Put(item T) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.MaxCap == 0 || len(p.cache) < int(p.MaxCap) {
-		p.cache = append(p.cache, item)
-	}
+	p.cache = append(p.cache, item)
 }
 
 func (p *Pool[T]) Reset() {
@@ -34,4 +30,9 @@ func (p *Pool[T]) Reset() {
 	defer p.mu.Unlock()
 	clear(p.cache)
 	p.cache = nil
+}
+
+func (p *Pool[T]) Close() error {
+	p.Reset()
+	return nil
 }

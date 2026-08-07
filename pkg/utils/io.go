@@ -189,17 +189,17 @@ func NewClosers(c ...io.Closer) Closers {
 
 type SyncClosers struct {
 	closers []io.Closer
-	ref     int32
+	ref     atomic.Int32
 }
 
 // if closed, return false
 func (c *SyncClosers) AcquireReference() bool {
-	ref := atomic.AddInt32(&c.ref, 1)
+	ref := c.ref.Add(1)
 	if ref > 0 {
 		// log.Debugf("AcquireReference %p: %d", c, ref)
 		return true
 	}
-	atomic.StoreInt32(&c.ref, closersClosed)
+	c.ref.Store(closersClosed)
 	return false
 }
 
@@ -207,16 +207,16 @@ const closersClosed = math.MinInt32
 
 func (c *SyncClosers) Close() error {
 	for {
-		ref := atomic.LoadInt32(&c.ref)
+		ref := c.ref.Load()
 		if ref < 0 {
 			return nil
 		}
 		if ref > 1 {
-			if atomic.CompareAndSwapInt32(&c.ref, ref, ref-1) {
+			if c.ref.CompareAndSwap(ref, ref-1) {
 				// log.Debugf("ReleaseReference %p: %d", c, ref)
 				return nil
 			}
-		} else if atomic.CompareAndSwapInt32(&c.ref, ref, closersClosed) {
+		} else if c.ref.CompareAndSwap(ref, closersClosed) {
 			break
 		}
 	}
@@ -235,7 +235,7 @@ func (c *SyncClosers) Close() error {
 
 func (c *SyncClosers) Add(closer io.Closer) {
 	if closer != nil {
-		if atomic.LoadInt32(&c.ref) < 0 {
+		if c.ref.Load() < 0 {
 			panic("Not reusable")
 		}
 		c.closers = append(c.closers, closer)
@@ -244,7 +244,7 @@ func (c *SyncClosers) Add(closer io.Closer) {
 
 func (c *SyncClosers) AddIfCloser(a any) {
 	if closer, ok := a.(io.Closer); ok {
-		if atomic.LoadInt32(&c.ref) < 0 {
+		if c.ref.Load() < 0 {
 			panic("Not reusable")
 		}
 		c.closers = append(c.closers, closer)
@@ -255,7 +255,7 @@ var _ ClosersIF = (*SyncClosers)(nil)
 
 // 实现cache.Expirable接口
 func (c *SyncClosers) Expired() bool {
-	return atomic.LoadInt32(&c.ref) < 0
+	return c.ref.Load() < 0
 }
 func (c *SyncClosers) Length() int {
 	return len(c.closers)

@@ -68,6 +68,12 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		return nil, err
 	}
 
+	// An empty directory reports totalPages == 0, which would make
+	// pagesData a zero-length slice and panic on pagesData[0] below.
+	if firstResp.Meta.TotalPages < 1 {
+		return []model.Obj{}, nil
+	}
+
 	pagesData := make([][]Object, firstResp.Meta.TotalPages)
 	pagesData[0] = firstResp.Items
 
