@@ -23,6 +23,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -46,6 +47,10 @@ func (d *Yun139) isFamily() bool {
 
 func (d *Yun139) isGroup() bool {
 	return d.Type == MetaGroup
+}
+
+func (d *Yun139) isShare() bool {
+	return d.Type == MetaShare
 }
 
 func encodeURIComponent(str string) string {
@@ -489,6 +494,324 @@ func (d *Yun139) groupGetLink(contentId string, path string) (string, error) {
 		return "", err
 	}
 	return jsoniter.Get(res, "data", "downloadURL").ToString(), nil
+}
+
+var shareAesKeyHex = hex.EncodeToString([]byte("PVGDwmcvfs1uV3d1"))
+
+func (d *Yun139) shareHeaders() map[string]string {
+	auth := d.getAuthorization()
+	if auth != "" && !strings.HasPrefix(strings.ToLower(auth), "basic ") {
+		auth = "Basic " + auth
+	}
+	headers := map[string]string{
+		"User-Agent":        "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+		"Accept":            "application/json, text/plain, */*",
+		"Content-Type":      "application/json;charset=UTF-8",
+		"X-Deviceinfo":      "||9|12.27.0|firefox|140.0|||linux unknown|1920X526|zh-CN|||",
+		"hcy-cool-flag":     "1",
+		"CMS-DEVICE":        "default",
+		"x-m4c-caller":      "PC",
+		"X-Yun-Api-Version": "v1",
+		"Origin":            "https://yun.139.com",
+		"Referer":           "https://yun.139.com/",
+	}
+	if auth != "" {
+		headers["Authorization"] = auth
+	}
+	return headers
+}
+
+func (d *Yun139) sharePost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
+	url := "https://share-kd-njs.yun.139.com/yun-share" + pathname
+	return d.yun139EncryptedRequest(url, data, d.shareHeaders(), shareAesKeyHex, resp)
+}
+
+type shareRef struct {
+	LinkID   string
+	Password string
+	NodeID   string
+}
+
+const multiShareRefPrefix = "shares:"
+
+func encodeShareRef(linkID, password, nodeID string) string {
+	return url.PathEscape(linkID) + "|" + url.PathEscape(password) + "|" + url.PathEscape(nodeID)
+}
+
+func decodeShareRef(id string) (shareRef, bool) {
+	parts := strings.SplitN(id, "|", 3)
+	if len(parts) != 3 {
+		return shareRef{}, false
+	}
+	linkID, err1 := url.PathUnescape(parts[0])
+	password, err2 := url.PathUnescape(parts[1])
+	nodeID, err3 := url.PathUnescape(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil || linkID == "" {
+		return shareRef{}, false
+	}
+	return shareRef{LinkID: linkID, Password: password, NodeID: nodeID}, true
+}
+
+func encodeShareRefs(refs []shareRef) string {
+	if len(refs) == 1 {
+		ref := refs[0]
+		return encodeShareRef(ref.LinkID, ref.Password, ref.NodeID)
+	}
+	data, err := utils.Json.Marshal(refs)
+	if err != nil {
+		return ""
+	}
+	return multiShareRefPrefix + base64.RawURLEncoding.EncodeToString(data)
+}
+
+func decodeShareRefs(id string) ([]shareRef, bool) {
+	if !strings.HasPrefix(id, multiShareRefPrefix) {
+		ref, ok := decodeShareRef(id)
+		if !ok {
+			return nil, false
+		}
+		return []shareRef{ref}, true
+	}
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(id, multiShareRefPrefix))
+	if err != nil {
+		return nil, false
+	}
+	var refs []shareRef
+	if err = utils.Json.Unmarshal(data, &refs); err != nil || len(refs) == 0 {
+		return nil, false
+	}
+	return refs, true
+}
+
+func (d *Yun139) shareEntries() []struct{ LinkID, Password string } {
+	raw := strings.TrimSpace(d.LinkID)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';'
+	})
+	entries := make([]struct{ LinkID, Password string }, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		entry := struct{ LinkID, Password string }{LinkID: part}
+		if linkID, password, ok := strings.Cut(part, "#"); ok {
+			entry.LinkID = strings.TrimSpace(linkID)
+			entry.Password = strings.TrimSpace(password)
+		}
+		if entry.LinkID != "" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func (d *Yun139) shareRootEntries() []shareRef {
+	entries := d.shareEntries()
+	refs := make([]shareRef, 0, len(entries))
+	for _, entry := range entries {
+		refs = append(refs, shareRef{LinkID: entry.LinkID, Password: entry.Password, NodeID: "root"})
+	}
+	return refs
+}
+
+func (d *Yun139) shareGetFilesWithRef(ref shareRef, pCaID string) ([]model.Obj, error) {
+	if ref.NodeID == "" {
+		ref.NodeID = "root"
+	}
+	if pCaID == "" {
+		pCaID = ref.NodeID
+	}
+	data := base.Json{
+		"getOutLinkInfoReq": base.Json{
+			"account": d.getAccount(),
+			"linkID":  ref.LinkID,
+			"passwd":  ref.Password,
+			"pCaID":   pCaID,
+		},
+	}
+	var resp ShareListResp
+	_, err := d.sharePost("/richlifeApp/devapp/IOutLink/getOutLinkInfoV6", data, &resp)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]model.Obj, 0)
+	for _, catalog := range resp.Data.CaLst {
+		modTime, _ := time.ParseInLocation("20060102150405", catalog.UdTime, utils.CNLoc)
+		f := model.Object{
+			ID:       encodeShareRef(ref.LinkID, ref.Password, catalog.CaID),
+			Name:     catalog.CaName,
+			Modified: modTime,
+			IsFolder: true,
+		}
+		files = append(files, &f)
+	}
+	for _, content := range resp.Data.CoLst {
+		name := content.CoName
+		size := content.CoSize
+		modTime, _ := time.ParseInLocation("20060102150405", content.UdTime, utils.CNLoc)
+		f := model.Object{
+			ID:       encodeShareRef(ref.LinkID, ref.Password, content.CoID),
+			Name:     name,
+			Size:     size,
+			Modified: modTime,
+		}
+		files = append(files, &f)
+	}
+
+	return files, nil
+}
+
+func (d *Yun139) shareGetMergedFiles(refs []shareRef) ([]model.Obj, error) {
+	files := make([]model.Obj, 0)
+	indices := make(map[string]int)
+	var firstErr error
+	for _, ref := range refs {
+		items, err := d.shareGetFilesWithRef(ref, ref.NodeID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, item := range items {
+			idx, exists := indices[item.GetName()]
+			if !exists {
+				indices[item.GetName()] = len(files)
+				files = append(files, item)
+				continue
+			}
+			if !files[idx].IsDir() || !item.IsDir() {
+				continue
+			}
+			existingRefs, ok1 := decodeShareRefs(files[idx].GetID())
+			itemRefs, ok2 := decodeShareRefs(item.GetID())
+			if !ok1 || !ok2 {
+				continue
+			}
+			mergedRefs := append(existingRefs, itemRefs...)
+			files[idx] = &model.Object{
+				ID:       encodeShareRefs(mergedRefs),
+				Name:     item.GetName(),
+				Modified: item.ModTime(),
+				IsFolder: true,
+			}
+		}
+	}
+	if len(files) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return files, nil
+}
+
+func (d *Yun139) shareGetObj(reqPath string) (model.Obj, error) {
+	reqPath = utils.FixAndCleanPath(reqPath)
+	if reqPath == "/" {
+		return &model.Object{ID: "root", Name: "root", IsFolder: true, Path: "/"}, nil
+	}
+	parts := strings.Split(strings.Trim(reqPath, "/"), "/")
+	currentRefs := d.shareRootEntries()
+	currentPath := ""
+	var currentObj model.Obj
+	for idx, part := range parts {
+		items, err := d.shareGetMergedFiles(currentRefs)
+		if err != nil {
+			return nil, err
+		}
+		matched := false
+		for _, item := range items {
+			if item.GetName() != part {
+				continue
+			}
+			matched = true
+			currentObj = item
+			currentPath = path.Join(currentPath, item.GetName())
+			if item.IsDir() {
+				itemRefs, ok := decodeShareRefs(item.GetID())
+				if !ok {
+					return nil, errs.ObjectNotFound
+				}
+				currentRefs = itemRefs
+				break
+			}
+			if idx != len(parts)-1 {
+				return nil, errs.ObjectNotFound
+			}
+		}
+		if !matched {
+			return nil, errs.ObjectNotFound
+		}
+	}
+	if currentObj == nil {
+		return nil, errs.ObjectNotFound
+	}
+	if setter, ok := currentObj.(model.SetPath); ok {
+		setter.SetPath(currentPath)
+	}
+	return currentObj, nil
+}
+
+func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string) (*model.Link, error) {
+	data := base.Json{
+		"getContentInfoFromOutLinkReq": base.Json{
+			"contentId": coID,
+			"linkID":    ref.LinkID,
+			"passwd":    ref.Password,
+			"account":   d.getAccount(),
+		},
+	}
+	var resp ShareContentInfoResp
+	body, err := d.sharePost("/richlifeApp/devapp/IOutLink/getContentInfoFromOutLink", data, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	res := resp.Data.ContentInfo
+	if linkType == "video_preview" || linkType == "preview" || linkType == "thumb" {
+		if res.PresentURL == "" {
+			return nil, fmt.Errorf("failed to get preview link")
+		}
+		return &model.Link{URL: res.PresentURL}, nil
+	}
+
+	if d.getAccount() == "" {
+		if res.PresentURL != "" {
+			return &model.Link{URL: res.PresentURL}, nil
+		}
+		return nil, fmt.Errorf("139 share download requires account authentication")
+	}
+
+	downloadReq := base.Json{
+		"dlFromOutLinkReqV3": base.Json{
+			"account": d.getAccount(),
+			"linkID":  ref.LinkID,
+			"passwd":  ref.Password,
+			"coIDLst": base.Json{
+				"item": []string{coID},
+			},
+		},
+	}
+	var downloadResp ShareDownloadResp
+	downloadBody, err := d.sharePost("/richlifeApp/devapp/IOutLink/dlFromOutLinkV3", downloadReq, &downloadResp)
+	if err != nil {
+		return nil, err
+	}
+	if downloadResp.Data.ExtInfo.CDNDownloadURL != "" {
+		return &model.Link{URL: downloadResp.Data.ExtInfo.CDNDownloadURL}, nil
+	}
+	if downloadResp.Data.RedrURL != "" {
+		return &model.Link{URL: downloadResp.Data.RedrURL}, nil
+	}
+	if downloadResp.Data.DownloadURL != "" {
+		return &model.Link{URL: downloadResp.Data.DownloadURL}, nil
+	}
+
+	log.Debugf("[139Share] content info without embedded download url: %s", string(body))
+	log.Debugf("[139Share] download response without direct url: %s", string(downloadBody))
+	return nil, fmt.Errorf("failed to get link")
 }
 
 func unicode(str string) string {

@@ -11,6 +11,13 @@ type Config struct {
 	AutoUpdate bool
 }
 
+type Filter func(node model.SearchNode) bool
+
+// FilteredSearcher applies filtering before calculating pagination and totals.
+type FilteredSearcher interface {
+	SearchFiltered(ctx context.Context, req model.SearchReq, filter Filter) ([]model.SearchNode, int64, error)
+}
+
 type Searcher interface {
 	// Config of the searcher
 	Config() Config

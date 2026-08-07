@@ -45,7 +45,7 @@ func (d *Yun139) GetAddition() driver.Additional {
 
 func (d *Yun139) Init(ctx context.Context) error {
 	if d.ref == nil {
-		if len(d.Authorization) == 0 {
+		if len(d.Authorization) == 0 && !d.isShare() {
 			if d.Username != "" && d.Password != "" {
 				log.Infof("139yun: authorization is empty, trying to login with password.")
 				newAuth, err := d.loginWithPassword()
@@ -57,53 +57,55 @@ func (d *Yun139) Init(ctx context.Context) error {
 				return fmt.Errorf("authorization is empty and username/password is not provided")
 			}
 		}
-		err := d.refreshToken()
-		if err != nil {
-			return err
-		}
-
-		// Query Route Policy
-		var resp QueryRoutePolicyResp
-		_, err = d.requestRoute(base.Json{
-			"userInfo": base.Json{
-				"userType":    1,
-				"accountType": 1,
-				"accountName": d.Account,
-			},
-			"modAddrType": 1,
-		}, &resp)
-		if err != nil {
-			return err
-		}
-		for _, policyItem := range resp.Data.RoutePolicyList {
-			switch policyItem.ModName {
-			case "personal":
-				d.PersonalCloudHost = policyItem.HttpsUrl
-			case "group":
-				d.GroupCloudHost = policyItem.HttpsUrl
-			case "family":
-				d.FamilyCloudHost = policyItem.HttpsUrl
-			}
-		}
-		if len(d.PersonalCloudHost) == 0 {
-			return fmt.Errorf("PersonalCloudHost is empty")
-		}
-		if d.isGroup() || d.isFamily() {
-			if len(d.GroupCloudHost) == 0 {
-				return fmt.Errorf("GroupCloudHost is empty")
-			}
-			if len(d.FamilyCloudHost) == 0 {
-				return fmt.Errorf("FamilyCloudHost is empty")
-			}
-		}
-
-		d.cron = cron.NewCron(time.Hour * 12)
-		d.cron.Do(func() {
+		if d.Authorization != "" {
 			err := d.refreshToken()
 			if err != nil {
-				log.Errorf("%+v", err)
+				return err
 			}
-		})
+
+			// Query Route Policy
+			var resp QueryRoutePolicyResp
+			_, err = d.requestRoute(base.Json{
+				"userInfo": base.Json{
+					"userType":    1,
+					"accountType": 1,
+					"accountName": d.Account,
+				},
+				"modAddrType": 1,
+			}, &resp)
+			if err != nil {
+				return err
+			}
+			for _, policyItem := range resp.Data.RoutePolicyList {
+				switch policyItem.ModName {
+				case "personal":
+					d.PersonalCloudHost = policyItem.HttpsUrl
+				case "group":
+					d.GroupCloudHost = policyItem.HttpsUrl
+				case "family":
+					d.FamilyCloudHost = policyItem.HttpsUrl
+				}
+			}
+			if len(d.PersonalCloudHost) == 0 {
+				return fmt.Errorf("PersonalCloudHost is empty")
+			}
+			if d.isGroup() || d.isFamily() {
+				if len(d.GroupCloudHost) == 0 {
+					return fmt.Errorf("GroupCloudHost is empty")
+				}
+				if len(d.FamilyCloudHost) == 0 {
+					return fmt.Errorf("FamilyCloudHost is empty")
+				}
+			}
+
+			d.cron = cron.NewCron(time.Hour * 12)
+			d.cron.Do(func() {
+				err := d.refreshToken()
+				if err != nil {
+					log.Errorf("%+v", err)
+				}
+			})
+		}
 	}
 	switch d.Addition.Type {
 	case MetaPersonalNew:
@@ -121,6 +123,13 @@ func (d *Yun139) Init(ctx context.Context) error {
 		_, err := d.groupGetFiles(d.RootFolderID)
 		if err != nil {
 			return err
+		}
+	case MetaShare:
+		if len(d.Addition.RootFolderID) == 0 {
+			d.RootFolderID = "root"
+		}
+		if len(d.shareEntries()) == 0 {
+			return fmt.Errorf("link_id is empty")
 		}
 	case MetaFamily:
 		// Attempt to obtain data.path as the root via a query and persist it.
@@ -152,6 +161,19 @@ func (d *Yun139) InitReference(storage driver.Driver) error {
 	return errs.NotSupport
 }
 
+func (d *Yun139) Get(ctx context.Context, path string) (model.Obj, error) {
+	if !d.isShare() {
+		return nil, errs.NotImplement
+	}
+	if path == "/" {
+		return &model.Object{ID: "root", Name: "root", IsFolder: true, Path: "/"}, nil
+	}
+	if obj, err := d.shareGetObj(path); err == nil {
+		return obj, nil
+	}
+	return nil, errs.ObjectNotFound
+}
+
 func (d *Yun139) Drop(ctx context.Context) error {
 	if d.cron != nil {
 		d.cron.Stop()
@@ -170,12 +192,23 @@ func (d *Yun139) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 		return d.familyGetFiles(dir.GetID())
 	case MetaGroup:
 		return d.groupGetFiles(dir.GetID())
+	case MetaShare:
+		if dir.GetID() == "root" {
+			return d.shareGetMergedFiles(d.shareRootEntries())
+		}
+		if refs, ok := decodeShareRefs(dir.GetID()); ok {
+			return d.shareGetMergedFiles(refs)
+		}
+		return d.shareGetFilesWithRef(shareRef{LinkID: d.LinkID, NodeID: dir.GetID()}, dir.GetID())
 	default:
 		return nil, errs.NotImplement
 	}
 }
 
 func (d *Yun139) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	if file.IsDir() {
+		return nil, errs.NotFile
+	}
 	var url string
 	var err error
 	switch d.Addition.Type {
@@ -187,6 +220,16 @@ func (d *Yun139) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 		url, err = d.familyGetLink(file.GetID(), file.GetPath())
 	case MetaGroup:
 		url, err = d.groupGetLink(file.GetID(), file.GetPath())
+	case MetaShare:
+		if refs, ok := decodeShareRefs(file.GetID()); ok && len(refs) > 0 {
+			return d.shareGetLinkWithRef(refs[0], refs[0].NodeID, args.Type)
+		}
+		fallbackRef := shareRef{LinkID: d.LinkID, NodeID: "root"}
+		if entries := d.shareEntries(); len(entries) > 0 {
+			fallbackRef.LinkID = entries[0].LinkID
+			fallbackRef.Password = entries[0].Password
+		}
+		return d.shareGetLinkWithRef(fallbackRef, file.GetID(), args.Type)
 	default:
 		return nil, errs.NotImplement
 	}
@@ -197,6 +240,9 @@ func (d *Yun139) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 }
 
 func (d *Yun139) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+	if d.isShare() {
+		return errs.NotImplement
+	}
 	var err error
 	switch d.Addition.Type {
 	case MetaPersonalNew:
@@ -254,6 +300,9 @@ func (d *Yun139) MakeDir(ctx context.Context, parentDir model.Obj, dirName strin
 }
 
 func (d *Yun139) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	if d.isShare() {
+		return nil, errs.NotImplement
+	}
 	switch d.Addition.Type {
 	case MetaPersonalNew:
 		data := base.Json{
@@ -365,6 +414,9 @@ func (d *Yun139) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj,
 }
 
 func (d *Yun139) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
+	if d.isShare() {
+		return errs.NotImplement
+	}
 	var err error
 	switch d.Addition.Type {
 	case MetaPersonalNew:
@@ -474,6 +526,9 @@ func (d *Yun139) Rename(ctx context.Context, srcObj model.Obj, newName string) e
 }
 
 func (d *Yun139) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
+	if d.isShare() {
+		return errs.NotImplement
+	}
 	var err error
 	switch d.Addition.Type {
 	case MetaPersonalNew:
@@ -543,6 +598,9 @@ func (d *Yun139) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Yun139) Remove(ctx context.Context, obj model.Obj) error {
+	if d.isShare() {
+		return errs.NotImplement
+	}
 	switch d.Addition.Type {
 	case MetaPersonalNew:
 		data := base.Json{
@@ -633,6 +691,9 @@ func (d *Yun139) getPartSize(size int64) int64 {
 }
 
 func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
+	if d.isShare() {
+		return errs.NotImplement
+	}
 	// PersonalNew 以及 Group/Family 在非旧流模式时走新上传路径
 	if d.Addition.Type == MetaPersonalNew ||
 		((d.isGroup() || d.isFamily()) && !d.UseOldStreamUpload) {

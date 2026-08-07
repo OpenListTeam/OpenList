@@ -304,7 +304,7 @@ var findFromReg = regexp.MustCompile(`data : '(.+?)'`) // 查找from字符串
 func htmlFormToMap(html string) (map[string]string, error) {
 	forms := findFromReg.FindStringSubmatch(html)
 	if len(forms) != 2 {
-		return nil, fmt.Errorf("not find file sgin")
+		return nil, fmt.Errorf("not find file sign")
 	}
 	return formToMap(forms[1]), nil
 }
