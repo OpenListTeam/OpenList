@@ -16,20 +16,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Makefile hash update
-        uses: peter-evans/repository-dispatch@v3
+        uses: actions/github-script@v9
         with:
-          token: ${{ secrets.EXTERNAL_REPO_TOKEN_LUCI_APP_OPENLIST }}
-          repository: ${{ vars.HOOK_REPO || 'OpenListTeam/OpenList-OpenWRT' }}
-          event-type: update-hashes
-          client-payload: |
-            {
-              "source_repository": "${{ github.repository }}",
-              "release_tag": "${{ inputs.tag || github.ref_name }}",
-              "release_name": "${{ inputs.tag || github.ref_name }}",
-              "release_url": "${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.tag || github.ref_name }}",
-              "triggered_by": "${{ github.actor }}",
-              "trigger_reason": "${{ github.event_name }}"
-            }
+          github-token: ${{ secrets.EXTERNAL_REPO_TOKEN_LUCI_APP_OPENLIST }}
+          script: |
+            const repository = process.env.REPOSITORY;
+            const [owner, repo] = repository.split('/');
+            
+            await github.rest.repos.createDispatchEvent({
+              owner: owner,
+              repo: repo,
+              event_type: 'update-hashes',
+              client_payload: {
+                source_repository: process.env.SOURCE_REPOSITORY,
+                release_tag: process.env.RELEASE_TAG,
+                release_name: process.env.RELEASE_TAG,
+                release_url: process.env.RELEASE_URL,
+                triggered_by: process.env.ACTOR,
+                trigger_reason: process.env.EVENT_NAME
+              }
+            });
+        env:
+          REPOSITORY: ${{ vars.HOOK_REPO || 'OpenListTeam/OpenList-OpenWRT' }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.tag || github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
 
       - name: Log trigger information
         run: |

@@ -67,7 +67,7 @@ OpenList 是一个由 OpenList 团队独立维护的开源项目，遵循 AGPL-3
   - [x] [MediaFire](https://www.mediafire.com)
   - [x] [分秒帧](https://www.mediatrack.cn)
   - [x] [ProtonDrive](https://proton.me/drive)
-  - [x] [和彩云](https://yun.139.com)（个人、家庭、群组）
+  - [x] [和彩云](https://yun.139.com)（个人、家庭、群组、分享）
   - [x] [YandexDisk](https://disk.yandex.com)
   - [x] [百度网盘](http://pan.baidu.com)
   - [x] [Terabox](https://www.terabox.com/main)
