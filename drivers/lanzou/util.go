@@ -157,25 +157,43 @@ func (d *LanZou) request(url string, method string, callback base.ReqCallback, u
 }
 
 func (d *LanZou) Login() ([]*http.Cookie, error) {
-	resp, err := base.NewRestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).
-		R().SetFormData(map[string]string{
-		"task":         "3",
-		"uid":          d.Account,
-		"pwd":          d.Password,
-		"setSessionId": "",
-		"setSig":       "",
-		"setScene":     "",
-		"setTocen":     "",
-		"formhash":     "",
-	}).Post("https://up.woozooo.com/mlogin.php")
-	if err != nil {
-		return nil, err
+	var vs string
+	for retry := 0; retry < 3; retry++ {
+		req := base.NewRestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
+
+		// 如果已计算出 acw_sc__v2，通过 cookie 携带
+		if vs != "" {
+			req.SetHeader("cookie", "acw_sc__v2="+vs)
+		}
+
+		resp, err := req.SetFormData(map[string]string{
+			"task":         "3",
+			"uid":          d.Account,
+			"pwd":          d.Password,
+			"setSessionId": "",
+			"setSig":       "",
+			"setScene":     "",
+			"setTocen":     "",
+			"formhash":     "",
+		}).Post("https://up.woozooo.com/mlogin.php")
+		if err != nil {
+			return nil, err
+		}
+		bodyStr := resp.String()
+		if strings.Contains(bodyStr, "acw_sc__v2") {
+			vs, err = CalcAcwScV2(bodyStr)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if utils.Json.Get(resp.Body(), "zt").ToInt() != 1 {
+			return nil, fmt.Errorf("login err: %s", resp.Body())
+		}
+		d.Cookie = CookieToString(resp.Cookies())
+		return resp.Cookies(), nil
 	}
-	if utils.Json.Get(resp.Body(), "zt").ToInt() != 1 {
-		return nil, fmt.Errorf("login err: %s", resp.Body())
-	}
-	d.Cookie = CookieToString(resp.Cookies())
-	return resp.Cookies(), nil
+	return nil, errors.New("acw_sc__v2 validation error")
 }
 
 /*
