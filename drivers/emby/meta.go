@@ -19,7 +19,7 @@ var config = driver.Config{
 	Name:        "Emby",
 	LocalSort:   true,
 	NoUpload:    true,
-	DefaultRoot: "1",
+	DefaultRoot: "",
 	CheckStatus: true,
 }
 

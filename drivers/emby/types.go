@@ -31,6 +31,7 @@ type embyItem struct {
 }
 
 type itemDetailResp struct {
+	MediaType    string            `json:"MediaType"`
 	MediaSources []embyMediaSource `json:"MediaSources"`
 }
 

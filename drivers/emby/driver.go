@@ -2,12 +2,12 @@ package emby
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -24,6 +24,7 @@ type Emby struct {
 	client *http.Client
 	token  string
 	userID string
+	authMu sync.Mutex
 }
 
 func (d *Emby) Config() driver.Config {
@@ -40,16 +41,12 @@ func (d *Emby) Init(ctx context.Context) error {
 		return fmt.Errorf("url is required")
 	}
 
-	if strings.TrimSpace(d.RootFolderID) == "" {
-		d.RootFolderID = "1"
-	}
-
 	d.client = base.HttpClient
-	d.token = strings.TrimSpace(d.ApiKey)
-	d.userID = strings.TrimSpace(d.UserID)
+	d.setAuth(strings.TrimSpace(d.ApiKey), strings.TrimSpace(d.UserID))
+	token, userID := d.auth()
 
-	if d.token != "" {
-		if d.userID == "" {
+	if token != "" {
+		if userID == "" {
 			return fmt.Errorf("user_id is required when api_key is set")
 		}
 		op.MustSaveDriverStorage(d)
@@ -64,8 +61,7 @@ func (d *Emby) Init(ctx context.Context) error {
 		return err
 	}
 
-	d.ApiKey = d.token
-	d.UserID = d.userID
+	d.saveAuth()
 	op.MustSaveDriverStorage(d)
 	return nil
 }
@@ -80,7 +76,15 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 		parentID = strings.TrimSpace(dir.GetID())
 	}
 
-	items, err := d.getItems(ctx, parentID)
+	var (
+		items []embyItem
+		err   error
+	)
+	if parentID == "" {
+		items, err = d.getViews(ctx)
+	} else {
+		items, err = d.getItems(ctx, parentID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +94,8 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 		parentPath = dir.GetPath()
 	}
 
-	objs := make([]model.Obj, 0, len(items.Items))
-	for _, it := range items.Items {
+	objs := make([]model.Obj, 0, len(items))
+	for _, it := range items {
 		modified := time.Now()
 		if it.DateCreated != "" {
 			if t, parseErr := time.Parse(time.RFC3339Nano, it.DateCreated); parseErr == nil {
@@ -188,67 +192,44 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 	linkMethod := strings.ToLower(strings.TrimSpace(d.LinkMethod))
 	useDownload := linkMethod == "download"
 
-	mediaSourceID := ""
-	mediaContainer := ""
-	if !useDownload {
-		detailURL, parseErr := url.Parse(d.URL + "/Users/" + d.userID + "/Items/" + fileID)
-		if parseErr == nil {
-			q := detailURL.Query()
-			q.Set("Fields", "MediaSources")
-			q.Set("api_key", d.token)
-			detailURL.RawQuery = q.Encode()
-
-			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, detailURL.String(), nil)
-			if reqErr == nil {
-				resp, doErr := d.client.Do(req)
-				if doErr == nil {
-					func() {
-						defer resp.Body.Close()
-						if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-							return
-						}
-						var detail itemDetailResp
-						if decodeErr := json.NewDecoder(resp.Body).Decode(&detail); decodeErr != nil || len(detail.MediaSources) == 0 {
-							return
-						}
-						for i := range detail.MediaSources {
-							if strings.TrimSpace(detail.MediaSources[i].ID) != "" && detail.MediaSources[i].SupportsDirectStream {
-								mediaSourceID = strings.TrimSpace(detail.MediaSources[i].ID)
-								mediaContainer = strings.TrimSpace(detail.MediaSources[i].Container)
-								return
-							}
-						}
-						for i := range detail.MediaSources {
-							if strings.TrimSpace(detail.MediaSources[i].ID) != "" {
-								mediaSourceID = strings.TrimSpace(detail.MediaSources[i].ID)
-								mediaContainer = strings.TrimSpace(detail.MediaSources[i].Container)
-								return
-							}
-						}
-					}()
-				}
-			}
-		}
-	}
-
 	if useDownload {
+		token, _ := d.auth()
 		u.Path = path.Join(u.Path, "/Items", fileID, "Download")
+		q := u.Query()
+		q.Set("api_key", token)
+		u.RawQuery = q.Encode()
 	} else {
-		if mediaContainer != "" {
-			u.Path = path.Join(u.Path, "/Videos", fileID, "stream."+mediaContainer)
-		} else {
-			u.Path = path.Join(u.Path, "/Videos", fileID, "stream")
+		detail, err := d.getItemDetail(ctx, fileID)
+		if err != nil {
+			return nil, err
 		}
-	}
-	q := u.Query()
-	q.Set("api_key", d.token)
-	if mediaSourceID != "" {
-		q.Set("MediaSourceId", mediaSourceID)
-	}
-	if !useDownload {
+
+		streamPath := ""
+		switch strings.ToLower(strings.TrimSpace(detail.MediaType)) {
+		case "video":
+			streamPath = "Videos"
+		case "audio":
+			streamPath = "Audio"
+		default:
+			return nil, fmt.Errorf("streaming is only supported for video and audio items")
+		}
+
+		mediaSourceID, mediaContainer := selectMediaSource(detail.MediaSources)
+		if mediaContainer != "" {
+			u.Path = path.Join(u.Path, "/"+streamPath, fileID, "stream."+mediaContainer)
+		} else {
+			u.Path = path.Join(u.Path, "/"+streamPath, fileID, "stream")
+		}
+
+		token, _ := d.auth()
+		q := u.Query()
+		q.Set("api_key", token)
+		if mediaSourceID != "" {
+			q.Set("MediaSourceId", mediaSourceID)
+		}
 		q.Set("Static", "true")
+		u.RawQuery = q.Encode()
 	}
-	u.RawQuery = q.Encode()
 
 	return &model.Link{
 		URL: u.String(),
@@ -256,6 +237,20 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 			"User-Agent": []string{base.UserAgent},
 		},
 	}, nil
+}
+
+func selectMediaSource(mediaSources []embyMediaSource) (string, string) {
+	for i := range mediaSources {
+		if strings.TrimSpace(mediaSources[i].ID) != "" && mediaSources[i].SupportsDirectStream {
+			return strings.TrimSpace(mediaSources[i].ID), strings.TrimSpace(mediaSources[i].Container)
+		}
+	}
+	for i := range mediaSources {
+		if strings.TrimSpace(mediaSources[i].ID) != "" {
+			return strings.TrimSpace(mediaSources[i].ID), strings.TrimSpace(mediaSources[i].Container)
+		}
+	}
+	return "", ""
 }
 
 var _ driver.Driver = (*Emby)(nil)
