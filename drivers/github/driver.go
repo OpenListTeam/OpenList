@@ -157,15 +157,13 @@ func (d *Github) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 	}
 
 	ret := make([]model.Obj, 0, len(obj.Entries))
-	entries := make([]Object, 0, len(obj.Entries))
 	for _, entry := range obj.Entries {
 		if entry.Name == ".gitkeep" {
 			continue
 		}
 		ret = append(ret, entry.toModelObj())
-		entries = append(entries, entry)
 	}
-	d.fetchAccurateModifiedTimes(ctx, dir.GetPath(), ret, entries)
+	d.fetchAccurateModifiedTimes(ctx, dir.GetPath(), ret)
 	return ret, nil
 }
 

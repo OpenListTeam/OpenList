@@ -11,7 +11,7 @@ type Addition struct {
 	Owner                string `json:"owner" type:"string" required:"true"`
 	Repo                 string `json:"repo" type:"string" required:"true"`
 	Ref                  string `json:"ref" type:"string" help:"A branch, a tag or a commit SHA, main branch by default."`
-	AccurateModifiedTime bool   `json:"accurate_modified_time" type:"bool" default:"false" help:"Best-effort accurate modified time for small directory listings. Default disabled. Adds extra GitHub GraphQL requests and falls back to legacy zero-time values on failure."`
+	AccurateModifiedTime bool   `json:"accurate_modified_time" type:"bool" default:"false" help:"Best-effort accurate modified time for small directory listings. Default disabled. Adds one GitHub GraphQL request and falls back to legacy zero-time values on failure."`
 	GitHubProxy          string `json:"gh_proxy" type:"string" help:"GitHub proxy, e.g. https://ghproxy.net/raw.githubusercontent.com or https://gh-proxy.com/raw.githubusercontent.com"`
 	GPGPrivateKey        string `json:"gpg_private_key" type:"text"`
 	GPGKeyPassphrase     string `json:"gpg_key_passphrase" type:"string"`
