@@ -114,6 +114,21 @@ func TestCredentialState(t *testing.T) {
 	}
 }
 
+func TestInvalidAuthorizationDoesNotUseCookieFastLogin(t *testing.T) {
+	d := Yun139{Addition: Addition{
+		Authorization: "not-base64",
+		MailCookies:   "Os_SSo_Sid=sid; RMKEY=rmkey",
+	}}
+
+	err := d.refreshToken()
+	if err == nil || !strings.Contains(err.Error(), "password login failed") {
+		t.Fatalf("refreshToken() error = %v, want password login fallback error", err)
+	}
+	if d.Authorization != "not-base64" {
+		t.Fatalf("Authorization = %q, want original invalid value retained", d.Authorization)
+	}
+}
+
 func TestIntegrationLoginObtainsAuthorization(t *testing.T) {
 	if os.Getenv("OPENLIST_139_INTEGRATION") != "1" {
 		t.Skip("set OPENLIST_139_INTEGRATION=1 to run live 139Yun login checks")

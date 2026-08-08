@@ -112,21 +112,21 @@ func (d *Yun139) refreshToken() error {
 	}
 	decode, err := base64.StdEncoding.DecodeString(d.Authorization)
 	if err != nil {
-		return fmt.Errorf("authorization decode failed: %s", err)
+		return d.loginAfterAuthorizationFailure(fmt.Errorf("authorization decode failed: %w", err))
 	}
 	decodeStr := string(decode)
 	splits := strings.Split(decodeStr, ":")
 	if len(splits) < 3 {
-		return fmt.Errorf("authorization is invalid, splits < 3")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization is invalid, splits < 3"))
 	}
 	d.Account = splits[1]
 	strs := strings.Split(splits[2], "|")
 	if len(strs) < 4 {
-		return fmt.Errorf("authorization is invalid, strs < 4")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization is invalid, strs < 4"))
 	}
 	expiration, err := strconv.ParseInt(strs[3], 10, 64)
 	if err != nil {
-		return fmt.Errorf("authorization is invalid")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization expiration is invalid"))
 	}
 	expiration -= time.Now().UnixMilli()
 	if expiration > 1000*60*60*24*15 {
@@ -134,7 +134,7 @@ func (d *Yun139) refreshToken() error {
 		return nil
 	}
 	if expiration < 0 {
-		return fmt.Errorf("authorization has expired")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization has expired"))
 	}
 
 	url := "https://aas.caiyun.feixin.10086.cn:443/tellin/authTokenRefresh.do"
@@ -146,17 +146,23 @@ func (d *Yun139) refreshToken() error {
 		SetResult(&resp).
 		Post(url)
 	if err != nil || resp.Return != "0" {
-		log.Warnf("139yun: failed to refresh token with old token: %v, desc: %s. trying to login with password.", err, resp.Desc)
-		_, loginErr := d.loginWithPassword()
-		log.Debugf("139yun: password login generated a new authorization.")
-		if loginErr != nil {
-			return fmt.Errorf("failed to login with password after refresh failed: %w", loginErr)
-		}
-		return nil
+		return d.loginAfterAuthorizationFailure(fmt.Errorf("token refresh failed: %v, desc: %s", err, resp.Desc))
 	}
 
 	d.Authorization = base64.StdEncoding.EncodeToString([]byte(splits[0] + ":" + splits[1] + ":" + resp.Token))
 	op.MustSaveDriverStorage(d)
+	return nil
+}
+
+// loginAfterAuthorizationFailure deliberately skips cookie fast login. Mail
+// cookies are only reused as device context for the password login request.
+func (d *Yun139) loginAfterAuthorizationFailure(cause error) error {
+	log.Warnf("139yun: %v; trying password login.", cause)
+	newAuth, err := d.loginWithPassword()
+	log.Debugf("139yun: password fallback generated authorization: %t", newAuth != "")
+	if err != nil {
+		return fmt.Errorf("%v; password login failed: %w", cause, err)
+	}
 	return nil
 }
 
