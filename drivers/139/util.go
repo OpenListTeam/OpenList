@@ -41,31 +41,13 @@ const (
 	KEY_HEX_2 = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
 )
 
-var mailLoginCookieOrder = []string{
-	"behaviorid",
-	"Os_SSo_Sid",
-	"_139_index_isLoginType",
-	"_139_login_version",
-	"Login_UserNumber",
-	"cookiepartid8011",
-	"_139_login_agreement",
-	"UserData",
-	"rmUin8011",
-	"cookiepartid",
-	"UUIDToken",
-	"SkinPath28011",
-	"cbauto",
-	"areaCode8011",
-	"cookieLen",
-	"DEVICE_INFO_DIGEST",
-	"JSESSIONID",
-	"loginProcessFlag",
-	"provCode8011",
-	"S_DEVICE_TOKEN",
-	"taskIdCloud",
-	"UserNowState",
-	"UserNowState8011",
-	"ut8011",
+var mailLoginStateCookies = map[string]struct{}{
+	"Os_SSo_Sid":       {},
+	"RMKEY":            {},
+	"a_l":              {},
+	"a_l2":             {},
+	"Login_UserNumber": {},
+	"rtexpired":        {},
 }
 
 type credentialState int
@@ -1151,66 +1133,39 @@ func getMd5(dataStr string) string {
 	return fmt.Sprintf("%x", hash)
 }
 
-func parseCookieMap(raw string) map[string]string {
-	cookies := make(map[string]string)
-	for _, c := range cookiepkg.Parse(raw) {
-		if c.Name != "" {
-			cookies[c.Name] = c.Value
-		}
-	}
-	return cookies
-}
-
-func formatCookiesByOrder(cookies map[string]string, orderedNames []string, includeExtraNames bool) string {
-	if len(cookies) == 0 {
-		return ""
-	}
-
-	seen := make(map[string]struct{}, len(orderedNames))
-	parts := make([]string, 0, len(cookies))
-	for _, name := range orderedNames {
-		seen[name] = struct{}{}
-		if value, ok := cookies[name]; ok {
-			parts = append(parts, name+"="+value)
-		}
-	}
-
-	if includeExtraNames {
-		extraNames := make([]string, 0, len(cookies))
-		for name := range cookies {
-			if _, ok := seen[name]; !ok {
-				extraNames = append(extraNames, name)
-			}
-		}
-		sort.Strings(extraNames)
-		for _, name := range extraNames {
-			parts = append(parts, name+"="+cookies[name])
-		}
-	}
-
-	return strings.Join(parts, "; ")
-}
-
-// sanitizeLoginCookies filters and orders the mail login cookies. A stale
-// JSESSIONID is intentionally dropped when a fresh one cannot be fetched,
-// because sending an expired JSESSIONID can trigger mail.10086.cn risk control.
+// sanitizeLoginCookies preserves cookie order, drops stale authenticated-session
+// cookies from the password login request, and replaces JSESSIONID with the fresh
+// pre-login session.
 func sanitizeLoginCookies(existingCookies string, newJSessionID string) string {
-	cookies := parseCookieMap(existingCookies)
-	delete(cookies, "JSESSIONID")
-	if newJSessionID != "" {
-		cookies["JSESSIONID"] = newJSessionID
+	cookies := cookiepkg.Parse(existingCookies)
+	filtered := cookies[:0]
+	for _, c := range cookies {
+		if _, isLoginState := mailLoginStateCookies[c.Name]; isLoginState {
+			continue
+		}
+		if c.Name == "JSESSIONID" {
+			if newJSessionID == "" {
+				continue
+			}
+			c.Value = newJSessionID
+			newJSessionID = ""
+		}
+		filtered = append(filtered, c)
 	}
-	return formatCookiesByOrder(cookies, mailLoginCookieOrder, false)
+	if newJSessionID != "" {
+		filtered = append(filtered, &http.Cookie{Name: "JSESSIONID", Value: newJSessionID})
+	}
+	return cookiepkg.ToString(filtered)
 }
 
 func mergeMailCookies(existingCookies string, responseCookies []*http.Cookie) string {
-	cookies := parseCookieMap(existingCookies)
+	cookies := cookiepkg.Parse(existingCookies)
 	for _, c := range responseCookies {
-		if c.Name != "" {
-			cookies[c.Name] = c.Value
+		if c != nil && c.Name != "" {
+			cookies = cookiepkg.SetCookie(cookies, c.Name, c.Value)
 		}
 	}
-	return formatCookiesByOrder(cookies, mailLoginCookieOrder, true)
+	return cookiepkg.ToString(cookies)
 }
 
 func extractFastLoginCookies(mailCookies string) (sid string, rmkey string) {

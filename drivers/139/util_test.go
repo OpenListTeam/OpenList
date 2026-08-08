@@ -11,29 +11,29 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-func TestSanitizeLoginCookiesReplacesJSessionIDAndOrdersAllowlist(t *testing.T) {
-	got := sanitizeLoginCookies("unknown=x; RMKEY=rm; JSESSIONID=old; Os_SSo_Sid=sid; behaviorid=b", "fresh")
-	want := "behaviorid=b; Os_SSo_Sid=sid; JSESSIONID=fresh"
+func TestSanitizeLoginCookiesDropsLoginStateAndReplacesJSessionIDWithoutReordering(t *testing.T) {
+	got := sanitizeLoginCookies("unknown=x; RMKEY=rm; a_l=l; JSESSIONID=old; Os_SSo_Sid=sid; behaviorid=b; a_l2=l2; Login_UserNumber=user; rtexpired=1", "fresh")
+	want := "unknown=x;JSESSIONID=fresh;behaviorid=b"
 	if got != want {
 		t.Fatalf("sanitizeLoginCookies() = %q, want %q", got, want)
 	}
 }
 
 func TestSanitizeLoginCookiesDropsStaleJSessionIDWhenFreshOneMissing(t *testing.T) {
-	got := sanitizeLoginCookies("JSESSIONID=old; Os_SSo_Sid=sid", "")
-	want := "Os_SSo_Sid=sid"
+	got := sanitizeLoginCookies("JSESSIONID=old; behaviorid=b", "")
+	want := "behaviorid=b"
 	if got != want {
 		t.Fatalf("sanitizeLoginCookies() = %q, want %q", got, want)
 	}
 }
 
-func TestMergeMailCookiesIsDeterministicAndKeepsExtrasSorted(t *testing.T) {
+func TestMergeMailCookiesPreservesExistingOrderAndAppendsNewNames(t *testing.T) {
 	got := mergeMailCookies("z=zv; behaviorid=b; Os_SSo_Sid=old", []*http.Cookie{
 		{Name: "RMKEY", Value: "rm"},
 		{Name: "Os_SSo_Sid", Value: "sid"},
 		{Name: "a", Value: "av"},
 	})
-	want := "behaviorid=b; Os_SSo_Sid=sid; RMKEY=rm; a=av; z=zv"
+	want := "z=zv;behaviorid=b;Os_SSo_Sid=sid;RMKEY=rm;a=av"
 	if got != want {
 		t.Fatalf("mergeMailCookies() = %q, want %q", got, want)
 	}
