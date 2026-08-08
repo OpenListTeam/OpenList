@@ -2,6 +2,7 @@ package _139
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -258,5 +259,21 @@ func TestIsRedirectStatus(t *testing.T) {
 		if isRedirectStatus(status) {
 			t.Fatalf("isRedirectStatus(%d) = true, want false", status)
 		}
+	}
+}
+
+func TestFetchMailJSessionIDAcceptsRedirectResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "fresh"})
+		http.Redirect(w, r, "/next", http.StatusFound)
+	}))
+	defer server.Close()
+
+	got, err := fetchMailJSessionID(server.URL)
+	if err != nil {
+		t.Fatalf("fetchMailJSessionID() error: %v", err)
+	}
+	if got != "fresh" {
+		t.Fatalf("fetchMailJSessionID() = %q, want fresh", got)
 	}
 }

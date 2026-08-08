@@ -1197,24 +1197,34 @@ func hasCookiePair(raw string) bool {
 	return false
 }
 
+func fetchMailJSessionID(endpoint string) (string, error) {
+	client := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy())
+	res, err := client.R().Get(endpoint)
+	if res == nil {
+		return "", fmt.Errorf("pre-login request returned no response: %v", err)
+	}
+	if err != nil && !isRedirectStatus(res.StatusCode()) {
+		return "", fmt.Errorf("pre-login request failed with status %d: %w", res.StatusCode(), err)
+	}
+	if res.StatusCode() >= http.StatusBadRequest {
+		return "", fmt.Errorf("pre-login request failed with status %d", res.StatusCode())
+	}
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == "JSESSIONID" && cookie.Value != "" {
+			return cookie.Value, nil
+		}
+	}
+	return "", errors.New("pre-login response did not set JSESSIONID")
+}
+
 func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("--- 执行步骤 1: 登录 API ---")
 	loginURL := "https://mail.10086.cn/Login/Login.ashx"
 
 	log.Debugf("--- 执行步骤 1.1: 获取 JSESSIONID ---")
-	getResp, err := base.RestyClient.R().Get(loginURL)
+	jsessionid, err := fetchMailJSessionID("https://mail.10086.cn/")
 	if err != nil {
 		return "", fmt.Errorf("step1 get jsessionid failed: %w", err)
-	}
-	var jsessionid string
-	for _, cookie := range getResp.Cookies() {
-		if cookie.Name == "JSESSIONID" {
-			jsessionid = cookie.Value
-			break
-		}
-	}
-	if jsessionid == "" {
-		log.Warnf("139yun: failed to get JSESSIONID from GET request.")
 	}
 
 	// 密码 SHA1 哈希
