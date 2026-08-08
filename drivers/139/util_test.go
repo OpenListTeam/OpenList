@@ -13,8 +13,8 @@ import (
 )
 
 func TestSanitizeLoginCookiesDropsLoginStateAndReplacesJSessionIDWithoutReordering(t *testing.T) {
-	got := sanitizeLoginCookies("unknown=x; RMKEY=rm; a_l=l; JSESSIONID=old; Os_SSo_Sid=sid; behaviorid=b; a_l2=l2; Login_UserNumber=user; rtexpired=1", "fresh")
-	want := "unknown=x;JSESSIONID=fresh;behaviorid=b"
+	got := sanitizeLoginCookies("behaviorid=b; hecaiyun_stay_time=t; isShowAgreeIconNew=1; Os_SSo_Sid=sid; hecaiyundata2021jssdkcross=data; random=r; a_l2=l2; hecaiyun_stay_url=url; a_l=l; Login_UserNumber=user; _139mail_login_type=2; _139mail_login_shortAddr=short; sajssdk_2015_cross_new_user=1; JSESSIONID=old; fromhtml5=1; html5SkinPath8011=skin; RMKEY=rm; rtexpired=1; S_DEVICE_TOKEN=device", "fresh")
+	want := "behaviorid=b;Os_SSo_Sid=sid;Login_UserNumber=user;JSESSIONID=fresh;S_DEVICE_TOKEN=device"
 	if got != want {
 		t.Fatalf("sanitizeLoginCookies() = %q, want %q", got, want)
 	}

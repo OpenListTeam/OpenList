@@ -41,13 +41,21 @@ const (
 	KEY_HEX_2 = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
 )
 
-var mailLoginStateCookies = map[string]struct{}{
-	"Os_SSo_Sid":       {},
-	"RMKEY":            {},
-	"a_l":              {},
-	"a_l2":             {},
-	"Login_UserNumber": {},
-	"rtexpired":        {},
+var mailLoginCookieExclusions = map[string]struct{}{
+	"hecaiyun_stay_time":          {},
+	"isShowAgreeIconNew":          {},
+	"hecaiyundata2021jssdkcross":  {},
+	"random":                      {},
+	"a_l2":                        {},
+	"hecaiyun_stay_url":           {},
+	"a_l":                         {},
+	"_139mail_login_type":         {},
+	"_139mail_login_shortAddr":    {},
+	"sajssdk_2015_cross_new_user": {},
+	"fromhtml5":                   {},
+	"html5SkinPath8011":           {},
+	"RMKEY":                       {},
+	"rtexpired":                   {},
 }
 
 type credentialState int
@@ -1133,14 +1141,14 @@ func getMd5(dataStr string) string {
 	return fmt.Sprintf("%x", hash)
 }
 
-// sanitizeLoginCookies preserves cookie order, drops stale authenticated-session
-// cookies from the password login request, and replaces JSESSIONID with the fresh
-// pre-login session.
+// sanitizeLoginCookies preserves cookie order, drops fields seen only in an
+// authenticated browser state, and replaces JSESSIONID with the fresh pre-login
+// session.
 func sanitizeLoginCookies(existingCookies string, newJSessionID string) string {
 	cookies := cookiepkg.Parse(existingCookies)
 	filtered := cookies[:0]
 	for _, c := range cookies {
-		if _, isLoginState := mailLoginStateCookies[c.Name]; isLoginState {
+		if _, excluded := mailLoginCookieExclusions[c.Name]; excluded {
 			continue
 		}
 		if c.Name == "JSESSIONID" {
