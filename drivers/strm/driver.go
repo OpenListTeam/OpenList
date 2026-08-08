@@ -27,6 +27,7 @@ type Strm struct {
 
 	supportSuffix  map[string]struct{}
 	downloadSuffix map[string]struct{}
+	minSizeBytes   int64
 }
 
 func (d *Strm) Config() driver.Config {
@@ -119,6 +120,18 @@ func (d *Strm) Init(ctx context.Context) error {
 	}
 	if len(d.SaveLocalMode) == 0 {
 		d.SaveLocalMode = SaveLocalInsertMode
+	}
+	d.MinFileSize = strings.TrimSpace(d.MinFileSize)
+	if d.MinFileSize != "" {
+		minSize, err := utils.ParseSize(d.MinFileSize)
+		if err != nil {
+			log.Warnf("failed to parse minFileSize %s: %v", d.MinFileSize, err)
+			d.minSizeBytes = 0
+		} else {
+			d.minSizeBytes = minSize
+		}
+	} else {
+		d.minSizeBytes = 0
 	}
 	return nil
 }

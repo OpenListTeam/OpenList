@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -201,4 +202,49 @@ func IsSystemFile(filename string) bool {
 	}
 
 	return false
+}
+
+// ParseSize parses human-readable file size strings like "100MB", "10KB", "10G", "1.5GB", "500B", "500" into bytes.
+func ParseSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	s = strings.ToUpper(s)
+
+	i := 0
+	for i < len(s) && ((s[i] >= '0' && s[i] <= '9') || s[i] == '.') {
+		i++
+	}
+	numStr := strings.TrimSpace(s[:i])
+	unitStr := strings.TrimSpace(s[i:])
+
+	if numStr == "" {
+		return 0, fmt.Errorf("invalid size format: %s", s)
+	}
+
+	val, err := strconv.ParseFloat(numStr, 64)
+	if err != nil || val < 0 {
+		return 0, fmt.Errorf("invalid size value: %s", numStr)
+	}
+
+	var multiplier float64 = 1
+	switch unitStr {
+	case "", "B", "BYTE", "BYTES":
+		multiplier = 1
+	case "K", "KB", "KIB":
+		multiplier = float64(KB)
+	case "M", "MB", "MIB":
+		multiplier = float64(MB)
+	case "G", "GB", "GIB":
+		multiplier = float64(GB)
+	case "T", "TB", "TIB":
+		multiplier = float64(TB)
+	case "P", "PB", "PIB":
+		multiplier = float64(1 << 50)
+	default:
+		return 0, fmt.Errorf("unknown unit in size format: %s", unitStr)
+	}
+
+	return int64(val * multiplier), nil
 }

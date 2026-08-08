@@ -41,3 +41,48 @@ func TestIsSystemFile(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSize(t *testing.T) {
+	testCases := []struct {
+		input       string
+		expected    int64
+		expectError bool
+	}{
+		{"", 0, false},
+		{"   ", 0, false},
+		{"0", 0, false},
+		{"100", 100, false},
+		{"500B", 500, false},
+		{"10Kb", 10 * 1024, false},
+		{"10KB", 10 * 1024, false},
+		{"10KiB", 10 * 1024, false},
+		{"100MB", 100 * 1024 * 1024, false},
+		{"100mb", 100 * 1024 * 1024, false},
+		{"10G", 10 * 1024 * 1024 * 1024, false},
+		{"10GB", 10 * 1024 * 1024 * 1024, false},
+		{"1.5GB", int64(1.5 * 1024 * 1024 * 1024), false},
+		{"1TB", 1 * 1024 * 1024 * 1024 * 1024, false},
+		{"  100 MB  ", 100 * 1024 * 1024, false},
+		{"invalid", 0, true},
+		{"100XYZ", 0, true},
+		{"-50MB", 0, true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.input, func(t *testing.T) {
+			res, err := ParseSize(tc.input)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("ParseSize(%q) expected error, got nil", tc.input)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ParseSize(%q) unexpected error: %v", tc.input, err)
+				}
+				if res != tc.expected {
+					t.Errorf("ParseSize(%q) = %d, want %d", tc.input, res, tc.expected)
+				}
+			}
+		})
+	}
+}
