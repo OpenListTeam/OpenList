@@ -28,10 +28,9 @@ import (
 
 type TransferTask struct {
 	fs.TaskData
-	DeletePolicy DeletePolicy  `json:"delete_policy"`
-	Url          string        `json:"url"`
-	groupID      string        `json:"-"`
-	ParentTask   *DownloadTask `json:"-"`
+	DeletePolicy DeletePolicy `json:"delete_policy"`
+	Url          string       `json:"url"`
+	groupID      string       `json:"-"`
 }
 
 func (t *TransferTask) Run() error {
@@ -54,15 +53,11 @@ func (t *TransferTask) Run() error {
 	defer func() { t.SetEndTime(time.Now()) }()
 	if t.SrcStorage == nil {
 		if t.DeletePolicy == UploadDownloadStream {
-			downloadSize := t.GetTotalBytes()
-			if downloadSize <= 0 {
-				downloadSize = -1
-			}
-			rr, err := stream.GetRangeReaderFromLink(downloadSize, &model.Link{URL: t.Url})
+			rr, err := stream.GetRangeReaderFromLink(t.GetTotalBytes(), &model.Link{URL: t.Url})
 			if err != nil {
 				return err
 			}
-			r, err := rr.RangeRead(t.Ctx(), http_range.Range{Length: downloadSize})
+			r, err := rr.RangeRead(t.Ctx(), http_range.Range{Length: t.GetTotalBytes()})
 			if err != nil {
 				return err
 			}
@@ -72,7 +67,7 @@ func (t *TransferTask) Run() error {
 				Ctx: t.Ctx(),
 				Obj: &model.Object{
 					Name:     name,
-					Size:     downloadSize,
+					Size:     t.GetTotalBytes(),
 					Modified: time.Now(),
 					IsFolder: false,
 				},
@@ -80,28 +75,7 @@ func (t *TransferTask) Run() error {
 				Mimetype: mimetype,
 				Closers:  utils.NewClosers(r),
 			}
-			if downloadSize < 0 {
- 				cache, err := s.CacheFullAndWriter(nil, nil)
- 				if err != nil {
-					return err
-				}
- 				size, err := cache.Seek(0, os.SEEK_END)
- 				if err != nil {
- 					return err
- 				}
- 				if _, err := cache.Seek(0, os.SEEK_SET); err != nil {
- 					return err
- 				}
- 				if obj, ok := s.Obj.(*model.Object); ok {
- 					obj.Size = size
- 				}
- 				t.setKnownSize(size)
-			}
-			if err := op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress); err != nil {
-				return err
-			}
-			t.SetCompletedSize(s.GetSize())
-			return nil
+			return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress)
 		}
 		return transferStdPath(t)
 	}
@@ -113,23 +87,6 @@ func (t *TransferTask) GetName() string {
 		return fmt.Sprintf("upload [%s](%s) to [%s](%s)", t.SrcActualPath, t.Url, t.DstStorageMp, t.DstActualPath)
 	}
 	return fmt.Sprintf("transfer [%s](%s) to [%s](%s)", t.SrcStorageMp, t.SrcActualPath, t.DstStorageMp, t.DstActualPath)
-}
-
-func (t *TransferTask) setKnownSize(size int64) {
-	if size >= 0 {
-		t.SetTotalBytes(size)
-		if t.ParentTask != nil {
-			t.ParentTask.SetTotalBytes(size)
-		}
-	}
-}
-
-func (t *TransferTask) SetCompletedSize(size int64) {
-	t.setKnownSize(size)
-	t.SetProgress(100)
-	if t.ParentTask != nil {
-		t.ParentTask.SetProgress(100)
-	}
 }
 
 func (t *TransferTask) OnSucceeded() {

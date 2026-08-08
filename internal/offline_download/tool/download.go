@@ -205,7 +205,6 @@ func (t *DownloadTask) Transfer() error {
 			},
 			DeletePolicy: t.DeletePolicy,
 			Url:          t.Url,
-			ParentTask:   t,
 		}
 		tsk.SetTotalBytes(t.GetTotalBytes())
 		tsk.groupID = path.Join(tsk.DstStorageMp, tsk.DstActualPath)

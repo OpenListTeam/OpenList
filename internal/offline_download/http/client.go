@@ -88,9 +88,13 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 		}
 		if fileSize > 0 {
 			task.SetTotalBytes(fileSize)
+			task.TempDir = filename
+			return nil
 		}
-		task.TempDir = filename
-		return nil
+		// fallback to download the file to temp dir
+		task.DeletePolicy = tool.DeleteAlways
+		task.Persist()
+		return s.Run(task)
 	}
 	if fileSize > 0 {
 		task.SetTotalBytes(fileSize)
