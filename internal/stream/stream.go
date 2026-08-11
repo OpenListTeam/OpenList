@@ -519,7 +519,7 @@ func (r *RangeReadReadAtSeeker) Seek(offset int64, whence int) (int64, error) {
 	default:
 		return 0, errors.New("Seek: invalid whence")
 	}
-	if offset < 0 || offset > r.ss.GetSize() {
+	if offset < 0 {
 		return 0, errors.New("Seek: invalid offset")
 	}
 	r.masterOff = offset
