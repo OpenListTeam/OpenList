@@ -273,7 +273,7 @@ loop:
 	}
 	pstat := Propstat{Status: http.StatusOK}
 	var err error
-	for attempt := 0; attempt < 40; attempt++ {
+	for attempt := 0; attempt < 10; attempt++ {
 		pstat.Props = nil
 		err = database.Transaction(func(tx *gorm.DB) error {
 			for _, patch := range patches {
@@ -302,7 +302,7 @@ loop:
 		if err == nil || !strings.Contains(err.Error(), "database is locked") {
 			break
 		}
-		time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+		time.Sleep(time.Duration(attempt+1) * 20 * time.Millisecond)
 	}
 	if err != nil {
 		return nil, err
@@ -351,8 +351,8 @@ func moveDeadProps(src, dst string) error {
 	if database == nil {
 		return errors.New("webdav property database is not initialized")
 	}
-	escapedSrc := strings.ReplaceAll(strings.ReplaceAll(src, "%", "\\%"), "_", "\\_")
-	escapedDst := strings.ReplaceAll(strings.ReplaceAll(dst, "%", "\\%"), "_", "\\_")
+	escapedSrc := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(src, "\\", "\\\\"), "%", "\\%"), "_", "\\_")
+	escapedDst := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(dst, "\\", "\\\\"), "%", "\\%"), "_", "\\_")
 	return database.Transaction(func(tx *gorm.DB) error {
 		// Clear destination subtree for overwrite MOVE.
 		if err := tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", dst, escapedDst+"/%").Delete(&model.WebDAVProperty{}).Error; err != nil {
