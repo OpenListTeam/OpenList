@@ -4,6 +4,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/message"
+	multipartPkg "github.com/OpenListTeam/OpenList/v4/internal/multipart"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -167,6 +168,7 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_thunder", handles.SetThunder)
 	setting.POST("/set_thunderx", handles.SetThunderX)
 	setting.POST("/set_thunder_browser", handles.SetThunderBrowser)
+	setting.POST("/set_guangyapan", handles.SetGuangYaPan)
 
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
 	_task(g.Group("/task"))
@@ -212,6 +214,13 @@ func _fs(g *gin.RouterGroup) {
 	uploadLimiter := middlewares.UploadRateLimiter(stream.ClientUploadLimit)
 	g.PUT("/put", middlewares.FsUp, uploadLimiter, handles.FsStream)
 	g.PUT("/form", middlewares.FsUp, uploadLimiter, handles.FsForm)
+	multipartPkg.DefaultManager.StartGC() // reclaim ring files orphaned by a previous run
+	multipart := g.Group("/multipart")
+	multipart.POST("/init", middlewares.FsUp, handles.MultipartInit)
+	multipart.PUT("/chunk", uploadLimiter, handles.MultipartChunk)
+	multipart.POST("/complete", handles.MultipartComplete)
+	multipart.GET("/status", handles.MultipartStatus)
+	multipart.POST("/abort", handles.MultipartAbort)
 	g.POST("/link", middlewares.AuthAdmin, handles.Link)
 	// g.POST("/add_aria2", handles.AddOfflineDownload)
 	// g.POST("/add_qbit", handles.AddQbittorrent)
