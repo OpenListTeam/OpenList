@@ -8,7 +8,7 @@ import (
 	"github.com/itsHenry35/gofakes3"
 )
 
-// pager splits the object list into smulitply pages.
+// pager splits the object list into multiple pages.
 func (db *s3Backend) pager(list *gofakes3.ObjectList, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
 	// sort by alphabet
 	sort.Slice(list.CommonPrefixes, func(i, j int) bool {
