@@ -116,9 +116,15 @@ func (t *Time) UnmarshalXML(e *xml.Decoder, ee xml.StartElement) error {
 }
 func (t *Time) Unmarshal(b []byte) error {
 	bs := strings.Trim(string(b), "\"")
+	bs = strings.ReplaceAll(bs, "\u202f", " ")
+	bs = strings.ReplaceAll(bs, "\u00a0", " ")
 	var v time.Time
 	var err error
-	for _, f := range []string{"2006-01-02 15:04:05 -07", "Jan 2, 2006 15:04:05 PM -07"} {
+	for _, f := range []string{
+		"2006-01-02 15:04:05 -07",
+		"Jan 2, 2006 15:04:05 PM -07",
+		"Jan 2, 2006, 3:04:05 PM -07",
+	} {
 		v, err = time.ParseInLocation(f, bs+" +08", time.Local)
 		if err == nil {
 			break
