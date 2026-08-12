@@ -18,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -69,7 +70,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 		}
 	}
 	// try putting url
-	if args.Tool == "SimpleHttp" {
+	if args.Tool == "SimpleHttp" && !isEd2kURL(args.URL) {
 		if isSimpleHttpSchemeUnsupported(args.URL) {
 			return nil, fmt.Errorf("SimpleHttp tool does not support this URL scheme, please use aria2 or other tools for magnet/ed2k links")
 		}
@@ -83,13 +84,17 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	// ed2k 链接自动路由：如果当前工具不支持 ed2k，自动尝试使用迅雷系工具
 	if isEd2kURL(args.URL) {
 		if !isEd2kCapableTool(args.Tool) {
-			// 尝试找到一个可用的支持 ed2k 的工具
-			fallbackTool, fallbackName := findEd2kCapableTool()
-			if fallbackTool != nil {
-				// 使用找到的迅雷工具替代
-				args.Tool = fallbackName
+			if storageTool := ed2kToolForStorage(storage); storageTool != "" {
+				// Prefer the matching native tool when the destination storage supports ed2k.
+				args.Tool = storageTool
 			} else {
-				return nil, fmt.Errorf("ed2k protocol is not supported by %s. Please configure and use Thunder/ThunderX/ThunderBrowser for ed2k links", args.Tool)
+				// Otherwise, try to find an available Thunder-family tool.
+				fallbackTool, fallbackName := findEd2kCapableTool()
+				if fallbackTool != nil {
+					args.Tool = fallbackName
+				} else {
+					return nil, fmt.Errorf("ed2k protocol is not supported by %s. Please configure and use Thunder/ThunderX/ThunderBrowser for ed2k links", args.Tool)
+				}
 			}
 		}
 	}
@@ -215,6 +220,17 @@ func isSimpleHttpSchemeUnsupported(urlStr string) bool {
 // isEd2kURL 检测 URL 是否为 ed2k 协议
 func isEd2kURL(urlStr string) bool {
 	return strings.HasPrefix(strings.ToLower(urlStr), "ed2k://")
+}
+
+func ed2kToolForStorage(storage driver.Driver) string {
+	switch storage.(type) {
+	case *_115.Pan115:
+		return "115 Cloud"
+	case *_115_open.Open115:
+		return "115 Open"
+	default:
+		return ""
+	}
 }
 
 // ed2kCapableTools 支持 ed2k 协议的工具列表
