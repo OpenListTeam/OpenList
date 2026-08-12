@@ -217,8 +217,11 @@ func isEd2kURL(urlStr string) bool {
 	return strings.HasPrefix(strings.ToLower(urlStr), "ed2k://")
 }
 
-// ed2kCapableTools 支持 ed2k 协议的工具列表（迅雷系）
-var ed2kCapableTools = []string{"Thunder", "ThunderX", "ThunderBrowser"}
+// ed2kCapableTools 支持 ed2k 协议的工具列表
+var ed2kCapableTools = []string{"115 Cloud", "115 Open", "Thunder", "ThunderX", "ThunderBrowser"}
+
+// ed2kFallbackTools 是当前可用于自动接管 ed2k 任务的工具列表。
+var ed2kFallbackTools = []string{"Thunder", "ThunderX", "ThunderBrowser"}
 
 // isEd2kCapableTool 检查工具是否支持 ed2k 协议
 func isEd2kCapableTool(toolName string) bool {
@@ -232,7 +235,7 @@ func isEd2kCapableTool(toolName string) bool {
 
 // findEd2kCapableTool 查找一个可用的支持 ed2k 的工具
 func findEd2kCapableTool() (Tool, string) {
-	for _, name := range ed2kCapableTools {
+	for _, name := range ed2kFallbackTools {
 		t, err := Tools.Get(name)
 		if err != nil {
 			continue
