@@ -367,6 +367,21 @@ func getCopyPartSize(size int64) (int64, error) {
 	return partSize, nil
 }
 
+func calculatePartSize(fileSize, maxParts, minPartSize, maxPartSize int64) (int64, error) {
+	if fileSize <= 0 {
+		return 0, errors.New("file size must be positive")
+	}
+	partSize := (fileSize + maxParts - 1) / maxParts
+	if partSize < minPartSize {
+		return minPartSize, nil
+	}
+	if partSize > maxPartSize {
+		return 0, fmt.Errorf("file size %d bytes exceeds S3 multipart upload limit (max %d parts x %d bytes/part = %d bytes total)",
+			fileSize, maxParts, maxPartSize, maxParts*maxPartSize)
+	}
+	return partSize, nil
+}
+
 func (d *S3) copyDir(ctx context.Context, src string, dst string) error {
 	objs, err := op.List(ctx, d, src, model.ListArgs{S3ShowPlaceholder: true})
 	if err != nil {

@@ -15,3 +15,13 @@ type S3MultipartDirectUploadInfo struct {
 	CompleteURL string   `json:"complete_url"`
 	AbortURL    string   `json:"abort_url"`
 }
+
+type DirectUploadPartOption struct {
+	Key      string `json:"key"`
+	UploadId string `json:"upload_id"`
+}
+
+type DirectUploadPartInfo struct {
+	ETag       string `json:"etag"`
+	PartNumber int    `json:"part_number"`
+}

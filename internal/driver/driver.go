@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/task"
 )
 
 type Driver interface {
@@ -217,4 +218,15 @@ type DirectUploader interface {
 	// actualPath is the path relative to the storage root (after removing mount path prefix)
 	// return errs.NotImplement if the driver does not support the given direct upload tool
 	GetDirectUploadInfo(ctx context.Context, tool string, dstDir model.Obj, fileName string, fileSize int64) (any, error)
+}
+
+type MultipartBackend interface {
+	CreateMultipartUpload(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64) (*model.DirectUploadPartOption, error)
+	UploadPart(ctx context.Context, uploadId string, partNumber int, stream model.FileStreamer, options *model.DirectUploadPartOption) (*model.DirectUploadPartInfo, error)
+	CompleteMultipartUpload(ctx context.Context, uploadId string, dst string, parts []model.DirectUploadPartInfo) error
+	AbortMultipartUpload(ctx context.Context, uploadId string, dst string) error
+}
+
+type PutAsTask interface {
+	PutAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) (task.TaskExtensionInfo, error)
 }

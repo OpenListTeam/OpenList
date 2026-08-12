@@ -437,6 +437,38 @@ func TestDirectMultipartUploadCompletesWithUploadedPartETags(t *testing.T) {
 	}
 }
 
+func TestCalculatePartSize(t *testing.T) {
+	tests := []struct {
+		fileSize    int64
+		maxParts    int64
+		minPartSize int64
+		maxPartSize int64
+		wantErr     bool
+		wantPart    int64
+	}{
+		{100 * 1024 * 1024, 10000, minMultipartUploadPartSize, maxMultipartUploadPartSize, false, minMultipartUploadPartSize},
+		{50*1024*1024*1024 + 1, 10000, minMultipartUploadPartSize, maxMultipartUploadPartSize, false, (50*1024*1024*1024+1 + 9999) / 10000},
+		{maxMultipartUploadPartSize * 10000, 10000, minMultipartUploadPartSize, maxMultipartUploadPartSize, false, maxMultipartUploadPartSize},
+		{maxMultipartUploadPartSize*10000 + 1, 10000, minMultipartUploadPartSize, maxMultipartUploadPartSize, true, 0},
+		{25 * 1024 * 1024, 2, 10 * 1024 * 1024, 100 * 1024 * 1024, false, 13107200},
+		{0, 10000, minMultipartUploadPartSize, maxMultipartUploadPartSize, true, 0},
+		{-1, 10000, minMultipartUploadPartSize, maxMultipartUploadPartSize, true, 0},
+		{5 * 1024 * 1024, 1, minMultipartUploadPartSize, maxMultipartUploadPartSize, false, minMultipartUploadPartSize},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("size=%d_parts=%d", tt.fileSize, tt.maxParts), func(t *testing.T) {
+			got, err := calculatePartSize(tt.fileSize, tt.maxParts, tt.minPartSize, tt.maxPartSize)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("calculatePartSize error = %v, wantErr = %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.wantPart {
+				t.Errorf("calculatePartSize = %d, want %d", got, tt.wantPart)
+			}
+		})
+	}
+}
+
 func newTestS3Driver(t *testing.T, handler http.HandlerFunc) *S3 {
 	t.Helper()
 	server := httptest.NewServer(handler)

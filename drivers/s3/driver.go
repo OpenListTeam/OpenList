@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	stdpath "path"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -337,6 +339,107 @@ func (d *S3) getMultipartDirectUploadInfo(ctx context.Context, key string, fileS
 	return info, nil
 }
 
+func (d *S3) PutAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) (task.TaskExtensionInfo, error) {
+	return nil, errs.NotImplement
+}
+
+func (d *S3) CreateMultipartUpload(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64) (*model.DirectUploadPartOption, error) {
+	if d.DirectUploadMaxParts == 1 {
+		return nil, errs.NotSupport
+	}
+	maxParts := d.DirectUploadMaxParts
+	if maxParts == 0 {
+		maxParts = maxCopyParts
+	}
+	if _, err := calculatePartSize(fileSize, maxParts, minMultipartUploadPartSize, maxMultipartUploadPartSize); err != nil {
+		return nil, err
+	}
+	key := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
+	created, err := d.client.CreateMultipartUploadWithContext(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: &d.Bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		return nil, err
+	}
+	uploadID := aws.StringValue(created.UploadId)
+	if uploadID == "" {
+		return nil, fmt.Errorf("create multipart upload returned an empty upload ID")
+	}
+	return &model.DirectUploadPartOption{
+		Key:      key,
+		UploadId: uploadID,
+	}, nil
+}
+
+func (d *S3) UploadPart(ctx context.Context, uploadId string, partNumber int, stream model.FileStreamer, options *model.DirectUploadPartOption) (*model.DirectUploadPartInfo, error) {
+	if d.DirectUploadMaxParts == 1 {
+		return nil, errs.NotSupport
+	}
+	if partNumber < 1 || partNumber > 10000 {
+		return nil, fmt.Errorf("partNumber must be between 1 and 10000, got %d", partNumber)
+	}
+	if uploadId == "" {
+		return nil, fmt.Errorf("uploadId must not be empty")
+	}
+	body, err := io.ReadAll(stream)
+	if err != nil {
+		return nil, fmt.Errorf("read part body: %w", err)
+	}
+	partNum := int64(partNumber)
+	key := options.Key
+	input := &s3.UploadPartInput{
+		Bucket:     &d.Bucket,
+		Key:        &key,
+		PartNumber: &partNum,
+		UploadId:   &uploadId,
+		Body:       bytes.NewReader(body),
+	}
+	output, err := d.directUploadClient.UploadPartWithContext(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return &model.DirectUploadPartInfo{
+		ETag:       aws.StringValue(output.ETag),
+		PartNumber: partNumber,
+	}, nil
+}
+
+func (d *S3) CompleteMultipartUpload(ctx context.Context, uploadId string, dst string, parts []model.DirectUploadPartInfo) error {
+	completedParts := make([]*s3.CompletedPart, 0, len(parts))
+	for _, p := range parts {
+		partNumber := int64(p.PartNumber)
+		etag := p.ETag
+		completedParts = append(completedParts, &s3.CompletedPart{
+			PartNumber: &partNumber,
+			ETag:       &etag,
+		})
+	}
+	key := getKey(dst, false)
+	_, err := d.client.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   &d.Bucket,
+		Key:      &key,
+		UploadId: &uploadId,
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to complete multipart upload for %s (uploadId=%s): %w", dst, uploadId, err)
+	}
+	return nil
+}
+
+func (d *S3) AbortMultipartUpload(ctx context.Context, uploadId string, dst string) error {
+	key := getKey(dst, false)
+	_, err := d.client.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   &d.Bucket,
+		Key:      &key,
+		UploadId: &uploadId,
+	})
+	return err
+}
+
 // implements driver.Getter interface
 func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 	// try to get object as a file using HeadObject
@@ -416,3 +519,5 @@ func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 
 var _ driver.Driver = (*S3)(nil)
 var _ driver.Getter = (*S3)(nil)
+var _ driver.MultipartBackend = (*S3)(nil)
+var _ driver.PutAsTask = (*S3)(nil)
