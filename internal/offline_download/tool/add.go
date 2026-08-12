@@ -223,11 +223,34 @@ func isEd2kURL(urlStr string) bool {
 }
 
 func ed2kToolForStorage(storage driver.Driver) string {
+	switch toolNameForStorage(storage) {
+	case "115 Cloud", "115 Open":
+		return toolNameForStorage(storage)
+	default:
+		return ""
+	}
+}
+
+func toolNameForStorage(storage driver.Driver) string {
 	switch storage.(type) {
 	case *_115.Pan115:
 		return "115 Cloud"
 	case *_115_open.Open115:
 		return "115 Open"
+	case *_123.Pan123:
+		return "123Pan"
+	case *_123_open.Open123:
+		return "123 Open"
+	case *guangyapan.GuangYaPan:
+		return "GuangYaPan"
+	case *pikpak.PikPak:
+		return "PikPak"
+	case *thunder.Thunder:
+		return "Thunder"
+	case *thunderx.ThunderX:
+		return "ThunderX"
+	case *thunder_browser.ThunderBrowser, *thunder_browser.ThunderBrowserExpert:
+		return "ThunderBrowser"
 	default:
 		return ""
 	}
