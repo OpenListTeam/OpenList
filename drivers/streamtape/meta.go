@@ -20,7 +20,6 @@ type Addition struct {
 var config = driver.Config{
 	Name:              "Streamtape",
 	LocalSort:         false,
-	OnlyLocal:         false,
 	OnlyProxy:         true,
 	NoCache:           false,
 	NoUpload:          false,
