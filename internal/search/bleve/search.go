@@ -135,6 +135,18 @@ func (b *Bleve) Release(ctx context.Context) error {
 	return nil
 }
 
+// Close releases the underlying bleve index. It is idempotent and safe to
+// call multiple times: after the first call the BIndex field is cleared so
+// subsequent calls (and calls to Release) become no-ops.
+func (b *Bleve) Close() error {
+	if b.BIndex != nil {
+		err := b.BIndex.Close()
+		b.BIndex = nil
+		return err
+	}
+	return nil
+}
+
 func (b *Bleve) Clear(ctx context.Context) error {
 	err := b.Release(ctx)
 	if err != nil {

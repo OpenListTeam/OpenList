@@ -9,6 +9,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/search/searcher"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -45,6 +46,28 @@ func Init(mode string) error {
 		instance = i
 	}
 	return err
+}
+
+// Reinit rebuilds the search instance using the current config. It is called
+// by the hot-reload applier when bleve_dir / meilisearch.* changes — cases
+// where the mode (stored in settings) is unchanged but the underlying
+// resources must be re-opened. Init(mode) alone would no-op in that case
+// (same mode), so Reinit force-releases the existing instance first.
+func Reinit() error {
+	if instance != nil {
+		// Prefer Close() when the searcher supports it so client/task-queue
+		// resources are released; Release() alone may leave them dangling.
+		if closer, ok := instance.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		err := instance.Release(context.Background())
+		if err != nil {
+			log.Errorf("release search instance err: %+v", err)
+		}
+		instance = nil
+	}
+	mode := setting.GetStr(conf.SearchIndex)
+	return Init(mode)
 }
 
 func Search(ctx context.Context, req model.SearchReq) ([]model.SearchNode, int64, error) {

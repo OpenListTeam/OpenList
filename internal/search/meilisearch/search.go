@@ -216,6 +216,22 @@ func (m *Meilisearch) Release(ctx context.Context) error {
 	return nil
 }
 
+// Close releases the meilisearch client and stops the task queue. It is
+// idempotent and safe to call multiple times: fields are cleared after the
+// first call so subsequent calls (and calls to Release) become no-ops.
+// Note: meilisearch-go's ServiceManager.Close() returns no error.
+func (m *Meilisearch) Close() error {
+	if m.taskQueue != nil {
+		m.taskQueue.Stop()
+		m.taskQueue = nil
+	}
+	if m.Client != nil {
+		m.Client.Close()
+		m.Client = nil
+	}
+	return nil
+}
+
 func (m *Meilisearch) Clear(ctx context.Context) error {
 	_, err := m.Client.Index(m.IndexUid).DeleteAllDocumentsWithContext(ctx)
 	// task was enqueued (if succeed), no need to wait

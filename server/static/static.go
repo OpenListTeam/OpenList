@@ -16,6 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/public"
 	"github.com/gin-gonic/gin"
+	log "github.com/sirupsen/logrus"
 )
 
 type ManifestIcon struct {
@@ -104,6 +105,15 @@ func initIndex(siteConfig SiteConfig) {
 	}
 	conf.RawIndexHtml = replaceStrings(conf.RawIndexHtml, replaceMap)
 	UpdateIndex()
+}
+
+// Reload re-derives the static fs and index.html from the current config.
+// Called by the hot-reload applier when dist_dir / cdn changes.
+func Reload() {
+	siteConfig := getSiteConfig()
+	initStatic()
+	initIndex(siteConfig)
+	log.Info("static resources reloaded")
 }
 
 func UpdateIndex() {
