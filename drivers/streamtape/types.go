@@ -61,16 +61,16 @@ type remoteDlAddResult struct {
 type remoteDlStatusResult map[string]remoteDlStatusItem
 
 type remoteDlStatusItem struct {
-	ID         string      `json:"id"`
-	RemoteURL  string      `json:"remoteurl"`
-	Status     string      `json:"status"`
+	ID          string      `json:"id"`
+	RemoteURL   string      `json:"remoteurl"`
+	Status      string      `json:"status"`
 	BytesLoaded interface{} `json:"bytes_loaded"`
-	BytesTotal interface{} `json:"bytes_total"`
-	FolderID   string      `json:"folderid"`
-	Added      string      `json:"added"`
-	LastUpdate string      `json:"last_update"`
-	ExtID      bool        `json:"extid"`
-	URL        bool        `json:"url"`
+	BytesTotal  interface{} `json:"bytes_total"`
+	FolderID    string      `json:"folderid"`
+	Added       string      `json:"added"`
+	LastUpdate  string      `json:"last_update"`
+	ExtID       any         `json:"extid"`
+	URL         any         `json:"url"`
 }
 
 type fileInfoResult map[string]fileInfoItem

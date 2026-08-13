@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -189,9 +190,8 @@ func (d *Streamtape) applyRangeStrategy(link *model.Link, size int64) {
 
 	switch mode {
 	case "full":
-		// Keep single full-tail behavior while still using ranged requests.
-		link.Concurrency = 1
-		link.PartSize = int(size)
+		// No driver-level range shaping for full mode; allow transparent streaming
+		return
 	case "percent":
 		percent := d.RangePercent
 		if percent <= 0 {
@@ -207,6 +207,9 @@ func (d *Streamtape) applyRangeStrategy(link *model.Link, size int64) {
 		if partSize > size {
 			partSize = size
 		}
+		if partSize > int64(math.MaxInt) {
+			partSize = int64(math.MaxInt)
+		}
 		link.Concurrency = 1
 		link.PartSize = int(partSize)
 	default:
@@ -217,6 +220,9 @@ func (d *Streamtape) applyRangeStrategy(link *model.Link, size int64) {
 		partSize := int64(chunkMB) * 1024 * 1024
 		if partSize > size {
 			partSize = size
+		}
+		if partSize > int64(math.MaxInt) {
+			partSize = int64(math.MaxInt)
 		}
 		concurrency := d.RangeConcurrency
 		if concurrency <= 0 {
@@ -369,11 +375,7 @@ func (d *Streamtape) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 				}
 			}
 		}
-		return &model.Object{
-			Name:     file.GetName(),
-			Size:     file.GetSize(),
-			IsFolder: false,
-		}, nil
+		return nil, errors.New("uploaded file ID not found in response or directory scan")
 	}
 
 	return &model.Object{

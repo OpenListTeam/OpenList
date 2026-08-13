@@ -1,6 +1,7 @@
 package streamtape
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -43,7 +44,7 @@ func (d *Streamtape) callAPI(ctx context.Context, endpoint string, params map[st
 	if resp.Status != 200 {
 		return fmt.Errorf("streamtape api error: status=%d msg=%s", resp.Status, resp.Msg)
 	}
-	if out == nil || len(resp.Result) == 0 || string(resp.Result) == "null" {
+	if out == nil || len(resp.Result) == 0 || string(bytes.TrimSpace(resp.Result)) == "null" {
 		return nil
 	}
 	if err := json.Unmarshal(resp.Result, out); err != nil {
@@ -77,6 +78,9 @@ func encodeFolderID(id string) string {
 }
 
 func encodeFileID(id string) string {
+	if id == "" {
+		return ""
+	}
 	if strings.HasPrefix(id, "f:") {
 		return id
 	}
