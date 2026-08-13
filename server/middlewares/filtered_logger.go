@@ -50,6 +50,17 @@ func initFilterList() {
 	log.Infof("Loaded %d log filters.", len(filterList))
 }
 
+// ReloadFilterList resets and rebuilds the log filter list from the current
+// config. It is safe to call repeatedly (e.g. on config hot-reload). When log
+// filtering is disabled (Log.Filter.Enable == false) the list is cleared so an
+// already-installed FilteredLogger middleware stops filtering requests.
+func ReloadFilterList() {
+	filterList = nil
+	if conf.Conf.Log.Filter.Enable {
+		initFilterList()
+	}
+}
+
 func skiperDecider(c *gin.Context) bool {
 	// every filter need metch all condithon as filter match
 	// so if any condithon not metch, skip this filter

@@ -1,6 +1,10 @@
 package server
 
 import (
+	"fmt"
+	"strings"
+	"sync/atomic"
+
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/message"
@@ -25,9 +29,7 @@ func Init(e *gin.Engine) {
 	}
 	Cors(e)
 	g := e.Group(conf.URL.Path)
-	if conf.Conf.Scheme.HttpPort != -1 && conf.Conf.Scheme.HttpsPort != -1 && conf.Conf.Scheme.ForceHttps {
-		e.Use(middlewares.ForceHttps)
-	}
+	e.Use(forceHttpsGuard)
 	g.Any("/ping", func(c *gin.Context) {
 		c.String(200, "pong")
 	})
@@ -37,9 +39,7 @@ func Init(e *gin.Engine) {
 	g.GET("/i/:link_name", handles.Plist)
 	common.SecretKey = []byte(conf.Conf.JwtSecret)
 	g.Use(middlewares.StoragesLoaded)
-	if conf.Conf.MaxConnections > 0 {
-		g.Use(middlewares.MaxAllowed(conf.Conf.MaxConnections))
-	}
+	g.Use(middlewares.MaxAllowedLive())
 	WebDav(g.Group("/dav"))
 	S3(g.Group("/s3"))
 	MCP(g)
@@ -250,13 +250,42 @@ func _sharing(g *gin.RouterGroup) {
 	g.POST("/disable", handles.SetEnableSharing(true))
 }
 
-func Cors(r *gin.Engine) {
+var corsHolder atomic.Pointer[gin.HandlerFunc]
+
+func buildCorsHandler() gin.HandlerFunc {
 	config := cors.DefaultConfig()
 	// config.AllowAllOrigins = true
 	config.AllowOrigins = conf.Conf.Cors.AllowOrigins
 	config.AllowHeaders = conf.Conf.Cors.AllowHeaders
 	config.AllowMethods = conf.Conf.Cors.AllowMethods
-	r.Use(cors.New(config))
+	return cors.New(config)
+}
+
+func Cors(r *gin.Engine) {
+	h := buildCorsHandler()
+	corsHolder.Store(&h)
+	r.Use(func(c *gin.Context) {
+		if h := corsHolder.Load(); h != nil {
+			(*h)(c)
+		}
+	})
+}
+
+func ReloadCors() {
+	h := buildCorsHandler()
+	corsHolder.Store(&h)
+}
+
+func forceHttpsGuard(c *gin.Context) {
+	if conf.Conf.Scheme.ForceHttps && c.Request.TLS == nil {
+		host := c.Request.Host
+		// change port to https port
+		host = strings.Replace(host, fmt.Sprintf(":%d", conf.Conf.Scheme.HttpPort), fmt.Sprintf(":%d", conf.Conf.Scheme.HttpsPort), 1)
+		c.Redirect(302, "https://"+host+c.Request.RequestURI)
+		c.Abort()
+		return
+	}
+	c.Next()
 }
 
 func InitS3(e *gin.Engine) {

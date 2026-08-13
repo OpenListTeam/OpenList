@@ -78,10 +78,23 @@ var supportedProtocolVersions = map[string]struct{}{
 }
 
 func Register(g *gin.RouterGroup) {
-	mcpGroup := g.Group("/mcp", middlewares.Auth(false), middlewares.AuthAdmin)
+	mcpGroup := g.Group("/mcp", mcpEnabledGuard, middlewares.Auth(false), middlewares.AuthAdmin)
 	mcpGroup.GET("", defaultServer.handleGet)
 	mcpGroup.POST("", defaultServer.handlePost)
 	mcpGroup.DELETE("", defaultServer.handleDelete)
+}
+
+// mcpEnabledGuard hot-reloads conf.Conf.MCP.Enable on every request so that
+// toggling the flag in config.json takes effect without a restart. It runs
+// before the auth middlewares so a disabled MCP returns 403 without requiring
+// authentication, matching the previous startup-time placeholder behavior.
+func mcpEnabledGuard(c *gin.Context) {
+	if !conf.Conf.MCP.Enable {
+		common.ErrorStrResp(c, "MCP server is not enabled", 403)
+		c.Abort()
+		return
+	}
+	c.Next()
 }
 
 func (s *Server) handleGet(c *gin.Context) {
