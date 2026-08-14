@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	stdpath "path"
+	"path/filepath"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -26,6 +28,11 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 	updateLocal := func(driver *Strm, basePath string, objs []model.Obj) {
 		relParent := strings.TrimPrefix(basePath, utils.GetActualMountPath(driver.MountPath))
 		localParentPath := stdpath.Join(driver.SaveStrmLocalPath, relParent)
+		if driver.SaveLocalPermMode == SaveLocalSharedPermMode {
+			if err := ensureLocalDirectories(localParentPath, driver.SaveStrmLocalPath, 0o755); err != nil {
+				log.Warnf("failed to set local strm directory permissions for %s: %v", localParentPath, err)
+			}
+		}
 		for _, obj := range objs {
 			localPath := stdpath.Join(localParentPath, obj.GetName())
 			generateStrm(ctx, driver, obj, localPath)
@@ -92,54 +99,103 @@ func RemoveStrm(dstPath string, d *Strm) {
 }
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
-	if !obj.IsDir() {
-		if utils.Exists(localPath) && driver.SaveLocalMode == SaveLocalInsertMode {
-			return
+	if obj.IsDir() {
+		if driver.SaveLocalPermMode == SaveLocalSharedPermMode {
+			if err := ensureLocalDirectories(localPath, driver.SaveStrmLocalPath, 0o755); err != nil {
+				log.Warnf("failed to set local strm directory permissions for %s: %v", localPath, err)
+			}
 		}
-		link, err := driver.Link(ctx, obj, model.LinkArgs{})
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
-			return
+		return
+	}
+
+	if utils.Exists(localPath) && driver.SaveLocalMode == SaveLocalInsertMode {
+		setLocalStrmFilePermissions(driver, localPath)
+		return
+	}
+	link, err := driver.Link(ctx, obj, model.LinkArgs{})
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
+		return
+	}
+	defer link.Close()
+	size := link.ContentLength
+	if size <= 0 {
+		size = obj.GetSize()
+	}
+	rrf, err := stream.GetRangeReaderFromLink(size, link)
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to get range reader: %v", localPath, err)
+		return
+	}
+	rc, err := rrf.RangeRead(ctx, http_range.Range{Length: -1})
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to read range: %v", localPath, err)
+		return
+	}
+	defer rc.Close()
+	same, err := isSameContent(localPath, size, rc)
+	if err != nil {
+		log.Warnf("failed to compare content of obj %s: %v", localPath, err)
+		return
+	}
+	if same {
+		setLocalStrmFilePermissions(driver, localPath)
+		return
+	}
+	rc, err = rrf.RangeRead(ctx, http_range.Range{Length: -1})
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to reread range: %v", localPath, err)
+		return
+	}
+	defer rc.Close()
+	file, err := utils.CreateNestedFile(localPath)
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
+		return
+	}
+	defer file.Close()
+	if _, err := utils.CopyWithBuffer(file, rc); err != nil {
+		log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
+	}
+	setLocalStrmFilePermissions(driver, localPath)
+}
+
+func ensureLocalDirectories(path, basePath string, mode os.FileMode) error {
+	path = filepath.Clean(path)
+	basePath = filepath.Clean(basePath)
+	rel, err := filepath.Rel(basePath, path)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("local path %q is outside save path %q", path, basePath)
+	}
+
+	dirs := []string{basePath}
+	current := basePath
+	if rel != "." {
+		for _, part := range strings.Split(rel, string(filepath.Separator)) {
+			current = filepath.Join(current, part)
+			dirs = append(dirs, current)
 		}
-		defer link.Close()
-		size := link.ContentLength
-		if size <= 0 {
-			size = obj.GetSize()
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, mode); err != nil {
+			return err
 		}
-		rrf, err := stream.GetRangeReaderFromLink(size, link)
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to get range reader: %v", localPath, err)
-			return
+		if err := os.Chmod(dir, mode); err != nil {
+			return err
 		}
-		rc, err := rrf.RangeRead(ctx, http_range.Range{Length: -1})
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to read range: %v", localPath, err)
-			return
-		}
-		defer rc.Close()
-		same, err := isSameContent(localPath, size, rc)
-		if err != nil {
-			log.Warnf("failed to compare content of obj %s: %v", localPath, err)
-			return
-		}
-		if same {
-			return
-		}
-		rc, err = rrf.RangeRead(ctx, http_range.Range{Length: -1})
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to reread range: %v", localPath, err)
-			return
-		}
-		defer rc.Close()
-		file, err := utils.CreateNestedFile(localPath)
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
-			return
-		}
-		defer file.Close()
-		if _, err := utils.CopyWithBuffer(file, rc); err != nil {
-			log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
-		}
+	}
+	return nil
+}
+
+func setLocalStrmFilePermissions(driver *Strm, path string) {
+	if driver.SaveLocalPermMode != SaveLocalSharedPermMode {
+		return
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		log.Warnf("failed to set local strm file permissions for %s: %v", path, err)
 	}
 }
 

@@ -6,9 +6,11 @@ import (
 )
 
 const (
-	SaveLocalInsertMode = "insert"
-	SaveLocalUpdateMode = "update"
-	SaveLocalSyncMode   = "sync"
+	SaveLocalInsertMode      = "insert"
+	SaveLocalUpdateMode      = "update"
+	SaveLocalSyncMode        = "sync"
+	SaveLocalPrivatePermMode = "private"
+	SaveLocalSharedPermMode  = "shared"
 )
 
 type Addition struct {
@@ -24,6 +26,7 @@ type Addition struct {
 	SaveStrmToLocal   bool   `json:"SaveStrmToLocal" default:"false" help:"save strm file locally"`
 	SaveStrmLocalPath string `json:"SaveStrmLocalPath" type:"text" help:"save strm file local path"`
 	SaveLocalMode     string `json:"SaveLocalMode" type:"select" help:"save strm file locally mode" options:"insert,update,sync" default:"insert"`
+	SaveLocalPermMode string `json:"SaveLocalPermMode" type:"select" help:"permission mode for locally saved strm files; shared uses 0755 directories and 0644 files" options:"private,shared" default:"private"`
 	Version           int
 }
 

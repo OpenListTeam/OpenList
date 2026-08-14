@@ -45,6 +45,12 @@ func (d *Strm) Init(ctx context.Context) error {
 	if d.SaveStrmToLocal && len(d.SaveStrmLocalPath) <= 0 {
 		return errors.New("SaveStrmLocalPath is required")
 	}
+	if len(d.SaveLocalPermMode) == 0 {
+		d.SaveLocalPermMode = SaveLocalPrivatePermMode
+	}
+	if d.SaveLocalPermMode != SaveLocalPrivatePermMode && d.SaveLocalPermMode != SaveLocalSharedPermMode {
+		return fmt.Errorf("invalid SaveLocalPermMode: %s", d.SaveLocalPermMode)
+	}
 	d.pathMap = make(map[string][]string)
 	for path := range strings.SplitSeq(d.Paths, "\n") {
 		path = strings.TrimSpace(path)
