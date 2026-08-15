@@ -3,6 +3,7 @@ package lanzou
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -18,7 +19,7 @@ type LanZou struct {
 	uid string
 	vei string
 
-	flag int32
+	flag atomic.Int32
 }
 
 func (d *LanZou) Config() driver.Config {

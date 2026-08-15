@@ -27,6 +27,7 @@ type Strm struct {
 
 	supportSuffix  map[string]struct{}
 	downloadSuffix map[string]struct{}
+	minSizeBytes   int64
 }
 
 func (d *Strm) Config() driver.Config {
@@ -120,6 +121,7 @@ func (d *Strm) Init(ctx context.Context) error {
 	if len(d.SaveLocalMode) == 0 {
 		d.SaveLocalMode = SaveLocalInsertMode
 	}
+	d.minSizeBytes = d.MinFileSize * 1024 * 1024
 	return nil
 }
 
@@ -219,9 +221,7 @@ func (d *Strm) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 		}, nil
 	}
 
-	resultLink := *link
-	resultLink.SyncClosers = utils.NewSyncClosers(link)
-	return &resultLink, nil
+	return link.Clone(), nil
 }
 
 var _ driver.Driver = (*Strm)(nil)

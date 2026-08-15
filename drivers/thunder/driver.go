@@ -88,6 +88,9 @@ func (x *Thunder) Init(ctx context.Context) (err error) {
 					// 清空 信任密钥
 					x.Addition.CreditKey = ""
 				}
+				if token == nil {
+					return err
+				}
 				x.SetTokenResp(token)
 				return err
 			},
@@ -521,6 +524,9 @@ func (xc *XunLeiCommon) SetCoreTokenResp(tr *CoreLoginResp) {
 
 // 携带Authorization和CaptchaToken的请求
 func (xc *XunLeiCommon) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	if xc.TokenResp == nil {
+		return nil, errs.EmptyToken
+	}
 	data, err := xc.Common.Request(url, method, func(req *resty.Request) {
 		req.SetHeaders(map[string]string{
 			"Authorization":   xc.Token(),

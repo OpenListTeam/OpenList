@@ -58,15 +58,14 @@ func (*Pan123) AddURL(args *tool.AddUrlArgs) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unsupported storage driver for offline download, only 123Pan is supported")
 	}
-	ctx := context.Background()
-	if err := op.MakeDir(ctx, storage, actualPath); err != nil {
+	if err := op.MakeDir(args.Ctx, storage, actualPath); err != nil {
 		return "", err
 	}
-	parentDir, err := op.GetUnwrap(ctx, storage, actualPath)
+	parentDir, err := op.GetUnwrap(args.Ctx, storage, actualPath)
 	if err != nil {
 		return "", err
 	}
-	taskID, err := driver123.OfflineDownload(ctx, args.Url, parentDir)
+	taskID, err := driver123.OfflineDownload(args.Ctx, args.Url, parentDir)
 	if err != nil {
 		return "", fmt.Errorf("failed to add offline download task: %w", err)
 	}

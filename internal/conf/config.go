@@ -106,6 +106,10 @@ type SFTP struct {
 	Listen string `json:"listen" env:"LISTEN"`
 }
 
+type MCP struct {
+	Enable bool `json:"enable" env:"ENABLE"`
+}
+
 type Config struct {
 	Force                 bool        `json:"force" env:"FORCE"`
 	SiteURL               string      `json:"site_url" env:"SITE_URL"`
@@ -131,6 +135,7 @@ type Config struct {
 	S3                    S3          `json:"s3" envPrefix:"S3_"`
 	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
 	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
+	MCP                   MCP         `json:"mcp" envPrefix:"MCP_"`
 	LastLaunchedVersion   string      `json:"last_launched_version"`
 	ProxyAddress          string      `json:"proxy_address" env:"PROXY_ADDRESS"`
 }
@@ -243,6 +248,9 @@ func DefaultConfig(dataDir string) *Config {
 		SFTP: SFTP{
 			Enable: false,
 			Listen: ":5222",
+		},
+		MCP: MCP{
+			Enable: false,
 		},
 		LastLaunchedVersion: "",
 		ProxyAddress:        "",

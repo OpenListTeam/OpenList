@@ -3,7 +3,7 @@ name: Issue or PR Auto Reply
 on:
   issues:
     types: [opened]
-  pull_request:
+  pull_request_target:
     types: [opened]
 
 permissions:
@@ -16,7 +16,7 @@ jobs:
     if: github.event_name == 'issues'
     steps:
       - name: Check issue for unchecked tasks and reply
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             let comment = "";
@@ -78,10 +78,10 @@ jobs:
 
   pr-title-check:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request_target'
     steps:
       - name: Check PR title for required prefix and comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const title = context.payload.pull_request.title || "";

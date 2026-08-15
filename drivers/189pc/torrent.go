@@ -1,6 +1,7 @@
 package _189pc
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -8,10 +9,13 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
@@ -89,7 +93,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(upperSliceMD5s, "\n")))
 	}
 
-
 	// 使用与 Web 端一致的三步秒传流程
 	fullUrl := "https://upload.cloud.189.cn"
 	if isFamily {
@@ -110,7 +113,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		initParams.Set("familyId", y.FamilyID)
 	}
 
-
 	var uploadInfo InitMultiUploadResp
 	_, err = y.request(fullUrl+"/initMultiUpload", "GET", func(req *resty.Request) {
 		req.SetContext(ctx)
@@ -118,7 +120,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	if err != nil {
 		return nil, fmt.Errorf("initMultiUpload 失败: %w", err)
 	}
-
 
 	uploadFileId := uploadInfo.Data.UploadFileID
 
@@ -128,7 +129,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		"sliceMd5":     sliceMd5Hex,
 		"uploadFileId": uploadFileId,
 	}
-
 
 	var checkResp struct {
 		Data struct {
@@ -142,7 +142,6 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		utils.Log.Errorf("[RapidUpload] checkTransSecond 失败: uploadFileId=%s, err=%v", uploadFileId, err)
 		return nil, fmt.Errorf("秒传检查失败: %w", err)
 	}
-
 
 	if checkResp.Data.FileDataExists != 1 {
 		return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", fileMD5Upper, sliceMd5Hex, fileSize)
@@ -165,6 +164,36 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	if err != nil {
 		utils.Log.Errorf("[RapidUpload] commitMultiUploadFile 失败: uploadFileId=%s, err=%v", uploadFileId, err)
 		return nil, fmt.Errorf("提交上传失败: %w", err)
+	}
+
+	// 秒传成功后，将 torrent 文件上传到目标目录（异步，不影响秒传结果）
+	if y.Addition.GenerateTorrent {
+		capturedDstDir := dstDir
+		capturedIsFamily := isFamily
+		go func() {
+			torrentName := fileName + ".cas.torrent"
+			infoHash, _ := GetInfoHashHex(torrentData)
+			utils.Log.Infof("秒传成功，上传 torrent: %s (info_hash: %s, size: %d bytes)",
+				torrentName, infoHash, len(torrentData))
+
+			torrentFileStream := &stream.FileStream{
+				Ctx: context.Background(),
+				Obj: &model.Object{
+					Name:     torrentName,
+					Size:     int64(len(torrentData)),
+					IsFolder: false,
+				},
+				Reader:   bytes.NewReader(torrentData),
+				Mimetype: "application/x-bittorrent",
+			}
+			_, uploadErr := y.fastUpload(context.Background(), capturedDstDir, torrentFileStream, func(p float64) {}, capturedIsFamily, false, false)
+			if uploadErr != nil {
+				utils.Log.Warnf("上传 torrent 文件失败: %v", uploadErr)
+			} else {
+				utils.Log.Infof("torrent 文件已上传: %s", torrentName)
+				op.Cache.DeleteDirectory(y, capturedDstDir.GetPath())
+			}
+		}()
 	}
 
 	return resp.toFile(), nil
@@ -263,6 +292,10 @@ func GetInfoHashHex(torrentData []byte) (string, error) {
 	return hex.EncodeToString(t.InfoHash), nil
 }
 
+func isCASTorrentFile(fileName string) bool {
+	return strings.HasSuffix(fileName, ".cas.torrent")
+}
+
 // ComputeSliceMD5sFromReader 从 reader 中计算每个 10MB 分片的 MD5
 // 返回：整文件 MD5、分片 MD5 列表
 func ComputeSliceMD5sFromReader(reader io.Reader, sliceSize int64) (string, []string, error) {
@@ -293,4 +326,124 @@ func ComputeSliceMD5sFromReader(reader io.Reader, sliceSize int64) (string, []st
 
 	fileMD5Hex := strings.ToUpper(hex.EncodeToString(fileMD5Hash.Sum(nil)))
 	return fileMD5Hex, sliceMD5s, nil
+}
+
+// torrentFollowCopy 跟随复制 torrent 文件（异步，不影响主操作）
+// srcFolderId: 源文件所在目录 ID
+// srcFileName: 源文件名
+// dstDir: 目标目录
+func (y *Cloud189PC) torrentFollowCopy(srcFolderId string, srcFileName string, dstDir model.Obj) {
+	if !y.Addition.GenerateTorrent {
+		return
+	}
+	if srcFolderId == "" {
+		return
+	}
+	torrentName := srcFileName + ".cas.torrent"
+	isFamily := y.isFamily()
+
+	go func() {
+		torrentFile, err := y.findFileByName(context.Background(), torrentName, srcFolderId, isFamily)
+		if err != nil {
+			utils.Log.Debugf("查找 torrent 文件失败（跟随复制）: %v", err)
+			return
+		}
+		// 复制 torrent 文件到目标目录
+		resp, copyErr := y.CreateBatchTask("COPY", IF(isFamily, y.FamilyID, ""), dstDir.GetID(),
+			map[string]string{"targetFileName": dstDir.GetName()},
+			BatchTaskInfo{
+				FileId:   torrentFile.GetID(),
+				FileName: torrentFile.GetName(),
+				IsFolder: 0,
+			})
+		if copyErr != nil {
+			utils.Log.Warnf("跟随复制 torrent 文件失败: %v", copyErr)
+			return
+		}
+		if err = y.WaitBatchTask("COPY", resp.TaskID, time.Second); err != nil {
+			utils.Log.Warnf("等待跟随复制 torrent 文件失败: %v", err)
+		}
+	}()
+}
+
+// torrentFollowMove 跟随移动 torrent 文件（异步，不影响主操作）
+// srcFolderId: 源文件所在目录 ID
+// srcFileName: 源文件名
+// dstDir: 目标目录
+func (y *Cloud189PC) torrentFollowMove(srcFolderId string, srcFileName string, dstDir model.Obj) {
+	if !y.Addition.GenerateTorrent {
+		return
+	}
+	if srcFolderId == "" {
+		return
+	}
+	torrentName := srcFileName + ".cas.torrent"
+	isFamily := y.isFamily()
+
+	go func() {
+		torrentFile, err := y.findFileByName(context.Background(), torrentName, srcFolderId, isFamily)
+		if err != nil {
+			utils.Log.Debugf("查找 torrent 文件失败（跟随移动）: %v", err)
+			return
+		}
+		// 移动 torrent 文件到目标目录
+		resp, moveErr := y.CreateBatchTask("MOVE", IF(isFamily, y.FamilyID, ""), dstDir.GetID(),
+			map[string]string{"targetFileName": dstDir.GetName()},
+			BatchTaskInfo{
+				FileId:   torrentFile.GetID(),
+				FileName: torrentFile.GetName(),
+				IsFolder: 0,
+			})
+		if moveErr != nil {
+			utils.Log.Warnf("跟随移动 torrent 文件失败: %v", moveErr)
+			return
+		}
+		if err = y.WaitBatchTask("MOVE", resp.TaskID, time.Millisecond*400); err != nil {
+			utils.Log.Warnf("等待跟随移动 torrent 文件失败: %v", err)
+		}
+	}()
+}
+
+// torrentFollowRename 跟随重命名 torrent 文件（异步，不影响主操作）
+// folderId: 文件所在目录 ID
+// oldFileName: 原文件名
+// newFileName: 新文件名
+func (y *Cloud189PC) torrentFollowRename(folderId string, oldFileName string, newFileName string) {
+	if !y.Addition.GenerateTorrent {
+		return
+	}
+	if folderId == "" {
+		return
+	}
+	oldTorrentName := oldFileName + ".cas.torrent"
+	newTorrentName := newFileName + ".cas.torrent"
+	isFamily := y.isFamily()
+
+	go func() {
+		torrentFile, err := y.findFileByName(context.Background(), oldTorrentName, folderId, isFamily)
+		if err != nil {
+			utils.Log.Debugf("查找 torrent 文件失败（跟随重命名）: %v", err)
+			return
+		}
+
+		// 重命名 torrent 文件
+		queryParam := make(map[string]string)
+		fullUrl := API_URL
+		method := "POST"
+		if isFamily {
+			fullUrl += "/family/file"
+			method = "GET"
+			queryParam["familyId"] = y.FamilyID
+		}
+		fullUrl += "/renameFile.action"
+		queryParam["fileId"] = torrentFile.GetID()
+		queryParam["destFileName"] = newTorrentName
+
+		_, renameErr := y.request(fullUrl, method, func(req *resty.Request) {
+			req.SetContext(context.Background()).SetQueryParams(queryParam)
+		}, nil, &RenameResp{}, isFamily)
+		if renameErr != nil {
+			utils.Log.Warnf("跟随重命名 torrent 文件失败: %v", renameErr)
+		}
+	}()
 }

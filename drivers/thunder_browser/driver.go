@@ -12,6 +12,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -86,6 +87,9 @@ func (x *ThunderBrowser) Init(ctx context.Context) (err error) {
 					}
 					// 清空 信任密钥
 					x.Addition.CreditKey = ""
+				}
+				if token == nil {
+					return err
 				}
 				x.SetTokenResp(token)
 				return err
@@ -639,6 +643,9 @@ func (xc *XunLeiBrowserCommon) SetSpaceTokenResp(spaceToken string) {
 
 // Request 携带Authorization和CaptchaToken的请求
 func (xc *XunLeiBrowserCommon) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	if xc.TokenResp == nil {
+		return nil, errs.EmptyToken
+	}
 	data, err := xc.Common.Request(url, method, func(req *resty.Request) {
 		req.SetHeaders(map[string]string{
 			"Authorization":         xc.GetToken(),

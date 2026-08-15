@@ -62,18 +62,16 @@ func (p *Cloud115) AddURL(args *tool.AddUrlArgs) (string, error) {
 		return "", fmt.Errorf("unsupported storage driver for offline download, only 115 Cloud is supported")
 	}
 
-	ctx := context.Background()
-
-	if err := op.MakeDir(ctx, storage, actualPath); err != nil {
+	if err := op.MakeDir(args.Ctx, storage, actualPath); err != nil {
 		return "", err
 	}
 
-	parentDir, err := op.GetUnwrap(ctx, storage, actualPath)
+	parentDir, err := op.GetUnwrap(args.Ctx, storage, actualPath)
 	if err != nil {
 		return "", err
 	}
 
-	hashs, err := driver115.OfflineDownload(ctx, []string{args.Url}, parentDir)
+	hashs, err := driver115.OfflineDownload(args.Ctx, []string{args.Url}, parentDir)
 	if err != nil || len(hashs) < 1 {
 		return "", fmt.Errorf("failed to add offline download task: %w", err)
 	}
