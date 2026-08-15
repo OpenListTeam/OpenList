@@ -31,6 +31,17 @@ func (t *UploadTask) GetName() string {
 	return fmt.Sprintf("upload %s to [%s](%s)", t.file.GetName(), t.storage.GetStorage().MountPath, t.dstDirActualPath)
 }
 
+func (t *UploadTask) GetSrcPath() string {
+	return ""
+}
+
+func (t *UploadTask) GetDstPath() string {
+	if t.storage == nil || t.file == nil {
+		return ""
+	}
+	return stdpath.Join(t.storage.GetStorage().MountPath, t.dstDirActualPath, t.file.GetName())
+}
+
 func (t *UploadTask) GetStatus() string {
 	return "uploading"
 }
