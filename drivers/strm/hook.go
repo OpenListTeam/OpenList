@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	stdpath "path"
@@ -28,10 +27,9 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 	updateLocal := func(driver *Strm, basePath string, objs []model.Obj) {
 		relParent := strings.TrimPrefix(basePath, utils.GetActualMountPath(driver.MountPath))
 		localParentPath := stdpath.Join(driver.SaveStrmLocalPath, relParent)
-		if driver.SaveLocalPermMode == SaveLocalSharedPermMode {
-			if err := ensureLocalDirectories(localParentPath, driver.SaveStrmLocalPath, 0o755); err != nil {
-				log.Warnf("failed to set local strm directory permissions for %s: %v", localParentPath, err)
-			}
+		if err := createLocalDirectory(localParentPath); err != nil {
+			log.Warnf("failed to create local strm directory %s: %v", localParentPath, err)
+			return
 		}
 		for _, obj := range objs {
 			localPath := stdpath.Join(localParentPath, obj.GetName())
@@ -100,16 +98,13 @@ func RemoveStrm(dstPath string, d *Strm) {
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
 	if obj.IsDir() {
-		if driver.SaveLocalPermMode == SaveLocalSharedPermMode {
-			if err := ensureLocalDirectories(localPath, driver.SaveStrmLocalPath, 0o755); err != nil {
-				log.Warnf("failed to set local strm directory permissions for %s: %v", localPath, err)
-			}
+		if err := createLocalDirectory(localPath); err != nil {
+			log.Warnf("failed to create local strm directory %s: %v", localPath, err)
 		}
 		return
 	}
 
 	if utils.Exists(localPath) && driver.SaveLocalMode == SaveLocalInsertMode {
-		setLocalStrmFilePermissions(driver, localPath)
 		return
 	}
 	link, err := driver.Link(ctx, obj, model.LinkArgs{})
@@ -139,7 +134,6 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 		return
 	}
 	if same {
-		setLocalStrmFilePermissions(driver, localPath)
 		return
 	}
 	rc, err = rrf.RangeRead(ctx, http_range.Range{Length: -1})
@@ -148,7 +142,11 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 		return
 	}
 	defer rc.Close()
-	file, err := utils.CreateNestedFile(localPath)
+	if err := createLocalDirectory(filepath.Dir(localPath)); err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to create parent directory: %v", localPath, err)
+		return
+	}
+	file, err := os.Create(localPath)
 	if err != nil {
 		log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
 		return
@@ -157,46 +155,10 @@ func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath st
 	if _, err := utils.CopyWithBuffer(file, rc); err != nil {
 		log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
 	}
-	setLocalStrmFilePermissions(driver, localPath)
 }
 
-func ensureLocalDirectories(path, basePath string, mode os.FileMode) error {
-	path = filepath.Clean(path)
-	basePath = filepath.Clean(basePath)
-	rel, err := filepath.Rel(basePath, path)
-	if err != nil {
-		return err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("local path %q is outside save path %q", path, basePath)
-	}
-
-	dirs := []string{basePath}
-	current := basePath
-	if rel != "." {
-		for _, part := range strings.Split(rel, string(filepath.Separator)) {
-			current = filepath.Join(current, part)
-			dirs = append(dirs, current)
-		}
-	}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, mode); err != nil {
-			return err
-		}
-		if err := os.Chmod(dir, mode); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func setLocalStrmFilePermissions(driver *Strm, path string) {
-	if driver.SaveLocalPermMode != SaveLocalSharedPermMode {
-		return
-	}
-	if err := os.Chmod(path, 0o644); err != nil {
-		log.Warnf("failed to set local strm file permissions for %s: %v", path, err)
-	}
+func createLocalDirectory(path string) error {
+	return os.MkdirAll(path, 0o777)
 }
 
 func isSameContent(localPath string, size int64, rc io.Reader) (bool, error) {
