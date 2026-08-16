@@ -18,8 +18,12 @@ type Addition struct {
 	SiteId             string `json:"site_id"`
 	ChunkSize          int64  `json:"chunk_size" type:"number" default:"5"`
 	CustomHost         string `json:"custom_host" help:"Custom host for onedrive download link"`
+	CustomGraphAPI     string `json:"custom_graph_api" help:"Custom Graph API base URL (with scheme, e.g. https://graph.microsoft.com). Reverse proxy targets per region: global=https://graph.microsoft.com, cn=https://microsoftgraph.chinacloudapi.cn, us=https://graph.microsoft.us, de=https://graph.microsoft.de"`
+	CustomOauthAPI     string `json:"custom_oauth_api" help:"Custom OAuth base URL (with scheme, e.g. https://login.microsoftonline.com). Reverse proxy targets per region: global=https://login.microsoftonline.com, cn=https://login.chinacloudapi.cn, us=https://login.microsoftonline.us, de=https://login.microsoftonline.de"`
 	DisableDiskUsage   bool   `json:"disable_disk_usage" default:"false"`
 	EnableDirectUpload bool   `json:"enable_direct_upload" default:"false" help:"Enable direct upload from client to OneDrive"`
+	CreateShareLink    bool   `json:"create_share_link" default:"false" help:"Create share link for file download"`
+	LinkExpireSeconds  int64  `json:"link_expire_seconds" type:"number" default:"0" help:"Link cache duration in seconds, 0 means no cache"`
 }
 
 var config = driver.Config{
