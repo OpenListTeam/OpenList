@@ -413,6 +413,8 @@ type UpdateSharingReq struct {
 	Remark      string     `json:"remark"`
 	Readme      string     `json:"readme"`
 	Header      string     `json:"header"`
+	Domain      string     `json:"domain"`
+	WebHosting  bool       `json:"web_hosting"`
 	model.Sort
 	CreatorName string `json:"creator"`
 	Accessed    int    `json:"accessed"`
@@ -430,6 +432,32 @@ func validateSharingID(id string) error {
 		return errors.New("share id can only contain letters, numbers, underscores, hyphens, and CJK characters")
 	}
 	return nil
+}
+
+// validDomainRe 校验域名格式：仅允许字母、数字、连字符、点号，且不以点/连字符开头结尾。
+var validDomainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$`)
+
+// normalizeDomain 对域名做归一化处理：去空白、转小写、去端口。
+// 返回归一化后的域名和可能的错误。
+func normalizeDomain(domain string) (string, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return "", nil
+	}
+	// 去掉可能误填的端口号
+	if idx := strings.LastIndex(domain, ":"); idx > 0 {
+		// 排除 IPv6 裸地址（含 [ 的情况）
+		if !strings.Contains(domain, "[") {
+			domain = domain[:idx]
+		}
+	}
+	if len(domain) > 253 {
+		return "", errors.New("domain must be at most 253 characters")
+	}
+	if !validDomainRe.MatchString(domain) {
+		return "", errors.New("invalid domain format: only lowercase letters, numbers, hyphens and dots are allowed")
+	}
+	return domain, nil
 }
 
 func UpdateSharing(c *gin.Context) {
@@ -474,6 +502,16 @@ func UpdateSharing(c *gin.Context) {
 	if reqUser.IsAdmin() && req.CreatorName == "" {
 		user = s.Creator
 	}
+	// 域名归一化与校验
+	normalizedDomain, domErr := normalizeDomain(req.Domain)
+	if domErr != nil {
+		common.ErrorResp(c, domErr, 400)
+		return
+	}
+	if req.WebHosting && normalizedDomain == "" {
+		common.ErrorStrResp(c, "web_hosting requires a valid domain", 400)
+		return
+	}
 	s.Files = req.Files
 	s.Expires = req.Expires
 	s.Pwd = req.Pwd
@@ -484,6 +522,8 @@ func UpdateSharing(c *gin.Context) {
 	s.Header = req.Header
 	s.Readme = req.Readme
 	s.Remark = req.Remark
+	s.Domain = normalizedDomain
+	s.WebHosting = req.WebHosting
 	s.Creator = user
 	if req.NewID != "" && req.NewID != req.ID {
 		if !reqUser.CanCustomizeShareID() {
@@ -550,6 +590,16 @@ func CreateSharing(c *gin.Context) {
 			return
 		}
 	}
+	// 域名归一化与校验
+	normalizedDomain, domErr := normalizeDomain(req.Domain)
+	if domErr != nil {
+		common.ErrorResp(c, domErr, 400)
+		return
+	}
+	if req.WebHosting && normalizedDomain == "" {
+		common.ErrorStrResp(c, "web_hosting requires a valid domain", 400)
+		return
+	}
 	s := &model.Sharing{
 		SharingDB: &model.SharingDB{
 			ID:          req.ID,
@@ -562,6 +612,8 @@ func CreateSharing(c *gin.Context) {
 			Remark:      req.Remark,
 			Readme:      req.Readme,
 			Header:      req.Header,
+			Domain:      normalizedDomain,
+			WebHosting:  req.WebHosting,
 		},
 		Files:   req.Files,
 		Creator: user,
