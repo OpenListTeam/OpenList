@@ -7,7 +7,7 @@ import (
 )
 
 // UpdateAuthnForOldVersion updates users' authn
-// First published: bdfc159 fix: webauthn logspam (#6181) by itsHenry
+// First published: bdfc159 fix: passkey logspam (#6181) by itsHenry
 func UpdateAuthnForOldVersion() {
 	users, _, err := op.GetUsers(1, -1)
 	if err != nil {
