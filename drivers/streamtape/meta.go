@@ -7,14 +7,8 @@ import (
 
 type Addition struct {
 	driver.RootID
-	APILogin           string `json:"api_login" required:"true" help:"API Login from Streamtape account settings"`
-	APIKey             string `json:"api_key" required:"true" help:"API Key from Streamtape account settings"`
-	RangeMode          string `json:"range_mode" type:"select" options:"chunk,full,percent" default:"chunk" help:"Range strategy for preview: chunk=bounded ranges, full=no driver-level range shaping, percent=part size by file percentage"`
-	RangeChunkMB       int    `json:"range_chunk_mb" type:"number" default:"8" help:"Chunk mode part size in MB"`
-	RangeConcurrency   int    `json:"range_concurrency" type:"number" default:"4" help:"Chunk mode concurrent upstream requests"`
-	RangePercent       int    `json:"range_percent" type:"number" default:"15" help:"Percent mode part size percentage (1-100)"`
-	EnableRangeControl bool   `json:"enable_range_control" default:"true" help:"Enable driver-level range shaping for smoother streaming"`
-	Sha256             string `json:"sha256" help:"Expected SHA256 hash for upload verification (optional)"`
+	APILogin string `json:"api_login" required:"true" help:"API Login from Streamtape account settings"`
+	APIKey   string `json:"api_key" required:"true" help:"API Key from Streamtape account settings"`
 }
 
 var config = driver.Config{

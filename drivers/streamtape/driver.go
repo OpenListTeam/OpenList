@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -48,6 +47,7 @@ func (d *Streamtape) Init(ctx context.Context) error {
 		return err
 	}
 
+	log.Warn("Streamtape does not support moving files to root folder. Please ensure all move operations target a non-root destination.")
 	op.MustSaveDriverStorage(d)
 	return nil
 }
@@ -139,15 +139,13 @@ func (d *Streamtape) Link(ctx context.Context, file model.Obj, args model.LinkAr
 
 	finalURL := ensureStreamQuery(dl.URL)
 	log.Infof("streamtape direct link file=%s url=%s", fileID, finalURL)
-	link := &model.Link{
+	return &model.Link{
 		URL: finalURL,
 		Header: http.Header{
 			"Referer": []string{"https://streamtape.com/"},
 			"Origin":  []string{"https://streamtape.com"},
 		},
-	}
-	d.applyRangeStrategy(link, file.GetSize())
-	return link, nil
+	}, nil
 }
 
 func extractWaitSecondsFromErr(err error) int {
@@ -176,61 +174,6 @@ func ensureStreamQuery(rawURL string) string {
 		u.RawQuery = q.Encode()
 	}
 	return u.String()
-}
-
-func (d *Streamtape) applyRangeStrategy(link *model.Link, size int64) {
-	if !d.EnableRangeControl || size <= 0 {
-		return
-	}
-
-	mode := strings.ToLower(strings.TrimSpace(d.RangeMode))
-	if mode == "" {
-		mode = "chunk"
-	}
-
-	switch mode {
-	case "full":
-		// No driver-level range shaping for full mode; allow transparent streaming
-		return
-	case "percent":
-		percent := d.RangePercent
-		if percent <= 0 {
-			percent = 15
-		}
-		if percent > 100 {
-			percent = 100
-		}
-		partSize := size * int64(percent) / 100
-		if partSize < 1*1024*1024 {
-			partSize = 1 * 1024 * 1024
-		}
-		if partSize > size {
-			partSize = size
-		}
-		if partSize > int64(math.MaxInt) {
-			partSize = int64(math.MaxInt)
-		}
-		link.Concurrency = 1
-		link.PartSize = int(partSize)
-	default:
-		chunkMB := d.RangeChunkMB
-		if chunkMB <= 0 {
-			chunkMB = 8
-		}
-		partSize := int64(chunkMB) * 1024 * 1024
-		if partSize > size {
-			partSize = size
-		}
-		if partSize > int64(math.MaxInt) {
-			partSize = int64(math.MaxInt)
-		}
-		concurrency := d.RangeConcurrency
-		if concurrency <= 0 {
-			concurrency = 4
-		}
-		link.Concurrency = concurrency
-		link.PartSize = int(partSize)
-	}
 }
 
 func (d *Streamtape) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
@@ -336,9 +279,6 @@ func (d *Streamtape) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 	params := map[string]string{}
 	if folderID != "" && folderID != "0" {
 		params["folder"] = folderID
-	}
-	if d.Sha256 != "" {
-		params["sha256"] = d.Sha256
 	}
 
 	var uploadURL uploadURLResult
