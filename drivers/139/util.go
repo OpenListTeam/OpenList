@@ -40,18 +40,15 @@ import (
 )
 
 const (
-	KEY_HEX_1                = "73634235495062495331515373756c734e7253306c673d3d" // 第一层 AES 解密密钥
-	KEY_HEX_2                = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
-	credentialExchangeWindow = 3 * 24 * time.Hour
-	mailPublicKey            = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnsOHTFtwW5rq/8gGhPlM5Z3RPdeN/d+FYIHb5JmcfBOCozXuT8c+0anvxtkjzghixwNlnmBuhN8OYfS789YuH/qReQbHC7OdlisLildNWPHRNUYcPa0W3lXSG3+81CXK7FDXPvXo5ubw2GqVbIsccMarI1dyfXdi4ITiCXvmM9wYBdUs9yXtoorhlpyYUI2GV8HNsQjWK9P5QZHT3ox5Qy+mjRmvv6RUFJLPOMkOS/pGZ0DwC1ypFZBxstW0/ftVupdOmGWvW7J2/e3dq3A/UvIkC4YUY/diL1wighJx1G9MiRROISjNMvNyUDSTqPJy516+l3sgHEbc067QIJx2NQIDAQAB"
+	KEY_HEX_1     = "73634235495062495331515373756c734e7253306c673d3d" // 第一层 AES 解密密钥
+	KEY_HEX_2     = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
+	mailPublicKey = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnsOHTFtwW5rq/8gGhPlM5Z3RPdeN/d+FYIHb5JmcfBOCozXuT8c+0anvxtkjzghixwNlnmBuhN8OYfS789YuH/qReQbHC7OdlisLildNWPHRNUYcPa0W3lXSG3+81CXK7FDXPvXo5ubw2GqVbIsccMarI1dyfXdi4ITiCXvmM9wYBdUs9yXtoorhlpyYUI2GV8HNsQjWK9P5QZHT3ox5Qy+mjRmvv6RUFJLPOMkOS/pGZ0DwC1ypFZBxstW0/ftVupdOmGWvW7J2/e3dq3A/UvIkC4YUY/diL1wighJx1G9MiRROISjNMvNyUDSTqPJy516+l3sgHEbc067QIJx2NQIDAQAB"
 )
 
 var (
-	driveMailTicketURL = "https://aas.caiyun.feixin.10086.cn/tellin/querySpecToken.do"
-	driveMailLoginURL  = "https://mail.10086.cn/login/inlogin.action"
-	mailRootURL        = "https://mail.10086.cn/"
-	mailPasswordURL    = "https://mail.10086.cn/Login/Login.ashx"
-	mailSMSURL         = "https://mail.10086.cn/s"
+	mailRootURL     = "https://mail.10086.cn/"
+	mailPasswordURL = "https://mail.10086.cn/Login/Login.ashx"
+	mailSMSURL      = "https://mail.10086.cn/s"
 )
 
 var mailLoginCookieExclusions = map[string]struct{}{
@@ -126,14 +123,6 @@ func (d *Yun139) refreshToken() error {
 	if d.ref != nil {
 		return d.ref.refreshToken()
 	}
-	return d.refreshTokenAt(time.Now())
-}
-
-func shouldExchangeAuthorization(now, authorizationExpiresAt time.Time) bool {
-	return authorizationExpiresAt.Sub(now) <= credentialExchangeWindow
-}
-
-func (d *Yun139) refreshTokenAt(now time.Time) error {
 	decode, err := base64.StdEncoding.DecodeString(d.Authorization)
 	if err != nil {
 		return d.loginAfterAuthorizationFailure(fmt.Errorf("authorization decode failed: %w", err))
@@ -152,23 +141,11 @@ func (d *Yun139) refreshTokenAt(now time.Time) error {
 	if err != nil {
 		return d.loginAfterAuthorizationFailure(errors.New("authorization expiration is invalid"))
 	}
-	authorizationExpiresAt := time.UnixMilli(expiration)
-	if !shouldExchangeAuthorization(now, authorizationExpiresAt) {
+	expiration -= time.Now().UnixMilli()
+	if expiration > 1000*60*60*24*15 {
 		return nil
 	}
-
-	// Authorization is the lifecycle anchor. While it is still valid, create a
-	// fresh mail session and consume that session immediately to issue the next
-	// Authorization. The mail session is not maintained independently.
-	if authorizationExpiresAt.After(now) {
-		if exchangeErr := d.renewAuthorizationFromDrive(); exchangeErr == nil {
-			return nil
-		} else {
-			log.Warnf("139yun: scheduled credential exchange failed: %v", exchangeErr)
-		}
-	}
-
-	if !authorizationExpiresAt.After(now) {
+	if expiration < 0 {
 		return d.loginAfterAuthorizationFailure(errors.New("authorization has expired"))
 	}
 
@@ -1585,170 +1562,6 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 	log.Debugf("DEBUG: 提取到 dycpwd: %s", dycpwd)
 
 	return dycpwd, nil
-}
-
-type driveMailTicketResponse struct {
-	Return string `xml:"return"`
-	Code   string `xml:"code"`
-	Token  string `xml:"token"`
-	Desc   string `xml:"desc"`
-}
-
-type driveMailLoginResponse struct {
-	Code    string `json:"code"`
-	Summary string `json:"summary"`
-	Var     struct {
-		SID             string `json:"sid"`
-		RMKey           string `json:"rmkey"`
-		LoginSuccessURL string `json:"loginSuccessUrl"`
-	} `json:"var"`
-}
-
-// renewAuthorizationFromDrive converts a still-valid cloud-drive credential
-// into a fresh mail session, then uses the existing mail-to-drive exchange to
-// issue a new cloud-drive credential.
-func (d *Yun139) renewAuthorizationFromDrive() error {
-	sid, err := d.recoverMailSessionFromDrive()
-	if err != nil {
-		return err
-	}
-	artifact, err := d.step2_get_single_token(sid)
-	if err != nil {
-		return fmt.Errorf("get mail artifact after session recovery: %w", err)
-	}
-	authorization, err := d.step3_third_party_login(artifact)
-	if err != nil {
-		return fmt.Errorf("exchange mail artifact for cloud-drive authorization: %w", err)
-	}
-	d.Authorization = authorization
-	op.MustSaveDriverStorage(d)
-	return nil
-}
-
-// recoverMailSessionFromDrive exchanges the current cloud-drive Authorization
-// for a 139 Mail session containing sid and RMKEY.
-func (d *Yun139) recoverMailSessionFromDrive() (string, error) {
-	account, authToken, err := decodeDriveAuthorization(d.Authorization)
-	if err != nil {
-		return "", err
-	}
-	if d.Username != "" && d.Username != account {
-		return "", errors.New("authorization account does not match username")
-	}
-
-	pcAuthorization := base64.StdEncoding.EncodeToString([]byte("pc:" + account + ":" + authToken))
-	deviceInfo := "1|127.0.0.1|1|1.2.6|Xiaomi|23116PN5BC||02-00-00-00-00-00|android 15|1220X2574|zh||||108|"
-	ticketBody := "<root><account>" + escapeXML(account) + "</account><toSourceId>001003</toSourceId></root>"
-	ticketRes, err := base.RestyClient.R().
-		SetHeaders(map[string]string{
-			"x-nettype":           "1",
-			"x-deviceinfo":        deviceInfo,
-			"x-yun-client-info":   deviceInfo,
-			"x-yun-app-channel":   "10000023",
-			"x-huawei-channelsrc": "10000023",
-			"x-mm-source":         "108",
-			"x-svctype":           "1",
-			"app_number":          account,
-			"x-exproute-code":     "routeCode=" + account + ",type=10",
-			"authorization":       "Basic " + pcAuthorization,
-			"content-type":        "application/xml; charset=UTF-8",
-			"user-agent":          "okhttp/3.11.0",
-		}).
-		SetBody(ticketBody).
-		Post(driveMailTicketURL)
-	if err != nil {
-		return "", fmt.Errorf("exchange cloud-drive authorization for mail ticket: %w", err)
-	}
-	var ticket driveMailTicketResponse
-	if err = xml.Unmarshal(ticketRes.Body(), &ticket); err != nil {
-		return "", fmt.Errorf("decode mail ticket response: %w", err)
-	}
-	if ticket.Return != "0" || ticket.Token == "" {
-		code := ticket.Return
-		if code == "" {
-			code = ticket.Code
-		}
-		return "", fmt.Errorf("cloud-drive authorization was rejected while obtaining mail ticket: code=%s desc=%s", code, ticket.Desc)
-	}
-
-	cguid := strconv.FormatInt(time.Now().UnixMilli(), 10) + random.String(12)
-	loginBody := strings.Join([]string{
-		"<object>",
-		mailXMLField("clientid", "10891"),
-		mailXMLField("version", "66"),
-		mailXMLField("loginType", "7"),
-		mailXMLField("autoSecretKey", ""),
-		mailXMLField("createAutoLoginSecretKey", "1"),
-		mailXMLField("verifyCode", `""`),
-		mailXMLField("authType", "2"),
-		mailXMLField("needWCookie", "1"),
-		mailXMLField("verifyAgentId", ""),
-		mailXMLField("loginName", ""),
-		mailXMLField("loginPassword", ""),
-		mailXMLField("loginToken", ""),
-		mailXMLField("token", ticket.Token),
-		mailXMLField("logActionId", ""),
-		`<int name="eMode">1</int>`,
-		"</object>",
-	}, "")
-	loginRes, err := base.RestyClient.R().
-		SetHeaders(map[string]string{
-			"content-type": "application/xml",
-			"user-agent":   "Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 Chrome/67.0.3396.99 Safari/537.36",
-		}).
-		SetBody(loginBody).
-		Post(driveMailLoginURL + "?comefrom=2066&clientId=10891&cguid=" + cguid +
-			"&deviceToken=ZFHIXQJV8EDNJO6H3D9M77WEQG2NO6TQ&appVersion=8.0.28")
-	if err != nil {
-		return "", fmt.Errorf("login to mail with cloud-drive ticket: %w", err)
-	}
-	var login driveMailLoginResponse
-	if err = utils.Json.Unmarshal(loginRes.Body(), &login); err != nil {
-		return "", fmt.Errorf("decode mail login response: %w", err)
-	}
-	if login.Code != "S_OK" {
-		return "", fmt.Errorf("cloud-drive ticket login to mail failed: code=%s summary=%s", login.Code, login.Summary)
-	}
-
-	cookies := loginRes.Cookies()
-	sid := login.Var.SID
-	if sid == "" && login.Var.LoginSuccessURL != "" {
-		if successURL, parseErr := url.Parse(login.Var.LoginSuccessURL); parseErr == nil {
-			sid = successURL.Query().Get("sid")
-		}
-	}
-	if sid == "" {
-		if sidCookie := cookiepkg.GetCookie(cookies, "Os_SSo_Sid"); sidCookie != nil {
-			sid = sidCookie.Value
-		}
-	}
-	if sid == "" || login.Var.RMKey == "" {
-		return "", errors.New("cloud-drive ticket login did not return sid or RMKEY")
-	}
-	cookies = cookiepkg.SetCookie(cookies, "sid", sid)
-	cookies = cookiepkg.SetCookie(cookies, "RMKEY", login.Var.RMKey)
-	d.MailCookies = cookiepkg.ToString(cookies)
-	d.Account = account
-	if d.Username == "" {
-		d.Username = account
-	}
-	return sid, nil
-}
-
-func decodeDriveAuthorization(authorization string) (account string, authToken string, err error) {
-	encoded := strings.TrimSpace(authorization)
-	if strings.HasPrefix(strings.ToLower(encoded), "basic ") {
-		encoded = strings.TrimSpace(encoded[len("basic "):])
-	}
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", "", fmt.Errorf("decode authorization: %w", err)
-	}
-	parts := strings.SplitN(string(decoded), ":", 3)
-	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
-		return "", "", errors.New("authorization format is invalid")
-	}
-	return parts[1], parts[2], nil
 }
 
 func mailXMLField(name, value string) string {
