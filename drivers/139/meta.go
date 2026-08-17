@@ -10,7 +10,8 @@ type Addition struct {
 	Authorization string `json:"authorization" type:"text" required:"true"`
 	Username      string `json:"username" required:"true"`
 	Password      string `json:"password" required:"true" secret:"true"`
-	MailCookies   string `json:"mail_cookies" required:"true" type:"text" help:"Cookies from mail.139.com used for login authentication."`
+	SmsCode       string `json:"sms_code" secret:"true" help:"Fill this only after OpenList reports that a 139 Mail SMS verification code was sent, then save the storage again."`
+	MailCookies   string `json:"mail_cookies" required:"true" type:"text" help:"Cookies from mail.139.com. Used for fast login only when Authorization is empty; otherwise retained as device context for password login fallback."`
 	driver.RootID
 	Type                 string `json:"type" type:"select" options:"personal_new,family,group,personal,share" default:"personal_new"`
 	LinkID               string `json:"link_id" type:"text" help:"Multiple shares are separated by commas or new lines. Use link_id#password for password-protected shares."`

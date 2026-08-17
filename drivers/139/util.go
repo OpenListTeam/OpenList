@@ -6,9 +6,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	crypto_rand "crypto/rand"
+	"crypto/rsa"
 	"crypto/sha1"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +30,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
+	cookiepkg "github.com/OpenListTeam/OpenList/v4/pkg/cookie"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/avast/retry-go"
@@ -36,9 +40,39 @@ import (
 )
 
 const (
-	KEY_HEX_1 = "73634235495062495331515373756c734e7253306c673d3d" // 第一层 AES 解密密钥
-	KEY_HEX_2 = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
+	KEY_HEX_1                = "73634235495062495331515373756c734e7253306c673d3d" // 第一层 AES 解密密钥
+	KEY_HEX_2                = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
+	credentialExchangeWindow = 3 * 24 * time.Hour
+	mailPublicKey            = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnsOHTFtwW5rq/8gGhPlM5Z3RPdeN/d+FYIHb5JmcfBOCozXuT8c+0anvxtkjzghixwNlnmBuhN8OYfS789YuH/qReQbHC7OdlisLildNWPHRNUYcPa0W3lXSG3+81CXK7FDXPvXo5ubw2GqVbIsccMarI1dyfXdi4ITiCXvmM9wYBdUs9yXtoorhlpyYUI2GV8HNsQjWK9P5QZHT3ox5Qy+mjRmvv6RUFJLPOMkOS/pGZ0DwC1ypFZBxstW0/ftVupdOmGWvW7J2/e3dq3A/UvIkC4YUY/diL1wighJx1G9MiRROISjNMvNyUDSTqPJy516+l3sgHEbc067QIJx2NQIDAQAB"
 )
+
+var (
+	driveMailTicketURL = "https://aas.caiyun.feixin.10086.cn/tellin/querySpecToken.do"
+	driveMailLoginURL  = "https://mail.10086.cn/login/inlogin.action"
+	mailRootURL        = "https://mail.10086.cn/"
+	mailPasswordURL    = "https://mail.10086.cn/Login/Login.ashx"
+	mailSMSURL         = "https://mail.10086.cn/s"
+)
+
+var mailLoginCookieExclusions = map[string]struct{}{
+	"hecaiyun_stay_time":          {},
+	"isShowAgreeIconNew":          {},
+	"hecaiyundata2021jssdkcross":  {},
+	"random":                      {},
+	"a_l2":                        {},
+	"hecaiyun_stay_url":           {},
+	"a_l":                         {},
+	"_139mail_login_type":         {},
+	"_139mail_login_shortAddr":    {},
+	"sajssdk_2015_cross_new_user": {},
+	"fromhtml5":                   {},
+	"html5SkinPath8011":           {},
+	"Os_SSo_Sid":                  {},
+	"sid":                         {},
+	"Login_UserNumber":            {},
+	"RMKEY":                       {},
+	"rtexpired":                   {},
+}
 
 // do others that not defined in Driver interface
 func (d *Yun139) isFamily() bool {
@@ -84,31 +118,50 @@ func (d *Yun139) refreshToken() error {
 	if d.ref != nil {
 		return d.ref.refreshToken()
 	}
+	return d.refreshTokenAt(time.Now())
+}
+
+func shouldExchangeAuthorization(now, authorizationExpiresAt time.Time) bool {
+	return authorizationExpiresAt.Sub(now) <= credentialExchangeWindow
+}
+
+func (d *Yun139) refreshTokenAt(now time.Time) error {
 	decode, err := base64.StdEncoding.DecodeString(d.Authorization)
 	if err != nil {
-		return fmt.Errorf("authorization decode failed: %s", err)
+		return d.loginAfterAuthorizationFailure(fmt.Errorf("authorization decode failed: %w", err))
 	}
 	decodeStr := string(decode)
 	splits := strings.Split(decodeStr, ":")
 	if len(splits) < 3 {
-		return fmt.Errorf("authorization is invalid, splits < 3")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization is invalid, splits < 3"))
 	}
 	d.Account = splits[1]
 	strs := strings.Split(splits[2], "|")
 	if len(strs) < 4 {
-		return fmt.Errorf("authorization is invalid, strs < 4")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization is invalid, strs < 4"))
 	}
 	expiration, err := strconv.ParseInt(strs[3], 10, 64)
 	if err != nil {
-		return fmt.Errorf("authorization is invalid")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization expiration is invalid"))
 	}
-	expiration -= time.Now().UnixMilli()
-	if expiration > 1000*60*60*24*15 {
-		// Authorization有效期大于15天无需刷新
+	authorizationExpiresAt := time.UnixMilli(expiration)
+	if !shouldExchangeAuthorization(now, authorizationExpiresAt) {
 		return nil
 	}
-	if expiration < 0 {
-		return fmt.Errorf("authorization has expired")
+
+	// Authorization is the lifecycle anchor. While it is still valid, create a
+	// fresh mail session and consume that session immediately to issue the next
+	// Authorization. The mail session is not maintained independently.
+	if authorizationExpiresAt.After(now) {
+		if exchangeErr := d.renewAuthorizationFromDrive(); exchangeErr == nil {
+			return nil
+		} else {
+			log.Warnf("139yun: scheduled credential exchange failed: %v", exchangeErr)
+		}
+	}
+
+	if !authorizationExpiresAt.After(now) {
+		return d.loginAfterAuthorizationFailure(errors.New("authorization has expired"))
 	}
 
 	url := "https://aas.caiyun.feixin.10086.cn:443/tellin/authTokenRefresh.do"
@@ -120,17 +173,23 @@ func (d *Yun139) refreshToken() error {
 		SetResult(&resp).
 		Post(url)
 	if err != nil || resp.Return != "0" {
-		log.Warnf("139yun: failed to refresh token with old token: %v, desc: %s. trying to login with password.", err, resp.Desc)
-		newAuth, loginErr := d.loginWithPassword()
-		log.Debugf("newAuth: Ok: %s", newAuth)
-		if loginErr != nil {
-			return fmt.Errorf("failed to login with password after refresh failed: %w", loginErr)
-		}
-		return nil
+		return d.loginAfterAuthorizationFailure(fmt.Errorf("token refresh failed: %v, desc: %s", err, resp.Desc))
 	}
 
 	d.Authorization = base64.StdEncoding.EncodeToString([]byte(splits[0] + ":" + splits[1] + ":" + resp.Token))
 	op.MustSaveDriverStorage(d)
+	return nil
+}
+
+// loginAfterAuthorizationFailure deliberately skips cookie fast login. Mail
+// cookies are only reused as device context for the password login request.
+func (d *Yun139) loginAfterAuthorizationFailure(cause error) error {
+	log.Warnf("139yun: %v; trying password login.", cause)
+	newAuth, err := d.loginWithPassword()
+	log.Debugf("139yun: password fallback generated authorization: %t", newAuth != "")
+	if err != nil {
+		return fmt.Errorf("%v; password login failed: %w", cause, err)
+	}
 	return nil
 }
 
@@ -1116,15 +1175,246 @@ func (d *Yun139) getDiskQuotaDetail(ctx context.Context) (*DiskQuotaDetail, erro
 	return &resp, nil
 }
 
+type mailLoginResponse struct {
+	Code    string `json:"code"`
+	Summary string `json:"summary"`
+	Var     struct {
+		LoginSuccessURL string `json:"loginSuccessUrl"`
+	} `json:"var"`
+}
+
+func parseMailLoginResponse(body []byte) mailLoginResponse {
+	var response mailLoginResponse
+	if utils.Json.Unmarshal(body, &response) == nil && (response.Code != "" || response.Summary != "" || response.Var.LoginSuccessURL != "") {
+		return response
+	}
+	if match := regexp.MustCompile(`['"]?code['"]?\s*:\s*['"]([^'"]+)`).FindSubmatch(body); len(match) == 2 {
+		response.Code = string(match[1])
+	}
+	if match := regexp.MustCompile(`['"]?summary['"]?\s*:\s*['"]([^'"]+)`).FindSubmatch(body); len(match) == 2 {
+		response.Summary = string(match[1])
+	}
+	if match := regexp.MustCompile(`['"]?loginSuccessUrl['"]?\s*:\s*['"]([^'"]+)`).FindSubmatch(body); len(match) == 2 {
+		response.Var.LoginSuccessURL = string(match[1])
+	}
+	return response
+}
+
+func mergeMailCookieHeader(existing string, responseCookies []*http.Cookie) string {
+	cookies := cookiepkg.Parse(existing)
+	for _, responseCookie := range responseCookies {
+		if responseCookie != nil && responseCookie.Name != "" {
+			cookies = cookiepkg.SetCookie(cookies, responseCookie.Name, responseCookie.Value)
+		}
+	}
+	return cookiepkg.ToString(cookies)
+}
+
+func sanitizeMailLoginCookies(existing, newJSessionID string) string {
+	cookies := cookiepkg.Parse(existing)
+	filtered := cookies[:0]
+	for _, cookie := range cookies {
+		if _, excluded := mailLoginCookieExclusions[cookie.Name]; excluded {
+			continue
+		}
+		if cookie.Name == "JSESSIONID" {
+			if newJSessionID == "" {
+				continue
+			}
+			cookie.Value = newJSessionID
+			newJSessionID = ""
+		}
+		filtered = append(filtered, cookie)
+	}
+	if newJSessionID != "" {
+		filtered = append(filtered, &http.Cookie{Name: "JSESSIONID", Value: newJSessionID})
+	}
+	return cookiepkg.ToString(filtered)
+}
+
+func mailRiskCode(location string) string {
+	parsed, err := url.Parse(location)
+	if err != nil {
+		return ""
+	}
+	return parsed.Query().Get("ec")
+}
+
+func smsSceneForRisk(riskCode string) (int, bool) {
+	switch riskCode {
+	case "PML401010062":
+		return 2, true
+	case "MW0016":
+		return 4, true
+	case "S025", "S035":
+		return 1, true
+	default:
+		return 0, false
+	}
+}
+
+func encryptMailLoginName(account string) (string, error) {
+	der, err := base64.StdEncoding.DecodeString(mailPublicKey)
+	if err != nil {
+		return "", fmt.Errorf("decode mail public key: %w", err)
+	}
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return "", fmt.Errorf("parse mail public key: %w", err)
+	}
+	publicKey, ok := parsed.(*rsa.PublicKey)
+	if !ok {
+		return "", errors.New("mail public key is not RSA")
+	}
+	encrypted, err := rsa.EncryptPKCS1v15(crypto_rand.Reader, publicKey, []byte(account))
+	if err != nil {
+		return "", fmt.Errorf("encrypt mail login name: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(encrypted), nil
+}
+
+func mailXMLHeaders(cookie string) map[string]string {
+	return map[string]string{
+		"Cookie":          cookie,
+		"Content-Type":    "application/xml; charset=utf-8",
+		"Accept-Encoding": "gzip",
+		"User-Agent":      "okhttp/4.12.0",
+	}
+}
+
+func (d *Yun139) sendSMSVerificationCode(riskCode string) error {
+	scene, ok := smsSceneForRisk(riskCode)
+	if !ok {
+		return fmt.Errorf("139 Mail risk control does not support SMS verification: %s", riskCode)
+	}
+	loginName, err := encryptMailLoginName(d.Username)
+	if err != nil {
+		return err
+	}
+	body := strings.Join([]string{
+		"<object>",
+		mailXMLField("loginName", loginName),
+		mailXMLField("fv", "4"),
+		mailXMLField("clientId", "1003"),
+		mailXMLField("eMode", "1"),
+		mailXMLField("loginFailureUrl", ""),
+		mailXMLField("loginSuccessUrl", ""),
+		mailXMLField("verifyCode", ""),
+		mailXMLField("version", "1.0"),
+		mailXMLField("scene", strconv.Itoa(scene)),
+		"</object>",
+	}, "")
+	res, err := resty.New().R().
+		SetHeaders(mailXMLHeaders(d.MailCookies)).
+		SetBody(body).
+		Post(mailSMSURL + "?func=" + url.QueryEscape("login:sendSmsCodeByScene") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
+	if err != nil {
+		return fmt.Errorf("send 139 Mail SMS verification code: %w", err)
+	}
+	d.MailCookies = mergeMailCookieHeader(d.MailCookies, res.Cookies())
+	response := parseMailLoginResponse(res.Body())
+	if response.Code == "S_OK" {
+		return nil
+	}
+	switch response.Code {
+	case "PML401010021", "PML401010022":
+		return fmt.Errorf("139 Mail requires picture verification before SMS can be sent: %s", response.Code)
+	case "PML404010001":
+		return errors.New("139 Mail SMS verification code was requested too frequently")
+	case "PML401010002":
+		return errors.New("139 Mail rejected the SMS verification parameters")
+	default:
+		return fmt.Errorf("send 139 Mail SMS verification code failed: code=%s summary=%s", response.Code, response.Summary)
+	}
+}
+
+func (d *Yun139) verifySMSCode(riskCode string) (string, error) {
+	if _, ok := smsSceneForRisk(riskCode); !ok {
+		return "", fmt.Errorf("139 Mail risk control does not support SMS verification: %s", riskCode)
+	}
+	loginName, err := encryptMailLoginName(d.Username)
+	if err != nil {
+		return "", err
+	}
+	pwdType := ""
+	if riskCode == "MW0016" {
+		pwdType = mailXMLField("pwdType", "1")
+	}
+	body := strings.Join([]string{
+		"<object>",
+		mailXMLField("clientId", "1003"),
+		mailXMLField("version", "4"),
+		mailXMLField("loginType", "0"),
+		mailXMLField("authType", "2"),
+		mailXMLField("loginName", loginName),
+		mailXMLField("eMode", "1"),
+		mailXMLField("loginPassword", sha1Hash("fetion.com.cn:"+d.SmsCode)),
+		mailXMLField("createAutoLoginSecretKey", "1"),
+		mailXMLField("verifyCode", ""),
+		mailXMLField("verifyAgentId", ""),
+		mailXMLField("reqFrom", "3"),
+		mailXMLField("needWCookie", "1"),
+		pwdType,
+		"</object>",
+	}, "")
+	res, err := resty.New().R().
+		SetHeaders(mailXMLHeaders(d.MailCookies)).
+		SetBody(body).
+		Post(mailSMSURL + "?func=" + url.QueryEscape("/login/inlogin.action") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
+	if err != nil {
+		return "", fmt.Errorf("verify 139 Mail SMS code: %w", err)
+	}
+	d.MailCookies = mergeMailCookieHeader(d.MailCookies, res.Cookies())
+	response := parseMailLoginResponse(res.Body())
+	if response.Code != "S_OK" {
+		return "", fmt.Errorf("verify 139 Mail SMS code failed: code=%s summary=%s", response.Code, response.Summary)
+	}
+	sid := ""
+	if response.Var.LoginSuccessURL != "" {
+		if successURL, parseErr := url.Parse(response.Var.LoginSuccessURL); parseErr == nil {
+			sid = successURL.Query().Get("sid")
+		}
+	}
+	if sid == "" {
+		for _, cookie := range cookiepkg.Parse(d.MailCookies) {
+			if cookie.Name == "Os_SSo_Sid" || cookie.Name == "sid" {
+				sid = cookie.Value
+				break
+			}
+		}
+	}
+	if sid == "" {
+		return "", errors.New("139 Mail SMS verification succeeded but did not return sid")
+	}
+	d.SmsCode = ""
+	return sid, nil
+}
+
 func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("--- 执行步骤 1: 登录 API ---")
-	loginURL := "https://mail.10086.cn/Login/Login.ashx"
+	loginURL := mailPasswordURL
+
+	preLogin, err := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R().Get(mailRootURL)
+	if preLogin == nil {
+		return "", fmt.Errorf("step1 pre-login request failed: %v", err)
+	}
+	if err != nil && (preLogin.StatusCode() < 300 || preLogin.StatusCode() >= 400) {
+		return "", fmt.Errorf("step1 pre-login request failed: %w", err)
+	}
+	jsessionid := ""
+	for _, cookie := range preLogin.Cookies() {
+		if cookie.Name == "JSESSIONID" {
+			jsessionid = cookie.Value
+			break
+		}
+	}
+	if jsessionid == "" {
+		return "", errors.New("step1 pre-login response did not set JSESSIONID")
+	}
+	loginCookies := sanitizeMailLoginCookies(d.MailCookies, jsessionid)
 
 	// 密码 SHA1 哈希
 	hashedPassword := sha1Hash(fmt.Sprintf("fetion.com.cn:%s", d.Password))
-	log.Debugf("DEBUG: 原始密码: %s", d.Password)
-	log.Debugf("DEBUG: SHA1 输入: fetion.com.cn:%s", d.Password)
-	log.Debugf("DEBUG: 生成的 Password 哈希: %s", hashedPassword)
 
 	cguid := strconv.FormatInt(time.Now().UnixMilli(), 10) // 随机生成 cguid
 
@@ -1146,7 +1436,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 		"sec-fetch-user":            "?1",
 		"upgrade-insecure-requests": "1",
 		"user-agent":                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0",
-		"Cookie":                    d.MailCookies,
+		"Cookie":                    loginCookies,
 	}
 
 	loginData := url.Values{}
@@ -1160,11 +1450,10 @@ func (d *Yun139) step1_password_login() (string, error) {
 	loginData.Set("authType", "2")
 
 	log.Debugf("DEBUG: 登录请求 URL: %s", loginURL)
-	log.Debugf("DEBUG: 登录请求 Headers: %+v", loginHeaders)
-	log.Debugf("DEBUG: 登录请求 Body: %s", loginData.Encode())
+	log.Debugf("DEBUG: 登录请求已准备")
 
 	// 设置客户端不跟随重定向
-	client := base.RestyClient.SetRedirectPolicy(resty.NoRedirectPolicy())
+	client := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy())
 	res, err := client.R().
 		SetHeaders(loginHeaders).
 		SetFormDataFromValues(loginData).
@@ -1180,24 +1469,36 @@ func (d *Yun139) step1_password_login() (string, error) {
 	} else {
 		log.Debugf("DEBUG: 登录响应 Status Code: %d", res.StatusCode())
 	}
-	// 恢复客户端的默认重定向策略，以免影响后续请求
-	base.RestyClient.SetRedirectPolicy(resty.FlexibleRedirectPolicy(10))
-	log.Debugf("DEBUG: 登录响应 Headers: %+v", res.Header())
+	log.Debugf("DEBUG: 登录响应 Location present: %t", res.Header().Get("Location") != "")
 
 	var sid, extractedCguid string
 
 	// 从 Location 头部提取 sid 和 cguid
 	locationHeader := res.Header().Get("Location")
 	if locationHeader != "" {
+		d.MailCookies = mergeMailCookieHeader(loginCookies, res.Cookies())
+		if riskCode := mailRiskCode(locationHeader); riskCode != "" {
+			if _, ok := smsSceneForRisk(riskCode); !ok {
+				return "", fmt.Errorf("139 Mail risk control triggered: %s", riskCode)
+			}
+			if strings.TrimSpace(d.SmsCode) == "" {
+				if sendErr := d.sendSMSVerificationCode(riskCode); sendErr != nil {
+					return "", sendErr
+				}
+				op.MustSaveDriverStorage(d)
+				return "", errors.New("139 Mail SMS verification code sent; fill sms_code and save the storage again")
+			}
+			return d.verifySMSCode(riskCode)
+		}
 		sidMatch := regexp.MustCompile(`sid=([^&]+)`).FindStringSubmatch(locationHeader)
 		cguidMatch := regexp.MustCompile(`cguid=([^&]+)`).FindStringSubmatch(locationHeader)
 		if len(sidMatch) > 1 {
 			sid = sidMatch[1]
-			log.Debugf("DEBUG: 从 Location 提取到 sid: %s", sid)
+			log.Debugf("DEBUG: 从 Location 提取到 sid.")
 		}
 		if len(cguidMatch) > 1 {
 			extractedCguid = cguidMatch[1]
-			log.Debugf("DEBUG: 从 Location 提取到 cguid: %s", extractedCguid)
+			log.Debugf("DEBUG: 从 Location 提取到 cguid.")
 		}
 	}
 
@@ -1209,11 +1510,11 @@ func (d *Yun139) step1_password_login() (string, error) {
 			cookieCguidMatch := regexp.MustCompile(`cguid=([^;]+)`).FindStringSubmatch(cookieStr)
 			if len(ssoSidMatch) > 1 && sid == "" {
 				sid = ssoSidMatch[1]
-				log.Debugf("DEBUG: 从 Set-Cookie 提取到 sid: %s", sid)
+				log.Debugf("DEBUG: 从 Set-Cookie 提取到 sid.")
 			}
 			if len(cookieCguidMatch) > 1 && extractedCguid == "" {
 				extractedCguid = cookieCguidMatch[1]
-				log.Debugf("DEBUG: 从 Set-Cookie 提取到 cguid: %s", extractedCguid)
+				log.Debugf("DEBUG: 从 Set-Cookie 提取到 cguid.")
 			}
 		}
 	}
@@ -1222,16 +1523,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 		return "", errors.New("failed to extract sid or cguid from login response")
 	}
 
-	// 提取并记录 cookies
-	loginUrlObj, _ := url.Parse(loginURL)
-	cookies := base.RestyClient.GetClient().Jar.Cookies(loginUrlObj)
-	var cookieStrings []string
-	for _, cookie := range cookies {
-		cookieStrings = append(cookieStrings, cookie.Name+"="+cookie.Value)
-	}
-	cookieStr := strings.Join(cookieStrings, "; ")
-	log.Debugf("DEBUG: 提取到的 Cookies: %s", cookieStr)
-	d.MailCookies = cookieStr
+	d.MailCookies = mergeMailCookieHeader(loginCookies, res.Cookies())
 
 	return sid, nil
 }
@@ -1285,6 +1577,180 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 	log.Debugf("DEBUG: 提取到 dycpwd: %s", dycpwd)
 
 	return dycpwd, nil
+}
+
+type driveMailTicketResponse struct {
+	Return string `xml:"return"`
+	Code   string `xml:"code"`
+	Token  string `xml:"token"`
+	Desc   string `xml:"desc"`
+}
+
+type driveMailLoginResponse struct {
+	Code    string `json:"code"`
+	Summary string `json:"summary"`
+	Var     struct {
+		SID             string `json:"sid"`
+		RMKey           string `json:"rmkey"`
+		LoginSuccessURL string `json:"loginSuccessUrl"`
+	} `json:"var"`
+}
+
+// renewAuthorizationFromDrive converts a still-valid cloud-drive credential
+// into a fresh mail session, then uses the existing mail-to-drive exchange to
+// issue a new cloud-drive credential.
+func (d *Yun139) renewAuthorizationFromDrive() error {
+	sid, err := d.recoverMailSessionFromDrive()
+	if err != nil {
+		return err
+	}
+	artifact, err := d.step2_get_single_token(sid)
+	if err != nil {
+		return fmt.Errorf("get mail artifact after session recovery: %w", err)
+	}
+	authorization, err := d.step3_third_party_login(artifact)
+	if err != nil {
+		return fmt.Errorf("exchange mail artifact for cloud-drive authorization: %w", err)
+	}
+	d.Authorization = authorization
+	op.MustSaveDriverStorage(d)
+	return nil
+}
+
+// recoverMailSessionFromDrive exchanges the current cloud-drive Authorization
+// for a 139 Mail session containing sid and RMKEY.
+func (d *Yun139) recoverMailSessionFromDrive() (string, error) {
+	account, authToken, err := decodeDriveAuthorization(d.Authorization)
+	if err != nil {
+		return "", err
+	}
+	if d.Username != "" && d.Username != account {
+		return "", errors.New("authorization account does not match username")
+	}
+
+	pcAuthorization := base64.StdEncoding.EncodeToString([]byte("pc:" + account + ":" + authToken))
+	deviceInfo := "1|127.0.0.1|1|1.2.6|Xiaomi|23116PN5BC||02-00-00-00-00-00|android 15|1220X2574|zh||||108|"
+	ticketBody := "<root><account>" + escapeXML(account) + "</account><toSourceId>001003</toSourceId></root>"
+	ticketRes, err := base.RestyClient.R().
+		SetHeaders(map[string]string{
+			"x-nettype":           "1",
+			"x-deviceinfo":        deviceInfo,
+			"x-yun-client-info":   deviceInfo,
+			"x-yun-app-channel":   "10000023",
+			"x-huawei-channelsrc": "10000023",
+			"x-mm-source":         "108",
+			"x-svctype":           "1",
+			"app_number":          account,
+			"x-exproute-code":     "routeCode=" + account + ",type=10",
+			"authorization":       "Basic " + pcAuthorization,
+			"content-type":        "application/xml; charset=UTF-8",
+			"user-agent":          "okhttp/3.11.0",
+		}).
+		SetBody(ticketBody).
+		Post(driveMailTicketURL)
+	if err != nil {
+		return "", fmt.Errorf("exchange cloud-drive authorization for mail ticket: %w", err)
+	}
+	var ticket driveMailTicketResponse
+	if err = xml.Unmarshal(ticketRes.Body(), &ticket); err != nil {
+		return "", fmt.Errorf("decode mail ticket response: %w", err)
+	}
+	if ticket.Return != "0" || ticket.Token == "" {
+		code := ticket.Return
+		if code == "" {
+			code = ticket.Code
+		}
+		return "", fmt.Errorf("cloud-drive authorization was rejected while obtaining mail ticket: code=%s desc=%s", code, ticket.Desc)
+	}
+
+	cguid := strconv.FormatInt(time.Now().UnixMilli(), 10) + random.String(12)
+	loginBody := strings.Join([]string{
+		"<object>",
+		mailXMLField("clientid", "10891"),
+		mailXMLField("version", "66"),
+		mailXMLField("loginType", "7"),
+		mailXMLField("autoSecretKey", ""),
+		mailXMLField("createAutoLoginSecretKey", "1"),
+		mailXMLField("verifyCode", `""`),
+		mailXMLField("authType", "2"),
+		mailXMLField("needWCookie", "1"),
+		mailXMLField("verifyAgentId", ""),
+		mailXMLField("loginName", ""),
+		mailXMLField("loginPassword", ""),
+		mailXMLField("loginToken", ""),
+		mailXMLField("token", ticket.Token),
+		mailXMLField("logActionId", ""),
+		`<int name="eMode">1</int>`,
+		"</object>",
+	}, "")
+	loginRes, err := base.RestyClient.R().
+		SetHeaders(map[string]string{
+			"content-type": "application/xml",
+			"user-agent":   "Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 Chrome/67.0.3396.99 Safari/537.36",
+		}).
+		SetBody(loginBody).
+		Post(driveMailLoginURL + "?comefrom=2066&clientId=10891&cguid=" + cguid +
+			"&deviceToken=ZFHIXQJV8EDNJO6H3D9M77WEQG2NO6TQ&appVersion=8.0.28")
+	if err != nil {
+		return "", fmt.Errorf("login to mail with cloud-drive ticket: %w", err)
+	}
+	var login driveMailLoginResponse
+	if err = utils.Json.Unmarshal(loginRes.Body(), &login); err != nil {
+		return "", fmt.Errorf("decode mail login response: %w", err)
+	}
+	if login.Code != "S_OK" {
+		return "", fmt.Errorf("cloud-drive ticket login to mail failed: code=%s summary=%s", login.Code, login.Summary)
+	}
+
+	cookies := loginRes.Cookies()
+	sid := login.Var.SID
+	if sid == "" && login.Var.LoginSuccessURL != "" {
+		if successURL, parseErr := url.Parse(login.Var.LoginSuccessURL); parseErr == nil {
+			sid = successURL.Query().Get("sid")
+		}
+	}
+	if sid == "" {
+		if sidCookie := cookiepkg.GetCookie(cookies, "Os_SSo_Sid"); sidCookie != nil {
+			sid = sidCookie.Value
+		}
+	}
+	if sid == "" || login.Var.RMKey == "" {
+		return "", errors.New("cloud-drive ticket login did not return sid or RMKEY")
+	}
+	cookies = cookiepkg.SetCookie(cookies, "sid", sid)
+	cookies = cookiepkg.SetCookie(cookies, "RMKEY", login.Var.RMKey)
+	d.MailCookies = cookiepkg.ToString(cookies)
+	d.Account = account
+	if d.Username == "" {
+		d.Username = account
+	}
+	return sid, nil
+}
+
+func decodeDriveAuthorization(authorization string) (account string, authToken string, err error) {
+	encoded := strings.TrimSpace(authorization)
+	if strings.HasPrefix(strings.ToLower(encoded), "basic ") {
+		encoded = strings.TrimSpace(encoded[len("basic "):])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", "", fmt.Errorf("decode authorization: %w", err)
+	}
+	parts := strings.SplitN(string(decoded), ":", 3)
+	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+		return "", "", errors.New("authorization format is invalid")
+	}
+	return parts[1], parts[2], nil
+}
+
+func mailXMLField(name, value string) string {
+	return `<string name="` + escapeXML(name) + `">` + escapeXML(value) + `</string>`
+}
+
+func escapeXML(value string) string {
+	var escaped bytes.Buffer
+	_ = xml.EscapeText(&escaped, []byte(value))
+	return escaped.String()
 }
 
 // --- 辅助函数：加密/解密 ---
