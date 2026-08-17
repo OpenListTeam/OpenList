@@ -45,10 +45,13 @@ func (d *Yun139) GetAddition() driver.Additional {
 
 func (d *Yun139) Init(ctx context.Context) error {
 	if d.ref == nil {
-		if err := d.validateAndInitCredentials(); err != nil {
-			return err
+		// Share links may be browsed without account credentials. All other
+		// storage types need an authorization or a supported login fallback.
+		if !d.isShare() {
+			if err := d.validateAndInitCredentials(); err != nil {
+				return err
+			}
 		}
-
 		if d.Authorization != "" {
 			err := d.refreshToken()
 			if err != nil {
