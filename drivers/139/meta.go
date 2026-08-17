@@ -10,6 +10,7 @@ type Addition struct {
 	Authorization string `json:"authorization" type:"text" help:"Authorization can be used alone. If empty, use mail_cookies alone for fast login, or mail_cookies + username + password for full login fallback."`
 	Username      string `json:"username" help:"Required only when using password login fallback with mail_cookies."`
 	Password      string `json:"password" secret:"true" help:"Required only when using password login fallback with mail_cookies."`
+	SmsCode       string `json:"sms_code" secret:"true" help:"Fill this only after OpenList reports that a 139 Mail SMS verification code was sent, then save the storage again."`
 	MailCookies   string `json:"mail_cookies" type:"text" help:"Cookies from mail.10086.cn. Used for fast login only when Authorization is empty; otherwise retained as device context for password login fallback."`
 	driver.RootID
 	Type                 string `json:"type" type:"select" options:"personal_new,family,group,personal,share" default:"personal_new"`

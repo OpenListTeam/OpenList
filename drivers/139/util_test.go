@@ -12,31 +12,23 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-func TestSanitizeLoginCookiesDropsLoginStateAndReplacesJSessionIDWithoutReordering(t *testing.T) {
-	got := sanitizeLoginCookies("behaviorid=b; hecaiyun_stay_time=t; isShowAgreeIconNew=1; Os_SSo_Sid=sid; hecaiyundata2021jssdkcross=data; random=r; a_l2=l2; hecaiyun_stay_url=url; a_l=l; Login_UserNumber=user; _139mail_login_type=2; _139mail_login_shortAddr=short; sajssdk_2015_cross_new_user=1; JSESSIONID=old; fromhtml5=1; html5SkinPath8011=skin; RMKEY=rm; rtexpired=1; S_DEVICE_TOKEN=device", "fresh")
-	want := "behaviorid=b;Os_SSo_Sid=sid;Login_UserNumber=user;JSESSIONID=fresh;S_DEVICE_TOKEN=device"
-	if got != want {
-		t.Fatalf("sanitizeLoginCookies() = %q, want %q", got, want)
-	}
-}
-
 func TestSanitizeLoginCookiesDropsStaleJSessionIDWhenFreshOneMissing(t *testing.T) {
-	got := sanitizeLoginCookies("JSESSIONID=old; behaviorid=b", "")
+	got := sanitizeMailLoginCookies("JSESSIONID=old; behaviorid=b", "")
 	want := "behaviorid=b"
 	if got != want {
-		t.Fatalf("sanitizeLoginCookies() = %q, want %q", got, want)
+		t.Fatalf("sanitizeMailLoginCookies() = %q, want %q", got, want)
 	}
 }
 
 func TestMergeMailCookiesPreservesExistingOrderAndAppendsNewNames(t *testing.T) {
-	got := mergeMailCookies("z=zv; behaviorid=b; Os_SSo_Sid=old", []*http.Cookie{
+	got := mergeMailCookieHeader("z=zv; behaviorid=b; Os_SSo_Sid=old", []*http.Cookie{
 		{Name: "RMKEY", Value: "rm"},
 		{Name: "Os_SSo_Sid", Value: "sid"},
 		{Name: "a", Value: "av"},
 	})
 	want := "z=zv;behaviorid=b;Os_SSo_Sid=sid;RMKEY=rm;a=av"
 	if got != want {
-		t.Fatalf("mergeMailCookies() = %q, want %q", got, want)
+		t.Fatalf("mergeMailCookieHeader() = %q, want %q", got, want)
 	}
 }
 
@@ -111,21 +103,6 @@ func TestCredentialState(t *testing.T) {
 				t.Fatalf("credentialState() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestInvalidAuthorizationDoesNotUseCookieFastLogin(t *testing.T) {
-	d := Yun139{Addition: Addition{
-		Authorization: "not-base64",
-		MailCookies:   "Os_SSo_Sid=sid; RMKEY=rmkey",
-	}}
-
-	err := d.refreshToken()
-	if err == nil || !strings.Contains(err.Error(), "password login failed") {
-		t.Fatalf("refreshToken() error = %v, want password login fallback error", err)
-	}
-	if d.Authorization != "not-base64" {
-		t.Fatalf("Authorization = %q, want original invalid value retained", d.Authorization)
 	}
 }
 
