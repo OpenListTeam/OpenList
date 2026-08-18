@@ -248,8 +248,14 @@ func (d *PikPak) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	params := resp.Resumable.Params
 	// endpoint := strings.Join(strings.Split(params.Endpoint, ".")[1:], ".")
 	// web 端上传 返回的endpoint 为 `mypikpak.net` | android 端上传 返回的endpoint 为 `vip-lixian-07.mypikpak.net`·
-	if d.Addition.Platform == "android" {
-		params.Endpoint = "mypikpak.net"
+	// if d.Addition.Platform == "android" {
+	// 	params.Endpoint = "mypikpak.net"
+	// }
+
+	// Strip the server-specific subdomain prefix (e.g. "vip-lixian-07.upload-a10b.mypikpak.com" -> "upload-a10b.mypikpak.com")
+	// to get the base OSS endpoint that is reliably DNS-resolvable.
+	if parts := strings.SplitN(params.Endpoint, ".", 2); len(parts) > 1 {
+		params.Endpoint = parts[1]
 	}
 
 	if stream.GetSize() <= 10*utils.MB { // 文件大小 小于10MB，改用普通模式上传
