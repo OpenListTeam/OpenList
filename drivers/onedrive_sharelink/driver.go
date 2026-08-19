@@ -82,6 +82,14 @@ func (d *OnedriveSharelink) Init(ctx context.Context) error {
 	}
 	d.storeHeaders(h)
 
+	// Validate the RootFolderPath format.
+    if d.RootFolderPath != "" && d.RootFolderPath != "/" {
+        cleaned := utils.FixAndCleanPath(d.RootFolderPath)
+        if !strings.HasPrefix(cleaned, "/") {
+            return fmt.Errorf("root_folder_path must be an absolute path, got %q", d.RootFolderPath)
+        }
+    }
+
 	return nil
 }
 
@@ -101,9 +109,12 @@ func (d *OnedriveSharelink) relativePath(virtualPath string) string {
 	if vpath == root {
 		return "/"
 	}
-	if strings.HasPrefix(vpath, root+"/") {
-		return utils.FixAndCleanPath(strings.TrimPrefix(vpath, root))
+	// Use `utils.IsSubPath` or an explicit prefix-plus-separator check.
+	if strings.HasPrefix(vpath+"/", root+"/") {
+		rel := strings.TrimPrefix(vpath, root)
+		return utils.FixAndCleanPath(rel)
 	}
+	log.Warnf("onedrive_sharelink: path %q is outside configured root %q", virtualPath, d.RootFolderPath)
 	return virtualPath
 }
 
@@ -478,15 +489,15 @@ func (d *OnedriveSharelink) effectiveDriveRootPath() string {
 	if d.listURL == "" || d.RootFolderPath == "" || d.RootFolderPath == "/" {
 		return d.driveRootPath
 	}
-	root := strings.TrimRight(d.RootFolderPath, "/")
-	list := strings.TrimRight(d.listURL, "/")
+	root := utils.FixAndCleanPath(d.RootFolderPath)
+	list := utils.FixAndCleanPath(d.listURL)
 	if root == list {
 		return "/"
 	}
-	prefix := list + "/"
-	if strings.HasPrefix(root+"/", prefix) {
+	if strings.HasPrefix(root+"/", list+"/") {
 		return utils.FixAndCleanPath(strings.TrimPrefix(root, list))
 	}
+	log.Warnf("onedrive_sharelink: RootFolderPath %q is not under listURL %q", d.RootFolderPath, d.listURL)
 	return d.driveRootPath
 }
 
