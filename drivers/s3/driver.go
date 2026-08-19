@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	stdpath "path"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -224,11 +226,25 @@ func (d *S3) GetDirectUploadTools() []string {
 	return []string{"HttpDirect"}
 }
 
-func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, _ int64) (any, error) {
+func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, fileSize int64) (any, error) {
 	if !d.EnableDirectUpload {
 		return nil, errs.NotImplement
 	}
+	maxParts := d.DirectUploadMaxParts
+	if maxParts == 0 {
+		maxParts = maxCopyParts
+	}
+	return d.getDirectUploadInfo(ctx, dstDir, fileName, fileSize, maxParts, d.DirectUploadMinPartSize)
+}
+
+func (d *S3) getDirectUploadInfo(ctx context.Context, dstDir model.Obj, fileName string, fileSize, maxParts, chunkSize int64) (any, error) {
 	path := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
+	if maxParts > 1 && fileSize > minMultipartUploadPartSize {
+		return d.getMultipartDirectUploadInfo(ctx, path, fileSize, maxParts, chunkSize)
+	}
+	if fileSize > maxMultipartUploadPartSize {
+		return nil, fmt.Errorf("object size %d exceeds direct upload limit", fileSize)
+	}
 	req, _ := d.directUploadClient.PutObjectRequest(&s3.PutObjectInput{
 		Bucket: &d.Bucket,
 		Key:    &path,
@@ -244,6 +260,184 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 		UploadURL: link,
 		Method:    "PUT",
 	}, nil
+}
+
+func (d *S3) getMultipartDirectUploadInfo(ctx context.Context, key string, fileSize, maxParts, chunkSize int64) (*model.S3MultipartDirectUploadInfo, error) {
+	partSize, err := getMultipartUploadPartSize(fileSize, maxParts, chunkSize)
+	if err != nil {
+		return nil, err
+	}
+	created, err := d.directUploadClient.CreateMultipartUploadWithContext(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: &d.Bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		return nil, err
+	}
+	uploadID := aws.StringValue(created.UploadId)
+	if uploadID == "" {
+		return nil, fmt.Errorf("create multipart upload returned an empty upload ID")
+	}
+	createdSuccessfully := false
+	defer func() {
+		if createdSuccessfully {
+			return
+		}
+		_, _ = d.directUploadClient.AbortMultipartUploadWithContext(context.WithoutCancel(ctx), &s3.AbortMultipartUploadInput{
+			Bucket:   &d.Bucket,
+			Key:      &key,
+			UploadId: &uploadID,
+		})
+	}()
+
+	partCount := (fileSize + partSize - 1) / partSize
+	uploadURLs := make([]string, 0, partCount)
+	for partNumber := int64(1); partNumber <= partCount; partNumber++ {
+		req, _ := d.directUploadClient.UploadPartRequest(&s3.UploadPartInput{
+			Bucket:     &d.Bucket,
+			Key:        &key,
+			PartNumber: &partNumber,
+			UploadId:   &uploadID,
+		})
+		if req == nil {
+			return nil, fmt.Errorf("failed to create multipart upload request for part %d", partNumber)
+		}
+		url, err := req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+		if err != nil {
+			return nil, err
+		}
+		uploadURLs = append(uploadURLs, url)
+	}
+	completeReq, _ := d.directUploadClient.CompleteMultipartUploadRequest(&s3.CompleteMultipartUploadInput{
+		Bucket:   &d.Bucket,
+		Key:      &key,
+		UploadId: &uploadID,
+	})
+	abortReq, _ := d.directUploadClient.AbortMultipartUploadRequest(&s3.AbortMultipartUploadInput{
+		Bucket:   &d.Bucket,
+		Key:      &key,
+		UploadId: &uploadID,
+	})
+	if completeReq == nil || abortReq == nil {
+		return nil, fmt.Errorf("failed to create multipart completion requests")
+	}
+	completeURL, err := completeReq.Presign(time.Hour * time.Duration(d.SignURLExpire))
+	if err != nil {
+		return nil, err
+	}
+	abortURL, err := abortReq.Presign(time.Hour * time.Duration(d.SignURLExpire))
+	if err != nil {
+		return nil, err
+	}
+	info := &model.S3MultipartDirectUploadInfo{
+		ChunkSize:   partSize,
+		UploadURLs:  uploadURLs,
+		CompleteURL: completeURL,
+		AbortURL:    abortURL,
+	}
+	createdSuccessfully = true
+	return info, nil
+}
+
+func (d *S3) PutAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) (task.TaskExtensionInfo, error) {
+	return nil, errs.NotImplement
+}
+
+func (d *S3) CreateMultipartUpload(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64) (*model.DirectUploadPartOption, error) {
+	if d.DirectUploadMaxParts == 1 {
+		return nil, errs.NotSupport
+	}
+	maxParts := d.DirectUploadMaxParts
+	if maxParts == 0 {
+		maxParts = maxCopyParts
+	}
+	if _, err := calculatePartSize(fileSize, maxParts, minMultipartUploadPartSize, maxMultipartUploadPartSize); err != nil {
+		return nil, err
+	}
+	key := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
+	created, err := d.client.CreateMultipartUploadWithContext(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: &d.Bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		return nil, err
+	}
+	uploadID := aws.StringValue(created.UploadId)
+	if uploadID == "" {
+		return nil, fmt.Errorf("create multipart upload returned an empty upload ID")
+	}
+	return &model.DirectUploadPartOption{
+		Key:      key,
+		UploadId: uploadID,
+	}, nil
+}
+
+func (d *S3) UploadPart(ctx context.Context, uploadId string, partNumber int, stream model.FileStreamer, options *model.DirectUploadPartOption) (*model.DirectUploadPartInfo, error) {
+	if d.DirectUploadMaxParts == 1 {
+		return nil, errs.NotSupport
+	}
+	if partNumber < 1 || partNumber > 10000 {
+		return nil, fmt.Errorf("partNumber must be between 1 and 10000, got %d", partNumber)
+	}
+	if uploadId == "" {
+		return nil, fmt.Errorf("uploadId must not be empty")
+	}
+	body, err := io.ReadAll(stream)
+	if err != nil {
+		return nil, fmt.Errorf("read part body: %w", err)
+	}
+	partNum := int64(partNumber)
+	key := options.Key
+	input := &s3.UploadPartInput{
+		Bucket:     &d.Bucket,
+		Key:        &key,
+		PartNumber: &partNum,
+		UploadId:   &uploadId,
+		Body:       bytes.NewReader(body),
+	}
+	output, err := d.directUploadClient.UploadPartWithContext(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return &model.DirectUploadPartInfo{
+		ETag:       aws.StringValue(output.ETag),
+		PartNumber: partNumber,
+	}, nil
+}
+
+func (d *S3) CompleteMultipartUpload(ctx context.Context, uploadId string, dst string, parts []model.DirectUploadPartInfo) error {
+	completedParts := make([]*s3.CompletedPart, 0, len(parts))
+	for _, p := range parts {
+		partNumber := int64(p.PartNumber)
+		etag := p.ETag
+		completedParts = append(completedParts, &s3.CompletedPart{
+			PartNumber: &partNumber,
+			ETag:       &etag,
+		})
+	}
+	key := getKey(dst, false)
+	_, err := d.client.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   &d.Bucket,
+		Key:      &key,
+		UploadId: &uploadId,
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to complete multipart upload for %s (uploadId=%s): %w", dst, uploadId, err)
+	}
+	return nil
+}
+
+func (d *S3) AbortMultipartUpload(ctx context.Context, uploadId string, dst string) error {
+	key := getKey(dst, false)
+	_, err := d.client.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   &d.Bucket,
+		Key:      &key,
+		UploadId: &uploadId,
+	})
+	return err
 }
 
 // implements driver.Getter interface
@@ -325,3 +519,5 @@ func (d *S3) Get(ctx context.Context, path string) (model.Obj, error) {
 
 var _ driver.Driver = (*S3)(nil)
 var _ driver.Getter = (*S3)(nil)
+var _ driver.MultipartBackend = (*S3)(nil)
+var _ driver.PutAsTask = (*S3)(nil)
