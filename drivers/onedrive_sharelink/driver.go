@@ -83,12 +83,15 @@ func (d *OnedriveSharelink) Init(ctx context.Context) error {
 	d.storeHeaders(h)
 
 	// Validate the RootFolderPath format.
-    if d.RootFolderPath != "" && d.RootFolderPath != "/" {
-        cleaned := utils.FixAndCleanPath(d.RootFolderPath)
-        if !strings.HasPrefix(cleaned, "/") {
-            return fmt.Errorf("root_folder_path must be an absolute path, got %q", d.RootFolderPath)
-        }
-    }
+	if d.RootFolderPath != "" && d.RootFolderPath != "/" {
+		if !strings.HasPrefix(d.RootFolderPath, "/") {
+			return fmt.Errorf("root_folder_path must be an absolute path, got %q", d.RootFolderPath)
+		}
+		cleaned := utils.FixAndCleanPath(d.RootFolderPath)
+		if !strings.Contains(cleaned, "/Documents") {
+			return fmt.Errorf("root_folder_path must contain the \"/Documents\" segment, got %q", d.RootFolderPath)
+		}
+	}
 
 	return nil
 }
@@ -104,15 +107,8 @@ func (d *OnedriveSharelink) relativePath(virtualPath string) string {
 	if d.RootFolderPath == "" || d.RootFolderPath == "/" {
 		return virtualPath
 	}
-	root := utils.FixAndCleanPath(d.RootFolderPath)
-	vpath := utils.FixAndCleanPath(virtualPath)
-	if vpath == root {
-		return "/"
-	}
-	// Use `utils.IsSubPath` or an explicit prefix-plus-separator check.
-	if strings.HasPrefix(vpath+"/", root+"/") {
-		rel := strings.TrimPrefix(vpath, root)
-		return utils.FixAndCleanPath(rel)
+	if rel, ok := stripPrefix(virtualPath, d.RootFolderPath); ok {
+		return rel
 	}
 	log.Warnf("onedrive_sharelink: path %q is outside configured root %q", virtualPath, d.RootFolderPath)
 	return virtualPath
@@ -468,13 +464,13 @@ func (d *OnedriveSharelink) uploadSessionChunk(ctx context.Context, uploadURL st
 }
 
 func (d *OnedriveSharelink) drivePathAPIURL(path string) string {
-	drivePath := stdpath.Join(d.driveRootPath, path)
+	base := d.driveRootPath
 	// When RootFolderPath is configured, the base drive root needs to take it
 	// into account so the API targets the correct subfolder.
 	if d.RootFolderPath != "" && d.RootFolderPath != "/" {
-		drivePath = stdpath.Join(d.effectiveDriveRootPath(), path)
+		base = d.effectiveDriveRootPath()
 	}
-	drivePath = utils.FixAndCleanPath(drivePath)
+	drivePath := utils.FixAndCleanPath(stdpath.Join(base, path))
 	if drivePath == "/" {
 		return d.DriveURL + "/root"
 	}
@@ -489,16 +485,26 @@ func (d *OnedriveSharelink) effectiveDriveRootPath() string {
 	if d.listURL == "" || d.RootFolderPath == "" || d.RootFolderPath == "/" {
 		return d.driveRootPath
 	}
-	root := utils.FixAndCleanPath(d.RootFolderPath)
-	list := utils.FixAndCleanPath(d.listURL)
-	if root == list {
-		return "/"
-	}
-	if strings.HasPrefix(root+"/", list+"/") {
-		return utils.FixAndCleanPath(strings.TrimPrefix(root, list))
+	if rel, ok := stripPrefix(d.RootFolderPath, d.listURL); ok {
+		return rel
 	}
 	log.Warnf("onedrive_sharelink: RootFolderPath %q is not under listURL %q", d.RootFolderPath, d.listURL)
 	return d.driveRootPath
+}
+
+// stripPrefix removes prefix from path when path equals prefix or is nested
+// under it, matching on the path separator to avoid /foo matching /foobar.
+// It reports whether the prefix matched.
+func stripPrefix(path, prefix string) (string, bool) {
+	path = utils.FixAndCleanPath(path)
+	prefix = utils.FixAndCleanPath(prefix)
+	if path == prefix {
+		return "/", true
+	}
+	if strings.HasPrefix(path, prefix+"/") {
+		return utils.FixAndCleanPath(path[len(prefix):]), true
+	}
+	return path, false
 }
 
 func injectAccessToken(rawURL, token string) string {
