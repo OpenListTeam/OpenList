@@ -3,7 +3,7 @@ name: Issue or PR Auto Reply
 on:
   issues:
     types: [opened]
-  pull_request:
+  pull_request_target:
     types: [opened]
 
 permissions:
@@ -78,7 +78,7 @@ jobs:
 
   pr-title-check:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request_target'
     steps:
       - name: Check PR title for required prefix and comment
         uses: actions/github-script@v9

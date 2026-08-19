@@ -507,7 +507,7 @@ func (d *Yun139) shareHeaders() map[string]string {
 		"User-Agent":        "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
 		"Accept":            "application/json, text/plain, */*",
 		"Content-Type":      "application/json;charset=UTF-8",
-		"X-Deviceinfo":      "||9|12.27.0|firefox|140.0|||linux unknow|1920X526|zh-CN|||",
+		"X-Deviceinfo":      "||9|12.27.0|firefox|140.0|||linux unknown|1920X526|zh-CN|||",
 		"hcy-cool-flag":     "1",
 		"CMS-DEVICE":        "default",
 		"x-m4c-caller":      "PC",
