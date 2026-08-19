@@ -6,11 +6,13 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -344,10 +346,20 @@ func GetStorageVirtualFilesByPath(prefix string) []model.Obj {
 	return getStorageVirtualFilesByPath(prefix, nil, "")
 }
 
+func getSettingInt(key string, defaultValue int) int {
+	if item, err := GetSettingItemByKey(key); err == nil && item != nil {
+		if val, err := strconv.Atoi(item.Value); err == nil {
+			return val
+		}
+	}
+	return defaultValue
+}
+
 func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string, hideDetails, refresh bool, filterByName string) []model.Obj {
 	if hideDetails {
 		return getStorageVirtualFilesByPath(prefix, nil, filterByName)
 	}
+	timeoutSec := time.Duration(getSettingInt(conf.StorageDetailsTimeoutSeconds, 15)) * time.Second
 	return getStorageVirtualFilesByPath(prefix, func(d driver.Driver, obj model.Obj) model.Obj {
 		if _, ok := obj.(*model.ObjStorageDetails); ok {
 			return obj
@@ -357,8 +369,10 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 			StorageDetails: nil,
 		}
 		resultChan := make(chan *model.StorageDetails, 1)
+		bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeoutSec)
 		go func(dri driver.Driver) {
-			details, err := GetStorageDetails(ctx, dri, refresh)
+			defer cancel()
+			details, err := GetStorageDetails(bgCtx, dri, refresh)
 			if err != nil {
 				if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.StorageNotInit) {
 					log.Errorf("failed get %s storage details: %+v", dri.GetStorage().MountPath, err)
@@ -463,7 +477,11 @@ func GetBalancedStorage(path string) driver.Driver {
 	}
 }
 
-var detailsG singleflight.Group[*model.StorageDetails]
+var (
+	detailsG      singleflight.Group[*model.StorageDetails]
+	detailsLock   sync.RWMutex
+	lastDoneTimes = make(map[string]int64)
+)
 
 func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bool) (*model.StorageDetails, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
@@ -473,17 +491,35 @@ func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bo
 	if !ok {
 		return nil, errs.NotImplement
 	}
-	if !utils.IsBool(refresh...) {
+	mountPath := utils.GetActualMountPath(storage.GetStorage().MountPath)
+	cooldownSec := getSettingInt(conf.StorageDetailsCooldownSeconds, 0)
+
+	detailsLock.RLock()
+	lastDone := lastDoneTimes[mountPath]
+	detailsLock.RUnlock()
+
+	now := time.Now().Unix()
+	isRefresh := utils.IsBool(refresh...)
+
+	// 强刷时：若超出冷却期（或默认 cooldown=0），先主动清空旧缓存，保证强一致性
+	if isRefresh && (cooldownSec <= 0 || now-lastDone >= int64(cooldownSec)) {
+		Cache.InvalidateStorageDetails(storage)
+	} else {
+		// 普通读取 或 处于冷却期内：优先读取有效缓存
 		if ret, ok := Cache.GetStorageDetails(storage); ok {
 			return ret, nil
 		}
 	}
-	details, err, _ := detailsG.Do(storage.GetStorage().MountPath, func() (*model.StorageDetails, error) {
+
+	details, err, _ := detailsG.Do(mountPath, func() (*model.StorageDetails, error) {
 		ret, err := wd.GetDetails(ctx)
 		if err != nil {
 			return nil, err
 		}
 		Cache.SetStorageDetails(storage, ret)
+		detailsLock.Lock()
+		lastDoneTimes[mountPath] = time.Now().Unix()
+		detailsLock.Unlock()
 		return ret, nil
 	})
 	return details, err
