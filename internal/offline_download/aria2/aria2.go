@@ -100,7 +100,9 @@ func (a *Aria2) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		Err:        err,
 		TotalBytes: total,
 	}
-	s.Progress = float64(downloaded) / float64(total) * 100
+	if total > 0 {
+		s.Progress = float64(downloaded) / float64(total) * 100
+	}
 	if len(info.FollowedBy) != 0 {
 		s.NewGID = info.FollowedBy[0]
 		notify.Signals.Delete(task.GID)
@@ -109,12 +111,14 @@ func (a *Aria2) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	switch info.Status {
 	case "complete":
 		s.Completed = true
+		s.Progress = 100
 	case "error":
 		s.Err = errors.Errorf("failed to download %s, error: %s", task.GID, info.ErrorMessage)
 	case "active":
 		s.Status = "aria2: " + info.Status
 		if info.Seeder == "true" {
 			s.Completed = true
+			s.Progress = 100
 		}
 	case "waiting", "paused":
 		s.Status = "aria2: " + info.Status
