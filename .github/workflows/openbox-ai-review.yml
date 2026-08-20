@@ -1,0 +1,84 @@
+name: Open-Box AI Review
+
+on:
+  pull_request:
+    branches: [staging, main, develop]
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Optional prompt for agent"
+        required: false
+        default: "Summarize repository health for Open-Box production."
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect diff context
+        id: ctx
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin ${{ github.base_ref }} --depth=50
+            git diff --stat origin/${{ github.base_ref }}...HEAD | head -80 > /tmp/ctx.txt
+            git diff --name-only origin/${{ github.base_ref }}...HEAD | head -80 >> /tmp/ctx.txt
+          else
+            echo "Manual agent run" > /tmp/ctx.txt
+            ls -la .github/workflows | head -30 >> /tmp/ctx.txt
+          fi
+          wc -c /tmp/ctx.txt
+
+      - name: Call AI agent (OpenRouter preferred)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          CTX=$(head -c 12000 /tmp/ctx.txt | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+          PROMPT=${{ github.event.inputs.prompt }}
+          if [ -z "${PROMPT:-}" ]; then PROMPT="Review this Open-Box change set for production risk (Railway, Supabase, Dockerfile VOLUME, data loss). Be concise."; fi
+          BODY=$(python3 - <<PY
+          import json,os,urllib.request
+          ctx=open("/tmp/ctx.txt").read()[:12000]
+          prompt=os.environ.get("PROMPT_OVERRIDE","""$PROMPT""")
+          messages=[{"role":"system","content":"You are Open-Box platform reviewer. Flag blockers: VOLUME in Dockerfile, DB drops, secret leaks, auth regressions."},{"role":"user","content":prompt+"\n\nContext:\n"+ctx}]
+          key=os.environ.get("OPENROUTER_API_KEY") or ""
+          if key:
+            url="https://openrouter.ai/api/v1/chat/completions"
+            model="nvidia/llama-3.1-nemotron-70b-instruct"
+            auth=key
+          else:
+            url="https://integrate.api.nvidia.com/v1/chat/completions"
+            model="meta/llama-3.1-8b-instruct"
+            auth=os.environ["NVIDIA_API_KEY"]
+          payload={"model":model,"messages":messages,"max_tokens":600,"temperature":0.2}
+          req=urllib.request.Request(url,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+auth,"Content-Type":"application/json"})
+          try:
+            with urllib.request.urlopen(req,timeout=90) as r:
+              d=json.load(r)
+            text=d["choices"][0]["message"]["content"]
+          except Exception as e:
+            text="AI review unavailable: "+str(e)
+          open("/tmp/ai-review.md","w").write(text)
+          print(text[:1500])
+          PY
+          )
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "## Open-Box AI agent review"
+            echo
+            cat /tmp/ai-review.md
+          } > /tmp/comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/comment.md || true
