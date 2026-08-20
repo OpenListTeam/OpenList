@@ -12,7 +12,8 @@ jobs:
       - name: Production smoke
         run: |
           set -euo pipefail
-          URL="${{ secrets.SITE_URL || 'https://openlist-railway-production-2100.up.railway.app' }}"
+          URL="${{ secrets.SITE_URL }}"
+          if [ -z "$URL" ]; then URL="https://openlist-railway-production-2100.up.railway.app"; fi
           code=$(curl -sS -o /tmp/p -w "%{http_code}" "$URL/ping" || true)
           body=$(cat /tmp/p || true)
           echo "ping=$code body=$body"
