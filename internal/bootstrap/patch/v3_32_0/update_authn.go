@@ -17,8 +17,7 @@ func UpdateAuthnForOldVersion() {
 	for i := range users {
 		user := users[i]
 		if user.Authn == "" {
-			user.Authn = "[]"
-			if err := db.UpdateUser(&user); err != nil {
+			if err := db.UpdateAuthn(user.ID, "[]"); err != nil {
 				utils.Log.Errorf("[update authn for old version] failed update user: %v", err)
 			}
 		}
