@@ -88,8 +88,17 @@ func rsaEncrypt(buffer, key []byte) []byte {
 	buffers := make([]byte, 128-16, 128)
 	buffers = append(buffers, buffer...)
 	block, _ := pem.Decode(key)
-	pubInterface, _ := x509.ParsePKIXPublicKey(block.Bytes)
-	pub := pubInterface.(*rsa.PublicKey)
+	if block == nil {
+		return nil
+	}
+	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil
+	}
+	pub, ok := pubInterface.(*rsa.PublicKey)
+	if !ok {
+		return nil
+	}
 	c := new(big.Int).SetBytes([]byte(buffers))
 	return c.Exp(c, big.NewInt(int64(pub.E)), pub.N).Bytes()
 }

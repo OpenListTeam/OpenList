@@ -47,8 +47,21 @@ func signatureOfHmac(sessionSecret, sessionKey, operate, fullUrl, dateOfGmt, par
 // RAS 加密用户名密码
 func RsaEncrypt(publicKey, origData string) string {
 	block, _ := pem.Decode([]byte(publicKey))
-	pubInterface, _ := x509.ParsePKIXPublicKey(block.Bytes)
-	data, _ := rsa.EncryptPKCS1v15(rand.Reader, pubInterface.(*rsa.PublicKey), []byte(origData))
+	if block == nil {
+		return ""
+	}
+	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return ""
+	}
+	pub, ok := pubInterface.(*rsa.PublicKey)
+	if !ok {
+		return ""
+	}
+	data, err := rsa.EncryptPKCS1v15(rand.Reader, pub, []byte(origData))
+	if err != nil {
+		return ""
+	}
 	return strings.ToUpper(hex.EncodeToString(data))
 }
 

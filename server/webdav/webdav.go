@@ -198,7 +198,10 @@ func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) (status 
 		return status, err
 	}
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
@@ -226,7 +229,10 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	}
 	// TODO: check locks for read-only access??
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	password, _ := ctx.Value(conf.MetaPassKey).(string)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
@@ -252,7 +258,10 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		return http.StatusMethodNotAllowed, nil
 	}
 	// Let ServeContent determine the Content-Type header.
-	storage, _ := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	if err != nil || storage == nil {
+		return http.StatusInternalServerError, err
+	}
 	if storage.GetStorage().Webdav302() {
 		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{IP: utils.ClientIP(r), Header: r.Header, Redirect: true})
 		if err != nil {
@@ -302,7 +311,10 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	defer release()
 
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	if !user.CanRemove() {
 		return http.StatusForbidden, nil
 	}
@@ -358,7 +370,10 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	// TODO(rost): Support the If-Match, If-None-Match headers? See bradfitz'
 	// comments in http.checkEtag.
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
@@ -435,7 +450,10 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	defer release()
 
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
@@ -509,7 +527,10 @@ func (h *Handler) handleCopyMove(w http.ResponseWriter, r *http.Request) (status
 	}
 
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	src, err = user.JoinPath(src)
 	if err != nil {
 		return http.StatusForbidden, err
@@ -573,7 +594,10 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 	}
 
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	token, ld, now, created := "", LockDetails{}, time.Now(), false
 	if li == (lockInfo{}) {
 		// An empty lockInfo means to refresh the lock.
@@ -677,13 +701,19 @@ func (h *Handler) handleUnlock(w http.ResponseWriter, r *http.Request) (status i
 		return http.StatusBadRequest, errInvalidLockToken
 	}
 	t = t[1 : len(t)-1]
+	if t == "" {
+		return http.StatusBadRequest, errInvalidLockToken
+	}
 
 	reqPath, status, err := h.stripPrefix(r.URL.Path)
 	if err != nil {
 		return status, err
 	}
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
@@ -718,7 +748,10 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 	ctx := r.Context()
 	userAgent := r.Header.Get("User-Agent")
 	ctx = context.WithValue(ctx, conf.UserAgentKey, userAgent)
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	password, _ := ctx.Value(conf.MetaPassKey).(string)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
@@ -805,7 +838,10 @@ func (h *Handler) handleProppatch(w http.ResponseWriter, r *http.Request) (statu
 	defer release()
 
 	ctx := r.Context()
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err

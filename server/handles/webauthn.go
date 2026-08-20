@@ -231,7 +231,11 @@ func GetAuthnCredentials(c *gin.Context) {
 		FingerPrint string `json:"fingerprint"`
 	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
-	credentials := user.WebAuthnCredentials()
+	credentials, err := user.WebAuthnCredentials()
+	if err != nil {
+		common.FailResp(c, err)
+		return
+	}
 	res := make([]WebAuthnCredentials, 0, len(credentials))
 	for _, v := range credentials {
 		credential := WebAuthnCredentials{

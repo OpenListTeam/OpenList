@@ -94,7 +94,10 @@ func (a *AferoAdapter) GetHandle(name string, flags int, offset int64) (ftpserve
 	if (flags & os.O_APPEND) != 0 {
 		return nil, errs.NotSupport
 	}
-	user := a.ctx.Value(conf.UserKey).(*model.User)
+	user, ok := a.ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return nil, errs.PermissionDenied
+	}
 	path, err := user.JoinPath(name)
 	if err != nil {
 		return nil, err

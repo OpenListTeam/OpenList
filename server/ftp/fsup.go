@@ -32,7 +32,10 @@ type FileUploadProxy struct {
 }
 
 func uploadAuth(ctx context.Context, path string) error {
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return errs.PermissionDenied
+	}
 	if !user.CanFTPManage() {
 		return errs.PermissionDenied
 	}
@@ -101,7 +104,10 @@ func (f *FileUploadProxy) Close() error {
 	if _, err := f.buffer.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	user := f.ctx.Value(conf.UserKey).(*model.User)
+	user, ok := f.ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return errs.PermissionDenied
+	}
 	sf, borrow, err := MakeStage(f.ctx, f.buffer, size, f.path, func(target string) {
 		ctx := context.WithValue(context.Background(), conf.UserKey, user)
 		dstDir, dstBase := stdpath.Split(target)
@@ -121,7 +127,9 @@ func (f *FileUploadProxy) Close() error {
 		return fmt.Errorf("failed make stage for [%s]: %+v", f.path, err)
 	}
 	if f.trunc {
-		_ = fs.Remove(f.ctx, f.path)
+		if err := fs.Remove(f.ctx, f.path); err != nil {
+			return err
+		}
 	}
 	s := &stream.FileStream{
 		Obj: &model.Object{
@@ -242,8 +250,12 @@ func (f *FileUploadWithLengthProxy) Close() error {
 		if err != nil {
 			return err
 		}
-		err = <-f.errChan
-		return err
+		select {
+		case err = <-f.errChan:
+			return err
+		case <-time.After(5 * time.Minute):
+			return context.DeadlineExceeded
+		}
 	} else {
 		data := f.first512Bytes[:f.pFirst]
 		contentType := http.DetectContentType(data)

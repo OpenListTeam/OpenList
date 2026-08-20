@@ -68,7 +68,9 @@ func (x *ThunderX) Init(ctx context.Context) (err error) {
 					// 重新登录
 					token, err = x.Login(x.Username, x.Password)
 					if err != nil {
-						x.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
+						if storage := x.GetStorage(); storage != nil {
+						storage.SetStatus(fmt.Sprintf("%+v", err.Error()))
+					}
 						if token != nil && token.UserID != "" {
 							x.SetUserID(token.UserID)
 							x.UserAgent = BuildCustomUserAgent(utils.GetMD5EncodeStr(x.Username+x.Password), ClientID, PackageName, SdkVersion, ClientVersion, PackageName, token.UserID)
@@ -213,7 +215,9 @@ func (x *ThunderXExpert) Init(ctx context.Context) (err error) {
 			x.SetRefreshTokenFunc(func() error {
 				token, err := x.XunLeiXCommon.RefreshToken(x.TokenResp.RefreshToken)
 				if err != nil {
-					x.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
+					if storage := x.GetStorage(); storage != nil {
+						storage.SetStatus(fmt.Sprintf("%+v", err.Error()))
+					}
 				}
 				x.SetTokenResp(token)
 				op.MustSaveDriverStorage(x)
@@ -231,7 +235,9 @@ func (x *ThunderXExpert) Init(ctx context.Context) (err error) {
 				if err != nil {
 					token, err = x.Login(x.Username, x.Password)
 					if err != nil {
-						x.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
+						if storage := x.GetStorage(); storage != nil {
+						storage.SetStatus(fmt.Sprintf("%+v", err.Error()))
+					}
 					}
 				}
 				x.SetTokenResp(token)

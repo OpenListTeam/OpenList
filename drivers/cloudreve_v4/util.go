@@ -236,7 +236,9 @@ func (d *CloudreveV4) refreshToken() error {
 		if d.canLogin() {
 			return d.login()
 		}
-		d.GetStorage().SetStatus(fmt.Sprintf("Invalid RefreshToken: %s", err.Error()))
+		if storage := d.GetStorage(); storage != nil {
+			storage.SetStatus(fmt.Sprintf("Invalid RefreshToken: %s", err.Error()))
+		}
 		op.MustSaveDriverStorage(d)
 		return fmt.Errorf("invalid refresh token: %w", err)
 	}
@@ -254,7 +256,9 @@ func (d *CloudreveV4) refreshToken() error {
 				// try to login again
 				return d.login()
 			}
-			d.GetStorage().SetStatus("This session is no longer valid")
+			if storage := d.GetStorage(); storage != nil {
+				storage.SetStatus("This session is no longer valid")
+			}
 			op.MustSaveDriverStorage(d)
 			return ErrorIssueToken
 		}
@@ -322,7 +326,9 @@ func (d *CloudreveV4) isTokenExpired() bool {
 		var jwt AccessJWT
 		err = d.parseJWT(d.AccessToken, &jwt)
 		if err != nil {
-			d.GetStorage().SetStatus(fmt.Sprintf("Invalid AccessToken: %s", err.Error()))
+			if storage := d.GetStorage(); storage != nil {
+			storage.SetStatus(fmt.Sprintf("Invalid AccessToken: %s", err.Error()))
+		}
 			op.MustSaveDriverStorage(d)
 			return false
 		}
@@ -345,7 +351,9 @@ func (d *CloudreveV4) isTokenExpired() bool {
 					// try to login again
 					return true
 				}
-				d.GetStorage().SetStatus("This session is no longer valid")
+				if storage := d.GetStorage(); storage != nil {
+				storage.SetStatus("This session is no longer valid")
+			}
 				op.MustSaveDriverStorage(d)
 				return false
 			}

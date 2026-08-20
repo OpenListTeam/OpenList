@@ -143,7 +143,13 @@ func (d *GoogleDrive) refreshToken() error {
 
 		// load private key from string
 		privateKeyPem, _ := pem.Decode([]byte(jsonData.PrivateKey))
-		privateKey, _ := x509.ParsePKCS8PrivateKey(privateKeyPem.Bytes)
+		if privateKeyPem == nil {
+			return fmt.Errorf("failed to decode PEM block containing private key")
+		}
+		privateKey, err := x509.ParsePKCS8PrivateKey(privateKeyPem.Bytes)
+		if err != nil {
+			return err
+		}
 
 		jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256,
 			jwt.MapClaims{

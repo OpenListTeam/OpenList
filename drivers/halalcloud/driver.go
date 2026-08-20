@@ -88,7 +88,9 @@ func (d *HalalCloud) Init(ctx context.Context) error {
 	if d.Addition.RefreshToken == "" || !d.IsLogin() {
 		as, err := d.NewAuthServiceWithOauth()
 		if err != nil {
-			d.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
+			if storage := d.GetStorage(); storage != nil {
+			storage.SetStatus(fmt.Sprintf("%+v", err.Error()))
+		}
 			return err
 		}
 		d.HalalCommon.AuthService = as
@@ -215,7 +217,11 @@ func (d *HalalCloud) getLink(ctx context.Context, file model.Obj, args model.Lin
 	ctx1, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
-	result, err := client.ParseFileSlice(ctx1, (*pubUserFile.File)(file.(*Files)))
+	files, ok := file.(*Files)
+	if !ok {
+		return nil, fmt.Errorf("unsupported file type: %T", file)
+	}
+	result, err := client.ParseFileSlice(ctx1, (*pubUserFile.File)(files))
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +376,10 @@ func (d *HalalCloud) put(ctx context.Context, dstDir model.Obj, fileStream model
 	if err != nil {
 		return nil, err
 	}
-	u, _ := url.Parse(result.Endpoint)
+	u, err := url.Parse(result.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse endpoint: %w", err)
+	}
 	u.Host = "s3." + u.Host
 	result.Endpoint = u.String()
 	s, err := session.NewSession(&aws.Config{

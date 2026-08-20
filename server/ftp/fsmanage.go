@@ -14,7 +14,10 @@ import (
 )
 
 func Mkdir(ctx context.Context, path string) error {
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return errs.PermissionDenied
+	}
 	if !user.CanFTPManage() {
 		return errs.PermissionDenied
 	}
@@ -37,7 +40,10 @@ func Mkdir(ctx context.Context, path string) error {
 }
 
 func Remove(ctx context.Context, path string) error {
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return errs.PermissionDenied
+	}
 	if !user.CanRemove() || !user.CanFTPManage() {
 		return errs.PermissionDenied
 	}
@@ -59,7 +65,10 @@ func Remove(ctx context.Context, path string) error {
 }
 
 func Rename(ctx context.Context, oldPath, newPath string) error {
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return errs.PermissionDenied
+	}
 	srcPath, err := user.JoinPath(oldPath)
 	if err != nil {
 		return err

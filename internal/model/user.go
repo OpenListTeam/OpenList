@@ -258,13 +258,12 @@ func (u *User) WebAuthnDisplayName() string {
 	return u.Username
 }
 
-func (u *User) WebAuthnCredentials() []webauthn.Credential {
+func (u *User) WebAuthnCredentials() ([]webauthn.Credential, error) {
 	var res []webauthn.Credential
-	err := json.Unmarshal([]byte(u.Authn), &res)
-	if err != nil {
-		fmt.Println(err)
+	if err := json.Unmarshal([]byte(u.Authn), &res); err != nil {
+		return nil, err
 	}
-	return res
+	return res, nil
 }
 
 func (u *User) WebAuthnIcon() string {

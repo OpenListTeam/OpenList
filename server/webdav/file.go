@@ -37,7 +37,10 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	dstDir := path.Dir(dst)
 	srcName := path.Base(src)
 	dstName := path.Base(dst)
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	if srcDir != dstDir && !user.CanMove() {
 		return http.StatusForbidden, nil
 	}
@@ -80,7 +83,10 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int, err error) {
 	srcDir := path.Dir(src)
 	dstDir := path.Dir(dst)
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return http.StatusForbidden, errs.PermissionDenied
+	}
 	if !user.CanCopy() {
 		return http.StatusForbidden, nil
 	}
@@ -141,16 +147,10 @@ func walkFS(ctx context.Context, depth int, name string, info model.Obj, walkFn 
 
 	for _, fileInfo := range objs {
 		filename := path.Join(name, fileInfo.GetName())
-		if err != nil {
-			if err := walkFn(filename, fileInfo, err); err != nil && err != filepath.SkipDir {
-				return err
-			}
-		} else {
-			err = walkFS(ctx, depth, filename, fileInfo, walkFn)
-			if err != nil {
-				if !fileInfo.IsDir() || err != filepath.SkipDir {
-					return err
-				}
+		walkErr := walkFS(ctx, depth, filename, fileInfo, walkFn)
+		if walkErr != nil {
+			if !fileInfo.IsDir() || walkErr != filepath.SkipDir {
+				return walkErr
 			}
 		}
 	}

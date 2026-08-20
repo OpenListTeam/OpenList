@@ -82,7 +82,9 @@ func (x *Thunder) Init(ctx context.Context) (err error) {
 					// 重新登录
 					token, err = x.Login(x.Username, x.Password)
 					if err != nil {
-						x.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
+						if storage := x.GetStorage(); storage != nil {
+						storage.SetStatus(fmt.Sprintf("%+v", err.Error()))
+					}
 						op.MustSaveDriverStorage(x)
 					}
 					// 清空 信任密钥
@@ -217,7 +219,9 @@ func (x *ThunderExpert) Init(ctx context.Context) (err error) {
 			x.SetRefreshTokenFunc(func() error {
 				token, err := x.XunLeiCommon.RefreshToken(x.TokenResp.RefreshToken)
 				if err != nil {
-					x.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
+					if storage := x.GetStorage(); storage != nil {
+						storage.SetStatus(fmt.Sprintf("%+v", err.Error()))
+					}
 				}
 				x.SetTokenResp(token)
 				op.MustSaveDriverStorage(x)
@@ -237,7 +241,9 @@ func (x *ThunderExpert) Init(ctx context.Context) (err error) {
 				if err != nil {
 					token, err = x.Login(x.Username, x.Password)
 					if err != nil {
-						x.GetStorage().SetStatus(fmt.Sprintf("%+v", err.Error()))
+						if storage := x.GetStorage(); storage != nil {
+						storage.SetStatus(fmt.Sprintf("%+v", err.Error()))
+					}
 					}
 					// 清空 信任密钥
 					x.ExpertAddition.CreditKey = ""

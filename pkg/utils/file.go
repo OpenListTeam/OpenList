@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"io"
 	"mime"
 	"os"
@@ -62,11 +61,11 @@ func CopyDir(src, dst string) error {
 
 		if fd.IsDir() {
 			if err = CopyDir(srcfp, dstfp); err != nil {
-				fmt.Println(err)
+				return err
 			}
 		} else {
 			if err = CopyFile(srcfp, dstfp); err != nil {
-				fmt.Println(err)
+				return err
 			}
 		}
 	}

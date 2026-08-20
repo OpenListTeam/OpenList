@@ -25,13 +25,17 @@ type FileDownloadProxy struct {
 }
 
 func OpenDownload(ctx context.Context, reqPath string, offset int64) (*FileDownloadProxy, error) {
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return nil, errs.PermissionDenied
+	}
 	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
+	metaPass, _ := ctx.Value(conf.MetaPassKey).(string)
+	if !common.CanAccess(user, meta, reqPath, metaPass) {
 		return nil, errs.PermissionDenied
 	}
 
@@ -113,7 +117,10 @@ func (o *OsFileInfoAdapter) Sys() any {
 }
 
 func Stat(ctx context.Context, path string) (os.FileInfo, error) {
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return nil, errs.PermissionDenied
+	}
 	reqPath, err := user.JoinPath(path)
 	if err != nil {
 		return nil, err
@@ -123,7 +130,8 @@ func Stat(ctx context.Context, path string) (os.FileInfo, error) {
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
+	metaPass, _ := ctx.Value(conf.MetaPassKey).(string)
+	if !common.CanAccess(user, meta, reqPath, metaPass) {
 		return nil, errs.PermissionDenied
 	}
 	if ret, err := StatStage(reqPath); !errors.Is(err, errs.ObjectNotFound) {
@@ -137,7 +145,10 @@ func Stat(ctx context.Context, path string) (os.FileInfo, error) {
 }
 
 func List(ctx context.Context, path string) ([]os.FileInfo, error) {
-	user := ctx.Value(conf.UserKey).(*model.User)
+	user, ok := ctx.Value(conf.UserKey).(*model.User)
+	if !ok || user == nil {
+		return nil, errs.PermissionDenied
+	}
 	reqPath, err := user.JoinPath(path)
 	if err != nil {
 		return nil, err
@@ -147,7 +158,8 @@ func List(ctx context.Context, path string) ([]os.FileInfo, error) {
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
+	metaPass, _ := ctx.Value(conf.MetaPassKey).(string)
+	if !common.CanAccess(user, meta, reqPath, metaPass) {
 		return nil, errs.PermissionDenied
 	}
 	objs, err := fs.List(ctx, reqPath, &fs.ListArgs{})

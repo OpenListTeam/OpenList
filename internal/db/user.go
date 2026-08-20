@@ -72,7 +72,10 @@ func RegisterAuthn(u *model.User, credential *webauthn.Credential) error {
 	if u == nil {
 		return errors.New("user is nil")
 	}
-	exists := u.WebAuthnCredentials()
+	exists, err := u.WebAuthnCredentials()
+	if err != nil {
+		return err
+	}
 	if credential != nil {
 		exists = append(exists, *credential)
 	}
@@ -84,7 +87,10 @@ func RegisterAuthn(u *model.User, credential *webauthn.Credential) error {
 }
 
 func RemoveAuthn(u *model.User, id string) error {
-	exists := u.WebAuthnCredentials()
+	exists, err := u.WebAuthnCredentials()
+	if err != nil {
+		return err
+	}
 	for i := 0; i < len(exists); i++ {
 		idEncoded := base64.StdEncoding.EncodeToString(exists[i].ID)
 		if idEncoded == id {

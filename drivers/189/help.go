@@ -29,11 +29,22 @@ func random() string {
 func RsaEncode(origData []byte, j_rsakey string, hex bool) string {
 	publicKey := []byte("-----BEGIN PUBLIC KEY-----\n" + j_rsakey + "\n-----END PUBLIC KEY-----")
 	block, _ := pem.Decode(publicKey)
-	pubInterface, _ := x509.ParsePKIXPublicKey(block.Bytes)
-	pub := pubInterface.(*rsa.PublicKey)
+	if block == nil {
+		return ""
+	}
+	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		log.Errorf("err: %s", err.Error())
+		return ""
+	}
+	pub, ok := pubInterface.(*rsa.PublicKey)
+	if !ok {
+		return ""
+	}
 	b, err := rsa.EncryptPKCS1v15(rand.Reader, pub, origData)
 	if err != nil {
 		log.Errorf("err: %s", err.Error())
+		return ""
 	}
 	res := base64.StdEncoding.EncodeToString(b)
 	if hex {
