@@ -8,11 +8,25 @@ on:
 jobs:
   backup:
     runs-on: ubuntu-latest
-    if: ${{ secrets.SUPABASE_DB_URL != '' }}
     steps:
+      - name: Check secrets
+        id: check
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "SUPABASE_DB_URL not set — skip"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install pg_dump
+        if: steps.check.outputs.present == 'true'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
       - name: Dump
+        if: steps.check.outputs.present == 'true'
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
@@ -21,17 +35,24 @@ jobs:
           pg_dump "$SUPABASE_DB_URL" --no-owner --no-acl | gzip -9 > "$FILE"
           echo "FILE=$FILE" >> "$GITHUB_ENV"
           ls -lh "$FILE"
+
       - uses: actions/upload-artifact@v4
+        if: steps.check.outputs.present == 'true'
         with:
           name: openbox-db-backup
           path: "*.sql.gz"
           retention-days: 14
-      - name: Upload to Supabase Storage
-        if: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' && secrets.SUPABASE_PROJECT_REF != '' }}
+
+      - name: Ensure bucket + upload
+        if: steps.check.outputs.present == 'true'
         env:
           REF: ${{ secrets.SUPABASE_PROJECT_REF }}
           KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          if [ -z "$REF" ] || [ -z "$KEY" ]; then
+            echo "Storage upload skipped (missing REF/KEY)"
+            exit 0
+          fi
           curl -sS -X POST "https://${REF}.supabase.co/storage/v1/bucket" \
             -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
             -H "Content-Type: application/json" \
