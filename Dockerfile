@@ -31,6 +31,7 @@ USER ${USER}
 RUN /entrypoint.sh version
 
 ENV UMASK=022 RUN_ARIA2=${INSTALL_ARIA2}
-VOLUME /opt/openlist/data/
+# Railway: volume mounted externally; do not declare Docker VOLUME
 EXPOSE 5244 5245
-CMD [ "/entrypoint.sh" ]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["server"]
