@@ -1,0 +1,9 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "./Dockerfile.railway"
+
+[deploy]
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/api/public/settings"
+healthcheckTimeout = 100

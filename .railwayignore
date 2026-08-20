@@ -1,0 +1,16 @@
+.git/
+.github/
+.idea/
+.DS_Store
+build/
+dist/
+*.db
+*.bin
+*.test
+*.out
+/tmp/
+/log/
+/lang/
+/daemon/
+/public/dist/*
+!/public/dist/README.md

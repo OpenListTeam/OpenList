@@ -5,6 +5,16 @@ umask ${UMASK}
 if [ "$1" = "version" ]; then
   ./openlist version
 else
+  # Railway provides a dynamic PORT; map it to OpenList's HTTP_PORT when needed.
+  if [ -z "$HTTP_PORT" ] && [ -n "$PORT" ]; then
+    export HTTP_PORT="$PORT"
+  fi
+
+  # Ensure data directory exists
+  if [ ! -d ./data ]; then
+    mkdir -p ./data
+  fi
+
   # Check file of /opt/openlist/data permissions for current user
   # 检查当前用户是否有当前目录的写和执行权限
   if [ -d ./data ]; then
