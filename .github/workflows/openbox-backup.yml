@@ -1,0 +1,42 @@
+name: Open-Box Backup Supabase
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SUPABASE_DB_URL != '' }}
+    steps:
+      - name: Install pg_dump
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Dump
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          FILE="openbox-db-${STAMP}.sql.gz"
+          pg_dump "$SUPABASE_DB_URL" --no-owner --no-acl | gzip -9 > "$FILE"
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+          ls -lh "$FILE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openbox-db-backup
+          path: "*.sql.gz"
+          retention-days: 14
+      - name: Upload to Supabase Storage
+        if: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' && secrets.SUPABASE_PROJECT_REF != '' }}
+        env:
+          REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -sS -X POST "https://${REF}.supabase.co/storage/v1/bucket" \
+            -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"id":"open-box-backups","name":"open-box-backups","public":false}' || true
+          curl -sS -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}" \
+            -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
+            -H "Content-Type: application/gzip" \
+            --data-binary "@${FILE}" -w "\nHTTP %{http_code}\n"

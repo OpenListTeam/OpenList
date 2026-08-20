@@ -1,0 +1,56 @@
+name: Open-Box PR Gate
+
+on:
+  pull_request:
+    branches: [staging, main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Risk scan
+        id: risk
+        run: |
+          set -euo pipefail
+          git fetch origin ${{ github.base_ref }} --depth=50
+          RISK=low
+          NOTES=""
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E 'Dockerfile|entrypoint|go.mod|internal/bootstrap' >/dev/null; then
+            RISK=high
+            NOTES="${NOTES}- Critical paths changed (Docker/bootstrap/deps)."$'\n'
+          fi
+          if git diff origin/${{ github.base_ref }}...HEAD | grep -E '^\+\s*VOLUME\s' >/dev/null; then
+            RISK=blocker
+            NOTES="${NOTES}- BLOCKER: Dockerfile reintroduces VOLUME (breaks Railway)."$'\n'
+          fi
+          echo "level=$RISK" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$RISK" = "blocker" ]; then
+            echo "Blocking PR due to VOLUME"
+            exit 1
+          fi
+
+      - name: Comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "## Open-Box automated gate
+
+**Risk:** \`${{ steps.risk.outputs.level }}\`
+
+${{ steps.risk.outputs.notes }}
+
+Policy: \`blocker\` fails CI. \`high\` requires human review + staging smoke. Never merge upstream-sync/* directly to main." || true

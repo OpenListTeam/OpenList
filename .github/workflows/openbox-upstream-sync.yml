@@ -1,0 +1,76 @@
+name: Open-Box Upstream Sync
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "Upstream tag or branch (empty = upstream default)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "Open-Box Platform Bot"
+          git config user.email "open-box-bot@users.noreply.github.com"
+          git remote add upstream https://github.com/OpenListTeam/OpenList.git || true
+          git fetch upstream --tags --force
+
+      - name: Create upstream-sync branch and PR to staging
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_REF: ${{ github.event.inputs.upstream_ref }}
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y%m%d)
+          if [ -n "${UPSTREAM_REF}" ]; then
+            REF="$UPSTREAM_REF"
+          else
+            REF=$(git rev-parse upstream/main 2>/dev/null || git rev-parse upstream/master)
+          fi
+          SHORT=$(echo "$REF" | cut -c1-7)
+          BRANCH="upstream-sync/${DATE}-${SHORT}"
+          git checkout -B "$BRANCH" origin/staging 2>/dev/null || git checkout -B "$BRANCH" origin/main
+          if git merge "$REF" --no-edit; then
+            STATUS="clean"
+          else
+            STATUS="conflicts"
+            git add -A
+            git commit -m "chore(sync): upstream merge requires conflict resolution" || true
+          fi
+          # Guard: never allow VOLUME back in
+          if grep -nE '^\s*VOLUME\s' Dockerfile 2>/dev/null; then
+            echo "BLOCKER: VOLUME reintroduced in Dockerfile"
+            exit 1
+          fi
+          git push -u origin "$BRANCH" --force-with-lease
+          gh pr create --base staging --head "$BRANCH" \
+            --title "chore(sync): upstream ${REF} (${STATUS})" \
+            --body "## Open-Box upstream synchronization
+
+**Status:** ${STATUS}
+**Upstream ref:** \`${REF}\`
+**Target base:** \`staging\` (never main)
+
+### Checklist before merge to staging
+- [ ] CI green
+- [ ] Dockerfile remains Railway-safe (no VOLUME)
+- [ ] No destructive DB changes without migration note
+- [ ] Smoke plan for staging
+
+After staging validation, open a separate PR: staging → main." \
+            --draft || echo "PR may already exist"
