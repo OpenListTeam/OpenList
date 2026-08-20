@@ -6,4 +6,4 @@ dockerfilePath = "./Dockerfile.railway"
 restartPolicyType = "on-failure"
 restartPolicyMaxRetries = 10
 healthcheckPath = "/api/public/settings"
-healthcheckTimeout = 100
+healthcheckTimeout = 300

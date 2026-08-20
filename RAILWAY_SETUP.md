@@ -39,6 +39,7 @@ Go to your service → **Variables** tab and add:
 | `RUN_ARIA2` | `false` | Enable aria2 (optional, increases build time) |
 | `INSTALL_FFMPEG` | `false` | Install ffmpeg (optional, increases build time) |
 | `INSTALL_ARIA2` | `false` | Install aria2 (optional, increases build time) |
+| `GITHUB_TOKEN` | `<your_token>` | GitHub token to avoid API rate limits when downloading the frontend (optional) |
 
 > **Note:** Railway's dynamic `PORT` is automatically mapped to `HTTP_PORT` by the entrypoint script. You do **not** need to manually set `HTTP_PORT=$PORT`.
 
@@ -109,11 +110,14 @@ Edit `railway.json` or `railway.toml` to customize:
 - Check build logs for missing dependencies
 - Ensure `go.mod` and `go.sum` are present
 - Try rebuilding with `INSTALL_FFMPEG=false` and `INSTALL_ARIA2=false`
+- If the build fails while downloading the frontend, add a `GITHUB_TOKEN` variable with a GitHub personal access token to avoid API rate limits
+- As a fallback, you can change `bash build.sh release docker` to `bash build.sh dev docker` in `Dockerfile.railway` to skip frontend version pinning
 
 ### Port Not Accessible
 
-- Ensure `HTTP_PORT=$PORT` is set
+- The entrypoint automatically maps Railway's `PORT` to `HTTP_PORT`
 - Check that the service is listening on `0.0.0.0` (default)
+- Ensure no other process is using the assigned port
 
 ### Data Lost After Redeploy
 
