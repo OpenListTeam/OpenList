@@ -1,0 +1,73 @@
+name: Open-Box Auto Review
+
+on:
+  pull_request:
+    branches: [staging, main, develop]
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Static risk rules
+        id: scan
+        run: |
+          set -euo pipefail
+          git fetch origin ${{ github.base_ref }} --depth=50
+          NOTES=""
+          LEVEL=ok
+          if git diff origin/${{ github.base_ref }}...HEAD | grep -E '^\+\s*VOLUME\s' >/dev/null; then
+            LEVEL=blocker
+            NOTES="${NOTES}- BLOCKER: Dockerfile VOLUME reintroduced"$'\n'
+          fi
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '(^|/)Dockerfile$' >/dev/null; then
+            NOTES="${NOTES}- Dockerfile changed — Railway build path review required"$'\n'
+            LEVEL=review
+          fi
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E 'go.mod|go.sum' >/dev/null; then
+            NOTES="${NOTES}- Dependency lockfile changed"$'\n'
+            [ "$LEVEL" = "ok" ] && LEVEL=review
+          fi
+          if git diff origin/${{ github.base_ref }}...HEAD | grep -Ei 'DROP TABLE|TRUNCATE|rm -rf|/opt/openlist/data' >/dev/null; then
+            NOTES="${NOTES}- Possible destructive path detected"$'\n'
+            LEVEL=blocker
+          fi
+          echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$LEVEL" = "blocker" ]; then exit 1; fi
+      - name: Comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "## Open-Box auto review
+
+**Level:** \`${{ steps.scan.outputs.level }}\`
+
+${{ steps.scan.outputs.notes }}
+
+Rules: never merge \`upstream-sync/*\` to \`main\` directly. Staging first. Protect Railway volume and Supabase data." || true
+
+  issue-triage:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label hint
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body=$(jq -r .issue.body < "$GITHUB_EVENT_PATH" | head -c 200)
+          echo "Issue opened. Manual triage recommended. Body prefix: $body"

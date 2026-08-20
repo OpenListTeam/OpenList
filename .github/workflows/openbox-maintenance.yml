@@ -1,0 +1,68 @@
+name: Open-Box Maintenance
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Production smoke
+        run: |
+          set -euo pipefail
+          URL="${{ secrets.SITE_URL || 'https://openlist-railway-production-2100.up.railway.app' }}"
+          code=$(curl -sS -o /tmp/p -w "%{http_code}" "$URL/ping" || true)
+          body=$(cat /tmp/p || true)
+          echo "ping=$code body=$body"
+          test "$code" = "200"
+          test "$body" = "pong"
+
+      - name: Settings check
+        run: |
+          URL="https://openlist-railway-production-2100.up.railway.app"
+          curl -sS "$URL/api/public/settings" | tee /tmp/settings.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("/tmp/settings.json"))
+          assert d.get("code")==200
+          title=(d.get("data") or {}).get("site_title","")
+          print("site_title", title)
+          PY
+
+  backup-db:
+    runs-on: ubuntu-latest
+    needs: health
+    steps:
+      - name: Dump if secret present
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "SUPABASE_DB_URL missing — skip"
+            exit 0
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          FILE="openbox-db-${STAMP}.sql.gz"
+          pg_dump "$SUPABASE_DB_URL" --no-owner --no-acl | gzip -9 > "$FILE"
+          ls -lh "$FILE"
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        if: env.FILE != ''
+        with:
+          name: openbox-maintenance-backup
+          path: "*.sql.gz"
+          retention-days: 14
+      - name: Upload Storage
+        if: env.FILE != ''
+        env:
+          REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "${REF:-}" ] || [ -z "${KEY:-}" ]; then exit 0; fi
+          curl -sS -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}" \
+            -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
+            -H "Content-Type: application/gzip" \
+            --data-binary "@${FILE}" -w "\nHTTP %{http_code}\n" || true
