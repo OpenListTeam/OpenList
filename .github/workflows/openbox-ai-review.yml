@@ -52,7 +52,7 @@ jobs:
           key=os.environ.get("OPENROUTER_API_KEY") or ""
           if key:
             url="https://openrouter.ai/api/v1/chat/completions"
-            model="nvidia/llama-3.1-nemotron-70b-instruct"
+            model="meta-llama/llama-3.1-8b-instruct"
             auth=key
           else:
             url="https://integrate.api.nvidia.com/v1/chat/completions"
