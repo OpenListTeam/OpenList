@@ -100,7 +100,7 @@ func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
 	}
 }
 
-func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
+func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, dstName string, skipHook ...bool) (task.TaskExtensionInfo, error) {
 	srcStorage, srcObjActualPath, err := op.GetStorageAndActualPath(srcObjPath)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed get src storage")
@@ -117,6 +117,12 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 		if taskType == copy || taskType == merge {
 			err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
 			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
+				if err == nil && dstName != "" {
+					srcObjName := stdpath.Base(srcObjActualPath)
+					if srcObjName != dstName {
+						err = op.Rename(ctx, srcStorage, stdpath.Join(dstDirActualPath, srcObjName), dstName)
+					}
+				}
 				return nil, err
 			}
 		} else {
@@ -134,6 +140,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 			DstStorage:    dstStorage,
 			SrcActualPath: srcObjActualPath,
 			DstActualPath: dstDirActualPath,
+			DstName:       dstName,
 			SrcStorageMp:  srcStorage.GetStorage().MountPath,
 			DstStorageMp:  dstStorage.GetStorage().MountPath,
 		},
@@ -189,9 +196,14 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		if err != nil {
 			return errors.WithMessagef(err, "failed list src [%s] objs", t.SrcActualPath)
 		}
-		dstActualPath := stdpath.Join(t.DstActualPath, srcObj.GetName())
-		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstActualPath))
-
+		dstName := srcObj.GetName()
+		if t.DstName != "" {
+			dstName = t.DstName
+		}
+		dstActualPath := stdpath.Join(t.DstActualPath, dstName)
+		if err := op.MakeDir(t.Ctx(), t.DstStorage, dstActualPath); err != nil {
+			return errors.WithMessagef(err, "failed create dst dir [%s]", dstActualPath)
+		}
 		existedObjs := make(map[string]bool)
 		if t.TaskType == merge {
 			dstObjs, err := op.List(t.Ctx(), t.DstStorage, dstActualPath, model.ListArgs{})
@@ -250,8 +262,12 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		return errors.WithMessagef(err, "failed get [%s] link", t.SrcActualPath)
 	}
 	// any link provided is seekable
+	streamObj := srcObj
+	if t.DstName != "" {
+		streamObj = &model.ObjWrapName{Name: t.DstName, Obj: srcObj}
+	}
 	ss, err := stream.NewSeekableStream(&stream.FileStream{
-		Obj: srcObj,
+		Obj: streamObj,
 		Ctx: t.Ctx(),
 	}, link)
 	if err != nil {

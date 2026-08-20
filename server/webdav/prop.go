@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"gorm.io/gorm"
 )
 
 // Proppatch describes a property update instruction as defined in RFC 4918.
@@ -170,79 +172,39 @@ var liveProps = map[xml.Name]struct {
 // TODO(nigeltao) merge props and allprop?
 
 // Props returns the status of the properties named pnames for resource name.
-//
-// Each Propstat has a unique status and each property name will only be part
-// of one Propstat element.
-func props(ctx context.Context, ls LockSystem, fi model.Obj, pnames []xml.Name) ([]Propstat, error) {
-	//f, err := fs.OpenFile(ctx, name, os.O_RDONLY, 0)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//defer f.Close()
-	//fi, err := f.Stat()
-	//if err != nil {
-	//	return nil, err
-	//}
+func props(ctx context.Context, ls LockSystem, name string, fi model.Obj, pnames []xml.Name) ([]Propstat, error) {
 	isDir := fi.IsDir()
-
-	var deadProps map[xml.Name]Property
-	// ??? what is this for?
-	//if dph, ok := f.(DeadPropsHolder); ok {
-	//	deadProps, err = dph.DeadProps()
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	//}
-
+	deadProps, err := getDeadProps(name)
+	if err != nil {
+		return nil, err
+	}
 	pstatOK := Propstat{Status: http.StatusOK}
 	pstatNotFound := Propstat{Status: http.StatusNotFound}
 	for _, pn := range pnames {
-		// If this file has dead properties, check if they contain pn.
 		if dp, ok := deadProps[pn]; ok {
 			pstatOK.Props = append(pstatOK.Props, dp)
 			continue
 		}
-		// Otherwise, it must either be a live property or we don't know it.
 		if prop := liveProps[pn]; prop.findFn != nil && (prop.dir || !isDir) {
 			innerXML, err := prop.findFn(ctx, ls, fi.GetName(), fi)
 			if err != nil {
 				return nil, err
 			}
-			pstatOK.Props = append(pstatOK.Props, Property{
-				XMLName:  pn,
-				InnerXML: []byte(innerXML),
-			})
+			pstatOK.Props = append(pstatOK.Props, Property{XMLName: pn, InnerXML: []byte(innerXML)})
 		} else {
-			pstatNotFound.Props = append(pstatNotFound.Props, Property{
-				XMLName: pn,
-			})
+			pstatNotFound.Props = append(pstatNotFound.Props, Property{XMLName: pn})
 		}
 	}
 	return makePropstats(pstatOK, pstatNotFound), nil
 }
 
 // Propnames returns the property names defined for resource name.
-func propnames(ctx context.Context, ls LockSystem, fi model.Obj) ([]xml.Name, error) {
-	//f, err := fs.OpenFile(ctx, name, os.O_RDONLY, 0)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//defer f.Close()
-	//fi, err := f.Stat()
-	//if err != nil {
-	//	return nil, err
-	//}
+func propnames(_ context.Context, _ LockSystem, name string, fi model.Obj) ([]xml.Name, error) {
 	isDir := fi.IsDir()
-
-	var deadProps map[xml.Name]Property
-	// ??? what is this for?
-	//if dph, ok := f.(DeadPropsHolder); ok {
-	//	deadProps, err = dph.DeadProps()
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	//}
-
+	deadProps, err := getDeadProps(name)
+	if err != nil {
+		return nil, err
+	}
 	pnames := make([]xml.Name, 0, len(liveProps)+len(deadProps))
 	for pn, prop := range liveProps {
 		if prop.findFn != nil && (prop.dir || !isDir) {
@@ -255,20 +217,12 @@ func propnames(ctx context.Context, ls LockSystem, fi model.Obj) ([]xml.Name, er
 	return pnames, nil
 }
 
-// Allprop returns the properties defined for resource name and the properties
-// named in include.
-//
-// Note that RFC 4918 defines 'allprop' to return the DAV: properties defined
-// within the RFC plus dead properties. Other live properties should only be
-// returned if they are named in 'include'.
-//
-// See http://www.webdav.org/specs/rfc4918.html#METHOD_PROPFIND
-func allprop(ctx context.Context, ls LockSystem, fi model.Obj, include []xml.Name) ([]Propstat, error) {
-	pnames, err := propnames(ctx, ls, fi)
+// Allprop returns the properties defined for resource name and the properties named in include.
+func allprop(ctx context.Context, ls LockSystem, name string, fi model.Obj, include []xml.Name) ([]Propstat, error) {
+	pnames, err := propnames(ctx, ls, name, fi)
 	if err != nil {
 		return nil, err
 	}
-	// Add names from include if they are not already covered in pnames.
 	nameset := make(map[xml.Name]bool)
 	for _, pn := range pnames {
 		nameset[pn] = true
@@ -278,11 +232,10 @@ func allprop(ctx context.Context, ls LockSystem, fi model.Obj, include []xml.Nam
 			pnames = append(pnames, pn)
 		}
 	}
-	return props(ctx, ls, fi, pnames)
+	return props(ctx, ls, name, fi, pnames)
 }
 
-// Patch patches the properties of resource name. The return values are
-// constrained in the same manner as DeadPropsHolder.Patch.
+// Patch patches the properties of resource name.
 func patch(ctx context.Context, ls LockSystem, name string, patches []Proppatch) ([]Propstat, error) {
 	conflict := false
 loop:
@@ -314,58 +267,115 @@ loop:
 		return makePropstats(pstatForbidden, pstatFailedDep), nil
 	}
 
-	// ------------------------------------------------------------
-	//f, err := fs.OpenFile(ctx, name, os.O_RDWR, 0)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//defer f.Close()
-	//if dph, ok := f.(DeadPropsHolder); ok {
-	//	ret, err := dph.Patch(patches)
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	//	// http://www.webdav.org/specs/rfc4918.html#ELEMENT_propstat says that
-	//	// "The contents of the prop XML element must only list the names of
-	//	// properties to which the result in the status element applies."
-	//	for _, pstat := range ret {
-	//		for i, p := range pstat.Props {
-	//			pstat.Props[i] = Property{XMLName: p.XMLName}
-	//		}
-	//	}
-	//	return ret, nil
-	//}
-	// ------------------------------------------------------------
-
-	// The file doesn't implement the optional DeadPropsHolder interface, so
-	// all patches are forbidden.
-	pstat := Propstat{Status: http.StatusForbidden}
-	for _, patch := range patches {
-		for _, p := range patch.Props {
-			pstat.Props = append(pstat.Props, Property{XMLName: p.XMLName})
+	database := db.GetDb()
+	if database == nil {
+		return nil, errors.New("webdav property database is not initialized")
+	}
+	pstat := Propstat{Status: http.StatusOK}
+	var err error
+	for attempt := 0; attempt < 10; attempt++ {
+		pstat.Props = nil
+		err = database.Transaction(func(tx *gorm.DB) error {
+			for _, patch := range patches {
+				for _, prop := range patch.Props {
+					if patch.Remove {
+						if err := tx.Where("path = ? AND namespace = ? AND name = ?", name, prop.XMLName.Space, prop.XMLName.Local).Delete(&model.WebDAVProperty{}).Error; err != nil {
+							return err
+						}
+					} else {
+						row := model.WebDAVProperty{
+							Path:      name,
+							Namespace: prop.XMLName.Space,
+							Name:      prop.XMLName.Local,
+						}
+						if err := tx.Where("path = ? AND namespace = ? AND name = ?", row.Path, row.Namespace, row.Name).
+							Assign(model.WebDAVProperty{Lang: prop.Lang, InnerXML: prop.InnerXML}).
+							FirstOrCreate(&row).Error; err != nil {
+							return err
+						}
+					}
+					pstat.Props = append(pstat.Props, Property{XMLName: prop.XMLName})
+				}
+			}
+			return nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "database is locked") {
+			break
 		}
+		time.Sleep(time.Duration(attempt+1) * 20 * time.Millisecond)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return []Propstat{pstat}, nil
 }
 
+func getDeadProps(path string) (map[xml.Name]Property, error) {
+	database := db.GetDb()
+	if database == nil {
+		return nil, errors.New("webdav property database is not initialized")
+	}
+	var rows []model.WebDAVProperty
+	if err := database.Where("path = ?", path).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	props := make(map[xml.Name]Property, len(rows))
+	for _, row := range rows {
+		props[xml.Name{Space: row.Namespace, Local: row.Name}] = Property{
+			XMLName:  xml.Name{Space: row.Namespace, Local: row.Name},
+			Lang:     row.Lang,
+			InnerXML: row.InnerXML,
+		}
+	}
+	return props, nil
+}
+
 func escapeXML(s string) string {
 	for i := 0; i < len(s); i++ {
-		// As an optimization, if s contains only ASCII letters, digits or a
-		// few special characters, the escaped value is s itself and we don't
-		// need to allocate a buffer and convert between string and []byte.
 		switch c := s[i]; {
 		case c == ' ' || c == '_' ||
-			('+' <= c && c <= '9') || // Digits as well as + , - . and /
+			('+' <= c && c <= '9') ||
 			('A' <= c && c <= 'Z') ||
 			('a' <= c && c <= 'z'):
 			continue
 		}
-		// Otherwise, go through the full escaping process.
 		var buf bytes.Buffer
 		xml.EscapeText(&buf, []byte(s))
 		return buf.String()
 	}
 	return s
+}
+
+func moveDeadProps(src, dst string) error {
+	database := db.GetDb()
+	if database == nil {
+		return errors.New("webdav property database is not initialized")
+	}
+	escapedSrc := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(src, "\\", "\\\\"), "%", "\\%"), "_", "\\_")
+	escapedDst := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(dst, "\\", "\\\\"), "%", "\\%"), "_", "\\_")
+	return database.Transaction(func(tx *gorm.DB) error {
+		// Clear destination subtree for overwrite MOVE.
+		if err := tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", dst, escapedDst+"/%").Delete(&model.WebDAVProperty{}).Error; err != nil {
+			return err
+		}
+		var rows []model.WebDAVProperty
+		if err := tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", src, escapedSrc+"/%").Find(&rows).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			newPath := dst + strings.TrimPrefix(row.Path, src)
+			copy := row
+			copy.ID = 0
+			copy.Path = newPath
+			if err := tx.Create(&copy).Error; err != nil {
+				return err
+			}
+			if err := tx.Delete(&row).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func findResourceType(ctx context.Context, ls LockSystem, name string, fi model.Obj) (string, error) {
