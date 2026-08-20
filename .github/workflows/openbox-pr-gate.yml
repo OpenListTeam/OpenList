@@ -20,16 +20,16 @@ jobs:
         id: risk
         run: |
           set -euo pipefail
-          git fetch origin ${{ github.base_ref }} --depth=50
+          git fetch origin "${{ github.base_ref }}" --depth=50
           RISK=low
           NOTES=""
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E 'Dockerfile|entrypoint|go.mod|internal/bootstrap' >/dev/null; then
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -E 'Dockerfile|entrypoint|go.mod|internal/bootstrap' >/dev/null; then
             RISK=high
-            NOTES="${NOTES}- Critical paths changed (Docker/bootstrap/deps)."$'\n'
+            NOTES="${NOTES}- Critical paths changed"$'\n'
           fi
-          if git diff origin/${{ github.base_ref }}...HEAD | grep -E '^\+\s*VOLUME\s' >/dev/null; then
+          if git diff "origin/${{ github.base_ref }}...HEAD" | grep -E '^\+\s*VOLUME\s' >/dev/null; then
             RISK=blocker
-            NOTES="${NOTES}- BLOCKER: Dockerfile reintroduces VOLUME (breaks Railway)."$'\n'
+            NOTES="${NOTES}- BLOCKER: Dockerfile reintroduces VOLUME"$'\n'
           fi
           echo "level=$RISK" >> "$GITHUB_OUTPUT"
           {
@@ -38,7 +38,6 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
           if [ "$RISK" = "blocker" ]; then
-            echo "Blocking PR due to VOLUME"
             exit 1
           fi
 
@@ -47,10 +46,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "## Open-Box automated gate
+          BODY=$(mktemp)
+          cat > "$BODY" << MSG
+          ## Open-Box automated gate
 
-**Risk:** \`${{ steps.risk.outputs.level }}\`
+          **Risk:** \`${{ steps.risk.outputs.level }}\`
 
-${{ steps.risk.outputs.notes }}
+          ${{ steps.risk.outputs.notes }}
 
-Policy: \`blocker\` fails CI. \`high\` requires human review + staging smoke. Never merge upstream-sync/* directly to main." || true
+          Policy: blocker fails CI. high requires human review plus staging smoke. Never merge upstream-sync branches directly to main.
+          MSG
+          gh pr comment ${{ github.event.pull_request.number }} --body-file "$BODY" || true

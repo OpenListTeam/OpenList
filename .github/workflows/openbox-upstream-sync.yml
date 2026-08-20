@@ -52,25 +52,28 @@ jobs:
             git add -A
             git commit -m "chore(sync): upstream merge requires conflict resolution" || true
           fi
-          # Guard: never allow VOLUME back in
           if grep -nE '^\s*VOLUME\s' Dockerfile 2>/dev/null; then
             echo "BLOCKER: VOLUME reintroduced in Dockerfile"
             exit 1
           fi
           git push -u origin "$BRANCH" --force-with-lease
+          BODY_FILE=$(mktemp)
+          cat > "$BODY_FILE" << BODY
+          ## Open-Box upstream synchronization
+
+          **Status:** ${STATUS}
+          **Upstream ref:** \`${REF}\`
+          **Target base:** \`staging\` (never main)
+
+          ### Checklist before merge to staging
+          - [ ] CI green
+          - [ ] Dockerfile remains Railway-safe (no VOLUME)
+          - [ ] No destructive DB changes without migration note
+          - [ ] Smoke plan for staging
+
+          After staging validation, open a separate PR: staging to main.
+          BODY
           gh pr create --base staging --head "$BRANCH" \
             --title "chore(sync): upstream ${REF} (${STATUS})" \
-            --body "## Open-Box upstream synchronization
-
-**Status:** ${STATUS}
-**Upstream ref:** \`${REF}\`
-**Target base:** \`staging\` (never main)
-
-### Checklist before merge to staging
-- [ ] CI green
-- [ ] Dockerfile remains Railway-safe (no VOLUME)
-- [ ] No destructive DB changes without migration note
-- [ ] Smoke plan for staging
-
-After staging validation, open a separate PR: staging → main." \
+            --body-file "$BODY_FILE" \
             --draft || echo "PR may already exist"
