@@ -83,9 +83,10 @@ type Cors struct {
 }
 
 type S3 struct {
-	Enable bool `json:"enable" env:"ENABLE"`
-	Port   int  `json:"port" env:"PORT"`
-	SSL    bool `json:"ssl" env:"SSL"`
+	Enable       bool   `json:"enable" env:"ENABLE"`
+	Port         int    `json:"port" env:"PORT"`
+	SSL          bool   `json:"ssl" env:"SSL"`
+	MultipartTTL string `json:"multipart_ttl" env:"MULTIPART_TTL"`
 }
 
 type FTP struct {

@@ -14,7 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/itsHenry35/gofakes3/signature"
+	"github.com/OpenListTeam/gofakes3/signature"
 )
 
 func redirectHandler(next http.Handler, authPairs map[string]string) http.Handler {
