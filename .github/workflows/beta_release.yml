@@ -18,13 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Create or update ref
         id: create-or-update-ref
-        uses: ovsds/create-or-update-ref-action@v1
+        uses: ovsds/create-or-update-ref-action@1157b2991820188d5a8e6f22656775d1d171f762 # v1
         with:
           ref: tags/beta
           sha: ${{ github.sha }}
@@ -51,7 +51,7 @@ jobs:
           gh release upload beta "CHANGELOG.md" --clobber
 
       - name: Upload assets to github artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: beta changelog
           path: ${{ github.workspace }}/CHANGELOG.md
@@ -108,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -124,7 +124,7 @@ jobs:
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Build
-        uses: OpenListTeam/cgo-actions@v1.2.5
+        uses: OpenListTeam/cgo-actions@6fcace5934c36d70503dba06e2396bb58b766130 # v1.2.5
         with:
           targets: ${{ matrix.target }}
           flags: ${{ matrix.flags || '-ldflags=' }}
@@ -185,7 +185,7 @@ jobs:
           echo "cleaned_target=$CLEANED_TARGET" >> $GITHUB_ENV
 
       - name: Upload assets to github artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: beta builds for ${{ env.cleaned_target }}
           path: ${{ github.workspace }}/build/compress/*

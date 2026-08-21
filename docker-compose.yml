@@ -11,4 +11,4 @@ services:
       - UMASK=022
       - TZ=Asia/Shanghai
     container_name: openlist
-    image: 'openlistteam/openlist:latest'
+    image: 'openlistteam/openlist:latest@sha256:3b9e56330ebf4aa40192e566bbbd79567591bb13c0ac252db02c41616cd75d1d'
