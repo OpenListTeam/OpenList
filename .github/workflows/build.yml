@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: benjlevesque/short-sha@dbe07338b37c456ce06d23409b35a56a7815eef4 # v4.0
         id: short-sha
@@ -42,7 +42,7 @@ jobs:
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Build
-        uses: OpenListTeam/cgo-actions@v1.2.5
+        uses: OpenListTeam/cgo-actions@6fcace5934c36d70503dba06e2396bb58b766130 # v1.2.5
         with:
           targets: ${{ matrix.target }}
           flags: ${{ contains(matrix.target, '-musl') && '-ldflags=-linkmode external -extldflags ''-static -fpic''' || '-ldflags=' }}
@@ -69,7 +69,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: openlist_${{ steps.short-sha.outputs.sha }}_${{ matrix.target }}
           path: build/*
