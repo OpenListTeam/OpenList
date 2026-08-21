@@ -1,6 +1,8 @@
 package huggingface
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -29,7 +31,7 @@ func (e *TreeEntry) toModelObj() *model.Object {
 }
 
 func (e *TreeEntry) Name() string {
-	if idx := lastIndexByte(e.Path, '/'); idx >= 0 {
+	if idx := strings.LastIndexByte(e.Path, '/'); idx >= 0 {
 		return e.Path[idx+1:]
 	}
 	return e.Path
@@ -78,22 +80,23 @@ type LFSAction struct {
 	Header map[string]interface{} `json:"header"`
 }
 
+type LFSBatchObjectError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *LFSBatchObjectError) Error() string {
+	return fmt.Sprintf("lfs error %d: %s", e.Code, e.Message)
+}
+
 type LFSBatchObject struct {
 	OID     string               `json:"oid"`
 	Size    int64                `json:"size"`
 	Actions map[string]LFSAction `json:"actions"`
+	Error   *LFSBatchObjectError `json:"error,omitempty"`
 }
 
 type LFSBatchResponse struct {
 	Transfer string           `json:"transfer"`
 	Objects  []LFSBatchObject `json:"objects"`
-}
-
-func lastIndexByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
 }

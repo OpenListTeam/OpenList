@@ -177,6 +177,7 @@ func (d *HuggingFace) streamCommit(ctx context.Context, cache model.File, filePa
 			UpdateProgress: up,
 		}))
 	if err != nil {
+		_ = pr.Close()
 		return fmt.Errorf("stream commit request build: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-ndjson")
@@ -226,6 +227,9 @@ func (d *HuggingFace) lfsUploadAndCommit(ctx context.Context, cache model.File, 
 		return errors.New("lfs batch returned empty objects")
 	}
 	obj := batchResp.Objects[0]
+	if obj.Error != nil {
+		return fmt.Errorf("lfs batch object error: %w", obj.Error)
+	}
 	if obj.Actions == nil {
 		return d.doCommitLFS(ctx, filePath, sha256Hex, size)
 	}
