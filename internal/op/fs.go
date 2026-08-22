@@ -814,6 +814,29 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 	return info, nil
 }
 
+func CompleteDirectUpload(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName, uploadToken string) (model.Obj, error) {
+	du, ok := storage.(driver.DirectUploadCompleter)
+	if !ok {
+		return nil, errors.WithStack(errs.NotImplement)
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	dstDirPath = utils.FixAndCleanPath(dstDirPath)
+	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
+	}
+	obj, err := du.CompleteDirectUpload(ctx, tool, dstDir, dstName, uploadToken)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
+	}
+	return obj, nil
+}
+
 func objsUpdateHook(ctx context.Context, storage driver.Driver, dirPath string, recursive bool) {
 	files, err := List(ctx, storage, dirPath, model.ListArgs{SkipHook: true})
 	if err != nil {

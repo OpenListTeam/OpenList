@@ -206,3 +206,11 @@ func GetDirectUploadInfo(ctx context.Context, tool, path, dstName string, fileSi
 	}
 	return info, err
 }
+
+func CompleteDirectUpload(ctx context.Context, tool, path, dstName, uploadToken string) (model.Obj, error) {
+	obj, err := completeDirectUpload(ctx, tool, path, dstName, uploadToken)
+	if err != nil {
+		log.Errorf("failed complete %s direct upload for %s: %+v", path, dstName, err)
+	}
+	return obj, err
+}
