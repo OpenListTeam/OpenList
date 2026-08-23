@@ -644,6 +644,8 @@ github.com/nwaples/rardecode/v2 v2.2.5 h1:L5doqgGfQwI7qADJMqnkrSB86rpPsqQDrHeO0H
 github.com/nwaples/rardecode/v2 v2.2.5/go.mod h1:7uz379lSxPe6j9nvzxUZ+n7mnJNgjsRNb6IbvGVHRmw=
 github.com/nwaples/rardecode/v2 v2.3.0 h1:CtgyxWm8ClLcSh1u4M58fOz6lmeb/j4V7KpaEi/6UtM=
 github.com/nwaples/rardecode/v2 v2.3.0/go.mod h1:7uz379lSxPe6j9nvzxUZ+n7mnJNgjsRNb6IbvGVHRmw=
+github.com/nwaples/rardecode/v2 v2.4.1 h1:F7zNW2LdAuuBThHWXQaiFUGVD/sef299NfWSB1nHAl4=
+github.com/nwaples/rardecode/v2 v2.4.1/go.mod h1:7uz379lSxPe6j9nvzxUZ+n7mnJNgjsRNb6IbvGVHRmw=
 github.com/panjf2000/ants/v2 v2.4.2/go.mod h1:f6F0NZVFsGCp5A7QW/Zj/m92atWwOkY0OIhFxRNFr4A=
 github.com/pelletier/go-toml/v2 v2.2.4 h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=
 github.com/pelletier/go-toml/v2 v2.2.4/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
