@@ -193,6 +193,9 @@ func transferStdPath(t *TransferTask) error {
 			return err
 		}
 		dstDirActualPath := stdpath.Join(t.DstActualPath, info.Name())
+		if err := op.MakeDir(t.Ctx(), t.DstStorage, dstDirActualPath); err != nil {
+			return errors.WithMessagef(err, "failed to make dst dir [%s]", dstDirActualPath)
+		}
 		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstDirActualPath))
 		for _, entry := range entries {
 			srcRawPath := stdpath.Join(t.SrcActualPath, entry.Name())
@@ -333,6 +336,9 @@ func transferObjPath(t *TransferTask) error {
 			return errors.WithMessagef(err, "failed list src [%s] objs", t.SrcActualPath)
 		}
 		dstDirActualPath := stdpath.Join(t.DstActualPath, srcObj.GetName())
+		if err := op.MakeDir(t.Ctx(), t.DstStorage, dstDirActualPath); err != nil {
+			return errors.WithMessagef(err, "failed to make dst dir [%s]", dstDirActualPath)
+		}
 		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstDirActualPath))
 		for _, obj := range objs {
 			if utils.IsCanceled(t.Ctx()) {

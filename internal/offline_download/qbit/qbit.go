@@ -24,6 +24,10 @@ type QBittorrent struct {
 	client qbittorrent.Client
 }
 
+func New(client qbittorrent.Client) *QBittorrent {
+	return &QBittorrent{client: client}
+}
+
 func (a *QBittorrent) Run(task *tool.DownloadTask) error {
 	return errs.NotSupport
 }
@@ -109,6 +113,9 @@ func (a *QBittorrent) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	info, err := a.client.GetInfo(task.GID)
 	if err != nil {
 		return nil, err
+	}
+	if info.SavePath != "" {
+		task.TempDir = info.SavePath
 	}
 	s := &tool.Status{}
 	s.TotalBytes = info.Size

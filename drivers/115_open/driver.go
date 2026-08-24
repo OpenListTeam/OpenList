@@ -171,7 +171,7 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = stdpath.Join(d.parentPath, path)
 	resp, err := d.client.GetFolderInfoByPath(ctx, path)
 	if err != nil {
-		if errors.Is(err, sdk.ErrObjectNotFound) {
+		if IsObjectNotFoundError(err) {
 			return nil, errs.ObjectNotFound
 		}
 		return nil, err
@@ -183,6 +183,14 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 		Sha1: resp.Sha1,
 		Pc:   resp.PickCode,
 	}, nil
+}
+
+func IsObjectNotFoundError(err error) bool {
+	if errors.Is(err, sdk.ErrObjectNotFound) {
+		return true
+	}
+	var sdkErr *sdk.Error
+	return errors.As(err, &sdkErr) && sdkErr.Code == 430004
 }
 
 func (d *Open115) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
