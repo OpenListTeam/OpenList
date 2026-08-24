@@ -170,7 +170,7 @@ var findKVReg = regexp.MustCompile(`'(.+?)':('?([^' },]*)'?)`) // 拆分kv
 
 // 根据key查询js变量
 func findJSVarFunc(key, data string) string {
-	re := regexp.MustCompile(`var\s+` + regexp.QuoteMeta(key) + `\s*=\s*['"]([^'"]*)['"]\s*;`)
+	re := regexp.MustCompile(`var\s+` + regexp.QuoteMeta(key) + `\s*=\s*['"]?([^'"]*)['"]?\s*;`)
 	matches := re.FindAllStringSubmatch(data, -1)
 	if len(matches) == 0 {
 		return ""
