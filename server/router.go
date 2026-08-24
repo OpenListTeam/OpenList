@@ -69,7 +69,7 @@ func Init(e *gin.Engine) {
 
 	api := g.Group("/api")
 	auth := api.Group("", middlewares.Auth(false))
-	webauthn := api.Group("/authn", middlewares.Authn)
+	passkeys := api.Group("/authn", middlewares.Auth(false), middlewares.AuthNotGuest)
 
 	api.POST("/auth/login", handles.Login)
 	api.POST("/auth/login/hash", handles.LoginHash)
@@ -92,10 +92,10 @@ func Init(e *gin.Engine) {
 	// webauthn
 	api.GET("/authn/webauthn_begin_login", handles.BeginAuthnLogin)
 	api.POST("/authn/webauthn_finish_login", handles.FinishAuthnLogin)
-	webauthn.GET("/webauthn_begin_registration", handles.BeginAuthnRegistration)
-	webauthn.POST("/webauthn_finish_registration", handles.FinishAuthnRegistration)
-	webauthn.POST("/delete_authn", handles.DeleteAuthnLogin)
-	webauthn.GET("/getcredentials", handles.GetAuthnCredentials)
+	passkeys.GET("/webauthn_begin_registration", handles.BeginAuthnRegistration)
+	passkeys.POST("/webauthn_finish_registration", handles.FinishAuthnRegistration)
+	passkeys.POST("/delete_authn", handles.DeleteAuthnLogin)
+	passkeys.GET("/getcredentials", handles.GetAuthnCredentials)
 
 	// no need auth
 	public := api.Group("/public")
