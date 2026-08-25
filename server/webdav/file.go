@@ -18,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 // slashClean is equivalent to but slightly more efficient than
@@ -52,7 +53,9 @@ func copyWithOverwrite(ctx context.Context, src, dstDir, dstName string) error {
 		}
 	}()
 
-	if _, err := fs.CopyTo(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir, stageName); err != nil {
+	stageCtx := context.WithValue(ctx, conf.NoTaskKey, struct{}{})
+	stageCtx = context.WithValue(stageCtx, conf.SkipNoOverwriteKey, struct{}{})
+	if _, err := fs.CopyTo(stageCtx, src, dstDir, stageName); err != nil {
 		return err
 	}
 	stageReady = true
@@ -71,7 +74,7 @@ func copyWithOverwrite(ctx context.Context, src, dstDir, dstName string) error {
 	}
 	stageReady = false
 	if err := fs.Remove(ctx, backupPath); err != nil {
-		return errors.WithMessage(err, "failed to remove overwrite backup")
+		log.Warnf("failed to remove COPY overwrite backup %s: %v", backupPath, err)
 	}
 	return nil
 }
@@ -90,7 +93,7 @@ func moveWithOverwrite(ctx context.Context, src, dst, dstDir, srcDir, srcName, d
 		return err
 	}
 	if err := fs.Remove(ctx, backupPath); err != nil {
-		return errors.WithMessage(err, "failed to remove overwrite backup")
+		log.Warnf("failed to remove MOVE overwrite backup %s: %v", backupPath, err)
 	}
 	return nil
 }

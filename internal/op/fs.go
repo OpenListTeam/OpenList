@@ -632,7 +632,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			if err != nil {
 				return errors.WithMessagef(err, "while uploading, failed remove existing file which size = 0")
 			}
-		} else if storage.Config().NoOverwriteUpload {
+		} else if storage.Config().NoOverwriteUpload && ctx.Value(conf.SkipNoOverwriteKey) == nil {
 			// try to rename old obj
 			err = Rename(ctx, storage, dstPath, tempName)
 			if err != nil {
