@@ -16,6 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )
 
@@ -26,6 +27,72 @@ func slashClean(name string) string {
 		name = "/" + name
 	}
 	return path.Clean(name)
+}
+
+func moveResource(ctx context.Context, src, dstDir, srcDir, srcName, dstName string) error {
+	if srcDir == dstDir {
+		return fs.Rename(ctx, src, dstName)
+	}
+	if _, err := fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir); err != nil {
+		return err
+	}
+	if srcName != dstName {
+		return fs.Rename(ctx, path.Join(dstDir, srcName), dstName)
+	}
+	return nil
+}
+
+func copyWithOverwrite(ctx context.Context, src, dstDir, dstName string) error {
+	stageName := ".openlist-copy-" + uuid.NewString()
+	stagePath := path.Join(dstDir, stageName)
+	stageReady := false
+	defer func() {
+		if stageReady {
+			_ = fs.Remove(ctx, stagePath)
+		}
+	}()
+
+	if _, err := fs.CopyTo(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir, stageName); err != nil {
+		return err
+	}
+	stageReady = true
+
+	backupName := ".openlist-backup-" + uuid.NewString()
+	backupPath := path.Join(dstDir, backupName)
+	if err := fs.Rename(ctx, path.Join(dstDir, dstName), backupName); err != nil {
+		return errors.WithMessage(err, "failed to stage overwrite destination")
+	}
+	if err := fs.Rename(ctx, stagePath, dstName); err != nil {
+		restoreErr := fs.Rename(ctx, backupPath, dstName)
+		if restoreErr != nil {
+			return errors.WithMessagef(err, "failed to install staged copy and restore destination: %v", restoreErr)
+		}
+		return errors.WithMessage(err, "failed to install staged copy")
+	}
+	stageReady = false
+	if err := fs.Remove(ctx, backupPath); err != nil {
+		return errors.WithMessage(err, "failed to remove overwrite backup")
+	}
+	return nil
+}
+
+func moveWithOverwrite(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string) error {
+	backupName := ".openlist-backup-" + uuid.NewString()
+	backupPath := path.Join(dstDir, backupName)
+	if err := fs.Rename(ctx, dst, backupName); err != nil {
+		return errors.WithMessage(err, "failed to stage overwrite destination")
+	}
+	if err := moveResource(ctx, src, dstDir, srcDir, srcName, dstName); err != nil {
+		restoreErr := fs.Rename(ctx, backupPath, dstName)
+		if restoreErr != nil {
+			return errors.WithMessagef(err, "move failed and destination restore failed: %v", restoreErr)
+		}
+		return err
+	}
+	if err := fs.Remove(ctx, backupPath); err != nil {
+		return errors.WithMessage(err, "failed to remove overwrite backup")
+	}
+	return nil
 }
 
 // moveFiles moves files and/or directories from src to dst.
@@ -55,6 +122,12 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
+	if _, err = fs.Get(ctx, src, &fs.GetArgs{}); err != nil {
+		if errs.IsObjectNotFound(err) {
+			return http.StatusNotFound, err
+		}
+		return http.StatusInternalServerError, err
+	}
 	if dstDirInfo, err := fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusConflict, err
@@ -69,19 +142,13 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 		if !overwrite {
 			return http.StatusPreconditionFailed, nil
 		}
-		if err = fs.Remove(ctx, dst); err != nil {
-			return http.StatusInternalServerError, err
-		}
 	} else if !errs.IsObjectNotFound(err) {
 		return http.StatusInternalServerError, err
 	}
-	if srcDir == dstDir {
-		err = fs.Rename(ctx, src, dstName)
+	if dstExisted && overwrite {
+		err = moveWithOverwrite(ctx, src, dst, dstDir, srcDir, srcName, dstName)
 	} else {
-		_, err = fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
-		if err == nil && srcName != dstName {
-			err = fs.Rename(ctx, path.Join(dstDir, srcName), dstName)
-		}
+		err = moveResource(ctx, src, dstDir, srcDir, srcName, dstName)
 	}
 	if err != nil {
 		return http.StatusInternalServerError, err
@@ -121,6 +188,12 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
+	if _, err = fs.Get(ctx, src, &fs.GetArgs{}); err != nil {
+		if errs.IsObjectNotFound(err) {
+			return http.StatusNotFound, err
+		}
+		return http.StatusInternalServerError, err
+	}
 	if dstDirInfo, err := fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusConflict, err
@@ -135,14 +208,15 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 		if !overwrite {
 			return http.StatusPreconditionFailed, nil
 		}
-		if err = fs.Remove(ctx, dst); err != nil {
-			return http.StatusInternalServerError, err
-		}
 	} else if !errs.IsObjectNotFound(err) {
 		return http.StatusInternalServerError, err
 	}
 
-	_, err = fs.CopyTo(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir, dstName)
+	if dstExisted && overwrite {
+		err = copyWithOverwrite(ctx, src, dstDir, dstName)
+	} else {
+		_, err = fs.CopyTo(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir, dstName)
+	}
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
