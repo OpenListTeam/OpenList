@@ -117,7 +117,7 @@ type LockDetails struct {
 func NewMemLS() LockSystem {
 	return &memLS{
 		byName:  make(map[string]*memLSNode),
-		byToken: make(map[string]*memLSNode),
+		byToken: make(map[string]*memLSLock),
 		gen:     uint64(time.Now().Unix()),
 	}
 }
@@ -125,7 +125,7 @@ func NewMemLS() LockSystem {
 type memLS struct {
 	mu      sync.Mutex
 	byName  map[string]*memLSNode
-	byToken map[string]*memLSNode
+	byToken map[string]*memLSLock
 	gen     uint64
 	// byExpiry only contains those nodes whose LockDetails have a finite
 	// Duration and are yet to expire.
@@ -151,7 +151,7 @@ func (m *memLS) Confirm(now time.Time, name0, name1 string, conditions ...Condit
 	defer m.mu.Unlock()
 	m.collectExpiredNodes(now)
 
-	var n0, n1 *memLSNode
+	var n0, n1 *memLSLock
 	if name0 != "" {
 		if n0 = m.lookup(slashClean(name0), conditions...); n0 == nil {
 			return nil, ErrConfirmationFailed
@@ -186,43 +186,43 @@ func (m *memLS) Confirm(now time.Time, name0, name1 string, conditions ...Condit
 	}, nil
 }
 
-func (m *memLS) lookup(name string, conditions ...Condition) *memLSNode {
+func (m *memLS) lookup(name string, conditions ...Condition) *memLSLock {
 	// TODO: support Condition.Not and Condition.ETag.
 	for _, c := range conditions {
-		n := m.byToken[c.Token]
-		if n == nil || n.held {
+		lock := m.byToken[c.Token]
+		if lock == nil || lock.held {
 			continue
 		}
-		if name == n.details.Root {
-			return n
+		if name == lock.details.Root {
+			return lock
 		}
-		if n.details.ZeroDepth {
+		if lock.details.ZeroDepth {
 			continue
 		}
-		if n.details.Root == "/" || strings.HasPrefix(name, n.details.Root+"/") {
-			return n
+		if lock.details.Root == "/" || strings.HasPrefix(name, lock.details.Root+"/") {
+			return lock
 		}
 	}
 	return nil
 }
 
-func (m *memLS) hold(n *memLSNode) {
-	if n.held {
+func (m *memLS) hold(lock *memLSLock) {
+	if lock.held {
 		panic("webdav: memLS inconsistent held state")
 	}
-	n.held = true
-	if n.details.Duration >= 0 && n.byExpiryIndex >= 0 {
-		heap.Remove(&m.byExpiry, n.byExpiryIndex)
+	lock.held = true
+	if lock.details.Duration >= 0 && lock.byExpiryIndex >= 0 {
+		heap.Remove(&m.byExpiry, lock.byExpiryIndex)
 	}
 }
 
-func (m *memLS) unhold(n *memLSNode) {
-	if !n.held {
+func (m *memLS) unhold(lock *memLSLock) {
+	if !lock.held {
 		panic("webdav: memLS inconsistent held state")
 	}
-	n.held = false
-	if n.details.Duration >= 0 {
-		heap.Push(&m.byExpiry, n)
+	lock.held = false
+	if lock.details.Duration >= 0 {
+		heap.Push(&m.byExpiry, lock)
 	}
 }
 
@@ -232,29 +232,23 @@ func (m *memLS) Create(now time.Time, details LockDetails) (string, error) {
 	m.collectExpiredNodes(now)
 	details.Root = slashClean(details.Root)
 
-	if details.Shared {
-		if n := m.byName[details.Root]; n != nil && n.token != "" && n.details.Shared && n.details.ZeroDepth == details.ZeroDepth && !n.held {
-			token := m.nextToken()
-			n.sharedTokens[token] = struct{}{}
-			m.byToken[token] = n
-			return token, nil
-		}
-	}
-	if !m.canCreate(details.Root, details.ZeroDepth) {
+	if !m.canCreate(details.Root, details.ZeroDepth, details.Shared) {
 		return "", ErrLocked
 	}
-	n := m.create(details.Root)
-	n.token = m.nextToken()
-	m.byToken[n.token] = n
-	n.details = details
-	if details.Shared {
-		n.sharedTokens = map[string]struct{}{n.token: {}}
+	node := m.create(details.Root)
+	lock := &memLSLock{
+		token:         m.nextToken(),
+		details:       details,
+		node:          node,
+		byExpiryIndex: -1,
 	}
-	if n.details.Duration >= 0 {
-		n.expiry = now.Add(n.details.Duration)
-		heap.Push(&m.byExpiry, n)
+	node.locks[lock.token] = lock
+	m.byToken[lock.token] = lock
+	if lock.details.Duration >= 0 {
+		lock.expiry = now.Add(lock.details.Duration)
+		heap.Push(&m.byExpiry, lock)
 	}
-	return n.token, nil
+	return lock.token, nil
 }
 
 func (m *memLS) Refresh(now time.Time, token string, duration time.Duration) (LockDetails, error) {
@@ -262,22 +256,22 @@ func (m *memLS) Refresh(now time.Time, token string, duration time.Duration) (Lo
 	defer m.mu.Unlock()
 	m.collectExpiredNodes(now)
 
-	n := m.byToken[token]
-	if n == nil {
+	lock := m.byToken[token]
+	if lock == nil {
 		return LockDetails{}, ErrNoSuchLock
 	}
-	if n.held {
+	if lock.held {
 		return LockDetails{}, ErrLocked
 	}
-	if n.byExpiryIndex >= 0 {
-		heap.Remove(&m.byExpiry, n.byExpiryIndex)
+	if lock.byExpiryIndex >= 0 {
+		heap.Remove(&m.byExpiry, lock.byExpiryIndex)
 	}
-	n.details.Duration = duration
-	if n.details.Duration >= 0 {
-		n.expiry = now.Add(n.details.Duration)
-		heap.Push(&m.byExpiry, n)
+	lock.details.Duration = duration
+	if lock.details.Duration >= 0 {
+		lock.expiry = now.Add(lock.details.Duration)
+		heap.Push(&m.byExpiry, lock)
 	}
-	return n.details, nil
+	return lock.details, nil
 }
 
 func (m *memLS) Unlock(now time.Time, token string) error {
@@ -285,41 +279,42 @@ func (m *memLS) Unlock(now time.Time, token string) error {
 	defer m.mu.Unlock()
 	m.collectExpiredNodes(now)
 
-	n := m.byToken[token]
-	if n == nil {
+	lock := m.byToken[token]
+	if lock == nil {
 		return ErrNoSuchLock
 	}
-	if n.held {
+	if lock.held {
 		return ErrLocked
 	}
-	if n.details.Shared {
-		delete(m.byToken, token)
-		delete(n.sharedTokens, token)
-		if len(n.sharedTokens) != 0 {
-			return nil
-		}
-	}
-	m.remove(n)
+	m.remove(lock)
 	return nil
 }
 
-func (m *memLS) canCreate(name string, zeroDepth bool) bool {
+func (m *memLS) canCreate(name string, zeroDepth bool, shared ...bool) bool {
+	wantShared := len(shared) > 0 && shared[0]
 	return walkToRoot(name, func(name0 string, first bool) bool {
 		n := m.byName[name0]
 		if n == nil {
 			return true
 		}
 		if first {
-			if n.token != "" {
-				// The target node is already locked.
-				return false
+			if len(n.locks) != 0 {
+				if !wantShared || (!zeroDepth && n.refCount != len(n.locks)) {
+					return false
+				}
+				for _, lock := range n.locks {
+					if !lock.details.Shared || lock.details.ZeroDepth != zeroDepth {
+						return false
+					}
+				}
+				return true
 			}
-			if !zeroDepth {
+			if !zeroDepth && n.refCount > 0 {
 				// The requested lock depth is infinite, and the fact that n exists
 				// (n != nil) means that a descendent of the target node is locked.
 				return false
 			}
-		} else if n.token != "" && !n.details.ZeroDepth {
+		} else if n.hasInfiniteLock() {
 			// An ancestor of the target node is locked with infinite depth.
 			return false
 		}
@@ -332,10 +327,8 @@ func (m *memLS) create(name string) (ret *memLSNode) {
 		n := m.byName[name0]
 		if n == nil {
 			n = &memLSNode{
-				details: LockDetails{
-					Root: name0,
-				},
-				byExpiryIndex: -1,
+				details: LockDetails{Root: name0},
+				locks:   make(map[string]*memLSLock),
 			}
 			m.byName[name0] = n
 		}
@@ -348,16 +341,10 @@ func (m *memLS) create(name string) (ret *memLSNode) {
 	return ret
 }
 
-func (m *memLS) remove(n *memLSNode) {
-	if n.details.Shared {
-		for token := range n.sharedTokens {
-			delete(m.byToken, token)
-		}
-	} else {
-		delete(m.byToken, n.token)
-	}
-	n.token = ""
-	walkToRoot(n.details.Root, func(name0 string, first bool) bool {
+func (m *memLS) remove(lock *memLSLock) {
+	delete(m.byToken, lock.token)
+	delete(lock.node.locks, lock.token)
+	walkToRoot(lock.details.Root, func(name0 string, first bool) bool {
 		x := m.byName[name0]
 		x.refCount--
 		if x.refCount == 0 {
@@ -365,8 +352,8 @@ func (m *memLS) remove(n *memLSNode) {
 		}
 		return true
 	})
-	if n.byExpiryIndex >= 0 {
-		heap.Remove(&m.byExpiry, n.byExpiryIndex)
+	if lock.byExpiryIndex >= 0 {
+		heap.Remove(&m.byExpiry, lock.byExpiryIndex)
 	}
 }
 
@@ -387,25 +374,33 @@ func walkToRoot(name string, f func(name0 string, first bool) bool) bool {
 }
 
 type memLSNode struct {
-	// details are the lock metadata. Even if this node's name is not explicitly locked,
-	// details.Root will still equal the node's name.
+	// details identifies the resource path represented by this node.
 	details LockDetails
-	// token is the unique identifier for this node's lock. An empty token means that
-	// this node is not explicitly locked.
-	token string
-	// refCount is the number of self-or-descendent nodes that are explicitly locked.
+	// locks contains the independent lock instances rooted at this resource.
+	locks map[string]*memLSLock
+	// refCount is the number of self-or-descendent lock instances.
 	refCount int
-	// expiry is when this node's lock expires.
-	expiry time.Time
-	// byExpiryIndex is the index of this node in memLS.byExpiry. It is -1
-	// if this node does not expire, or has expired.
-	byExpiryIndex int
-	// held is whether this node's lock is actively held by a Confirm call.
-	held         bool
-	sharedTokens map[string]struct{}
 }
 
-type byExpiry []*memLSNode
+type memLSLock struct {
+	token         string
+	details       LockDetails
+	node          *memLSNode
+	expiry        time.Time
+	byExpiryIndex int
+	held          bool
+}
+
+func (n *memLSNode) hasInfiniteLock() bool {
+	for _, lock := range n.locks {
+		if !lock.details.ZeroDepth {
+			return true
+		}
+	}
+	return false
+}
+
+type byExpiry []*memLSLock
 
 func (b *byExpiry) Len() int {
 	return len(*b)
@@ -422,18 +417,18 @@ func (b *byExpiry) Swap(i, j int) {
 }
 
 func (b *byExpiry) Push(x interface{}) {
-	n := x.(*memLSNode)
-	n.byExpiryIndex = len(*b)
-	*b = append(*b, n)
+	lock := x.(*memLSLock)
+	lock.byExpiryIndex = len(*b)
+	*b = append(*b, lock)
 }
 
 func (b *byExpiry) Pop() interface{} {
 	i := len(*b) - 1
-	n := (*b)[i]
+	lock := (*b)[i]
 	(*b)[i] = nil
-	n.byExpiryIndex = -1
+	lock.byExpiryIndex = -1
 	*b = (*b)[:i]
-	return n
+	return lock
 }
 
 const infiniteTimeout = -1
