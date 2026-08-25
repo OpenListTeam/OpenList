@@ -194,9 +194,9 @@ func TestMemLSLookup(t *testing.T) {
 				}
 
 				got := m.lookup(name, Condition{Token: token})
-				want := base
-				if token == badToken {
-					want = nil
+				var want *memLSLock
+				if token != badToken {
+					want = m.byToken[token]
 				}
 				if got != want {
 					t.Errorf("name=%-20qtoken=%q (bad=%t): got %p, want %p",
