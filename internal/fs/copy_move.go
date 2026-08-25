@@ -100,6 +100,10 @@ func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
 	}
 }
 
+func canUseNativeCopy(sameStorage bool, dstName string) bool {
+	return sameStorage && dstName == ""
+}
+
 func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, dstName string, skipHook ...bool) (task.TaskExtensionInfo, error) {
 	srcStorage, srcObjActualPath, err := op.GetStorageAndActualPath(srcObjPath)
 	if err != nil {
@@ -110,19 +114,16 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, ds
 		return nil, errors.WithMessage(err, "failed get dst storage")
 	}
 
-	if srcStorage.GetStorage() == dstStorage.GetStorage() {
+	// A named copy must not stage under the source basename: that path may be
+	// an unrelated destination object. Use the transfer path so DstName is
+	// applied directly by the upload.
+	if canUseNativeCopy(srcStorage.GetStorage() == dstStorage.GetStorage(), dstName) {
 		if utils.IsBool(skipHook...) {
 			ctx = context.WithValue(ctx, conf.SkipHookKey, struct{}{})
 		}
 		if taskType == copy || taskType == merge {
 			err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
 			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
-				if err == nil && dstName != "" {
-					srcObjName := stdpath.Base(srcObjActualPath)
-					if srcObjName != dstName {
-						err = op.Rename(ctx, srcStorage, stdpath.Join(dstDirActualPath, srcObjName), dstName)
-					}
-				}
 				return nil, err
 			}
 		} else {
@@ -133,7 +134,8 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, ds
 		}
 	}
 
-	// not in the same storage
+	// Use the transfer path when native copy cannot preserve the destination
+	// name or the source and destination storages differ.
 	t := &FileTransferTask{
 		TaskData: TaskData{
 			SrcStorage:    srcStorage,
