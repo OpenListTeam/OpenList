@@ -182,7 +182,10 @@ func TestMemLSLookup(t *testing.T) {
 			goodToken := ""
 			base := m.byName[baseName]
 			if base != nil && (suffix == "" || !lockTestZeroDepth(baseName)) {
-				goodToken = base.token
+				for token := range base.locks {
+					goodToken = token
+					break
+				}
 			}
 
 			for _, token := range []string{badToken, goodToken} {
@@ -449,6 +452,46 @@ func TestMemLSExpiry(t *testing.T) {
 	}
 }
 
+func TestMemLSSharedLockExpiry(t *testing.T) {
+	m := NewMemLS().(*memLS)
+	now := time.Unix(0, 0)
+	first, err := m.Create(now, LockDetails{Root: "/shared", Duration: infiniteTimeout, ZeroDepth: true, Shared: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.Create(now, LockDetails{Root: "/shared", Duration: 2 * time.Second, ZeroDepth: true, Shared: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := m.Create(now, LockDetails{Root: "/shared", Duration: 4 * time.Second, ZeroDepth: true, Shared: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := m.byToken[first].details.Duration; got != infiniteTimeout {
+		t.Fatalf("first lock duration = %v, want infinite", got)
+	}
+	if got := m.byToken[second].details.Duration; got != 2*time.Second {
+		t.Fatalf("second lock duration = %v, want 2s", got)
+	}
+	if got := m.byToken[third].details.Duration; got != 4*time.Second {
+		t.Fatalf("third lock duration = %v, want 4s", got)
+	}
+
+	m.mu.Lock()
+	m.collectExpiredNodes(now.Add(2 * time.Second))
+	m.mu.Unlock()
+	if m.byToken[second] != nil {
+		t.Fatal("second shared lock did not expire independently")
+	}
+	if m.byToken[first] == nil || m.byToken[third] == nil {
+		t.Fatal("independent shared lock expired with second lock")
+	}
+	if err := m.consistent(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMemLS(t *testing.T) {
 	now := time.Unix(0, 0)
 	m := NewMemLS().(*memLS)
@@ -578,8 +621,10 @@ func (m *memLS) consistent() error {
 			// so strings.HasPrefix is equivalent to self-or-descendent name match.
 			// We don't have to worry about "/foo/bar" being a false positive match
 			// for "/foo/b".
-			if strings.HasPrefix(name0, name) && n0.token != "" {
-				list = append(list, name0)
+			if strings.HasPrefix(name0, name) {
+				for range n0.locks {
+					list = append(list, name0)
+				}
 			}
 		}
 		if n.refCount != len(list) {
@@ -588,50 +633,34 @@ func (m *memLS) consistent() error {
 				name, n.refCount, list, len(list))
 		}
 
-		// A node n is in m.byToken if it has a non-empty token.
-		if n.token != "" {
-			if _, ok := m.byToken[n.token]; !ok {
-				return fmt.Errorf("node at name %q has token %q but not in m.byToken", name, n.token)
-			}
-		}
-
-		// A node n is in m.byExpiry if it has a non-negative byExpiryIndex.
-		if n.byExpiryIndex >= 0 {
-			if n.byExpiryIndex >= len(m.byExpiry) {
-				return fmt.Errorf("node at name %q has byExpiryIndex %d but m.byExpiry has length %d", name, n.byExpiryIndex, len(m.byExpiry))
-			}
-			if n != m.byExpiry[n.byExpiryIndex] {
-				return fmt.Errorf("node at name %q has byExpiryIndex %d but that indexes a different node", name, n.byExpiryIndex)
+		for token, lock := range n.locks {
+			if lock.token != token || lock.node != n || m.byToken[token] != lock {
+				return fmt.Errorf("lock %q at node %q is inconsistent", token, name)
 			}
 		}
 	}
 
-	for token, n := range m.byToken {
-		// The map keys should be consistent with the node's copy of the key.
-		if n.token != token {
-			return fmt.Errorf("node token %q != byToken map key %q", n.token, token)
+	for token, lock := range m.byToken {
+		if lock.token != token {
+			return fmt.Errorf("lock token %q != byToken map key %q", lock.token, token)
 		}
-
-		// Every node in m.byToken is in m.byName.
-		if _, ok := m.byName[n.details.Root]; !ok {
-			return fmt.Errorf("node at name %q in m.byToken but not in m.byName", n.details.Root)
+		if lock.node == nil || lock.node.locks[token] != lock {
+			return fmt.Errorf("lock %q is missing from its node", token)
+		}
+		if m.byName[lock.details.Root] != lock.node {
+			return fmt.Errorf("lock %q has inconsistent root %q", token, lock.details.Root)
 		}
 	}
 
-	for i, n := range m.byExpiry {
-		// The slice indices should be consistent with the node's copy of the index.
-		if n.byExpiryIndex != i {
-			return fmt.Errorf("node byExpiryIndex %d != byExpiry slice index %d", n.byExpiryIndex, i)
+	for i, lock := range m.byExpiry {
+		if lock.byExpiryIndex != i {
+			return fmt.Errorf("lock byExpiryIndex %d != byExpiry slice index %d", lock.byExpiryIndex, i)
 		}
-
-		// Every node in m.byExpiry is in m.byName.
-		if _, ok := m.byName[n.details.Root]; !ok {
-			return fmt.Errorf("node at name %q in m.byExpiry but not in m.byName", n.details.Root)
+		if m.byToken[lock.token] != lock {
+			return fmt.Errorf("lock %q is missing from byToken", lock.token)
 		}
-
-		// No node in m.byExpiry should be held.
-		if n.held {
-			return fmt.Errorf("node at name %q in m.byExpiry is held", n.details.Root)
+		if lock.held {
+			return fmt.Errorf("lock at name %q is held", lock.details.Root)
 		}
 	}
 	return nil
