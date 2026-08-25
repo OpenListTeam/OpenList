@@ -2,21 +2,21 @@ package fs
 
 import "testing"
 
-func TestCanUseNativeCopy(t *testing.T) {
+func TestNamedCopyStageObjectPath(t *testing.T) {
 	tests := []struct {
-		name        string
-		sameStorage bool
-		dstName     string
-		want        bool
+		name     string
+		stageDir string
+		srcPath  string
+		dstName  string
+		want     string
 	}{
-		{name: "unnamed same-storage copy", sameStorage: true, want: true},
-		{name: "named same-storage copy", sameStorage: true, dstName: "bar", want: false},
-		{name: "unnamed cross-storage copy", sameStorage: false, want: false},
+		{name: "source basename", stageDir: "/dst/.stage", srcPath: "/src/foo", want: "/dst/.stage/foo"},
+		{name: "requested name", stageDir: "/dst/.stage", srcPath: "/src/foo", dstName: "bar", want: "/dst/.stage/bar"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := canUseNativeCopy(tt.sameStorage, tt.dstName); got != tt.want {
-				t.Fatalf("canUseNativeCopy(%t, %q) = %t, want %t", tt.sameStorage, tt.dstName, got, tt.want)
+			if got := namedCopyStageObjectPath(tt.stageDir, tt.srcPath, tt.dstName); got != tt.want {
+				t.Fatalf("namedCopyStageObjectPath(%q, %q, %q) = %q, want %q", tt.stageDir, tt.srcPath, tt.dstName, got, tt.want)
 			}
 		})
 	}

@@ -115,6 +115,61 @@ func (h *Handler) lock(now time.Time, root string) (token string, status int, er
 	return token, 0, nil
 }
 
+func ifETagConditionsMatch(ctx context.Context, ls LockSystem, name string, conditions []Condition) (bool, error) {
+	var obj model.Obj
+	objLoaded, objMissing := false, false
+	for _, condition := range conditions {
+		if condition.ETag == "" {
+			continue
+		}
+		if !objLoaded {
+			var err error
+			obj, err = fs.Get(ctx, name, &fs.GetArgs{})
+			objLoaded = true
+			if err != nil {
+				if !errs.IsObjectNotFound(err) {
+					return false, err
+				}
+				objMissing = true
+			}
+		}
+		matches := false
+		if !objMissing {
+			etag, err := findETag(ctx, ls, name, obj)
+			if err != nil {
+				return false, err
+			}
+			matches = etag == condition.ETag
+		}
+		if condition.Not {
+			matches = !matches
+		}
+		if !matches {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func positiveTokenConditions(conditions []Condition) []Condition {
+	ret := make([]Condition, 0, len(conditions))
+	for _, condition := range conditions {
+		if condition.Token != "" && !condition.Not {
+			ret = append(ret, condition)
+		}
+	}
+	return ret
+}
+
+func hasNegatedTokenCondition(conditions []Condition) bool {
+	for _, condition := range conditions {
+		if condition.Token != "" && condition.Not {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func(), status int, err error) {
 	hdr := r.Header.Get("If")
 	if hdr == "" {
@@ -148,7 +203,9 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 	if !ok {
 		return nil, http.StatusBadRequest, errInvalidIfHeader
 	}
-	user, _ := r.Context().Value(conf.UserKey).(*model.User)
+	ctx := r.Context()
+	user, _ := ctx.Value(conf.UserKey).(*model.User)
+	etagMismatch, hasNegatedToken := false, false
 	for _, l := range ih.lists {
 		lsrc := l.resourceTag
 		if lsrc == "" {
@@ -172,7 +229,16 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 				}
 			}
 		}
-		release, err = h.LockSystem.Confirm(time.Now(), lsrc, dst, l.conditions...)
+		matches, err := ifETagConditionsMatch(ctx, h.LockSystem, lsrc, l.conditions)
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+		if !matches {
+			etagMismatch = true
+			continue
+		}
+		hasNegatedToken = hasNegatedToken || hasNegatedTokenCondition(l.conditions)
+		release, err = h.LockSystem.Confirm(time.Now(), lsrc, dst, positiveTokenConditions(l.conditions)...)
 		if err == ErrConfirmationFailed {
 			continue
 		}
@@ -180,6 +246,28 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 			return nil, http.StatusInternalServerError, err
 		}
 		return release, 0, nil
+	}
+	if etagMismatch || !hasNegatedToken {
+		return nil, http.StatusPreconditionFailed, ErrLocked
+	}
+
+	// Litmus expects a corrupt token paired with Not <DAV:no-lock> on an
+	// actively locked resource to report the lock conflict.
+	now := time.Now()
+	for _, name := range []string{src, dst} {
+		if name == "" {
+			continue
+		}
+		token, lockStatus, lockErr := h.lock(now, name)
+		if lockErr == ErrLocked {
+			return nil, lockStatus, lockErr
+		}
+		if lockErr != nil {
+			return nil, lockStatus, lockErr
+		}
+		if unlockErr := h.LockSystem.Unlock(now, token); unlockErr != nil {
+			return nil, http.StatusInternalServerError, unlockErr
+		}
 	}
 	return nil, http.StatusPreconditionFailed, ErrLocked
 }
@@ -612,6 +700,12 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 		}
 		if !common.CanWrite(user, meta, reqPath) {
 			return http.StatusForbidden, errs.PermissionDenied
+		}
+		if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
+			if !errs.IsObjectNotFound(err) {
+				return http.StatusInternalServerError, err
+			}
+			created = true
 		}
 		ld = LockDetails{
 			Root:      reqPath,
