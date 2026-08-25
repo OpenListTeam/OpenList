@@ -146,6 +146,9 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
+	if err = copyDeadProps(src, dst); err != nil {
+		return http.StatusInternalServerError, err
+	}
 	if dstExisted {
 		return http.StatusNoContent, nil
 	}

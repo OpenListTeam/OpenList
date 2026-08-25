@@ -321,6 +321,9 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if err := fs.Remove(ctx, reqPath); err != nil {
 		return http.StatusMethodNotAllowed, err
 	}
+	if err := deleteDeadProps(reqPath); err != nil {
+		return http.StatusInternalServerError, err
+	}
 	//fs.ClearCache(path.Dir(reqPath))
 	return http.StatusNoContent, nil
 }

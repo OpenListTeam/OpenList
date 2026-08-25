@@ -346,20 +346,61 @@ func escapeXML(s string) string {
 	return s
 }
 
+func deadPropsLikePath(path string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(path, "\\", "\\\\"), "%", "\\%"), "_", "\\_")
+}
+
+func deadPropsSubtree(tx *gorm.DB, path string) *gorm.DB {
+	return tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", path, deadPropsLikePath(path)+"/%")
+}
+
+func deleteDeadProps(path string) error {
+	database := db.GetDb()
+	if database == nil {
+		return errors.New("webdav property database is not initialized")
+	}
+	return database.Transaction(func(tx *gorm.DB) error {
+		return deadPropsSubtree(tx, path).Delete(&model.WebDAVProperty{}).Error
+	})
+}
+
+func copyDeadProps(src, dst string) error {
+	database := db.GetDb()
+	if database == nil {
+		return errors.New("webdav property database is not initialized")
+	}
+	return database.Transaction(func(tx *gorm.DB) error {
+		var rows []model.WebDAVProperty
+		if err := deadPropsSubtree(tx, src).Find(&rows).Error; err != nil {
+			return err
+		}
+		if err := deadPropsSubtree(tx, dst).Delete(&model.WebDAVProperty{}).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			copy := row
+			copy.ID = 0
+			copy.Path = dst + strings.TrimPrefix(row.Path, src)
+			if err := tx.Create(&copy).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func moveDeadProps(src, dst string) error {
 	database := db.GetDb()
 	if database == nil {
 		return errors.New("webdav property database is not initialized")
 	}
-	escapedSrc := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(src, "\\", "\\\\"), "%", "\\%"), "_", "\\_")
-	escapedDst := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(dst, "\\", "\\\\"), "%", "\\%"), "_", "\\_")
 	return database.Transaction(func(tx *gorm.DB) error {
-		// Clear destination subtree for overwrite MOVE.
-		if err := tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", dst, escapedDst+"/%").Delete(&model.WebDAVProperty{}).Error; err != nil {
+		var rows []model.WebDAVProperty
+		if err := deadPropsSubtree(tx, src).Find(&rows).Error; err != nil {
 			return err
 		}
-		var rows []model.WebDAVProperty
-		if err := tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", src, escapedSrc+"/%").Find(&rows).Error; err != nil {
+		// Clear destination only after the source rows are staged in memory.
+		if err := deadPropsSubtree(tx, dst).Delete(&model.WebDAVProperty{}).Error; err != nil {
 			return err
 		}
 		for _, row := range rows {
