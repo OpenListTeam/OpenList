@@ -762,3 +762,22 @@ func TestParseTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestHasNegatedTokenCondition(t *testing.T) {
+	tests := []struct {
+		name       string
+		conditions []Condition
+		want       bool
+	}{
+		{name: "positive token", conditions: []Condition{{Token: "DAV:no-lock"}}},
+		{name: "negated token", conditions: []Condition{{Not: true, Token: "DAV:no-lock"}}, want: true},
+		{name: "negated etag", conditions: []Condition{{Not: true, ETag: `"etag"`}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasNegatedTokenCondition(tt.conditions); got != tt.want {
+				t.Fatalf("hasNegatedTokenCondition(%v) = %t, want %t", tt.conditions, got, tt.want)
+			}
+		})
+	}
+}
