@@ -46,6 +46,12 @@ func isCDNChallenge(res *resty.Response) bool {
 	return strings.Contains(res.Header().Get("Content-Type"), "text/html") && strings.Contains(string(res.Body()), "403")
 }
 
+func appTokenQueryValue(token string) string {
+	// iLanzou requires a literal colon, while other reserved token characters
+	// must remain query-escaped.
+	return strings.ReplaceAll(url.QueryEscape(token), "%3A", ":")
+}
+
 func (d *ILanZou) request(pathname, method string, callback base.ReqCallback, proved bool, retry ...bool) ([]byte, error) {
 	_, timestamp, err := getTimestamp(d.conf.secret)
 	if err != nil {
@@ -61,8 +67,7 @@ func (d *ILanZou) request(pathname, method string, callback base.ReqCallback, pr
 		"timestamp=" + timestamp,
 	}
 	if proved {
-		// /file/delete rejects a percent-encoded colon in appToken.
-		params = append(params, "appToken="+d.Token)
+		params = append(params, "appToken="+appTokenQueryValue(d.Token))
 	}
 	params = append(params, "extra=2")
 

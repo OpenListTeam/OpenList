@@ -145,8 +145,7 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 		"devVersion=" + url.QueryEscape(d.conf.devVersion),
 		"appVersion=",
 		"timestamp=" + tsStr,
-		// The redirect endpoint rejects a percent-encoded colon in appToken.
-		"appToken=" + d.Token,
+		"appToken=" + appTokenQueryValue(d.Token),
 		"enable=1",
 	}
 	downloadID, err := mopan.AesEncrypt([]byte(fmt.Sprintf("%s|%s", file.GetID(), d.userID)), d.conf.secret)
@@ -194,7 +193,7 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 		return nil, fmt.Errorf("redirect failed, status: %d, location: %s, msg: %s", res.StatusCode(), location, utils.Json.Get(res.Body(), "msg").ToString())
 	}
 	link := &model.Link{URL: realURL}
-	if response, err := d.apiClient.R().SetContext(ctx).Head(realURL); err == nil {
+	if response, err := d.apiClient.R().SetContext(ctx).Head(realURL); err == nil && response.StatusCode() >= http.StatusOK && response.StatusCode() < http.StatusMultipleChoices {
 		if size, parseErr := strconv.ParseInt(response.Header().Get("Content-Length"), 10, 64); parseErr == nil && size > 0 {
 			link.ContentLength = size
 		}
