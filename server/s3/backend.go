@@ -36,13 +36,15 @@ var (
 // s3Backend implements the gofacess3.Backend interface to make an S3
 // backend for gofakes3
 type s3Backend struct {
-	meta *sync.Map
+	meta    *sync.Map
+	listDir func(context.Context, string) ([]model.Obj, error)
 }
 
 // newBackend creates a new SimpleBucketBackend.
 func newBackend() gofakes3.Backend {
 	return &s3Backend{
-		meta: new(sync.Map),
+		meta:    new(sync.Map),
+		listDir: getDirEntries,
 	}
 }
 
@@ -84,10 +86,9 @@ func (b *s3Backend) ListBucket(ctx context.Context, bucketName string, prefix *g
 		prefix.HasDelimiter = false
 	}
 
-	response := gofakes3.NewObjectList()
 	path, remaining := prefixParser(prefix)
 
-	err = b.entryListR(bucketPath, path, remaining, prefix.HasDelimiter, response)
+	response, err := b.listPage(ctx, bucketPath, path, remaining, prefix.HasDelimiter, page)
 	if err == gofakes3.ErrNoSuchKey {
 		// AWS just returns an empty list
 		response = gofakes3.NewObjectList()
@@ -95,7 +96,7 @@ func (b *s3Backend) ListBucket(ctx context.Context, bucketName string, prefix *g
 		return nil, err
 	}
 
-	return b.pager(response, page)
+	return response, nil
 }
 
 // HeadObject returns the fileinfo for the given object name.
