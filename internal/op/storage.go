@@ -249,6 +249,8 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 	if oldStorage.MountPath != storage.MountPath {
 		// mount path renamed, need to drop the storage
 		storagesMap.Delete(oldStorage.MountPath)
+		InvalidateStorageDetailsState(oldStorage.MountPath)
+	}
 	}
 	err = storageDriver.Drop(ctx)
 	if err != nil {
@@ -280,6 +282,7 @@ func DeleteStorageById(ctx context.Context, id uint) error {
 		storagesMap.Delete(storage.MountPath)
 		Cache.DeleteDirectoryTree(storageDriver, "/")
 		Cache.InvalidateStorageDetails(storageDriver)
+		InvalidateStorageDetailsState(storage.MountPath)
 		go callStorageHooks("del", storageDriver)
 	}
 	// delete the storage in the database
@@ -373,6 +376,11 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 		resultChan := make(chan *model.StorageDetails, 1)
 		bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeoutSec)
 		go func(dri driver.Driver) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Errorf("panic recovered in storage details probe for %s: %v", dri.GetStorage().MountPath, r)
+				}
+			}()
 			defer cancel()
 			details, err := GetStorageDetails(bgCtx, dri, refresh)
 			if err != nil {
@@ -485,6 +493,21 @@ var (
 	lastDoneTimes = make(map[string]int64)
 )
 
+func InvalidateStorageDetailsState(mountPath string) {
+	detailsLock.Lock()
+	delete(lastDoneTimes, utils.GetActualMountPath(mountPath))
+	detailsLock.Unlock()
+}
+
+func cleanExpiredLastDoneTimesLocked(now int64) {
+	const expireThreshold = 86400
+	for k, t := range lastDoneTimes {
+		if now-t > expireThreshold {
+			delete(lastDoneTimes, k)
+		}
+	}
+}
+
 func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bool) (*model.StorageDetails, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
@@ -513,14 +536,24 @@ func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bo
 		}
 	}
 
-	details, err, _ := detailsG.Do(mountPath, func() (*model.StorageDetails, error) {
-		ret, err := wd.GetDetails(ctx)
+	details, err, _ := detailsG.Do(mountPath, func() (ret *model.StorageDetails, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic in driver GetDetails: %v", r)
+				log.Errorf("panic recovered in driver GetDetails for %s: %v", mountPath, r)
+			}
+		}()
+		ret, err = wd.GetDetails(ctx)
 		if err != nil {
 			return nil, err
 		}
 		Cache.SetStorageDetails(storage, ret)
+		nowDone := time.Now().Unix()
 		detailsLock.Lock()
-		lastDoneTimes[mountPath] = time.Now().Unix()
+		lastDoneTimes[mountPath] = nowDone
+		if len(lastDoneTimes) > 256 {
+			cleanExpiredLastDoneTimesLocked(nowDone)
+		}
 		detailsLock.Unlock()
 		return ret, nil
 	})
