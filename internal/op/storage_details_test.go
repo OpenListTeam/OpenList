@@ -35,6 +35,14 @@ func (m *mockDriverWithDetails) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (m *mockDriverWithDetails) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+	return nil, nil
+}
+
+func (m *mockDriverWithDetails) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	return nil, nil
+}
+
 func (m *mockDriverWithDetails) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	atomic.AddInt64(&m.callCount, 1)
 	if m.delay > 0 {
@@ -160,5 +168,107 @@ func TestGetStorageDetailsCooldown(t *testing.T) {
 	}
 	if count := atomic.LoadInt64(&mock.callCount); count != 1 {
 		t.Errorf("expected callCount still 1 during cooldown, got %d", count)
+	}
+}
+
+type mockPanicDriverWithDetails struct {
+	model.Storage
+}
+
+func (m *mockPanicDriverWithDetails) Config() driver.Config {
+	return driver.Config{Name: "MockPanicDetails"}
+}
+
+func (m *mockPanicDriverWithDetails) GetAddition() driver.Additional {
+	return nil
+}
+
+func (m *mockPanicDriverWithDetails) Init(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockPanicDriverWithDetails) Drop(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockPanicDriverWithDetails) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+	return nil, nil
+}
+
+func (m *mockPanicDriverWithDetails) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	return nil, nil
+}
+
+func (m *mockPanicDriverWithDetails) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	panic("unexpected driver sdk crash")
+}
+
+func TestGetStorageDetailsPanicRecovery(t *testing.T) {
+	mock := &mockPanicDriverWithDetails{
+		Storage: model.Storage{
+			MountPath:       "/test-mock-panic",
+			Status:          op.WORK,
+			CacheExpiration: 30,
+		},
+	}
+
+	ctx := context.Background()
+	// Must not crash the process when driver panics
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("unexpected panic in test caller: %v", r)
+		}
+	}()
+
+	details, err := op.GetStorageDetails(ctx, mock, true)
+	if err == nil {
+		t.Fatalf("expected error from panic in singleflight, got details: %v", details)
+	}
+}
+
+func TestInvalidateStorageDetailsState(t *testing.T) {
+	mock := &mockDriverWithDetails{
+		Storage: model.Storage{
+			MountPath:       "/test-mock-invalidate-state",
+			Status:          op.WORK,
+			CacheExpiration: 30,
+		},
+	}
+
+	_ = op.SaveSettingItem(&model.SettingItem{
+		Key:   conf.StorageDetailsCooldownSeconds,
+		Value: "60",
+		Type:  conf.TypeNumber,
+		Group: model.STYLE,
+	})
+
+	ctx := context.Background()
+
+	// 1. First fetch establishes cooldown
+	_, err := op.GetStorageDetails(ctx, mock, true)
+	if err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+	if count := atomic.LoadInt64(&mock.callCount); count != 1 {
+		t.Fatalf("expected callCount 1, got %d", count)
+	}
+
+	// 2. Second fetch within 60s should be blocked by cooldown
+	_, _ = op.GetStorageDetails(ctx, mock, true)
+	if count := atomic.LoadInt64(&mock.callCount); count != 1 {
+		t.Fatalf("expected callCount 1 during cooldown, got %d", count)
+	}
+
+	// 3. Invalidate storage state explicitly (simulates storage deletion/update)
+	op.InvalidateStorageDetailsState(mock.MountPath)
+	op.Cache.InvalidateStorageDetails(mock)
+
+	// 4. Third fetch after state invalidation should bypass cooldown and hit driver
+	_, err = op.GetStorageDetails(ctx, mock, true)
+	if err != nil {
+		t.Fatalf("third call failed: %v", err)
+	}
+	if count := atomic.LoadInt64(&mock.callCount); count != 2 {
+		t.Fatalf("expected callCount 2 after InvalidateStorageDetailsState, got %d", count)
 	}
 }
