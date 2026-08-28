@@ -1267,6 +1267,13 @@ func mailXMLHeaders(cookie string) map[string]string {
 	}
 }
 
+func new139RestyClient() *resty.Client {
+	if base.RestyClient != nil {
+		return base.RestyClient.Clone()
+	}
+	return resty.New()
+}
+
 func (d *Yun139) sendSMSVerificationCode(riskCode string) error {
 	scene, ok := smsSceneForRisk(riskCode)
 	if !ok {
@@ -1289,7 +1296,7 @@ func (d *Yun139) sendSMSVerificationCode(riskCode string) error {
 		mailXMLField("scene", strconv.Itoa(scene)),
 		"</object>",
 	}, "")
-	res, err := resty.New().R().
+	res, err := new139RestyClient().R().
 		SetHeaders(mailXMLHeaders(d.MailCookies)).
 		SetBody(body).
 		Post(mailSMSURL + "?func=" + url.QueryEscape("login:sendSmsCodeByScene") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
@@ -1342,7 +1349,7 @@ func (d *Yun139) verifySMSCode(riskCode string) (string, error) {
 		pwdType,
 		"</object>",
 	}, "")
-	res, err := resty.New().R().
+	res, err := new139RestyClient().R().
 		SetHeaders(mailXMLHeaders(d.MailCookies)).
 		SetBody(body).
 		Post(mailSMSURL + "?func=" + url.QueryEscape("/login/inlogin.action") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
@@ -1379,7 +1386,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("--- 执行步骤 1: 登录 API ---")
 	loginURL := mailPasswordURL
 
-	preLogin, err := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R().Get(mailRootURL)
+	preLogin, err := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).R().Get(mailRootURL)
 	if preLogin == nil {
 		return "", fmt.Errorf("step1 pre-login request failed: %v", err)
 	}
@@ -1438,7 +1445,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("DEBUG: 登录请求已准备")
 
 	// 设置客户端不跟随重定向
-	client := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy())
+	client := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy())
 	res, err := client.R().
 		SetHeaders(loginHeaders).
 		SetFormDataFromValues(loginData).
@@ -1899,7 +1906,7 @@ func hasCookiePair(raw string) bool {
 }
 
 func fetchMailJSessionID(endpoint string) (string, error) {
-	client := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy())
+	client := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy())
 	res, err := client.R().Get(endpoint)
 	if res == nil {
 		return "", fmt.Errorf("pre-login request returned no response: %v", err)
