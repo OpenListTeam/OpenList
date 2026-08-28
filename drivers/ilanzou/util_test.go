@@ -1,4 +1,4 @@
-package template
+package ilanzou
 
 import "testing"
 

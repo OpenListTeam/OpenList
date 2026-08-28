@@ -1,4 +1,4 @@
-package template
+package ilanzou
 
 import (
 	"encoding/hex"
@@ -39,6 +39,8 @@ func getTimestamp(secret []byte) (int64, string, error) {
 	return ts, hex.EncodeToString(res), nil
 }
 
+// isCDNChallenge detects a transient CDN challenge (409 Conflict + HTML 403).
+// A retry with the session cookie jar can resolve transient challenges.
 func isCDNChallenge(res *resty.Response) bool {
 	if res == nil || res.StatusCode() != http.StatusConflict {
 		return false

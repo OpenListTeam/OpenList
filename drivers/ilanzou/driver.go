@@ -1,4 +1,4 @@
-package template
+package ilanzou
 
 import (
 	"context"
@@ -193,7 +193,9 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 		return nil, fmt.Errorf("redirect failed, status: %d, location: %s, msg: %s", res.StatusCode(), location, utils.Json.Get(res.Body(), "msg").ToString())
 	}
 	link := &model.Link{URL: realURL}
-	if response, err := d.apiClient.R().SetContext(ctx).Head(realURL); err == nil && response.StatusCode() >= http.StatusOK && response.StatusCode() < http.StatusMultipleChoices {
+	// Probe the CDN for the actual object size; API metadata can differ from
+	// the bytes served by the final URL. The timeout bounds Link latency.
+	if response, err := d.apiClient.R().SetContext(ctx).SetTimeout(linkHeadTimeout).Head(realURL); err == nil && response.StatusCode() >= http.StatusOK && response.StatusCode() < http.StatusMultipleChoices {
 		if size, parseErr := strconv.ParseInt(response.Header().Get("Content-Length"), 10, 64); parseErr == nil && size > 0 {
 			link.ContentLength = size
 		}
@@ -263,7 +265,15 @@ func (d *ILanZou) Remove(ctx context.Context, obj model.Obj) error {
 	return err
 }
 
-const DefaultPartSize = 1024 * 1024 * 8
+const (
+	DefaultPartSize = 1024 * 1024 * 8
+
+	// The results endpoint is eventually consistent after the upload commit.
+	maxUploadCommitRetries = 10
+	uploadCommitRetryDelay = time.Second
+
+	linkHeadTimeout = 5 * time.Second
+)
 
 func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	etag := s.GetHash().GetHash(utils.MD5)
@@ -327,7 +337,7 @@ func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 		token = utils.Json.Get(res.Body(), "token").ToString()
 	}
 	var resp UploadResultResp
-	for i := 0; i < 10; i++ {
+	for i := 0; i < maxUploadCommitRetries; i++ {
 		_, err = d.unproved("/7n/results", http.MethodPost, func(req *resty.Request) {
 			req.SetQueryString("tokenList=" + token + "&tokenTime=" + time.Now().Format("Mon Jan 02 2006 15:04:05 GMT-0700 (MST)")).SetResult(&resp)
 		})
@@ -340,7 +350,11 @@ func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 		if resp.List[0].Status == 1 {
 			break
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(uploadCommitRetryDelay):
+		}
 	}
 	file := resp.List[0]
 	if file.Status != 1 {
