@@ -34,7 +34,7 @@ type ILanZou struct {
 	linkClient *resty.Client
 	upClient   *resty.Client
 	conf       Conf
-	config   driver.Config
+	config     driver.Config
 }
 
 func (d *ILanZou) Config() driver.Config {
@@ -195,7 +195,9 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	link := &model.Link{URL: realURL}
 	// Probe the CDN for the actual object size; API metadata can differ from
 	// the bytes served by the final URL. The timeout bounds Link latency.
-	if response, err := d.apiClient.R().SetContext(ctx).SetTimeout(linkHeadTimeout).Head(realURL); err == nil && response.StatusCode() >= http.StatusOK && response.StatusCode() < http.StatusMultipleChoices {
+	headCtx, cancel := context.WithTimeout(ctx, linkHeadTimeout)
+	defer cancel()
+	if response, err := d.apiClient.R().SetContext(headCtx).Head(realURL); err == nil && response.StatusCode() >= http.StatusOK && response.StatusCode() < http.StatusMultipleChoices {
 		if size, parseErr := strconv.ParseInt(response.Header().Get("Content-Length"), 10, 64); parseErr == nil && size > 0 {
 			link.ContentLength = size
 		}
