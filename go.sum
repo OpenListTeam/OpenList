@@ -759,6 +759,8 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
+github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/t3rm1n4l/go-mega v0.0.0-20260630094356-4de2f127f34a h1:VQ9CmpYeTgdFvg748N6tIOHBZn+hXjJe2xNuOJHW07E=
 github.com/t3rm1n4l/go-mega v0.0.0-20260630094356-4de2f127f34a/go.mod h1:BF/l2jNyK+2h/BJZ7VLMAz6m/IWjA2F67gTjV1C/+Bo=
 github.com/t3rm1n4l/go-mega v0.0.0-20260717075258-c6acd6a5bd04 h1:s30A8dMuZ55lUOi5xUTh1hlfLqHpVBsRMfpk2iKCayk=
@@ -832,6 +834,8 @@ go.uber.org/mock v0.6.0/go.mod h1:KiVJ4BqZJaMj4svdfmHM0AUx4NJYO8ZNpPnZn1Z+BBU=
 go.yaml.in/yaml/v2 v2.4.3 h1:6gvOSjQoTB3vt1l+CU+tSyi/HOjfOjRLJ4YwYZGwRO0=
 go.yaml.in/yaml/v2 v2.4.3/go.mod h1:zSxWcmIDjOzPXpjlTTbAsKokqkDNAVtZO0WOMiT90s8=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
+go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
+go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
 go4.org v0.0.0-20260112195520-a5071408f32f h1:ziUVAjmTPwQMBmYR1tbdRFJPtTcQUI12fH9QQjfb0Sw=
 go4.org v0.0.0-20260112195520-a5071408f32f/go.mod h1:ZRJnO5ZI4zAwMFp+dS1+V6J6MSyAowhRqAE+DPa1Xp0=
 gocv.io/x/gocv v0.25.0/go.mod h1:Rar2PS6DV+T4FL+PM535EImD/h13hGVaHhnCu1xarBs=
