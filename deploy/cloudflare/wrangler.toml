@@ -1,0 +1,12 @@
+name = "open-box-gateway"
+main = "src/worker.js"
+compatibility_date = "2026-08-28"
+
+[vars]
+APP_NAME = "Open-Box"
+ORIGIN_URL = "https://openlist-railway-production-2100.up.railway.app"
+SUPABASE_URL = "https://ymhiwerqyegvondndkjn.supabase.co"
+AUTH_REQUIRED = "false"
+
+# Set SUPABASE_PUBLISHABLE_KEY with `wrangler secret put`.
+# Set AUTH_REQUIRED=true only after /auth/login succeeds on the production domain.

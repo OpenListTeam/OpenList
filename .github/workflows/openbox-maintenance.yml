@@ -21,8 +21,10 @@ jobs:
           test "$body" = "pong"
 
       - name: Settings check
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
         run: |
-          URL="https://openlist-railway-production-2100.up.railway.app"
+          URL="${SITE_URL:-https://openlist-railway-production-2100.up.railway.app}"
           curl -sS "$URL/api/public/settings" | tee /tmp/settings.json
           python3 - <<'PY'
           import json

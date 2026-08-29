@@ -17,7 +17,10 @@ RUN git init \
  && bash build.sh release docker
 
 FROM openlistteam/openlist-base-image:${BASE_IMAGE_TAG}
-LABEL MAINTAINER="OpenList"
+LABEL org.opencontainers.image.title="Open-Box" \
+      org.opencontainers.image.description="Open-Box storage gateway powered by OpenList" \
+      org.opencontainers.image.source="https://github.com/hillstreet-ph/open-box" \
+      org.opencontainers.image.licenses="AGPL-3.0"
 ARG INSTALL_FFMPEG=false
 ARG INSTALL_ARIA2=false
 ARG USER=openlist
