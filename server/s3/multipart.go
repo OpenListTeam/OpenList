@@ -39,9 +39,12 @@ type multipartPart struct {
 
 // multipartState tracks one in-progress multipart upload.
 //
-// gofakes3 does not serialize multipart operations for a given UploadID, so
-// the parts map is guarded by mu. Each part is written to its own file inside
-// dir, so concurrent UploadPart calls for different part numbers are safe.
+// Concurrency: gofakes3 does not serialize operations for the same uploadID,
+// so concurrent UploadPart/Complete/Abort calls may overlap. The parts map is
+// protected by mu. Each part is written to its own file inside dir, so
+// concurrent UploadPart calls for different part numbers are safe without
+// additional locking. lastActivity is updated under mu on create and on each
+// part upload so the reaper can make a consistent expiry decision.
 type multipartState struct {
 	bucket       string
 	object       string
@@ -229,8 +232,9 @@ func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object 
 		return firstErr
 	})
 
+	defer combined.Close()
+
 	err := b.putStream(ctx, bucket, object, state.meta, combined, total)
-	_ = combined.Close()
 	if err != nil {
 		// Leave the upload in place so the client may retry completion, per
 		// the gofakes3 MultipartBackend contract.
