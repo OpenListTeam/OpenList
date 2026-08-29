@@ -157,25 +157,43 @@ func (d *LanZou) request(url string, method string, callback base.ReqCallback, u
 }
 
 func (d *LanZou) Login() ([]*http.Cookie, error) {
-	resp, err := base.NewRestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).
-		R().SetFormData(map[string]string{
-		"task":         "3",
-		"uid":          d.Account,
-		"pwd":          d.Password,
-		"setSessionId": "",
-		"setSig":       "",
-		"setScene":     "",
-		"setTocen":     "",
-		"formhash":     "",
-	}).Post("https://up.woozooo.com/mlogin.php")
-	if err != nil {
-		return nil, err
+	var vs string
+	for retry := 0; retry < 3; retry++ {
+		req := base.NewRestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
+
+		// 如果已计算出 acw_sc__v2，通过 cookie 携带
+		if vs != "" {
+			req.SetHeader("cookie", "acw_sc__v2="+vs)
+		}
+
+		resp, err := req.SetFormData(map[string]string{
+			"task":         "3",
+			"uid":          d.Account,
+			"pwd":          d.Password,
+			"setSessionId": "",
+			"setSig":       "",
+			"setScene":     "",
+			"setTocen":     "",
+			"formhash":     "",
+		}).Post("https://up.woozooo.com/mlogin.php")
+		if err != nil {
+			return nil, err
+		}
+		bodyStr := resp.String()
+		if strings.Contains(bodyStr, "acw_sc__v2") {
+			vs, err = CalcAcwScV2(bodyStr)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if utils.Json.Get(resp.Body(), "zt").ToInt() != 1 {
+			return nil, fmt.Errorf("login err: %s", resp.Body())
+		}
+		d.Cookie = CookieToString(resp.Cookies())
+		return resp.Cookies(), nil
 	}
-	if utils.Json.Get(resp.Body(), "zt").ToInt() != 1 {
-		return nil, fmt.Errorf("login err: %s", resp.Body())
-	}
-	d.Cookie = CookieToString(resp.Cookies())
-	return resp.Cookies(), nil
+	return nil, errors.New("acw_sc__v2 validation error")
 }
 
 /*
@@ -295,7 +313,7 @@ var findSubFolderReg = regexp.MustCompile(`(?i)(?:folderlink|mbxfolder).+href="/
 var findDownPageParamReg = regexp.MustCompile(`<iframe.*?src="(.+?)"`)
 
 // 获取文件ID
-var findFileIDReg = regexp.MustCompile(`'/ajaxm\.php\?file=(\d+)'`)
+var findFileIDReg = regexp.MustCompile(`'/ajax(?:file|m)\.php\?file=(\d+)'`)
 
 // 获取分享链接主界面
 func (d *LanZou) getShareUrlHtml(shareID string) (string, error) {
@@ -394,15 +412,13 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 		}
 		param["p"] = pwd
 
-		fileIDs := findFileIDReg.FindStringSubmatch(sharePageData)
-		var fileID string
-		if len(fileIDs) > 1 {
-			fileID = fileIDs[1]
-		} else {
+		matches := findFileIDReg.FindStringSubmatch(sharePageData)
+		if len(matches) < 2 {
 			return nil, fmt.Errorf("not find file id")
 		}
+		ajaxUrl := d.ShareUrl + matches[0][1:len(matches[0])-1]
 		var resp FileShareInfoAndUrlResp[string]
-		_, err = d.post(d.ShareUrl+"/ajaxm.php?file="+fileID, func(req *resty.Request) { req.SetFormData(param) }, &resp)
+		_, err = d.post(ajaxUrl, func(req *resty.Request) { req.SetFormData(param) }, &resp)
 		if err != nil {
 			return nil, err
 		}
@@ -426,15 +442,13 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 			return nil, err
 		}
 
-		fileIDs := findFileIDReg.FindStringSubmatch(nextPageData)
-		var fileID string
-		if len(fileIDs) > 1 {
-			fileID = fileIDs[1]
-		} else {
+		matches := findFileIDReg.FindStringSubmatch(nextPageData)
+		if len(matches) < 2 {
 			return nil, fmt.Errorf("not find file id")
 		}
+		ajaxUrl := d.ShareUrl + matches[0][1:len(matches[0])-1]
 		var resp FileShareInfoAndUrlResp[int]
-		_, err = d.post(d.ShareUrl+"/ajaxm.php?file="+fileID, func(req *resty.Request) { req.SetFormData(param) }, &resp)
+		_, err = d.post(ajaxUrl, func(req *resty.Request) { req.SetFormData(param) }, &resp)
 		if err != nil {
 			return nil, err
 		}
@@ -572,14 +586,14 @@ func (d *LanZou) getFolderByShareUrl(pwd string, sharePageData string) ([]FileOr
 
 	files := make([]FileOrFolderByShareUrl, 0)
 	// vip获取文件夹
-	floders := findSubFolderReg.FindAllStringSubmatch(sharePageData, -1)
-	for _, floder := range floders {
-		if len(floder) == 3 {
+	folders := findSubFolderReg.FindAllStringSubmatch(sharePageData, -1)
+	for _, folder := range folders {
+		if len(folder) == 3 {
 			files = append(files, FileOrFolderByShareUrl{
 				// Pwd: pwd, // 子文件夹不加密
-				ID:       floder[1],
-				NameAll:  floder[2],
-				IsFloder: true,
+				ID:       folder[1],
+				NameAll:  folder[2],
+				IsFolder: true,
 			})
 		}
 	}

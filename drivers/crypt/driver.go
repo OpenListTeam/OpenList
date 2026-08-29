@@ -251,7 +251,7 @@ func (d *Crypt) Link(ctx context.Context, file model.Obj, _ model.LinkArgs) (*mo
 	rrf, err := stream.GetRangeReaderFromLink(remoteSize, remoteLink)
 	if err != nil {
 		_ = remoteLink.Close()
-		return nil, fmt.Errorf("the remote storage driver need to be enhanced to support encrytion")
+		return nil, fmt.Errorf("the remote storage driver need to be enhanced to support encryption")
 	}
 
 	mu := &sync.Mutex{}

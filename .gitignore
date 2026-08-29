@@ -23,6 +23,7 @@ OpenList
 # vendor/
 /bin/*
 *.json
+!renovate.json
 /build
 /data/
 /tmp/
@@ -30,6 +31,7 @@ OpenList
 /lang/
 /daemon/
 /public/dist/*
-/!public/dist/README.md
+!/public/dist/README.md
 
 .VSCodeCounter
+*.syso

@@ -6,9 +6,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	crypto_rand "crypto/rand"
+	"crypto/rsa"
 	"crypto/sha1"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -23,23 +26,70 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
+	cookiepkg "github.com/OpenListTeam/OpenList/v4/pkg/cookie"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
+	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
 	jsoniter "github.com/json-iterator/go"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
-	KEY_HEX_1 = "73634235495062495331515373756c734e7253306c673d3d" // 第一层 AES 解密密钥
-	KEY_HEX_2 = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
+	KEY_HEX_1     = "73634235495062495331515373756c734e7253306c673d3d" // 第一层 AES 解密密钥
+	KEY_HEX_2     = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
+	mailPublicKey = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnsOHTFtwW5rq/8gGhPlM5Z3RPdeN/d+FYIHb5JmcfBOCozXuT8c+0anvxtkjzghixwNlnmBuhN8OYfS789YuH/qReQbHC7OdlisLildNWPHRNUYcPa0W3lXSG3+81CXK7FDXPvXo5ubw2GqVbIsccMarI1dyfXdi4ITiCXvmM9wYBdUs9yXtoorhlpyYUI2GV8HNsQjWK9P5QZHT3ox5Qy+mjRmvv6RUFJLPOMkOS/pGZ0DwC1ypFZBxstW0/ftVupdOmGWvW7J2/e3dq3A/UvIkC4YUY/diL1wighJx1G9MiRROISjNMvNyUDSTqPJy516+l3sgHEbc067QIJx2NQIDAQAB"
+)
+
+var (
+	mailRootURL     = "https://mail.10086.cn/"
+	mailPasswordURL = "https://mail.10086.cn/Login/Login.ashx"
+	mailSMSURL      = "https://mail.10086.cn/s"
+)
+
+var mailLoginCookieExclusions = map[string]struct{}{
+	"hecaiyun_stay_time":          {},
+	"isShowAgreeIconNew":          {},
+	"hecaiyundata2021jssdkcross":  {},
+	"random":                      {},
+	"a_l2":                        {},
+	"hecaiyun_stay_url":           {},
+	"a_l":                         {},
+	"_139mail_login_type":         {},
+	"_139mail_login_shortAddr":    {},
+	"sajssdk_2015_cross_new_user": {},
+	"fromhtml5":                   {},
+	"html5SkinPath8011":           {},
+	"Os_SSo_Sid":                  {},
+	"sid":                         {},
+	"Login_UserNumber":            {},
+	"RMKEY":                       {},
+	"rtexpired":                   {},
+}
+
+type credentialState int
+
+const (
+	credentialStateAuthorization credentialState = iota
+	credentialStateFullLogin
+	credentialStateCookiesOnly
 )
 
 // do others that not defined in Driver interface
 func (d *Yun139) isFamily() bool {
-	return d.Type == "family"
+	return d.Type == MetaFamily
+}
+
+func (d *Yun139) isGroup() bool {
+	return d.Type == MetaGroup
+}
+
+func (d *Yun139) isShare() bool {
+	return d.Type == MetaShare
 }
 
 func encodeURIComponent(str string) string {
@@ -75,29 +125,28 @@ func (d *Yun139) refreshToken() error {
 	}
 	decode, err := base64.StdEncoding.DecodeString(d.Authorization)
 	if err != nil {
-		return fmt.Errorf("authorization decode failed: %s", err)
+		return d.loginAfterAuthorizationFailure(fmt.Errorf("authorization decode failed: %w", err))
 	}
 	decodeStr := string(decode)
 	splits := strings.Split(decodeStr, ":")
 	if len(splits) < 3 {
-		return fmt.Errorf("authorization is invalid, splits < 3")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization is invalid, splits < 3"))
 	}
 	d.Account = splits[1]
 	strs := strings.Split(splits[2], "|")
 	if len(strs) < 4 {
-		return fmt.Errorf("authorization is invalid, strs < 4")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization is invalid, strs < 4"))
 	}
 	expiration, err := strconv.ParseInt(strs[3], 10, 64)
 	if err != nil {
-		return fmt.Errorf("authorization is invalid")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization expiration is invalid"))
 	}
 	expiration -= time.Now().UnixMilli()
 	if expiration > 1000*60*60*24*15 {
-		// Authorization有效期大于15天无需刷新
 		return nil
 	}
 	if expiration < 0 {
-		return fmt.Errorf("authorization has expired")
+		return d.loginAfterAuthorizationFailure(errors.New("authorization has expired"))
 	}
 
 	url := "https://aas.caiyun.feixin.10086.cn:443/tellin/authTokenRefresh.do"
@@ -109,17 +158,23 @@ func (d *Yun139) refreshToken() error {
 		SetResult(&resp).
 		Post(url)
 	if err != nil || resp.Return != "0" {
-		log.Warnf("139yun: failed to refresh token with old token: %v, desc: %s. trying to login with password.", err, resp.Desc)
-		newAuth, loginErr := d.loginWithPassword()
-		log.Debugf("newAuth: Ok: %s", newAuth)
-		if loginErr != nil {
-			return fmt.Errorf("failed to login with password after refresh failed: %w", loginErr)
-		}
-		return nil
+		return d.loginAfterAuthorizationFailure(fmt.Errorf("token refresh failed: %v, desc: %s", err, resp.Desc))
 	}
 
 	d.Authorization = base64.StdEncoding.EncodeToString([]byte(splits[0] + ":" + splits[1] + ":" + resp.Token))
 	op.MustSaveDriverStorage(d)
+	return nil
+}
+
+// loginAfterAuthorizationFailure deliberately skips cookie fast login. Mail
+// cookies are only reused as device context for the password login request.
+func (d *Yun139) loginAfterAuthorizationFailure(cause error) error {
+	log.Warnf("139yun: %v; trying password login.", cause)
+	newAuth, err := d.loginWithPassword()
+	log.Debugf("139yun: password fallback generated authorization: %t", newAuth != "")
+	if err != nil {
+		return fmt.Errorf("%v; password login failed: %w", cause, err)
+	}
 	return nil
 }
 
@@ -339,15 +394,18 @@ func (d *Yun139) familyGetFiles(catalogID string) ([]model.Obj, error) {
 			},
 			"sortDirection": 1,
 		})
+		// 传入 catalogID 是文件夹的ID，而不是完整路径
+		// 当传入catalogID为家庭云根目录时，直接留空
+		if catalogID == d.ProviderRoot {
+			data["catalogID"] = ""
+		}
 		var resp QueryContentListResp
 		_, err := d.post("/orchestration/familyCloud-rebuild/content/v1.2/queryContentList", data, &resp)
 		if err != nil {
 			return nil, err
 		}
+		// 返回的是完整的Path: root:/<UserRootID>/<CatalogID>/.../<CatalogID>
 		path := resp.Data.Path
-		if catalogID == d.RootFolderID {
-			d.RootPath = path
-		}
 		for _, catalog := range resp.Data.CloudCatalogList {
 			f := model.Object{
 				ID:       catalog.CatalogID,
@@ -403,9 +461,6 @@ func (d *Yun139) groupGetFiles(catalogID string) ([]model.Obj, error) {
 			return nil, err
 		}
 		path := resp.Data.GetGroupContentResult.ParentCatalogID
-		if catalogID == d.RootFolderID {
-			d.RootPath = path
-		}
 		for _, catalog := range resp.Data.GetGroupContentResult.CatalogList {
 			f := model.Object{
 				ID:       catalog.CatalogID,
@@ -485,14 +540,331 @@ func (d *Yun139) groupGetLink(contentId string, path string) (string, error) {
 	return jsoniter.Get(res, "data", "downloadURL").ToString(), nil
 }
 
+var shareAesKeyHex = hex.EncodeToString([]byte("PVGDwmcvfs1uV3d1"))
+
+func (d *Yun139) shareHeaders() map[string]string {
+	auth := d.getAuthorization()
+	if auth != "" && !strings.HasPrefix(strings.ToLower(auth), "basic ") {
+		auth = "Basic " + auth
+	}
+	headers := map[string]string{
+		"User-Agent":        "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+		"Accept":            "application/json, text/plain, */*",
+		"Content-Type":      "application/json;charset=UTF-8",
+		"X-Deviceinfo":      "||9|12.27.0|firefox|140.0|||linux unknown|1920X526|zh-CN|||",
+		"hcy-cool-flag":     "1",
+		"CMS-DEVICE":        "default",
+		"x-m4c-caller":      "PC",
+		"X-Yun-Api-Version": "v1",
+		"Origin":            "https://yun.139.com",
+		"Referer":           "https://yun.139.com/",
+	}
+	if auth != "" {
+		headers["Authorization"] = auth
+	}
+	return headers
+}
+
+func (d *Yun139) sharePost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
+	url := "https://share-kd-njs.yun.139.com/yun-share" + pathname
+	return d.yun139EncryptedRequest(url, data, d.shareHeaders(), shareAesKeyHex, resp)
+}
+
+type shareRef struct {
+	LinkID   string
+	Password string
+	NodeID   string
+}
+
+const multiShareRefPrefix = "shares:"
+
+func encodeShareRef(linkID, password, nodeID string) string {
+	return url.PathEscape(linkID) + "|" + url.PathEscape(password) + "|" + url.PathEscape(nodeID)
+}
+
+func decodeShareRef(id string) (shareRef, bool) {
+	parts := strings.SplitN(id, "|", 3)
+	if len(parts) != 3 {
+		return shareRef{}, false
+	}
+	linkID, err1 := url.PathUnescape(parts[0])
+	password, err2 := url.PathUnescape(parts[1])
+	nodeID, err3 := url.PathUnescape(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil || linkID == "" {
+		return shareRef{}, false
+	}
+	return shareRef{LinkID: linkID, Password: password, NodeID: nodeID}, true
+}
+
+func encodeShareRefs(refs []shareRef) string {
+	if len(refs) == 1 {
+		ref := refs[0]
+		return encodeShareRef(ref.LinkID, ref.Password, ref.NodeID)
+	}
+	data, err := utils.Json.Marshal(refs)
+	if err != nil {
+		return ""
+	}
+	return multiShareRefPrefix + base64.RawURLEncoding.EncodeToString(data)
+}
+
+func decodeShareRefs(id string) ([]shareRef, bool) {
+	if !strings.HasPrefix(id, multiShareRefPrefix) {
+		ref, ok := decodeShareRef(id)
+		if !ok {
+			return nil, false
+		}
+		return []shareRef{ref}, true
+	}
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(id, multiShareRefPrefix))
+	if err != nil {
+		return nil, false
+	}
+	var refs []shareRef
+	if err = utils.Json.Unmarshal(data, &refs); err != nil || len(refs) == 0 {
+		return nil, false
+	}
+	return refs, true
+}
+
+func (d *Yun139) shareEntries() []struct{ LinkID, Password string } {
+	raw := strings.TrimSpace(d.LinkID)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';'
+	})
+	entries := make([]struct{ LinkID, Password string }, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		entry := struct{ LinkID, Password string }{LinkID: part}
+		if linkID, password, ok := strings.Cut(part, "#"); ok {
+			entry.LinkID = strings.TrimSpace(linkID)
+			entry.Password = strings.TrimSpace(password)
+		}
+		if entry.LinkID != "" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func (d *Yun139) shareRootEntries() []shareRef {
+	entries := d.shareEntries()
+	refs := make([]shareRef, 0, len(entries))
+	for _, entry := range entries {
+		refs = append(refs, shareRef{LinkID: entry.LinkID, Password: entry.Password, NodeID: "root"})
+	}
+	return refs
+}
+
+func (d *Yun139) shareGetFilesWithRef(ref shareRef, pCaID string) ([]model.Obj, error) {
+	if ref.NodeID == "" {
+		ref.NodeID = "root"
+	}
+	if pCaID == "" {
+		pCaID = ref.NodeID
+	}
+	data := base.Json{
+		"getOutLinkInfoReq": base.Json{
+			"account": d.getAccount(),
+			"linkID":  ref.LinkID,
+			"passwd":  ref.Password,
+			"pCaID":   pCaID,
+		},
+	}
+	var resp ShareListResp
+	_, err := d.sharePost("/richlifeApp/devapp/IOutLink/getOutLinkInfoV6", data, &resp)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]model.Obj, 0)
+	for _, catalog := range resp.Data.CaLst {
+		modTime, _ := time.ParseInLocation("20060102150405", catalog.UdTime, utils.CNLoc)
+		f := model.Object{
+			ID:       encodeShareRef(ref.LinkID, ref.Password, catalog.CaID),
+			Name:     catalog.CaName,
+			Modified: modTime,
+			IsFolder: true,
+		}
+		files = append(files, &f)
+	}
+	for _, content := range resp.Data.CoLst {
+		name := content.CoName
+		size := content.CoSize
+		modTime, _ := time.ParseInLocation("20060102150405", content.UdTime, utils.CNLoc)
+		f := model.Object{
+			ID:       encodeShareRef(ref.LinkID, ref.Password, content.CoID),
+			Name:     name,
+			Size:     size,
+			Modified: modTime,
+		}
+		files = append(files, &f)
+	}
+
+	return files, nil
+}
+
+func (d *Yun139) shareGetMergedFiles(refs []shareRef) ([]model.Obj, error) {
+	files := make([]model.Obj, 0)
+	indices := make(map[string]int)
+	var firstErr error
+	for _, ref := range refs {
+		items, err := d.shareGetFilesWithRef(ref, ref.NodeID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, item := range items {
+			idx, exists := indices[item.GetName()]
+			if !exists {
+				indices[item.GetName()] = len(files)
+				files = append(files, item)
+				continue
+			}
+			if !files[idx].IsDir() || !item.IsDir() {
+				continue
+			}
+			existingRefs, ok1 := decodeShareRefs(files[idx].GetID())
+			itemRefs, ok2 := decodeShareRefs(item.GetID())
+			if !ok1 || !ok2 {
+				continue
+			}
+			mergedRefs := append(existingRefs, itemRefs...)
+			files[idx] = &model.Object{
+				ID:       encodeShareRefs(mergedRefs),
+				Name:     item.GetName(),
+				Modified: item.ModTime(),
+				IsFolder: true,
+			}
+		}
+	}
+	if len(files) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return files, nil
+}
+
+func (d *Yun139) shareGetObj(reqPath string) (model.Obj, error) {
+	reqPath = utils.FixAndCleanPath(reqPath)
+	if reqPath == "/" {
+		return &model.Object{ID: "root", Name: "root", IsFolder: true, Path: "/"}, nil
+	}
+	parts := strings.Split(strings.Trim(reqPath, "/"), "/")
+	currentRefs := d.shareRootEntries()
+	currentPath := ""
+	var currentObj model.Obj
+	for idx, part := range parts {
+		items, err := d.shareGetMergedFiles(currentRefs)
+		if err != nil {
+			return nil, err
+		}
+		matched := false
+		for _, item := range items {
+			if item.GetName() != part {
+				continue
+			}
+			matched = true
+			currentObj = item
+			currentPath = path.Join(currentPath, item.GetName())
+			if item.IsDir() {
+				itemRefs, ok := decodeShareRefs(item.GetID())
+				if !ok {
+					return nil, errs.ObjectNotFound
+				}
+				currentRefs = itemRefs
+				break
+			}
+			if idx != len(parts)-1 {
+				return nil, errs.ObjectNotFound
+			}
+		}
+		if !matched {
+			return nil, errs.ObjectNotFound
+		}
+	}
+	if currentObj == nil {
+		return nil, errs.ObjectNotFound
+	}
+	if setter, ok := currentObj.(model.SetPath); ok {
+		setter.SetPath(currentPath)
+	}
+	return currentObj, nil
+}
+
+func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string) (*model.Link, error) {
+	data := base.Json{
+		"getContentInfoFromOutLinkReq": base.Json{
+			"contentId": coID,
+			"linkID":    ref.LinkID,
+			"passwd":    ref.Password,
+			"account":   d.getAccount(),
+		},
+	}
+	var resp ShareContentInfoResp
+	body, err := d.sharePost("/richlifeApp/devapp/IOutLink/getContentInfoFromOutLink", data, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	res := resp.Data.ContentInfo
+	if linkType == "video_preview" || linkType == "preview" || linkType == "thumb" {
+		if res.PresentURL == "" {
+			return nil, fmt.Errorf("failed to get preview link")
+		}
+		return &model.Link{URL: res.PresentURL}, nil
+	}
+
+	if d.getAccount() == "" {
+		if res.PresentURL != "" {
+			return &model.Link{URL: res.PresentURL}, nil
+		}
+		return nil, fmt.Errorf("139 share download requires account authentication")
+	}
+
+	downloadReq := base.Json{
+		"dlFromOutLinkReqV3": base.Json{
+			"account": d.getAccount(),
+			"linkID":  ref.LinkID,
+			"passwd":  ref.Password,
+			"coIDLst": base.Json{
+				"item": []string{coID},
+			},
+		},
+	}
+	var downloadResp ShareDownloadResp
+	downloadBody, err := d.sharePost("/richlifeApp/devapp/IOutLink/dlFromOutLinkV3", downloadReq, &downloadResp)
+	if err != nil {
+		return nil, err
+	}
+	if downloadResp.Data.ExtInfo.CDNDownloadURL != "" {
+		return &model.Link{URL: downloadResp.Data.ExtInfo.CDNDownloadURL}, nil
+	}
+	if downloadResp.Data.RedrURL != "" {
+		return &model.Link{URL: downloadResp.Data.RedrURL}, nil
+	}
+	if downloadResp.Data.DownloadURL != "" {
+		return &model.Link{URL: downloadResp.Data.DownloadURL}, nil
+	}
+
+	log.Debugf("[139Share] content info without embedded download url: %s", string(body))
+	log.Debugf("[139Share] download response without direct url: %s", string(downloadBody))
+	return nil, fmt.Errorf("failed to get link")
+}
+
 func unicode(str string) string {
 	textQuoted := strconv.QuoteToASCII(str)
 	textUnquoted := textQuoted[1 : len(textQuoted)-1]
 	return textUnquoted
 }
 
-func (d *Yun139) personalRequest(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	url := d.getPersonalCloudHost() + pathname
+func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	req := base.RestyClient.R()
 	randStr := random.String(16)
 	ts := time.Now().Format("2006-01-02 15:04:05")
@@ -554,7 +926,21 @@ func (d *Yun139) personalRequest(pathname string, method string, callback base.R
 }
 
 func (d *Yun139) personalPost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
-	return d.personalRequest(pathname, http.MethodPost, func(req *resty.Request) {
+	return d.newRequest(d.getPersonalCloudHost()+pathname, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, resp)
+}
+
+func (d *Yun139) newPost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
+	var url string
+	switch d.Type {
+	case MetaFamily, MetaGroup:
+		// this is on purpose
+		url = d.getGroupCloudHost() + pathname
+	default:
+		url = d.getPersonalCloudHost() + pathname
+	}
+	return d.newRequest(url, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
 	}, resp)
 }
@@ -681,7 +1067,21 @@ func (d *Yun139) getPersonalCloudHost() string {
 	return d.PersonalCloudHost
 }
 
-func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, uploadPartInfos []PersonalPartInfo, rateLimited *driver.RateLimitReader, p *driver.Progress) error {
+func (d *Yun139) getFamilyCloudHost() string {
+	if d.ref != nil {
+		return d.ref.getFamilyCloudHost()
+	}
+	return d.FamilyCloudHost
+}
+
+func (d *Yun139) getGroupCloudHost() string {
+	if d.ref != nil {
+		return d.ref.getGroupCloudHost()
+	}
+	return d.GroupCloudHost
+}
+
+func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, uploadPartInfos []PersonalPartInfo, ss streamPkg.StreamSectionReader, p *driver.Progress) error {
 	// 确保数组以 PartNumber 从小到大排序
 	sort.Slice(uploadPartInfos, func(i, j int) bool {
 		return uploadPartInfos[i].PartNumber < uploadPartInfos[j].PartNumber
@@ -693,31 +1093,51 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 			return fmt.Errorf("invalid PartNumber %d: index out of bounds (partInfos length: %d)", uploadPartInfo.PartNumber, len(partInfos))
 		}
 		partSize := partInfos[index].PartSize
+		offset := partInfos[index].ParallelHashCtx.PartOffset
 		log.Debugf("[139] uploading part %+v/%+v", index, len(partInfos))
-		limitReader := io.LimitReader(rateLimited, partSize)
-		r := io.TeeReader(limitReader, p)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadPartInfo.UploadUrl, r)
-		if err != nil {
-			return err
+
+		rd, getErr := ss.GetSectionReader(offset, partSize)
+		if getErr != nil {
+			return getErr
 		}
-		req.Header.Set("Content-Type", "application/octet-stream")
-		req.Header.Set("Content-Length", fmt.Sprint(partSize))
-		req.Header.Set("Origin", "https://yun.139.com")
-		req.Header.Set("Referer", "https://yun.139.com/")
-		req.ContentLength = partSize
-		err = func() error {
-			res, err := base.HttpClient.Do(req)
-			if err != nil {
-				return err
-			}
-			defer res.Body.Close()
-			log.Debugf("[139] uploaded: %+v", res)
-			if res.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(res.Body)
-				return fmt.Errorf("unexpected status code: %d, body: %s", res.StatusCode, string(body))
-			}
-			return nil
-		}()
+
+		// Save progress before this part so retries don't double-count bytes
+		partDoneStart := p.Done
+		err := retry.Do(
+			func() error {
+				// Reset progress to the start of this part on each attempt
+				p.Done = partDoneStart
+				if _, seekErr := rd.Seek(0, io.SeekStart); seekErr != nil {
+					return seekErr
+				}
+				req, reqErr := http.NewRequestWithContext(ctx, http.MethodPut, uploadPartInfo.UploadUrl, io.TeeReader(rd, p))
+				if reqErr != nil {
+					return reqErr
+				}
+				req.Header.Set("Content-Type", "application/octet-stream")
+				req.Header.Set("Content-Length", fmt.Sprint(partSize))
+				req.Header.Set("Origin", "https://yun.139.com")
+				req.Header.Set("Referer", "https://yun.139.com/")
+				req.ContentLength = partSize
+
+				res, doErr := base.HttpClient.Do(req)
+				if doErr != nil {
+					return doErr
+				}
+				defer res.Body.Close()
+				log.Debugf("[139] uploaded: %+v", res)
+				if res.StatusCode != http.StatusOK {
+					body, _ := io.ReadAll(res.Body)
+					return fmt.Errorf("unexpected status code: %d, body: %s", res.StatusCode, string(body))
+				}
+				return nil
+			},
+			retry.Context(ctx),
+			retry.Attempts(3),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Delay(time.Second),
+		)
+		ss.FreeSectionReader(rd)
 		if err != nil {
 			return err
 		}
@@ -740,15 +1160,253 @@ func (d *Yun139) getDiskQuotaDetail(ctx context.Context) (*DiskQuotaDetail, erro
 	return &resp, nil
 }
 
+type mailLoginResponse struct {
+	Code    string `json:"code"`
+	Summary string `json:"summary"`
+	Var     struct {
+		LoginSuccessURL string `json:"loginSuccessUrl"`
+	} `json:"var"`
+}
+
+func parseMailLoginResponse(body []byte) mailLoginResponse {
+	var response mailLoginResponse
+	if utils.Json.Unmarshal(body, &response) == nil && (response.Code != "" || response.Summary != "" || response.Var.LoginSuccessURL != "") {
+		return response
+	}
+	if match := regexp.MustCompile(`['"]?code['"]?\s*:\s*['"]([^'"]+)`).FindSubmatch(body); len(match) == 2 {
+		response.Code = string(match[1])
+	}
+	if match := regexp.MustCompile(`['"]?summary['"]?\s*:\s*['"]([^'"]+)`).FindSubmatch(body); len(match) == 2 {
+		response.Summary = string(match[1])
+	}
+	if match := regexp.MustCompile(`['"]?loginSuccessUrl['"]?\s*:\s*['"]([^'"]+)`).FindSubmatch(body); len(match) == 2 {
+		response.Var.LoginSuccessURL = string(match[1])
+	}
+	return response
+}
+
+func mergeMailCookieHeader(existing string, responseCookies []*http.Cookie) string {
+	cookies := cookiepkg.Parse(existing)
+	for _, responseCookie := range responseCookies {
+		if responseCookie != nil && responseCookie.Name != "" {
+			cookies = cookiepkg.SetCookie(cookies, responseCookie.Name, responseCookie.Value)
+		}
+	}
+	return cookiepkg.ToString(cookies)
+}
+
+func sanitizeMailLoginCookies(existing, newJSessionID string) string {
+	cookies := cookiepkg.Parse(existing)
+	filtered := cookies[:0]
+	for _, cookie := range cookies {
+		if _, excluded := mailLoginCookieExclusions[cookie.Name]; excluded {
+			continue
+		}
+		if cookie.Name == "JSESSIONID" {
+			if newJSessionID == "" {
+				continue
+			}
+			cookie.Value = newJSessionID
+			newJSessionID = ""
+		}
+		filtered = append(filtered, cookie)
+	}
+	if newJSessionID != "" {
+		filtered = append(filtered, &http.Cookie{Name: "JSESSIONID", Value: newJSessionID})
+	}
+	return cookiepkg.ToString(filtered)
+}
+
+func mailRiskCode(location string) string {
+	parsed, err := url.Parse(location)
+	if err != nil {
+		return ""
+	}
+	return parsed.Query().Get("ec")
+}
+
+func smsSceneForRisk(riskCode string) (int, bool) {
+	switch riskCode {
+	case "PML401010062":
+		return 2, true
+	case "MW0016":
+		return 4, true
+	case "S025", "S035":
+		return 1, true
+	default:
+		return 0, false
+	}
+}
+
+func encryptMailLoginName(account string) (string, error) {
+	der, err := base64.StdEncoding.DecodeString(mailPublicKey)
+	if err != nil {
+		return "", fmt.Errorf("decode mail public key: %w", err)
+	}
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return "", fmt.Errorf("parse mail public key: %w", err)
+	}
+	publicKey, ok := parsed.(*rsa.PublicKey)
+	if !ok {
+		return "", errors.New("mail public key is not RSA")
+	}
+	encrypted, err := rsa.EncryptPKCS1v15(crypto_rand.Reader, publicKey, []byte(account))
+	if err != nil {
+		return "", fmt.Errorf("encrypt mail login name: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(encrypted), nil
+}
+
+func mailXMLHeaders(cookie string) map[string]string {
+	return map[string]string{
+		"Cookie":          cookie,
+		"Content-Type":    "application/xml; charset=utf-8",
+		"Accept-Encoding": "gzip",
+		"User-Agent":      "okhttp/4.12.0",
+	}
+}
+
+func new139RestyClient() *resty.Client {
+	if base.RestyClient != nil {
+		return base.RestyClient.Clone()
+	}
+	return resty.New()
+}
+
+func (d *Yun139) sendSMSVerificationCode(riskCode string) error {
+	scene, ok := smsSceneForRisk(riskCode)
+	if !ok {
+		return fmt.Errorf("139 Mail risk control does not support SMS verification: %s", riskCode)
+	}
+	loginName, err := encryptMailLoginName(d.Username)
+	if err != nil {
+		return err
+	}
+	body := strings.Join([]string{
+		"<object>",
+		mailXMLField("loginName", loginName),
+		mailXMLField("fv", "4"),
+		mailXMLField("clientId", "1003"),
+		mailXMLField("eMode", "1"),
+		mailXMLField("loginFailureUrl", ""),
+		mailXMLField("loginSuccessUrl", ""),
+		mailXMLField("verifyCode", ""),
+		mailXMLField("version", "1.0"),
+		mailXMLField("scene", strconv.Itoa(scene)),
+		"</object>",
+	}, "")
+	res, err := new139RestyClient().R().
+		SetHeaders(mailXMLHeaders(d.MailCookies)).
+		SetBody(body).
+		Post(mailSMSURL + "?func=" + url.QueryEscape("login:sendSmsCodeByScene") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
+	if err != nil {
+		return fmt.Errorf("send 139 Mail SMS verification code: %w", err)
+	}
+	d.MailCookies = mergeMailCookieHeader(d.MailCookies, res.Cookies())
+	response := parseMailLoginResponse(res.Body())
+	if response.Code == "S_OK" {
+		return nil
+	}
+	switch response.Code {
+	case "PML401010021", "PML401010022":
+		return fmt.Errorf("139 Mail requires picture verification before SMS can be sent: %s", response.Code)
+	case "PML404010001":
+		return errors.New("139 Mail SMS verification code was requested too frequently")
+	case "PML401010002":
+		return errors.New("139 Mail rejected the SMS verification parameters")
+	default:
+		return fmt.Errorf("send 139 Mail SMS verification code failed: code=%s summary=%s", response.Code, response.Summary)
+	}
+}
+
+func (d *Yun139) verifySMSCode(riskCode string) (string, error) {
+	if _, ok := smsSceneForRisk(riskCode); !ok {
+		return "", fmt.Errorf("139 Mail risk control does not support SMS verification: %s", riskCode)
+	}
+	loginName, err := encryptMailLoginName(d.Username)
+	if err != nil {
+		return "", err
+	}
+	pwdType := ""
+	if riskCode == "MW0016" {
+		pwdType = mailXMLField("pwdType", "1")
+	}
+	body := strings.Join([]string{
+		"<object>",
+		mailXMLField("clientId", "1003"),
+		mailXMLField("version", "4"),
+		mailXMLField("loginType", "0"),
+		mailXMLField("authType", "2"),
+		mailXMLField("loginName", loginName),
+		mailXMLField("eMode", "1"),
+		mailXMLField("loginPassword", sha1Hash("fetion.com.cn:"+d.SmsCode)),
+		mailXMLField("createAutoLoginSecretKey", "1"),
+		mailXMLField("verifyCode", ""),
+		mailXMLField("verifyAgentId", ""),
+		mailXMLField("reqFrom", "3"),
+		mailXMLField("needWCookie", "1"),
+		pwdType,
+		"</object>",
+	}, "")
+	res, err := new139RestyClient().R().
+		SetHeaders(mailXMLHeaders(d.MailCookies)).
+		SetBody(body).
+		Post(mailSMSURL + "?func=" + url.QueryEscape("/login/inlogin.action") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
+	if err != nil {
+		return "", fmt.Errorf("verify 139 Mail SMS code: %w", err)
+	}
+	d.MailCookies = mergeMailCookieHeader(d.MailCookies, res.Cookies())
+	response := parseMailLoginResponse(res.Body())
+	if response.Code != "S_OK" {
+		return "", fmt.Errorf("verify 139 Mail SMS code failed: code=%s summary=%s", response.Code, response.Summary)
+	}
+	sid := ""
+	if response.Var.LoginSuccessURL != "" {
+		if successURL, parseErr := url.Parse(response.Var.LoginSuccessURL); parseErr == nil {
+			sid = successURL.Query().Get("sid")
+		}
+	}
+	if sid == "" {
+		for _, cookie := range cookiepkg.Parse(d.MailCookies) {
+			if cookie.Name == "Os_SSo_Sid" || cookie.Name == "sid" {
+				sid = cookie.Value
+				break
+			}
+		}
+	}
+	if sid == "" {
+		return "", errors.New("139 Mail SMS verification succeeded but did not return sid")
+	}
+	d.SmsCode = ""
+	return sid, nil
+}
+
 func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("--- 执行步骤 1: 登录 API ---")
-	loginURL := "https://mail.10086.cn/Login/Login.ashx"
+	loginURL := mailPasswordURL
+
+	preLogin, err := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).R().Get(mailRootURL)
+	if preLogin == nil {
+		return "", fmt.Errorf("step1 pre-login request failed: %v", err)
+	}
+	if err != nil && (preLogin.StatusCode() < 300 || preLogin.StatusCode() >= 400) {
+		return "", fmt.Errorf("step1 pre-login request failed: %w", err)
+	}
+	jsessionid := ""
+	for _, cookie := range preLogin.Cookies() {
+		if cookie.Name == "JSESSIONID" {
+			jsessionid = cookie.Value
+			break
+		}
+	}
+	if jsessionid == "" {
+		return "", errors.New("step1 pre-login response did not set JSESSIONID")
+	}
+	loginCookies := sanitizeMailLoginCookies(d.MailCookies, jsessionid)
 
 	// 密码 SHA1 哈希
 	hashedPassword := sha1Hash(fmt.Sprintf("fetion.com.cn:%s", d.Password))
-	log.Debugf("DEBUG: 原始密码: %s", d.Password)
-	log.Debugf("DEBUG: SHA1 输入: fetion.com.cn:%s", d.Password)
-	log.Debugf("DEBUG: 生成的 Password 哈希: %s", hashedPassword)
 
 	cguid := strconv.FormatInt(time.Now().UnixMilli(), 10) // 随机生成 cguid
 
@@ -770,7 +1428,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 		"sec-fetch-user":            "?1",
 		"upgrade-insecure-requests": "1",
 		"user-agent":                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0",
-		"Cookie":                    d.MailCookies,
+		"Cookie":                    loginCookies,
 	}
 
 	loginData := url.Values{}
@@ -784,11 +1442,10 @@ func (d *Yun139) step1_password_login() (string, error) {
 	loginData.Set("authType", "2")
 
 	log.Debugf("DEBUG: 登录请求 URL: %s", loginURL)
-	log.Debugf("DEBUG: 登录请求 Headers: %+v", loginHeaders)
-	log.Debugf("DEBUG: 登录请求 Body: %s", loginData.Encode())
+	log.Debugf("DEBUG: 登录请求已准备")
 
 	// 设置客户端不跟随重定向
-	client := base.RestyClient.SetRedirectPolicy(resty.NoRedirectPolicy())
+	client := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy())
 	res, err := client.R().
 		SetHeaders(loginHeaders).
 		SetFormDataFromValues(loginData).
@@ -804,24 +1461,36 @@ func (d *Yun139) step1_password_login() (string, error) {
 	} else {
 		log.Debugf("DEBUG: 登录响应 Status Code: %d", res.StatusCode())
 	}
-	// 恢复客户端的默认重定向策略，以免影响后续请求
-	base.RestyClient.SetRedirectPolicy(resty.FlexibleRedirectPolicy(10))
-	log.Debugf("DEBUG: 登录响应 Headers: %+v", res.Header())
+	log.Debugf("DEBUG: 登录响应 Location present: %t", res.Header().Get("Location") != "")
 
 	var sid, extractedCguid string
 
 	// 从 Location 头部提取 sid 和 cguid
 	locationHeader := res.Header().Get("Location")
 	if locationHeader != "" {
+		d.MailCookies = mergeMailCookieHeader(loginCookies, res.Cookies())
+		if riskCode := mailRiskCode(locationHeader); riskCode != "" {
+			if _, ok := smsSceneForRisk(riskCode); !ok {
+				return "", fmt.Errorf("139 Mail risk control triggered: %s", riskCode)
+			}
+			if strings.TrimSpace(d.SmsCode) == "" {
+				if sendErr := d.sendSMSVerificationCode(riskCode); sendErr != nil {
+					return "", sendErr
+				}
+				op.MustSaveDriverStorage(d)
+				return "", errors.New("139 Mail SMS verification code sent; fill sms_code and save the storage again")
+			}
+			return d.verifySMSCode(riskCode)
+		}
 		sidMatch := regexp.MustCompile(`sid=([^&]+)`).FindStringSubmatch(locationHeader)
 		cguidMatch := regexp.MustCompile(`cguid=([^&]+)`).FindStringSubmatch(locationHeader)
 		if len(sidMatch) > 1 {
 			sid = sidMatch[1]
-			log.Debugf("DEBUG: 从 Location 提取到 sid: %s", sid)
+			log.Debugf("DEBUG: 从 Location 提取到 sid.")
 		}
 		if len(cguidMatch) > 1 {
 			extractedCguid = cguidMatch[1]
-			log.Debugf("DEBUG: 从 Location 提取到 cguid: %s", extractedCguid)
+			log.Debugf("DEBUG: 从 Location 提取到 cguid.")
 		}
 	}
 
@@ -833,11 +1502,11 @@ func (d *Yun139) step1_password_login() (string, error) {
 			cookieCguidMatch := regexp.MustCompile(`cguid=([^;]+)`).FindStringSubmatch(cookieStr)
 			if len(ssoSidMatch) > 1 && sid == "" {
 				sid = ssoSidMatch[1]
-				log.Debugf("DEBUG: 从 Set-Cookie 提取到 sid: %s", sid)
+				log.Debugf("DEBUG: 从 Set-Cookie 提取到 sid.")
 			}
 			if len(cookieCguidMatch) > 1 && extractedCguid == "" {
 				extractedCguid = cookieCguidMatch[1]
-				log.Debugf("DEBUG: 从 Set-Cookie 提取到 cguid: %s", extractedCguid)
+				log.Debugf("DEBUG: 从 Set-Cookie 提取到 cguid.")
 			}
 		}
 	}
@@ -846,16 +1515,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 		return "", errors.New("failed to extract sid or cguid from login response")
 	}
 
-	// 提取并记录 cookies
-	loginUrlObj, _ := url.Parse(loginURL)
-	cookies := base.RestyClient.GetClient().Jar.Cookies(loginUrlObj)
-	var cookieStrings []string
-	for _, cookie := range cookies {
-		cookieStrings = append(cookieStrings, cookie.Name+"="+cookie.Value)
-	}
-	cookieStr := strings.Join(cookieStrings, "; ")
-	log.Debugf("DEBUG: 提取到的 Cookies: %s", cookieStr)
-	d.MailCookies = cookieStr
+	d.MailCookies = mergeMailCookieHeader(loginCookies, res.Cookies())
 
 	return sid, nil
 }
@@ -881,7 +1541,6 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 	}
 
 	exchangePassidHeaders := map[string]string{
-		"Host":            "smsrebuild1.mail.10086.cn",
 		"Cookie":          rmkey,
 		"Content-Type":    "text/xml; charset=utf-8",
 		"Accept-Encoding": "gzip",
@@ -910,6 +1569,16 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 	log.Debugf("DEBUG: 提取到 dycpwd: %s", dycpwd)
 
 	return dycpwd, nil
+}
+
+func mailXMLField(name, value string) string {
+	return `<string name="` + escapeXML(name) + `">` + escapeXML(value) + `</string>`
+}
+
+func escapeXML(value string) string {
+	var escaped bytes.Buffer
+	_ = xml.EscapeText(&escaped, []byte(value))
+	return escaped.String()
 }
 
 // --- 辅助函数：加密/解密 ---
@@ -1156,7 +1825,6 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 		"x-UserAgent":         "android|23116PN5BC|android15|1.2.6|||1440x3200|10246600",
 		"x-DeviceInfo":        "4|127.0.0.1|5|1.2.6|Xiaomi|23116PN5BC||02-00-00-00-00-00|android 15|1440x3200|android|||",
 		"Content-Type":        "text/plain;charset=UTF-8",
-		"Host":                "user-njs.yun.139.com",
 		"Accept-Encoding":     "gzip",
 		"User-Agent":          "okhttp/3.12.2",
 	}
@@ -1208,6 +1876,148 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 	return newAuthorization, nil
 }
 
+func extractFastLoginCookies(mailCookies string) (sid string, rmkey string) {
+	for _, c := range cookiepkg.Parse(mailCookies) {
+		switch c.Name {
+		case "Os_SSo_Sid":
+			sid = c.Value
+		case "RMKEY":
+			rmkey = c.Value
+		}
+		if sid != "" && rmkey != "" {
+			return sid, rmkey
+		}
+	}
+	return sid, rmkey
+}
+
+func isRedirectStatus(statusCode int) bool {
+	return statusCode >= 300 && statusCode <= 399
+}
+
+func hasCookiePair(raw string) bool {
+	for _, part := range strings.Split(raw, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if ok && strings.TrimSpace(name) != "" && value != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func fetchMailJSessionID(endpoint string) (string, error) {
+	client := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy())
+	res, err := client.R().Get(endpoint)
+	if res == nil {
+		return "", fmt.Errorf("pre-login request returned no response: %v", err)
+	}
+	if err != nil && !isRedirectStatus(res.StatusCode()) {
+		return "", fmt.Errorf("pre-login request failed with status %d: %w", res.StatusCode(), err)
+	}
+	if res.StatusCode() >= http.StatusBadRequest {
+		return "", fmt.Errorf("pre-login request failed with status %d", res.StatusCode())
+	}
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == "JSESSIONID" && cookie.Value != "" {
+			return cookie.Value, nil
+		}
+	}
+	return "", errors.New("pre-login response did not set JSESSIONID")
+}
+
+func (d *Yun139) tryFastLoginWithCookies() bool {
+	sid, rmkey := extractFastLoginCookies(d.MailCookies)
+	if sid == "" || rmkey == "" {
+		log.Warnf("139yun: fast login skipped, required cookies missing: Os_SSo_Sid=%t RMKEY=%t", sid != "", rmkey != "")
+		return false
+	}
+
+	log.Infof("139yun: attempting fast login using existing SID/Cookies (Step 2).")
+	token, err := d.step2_get_single_token(sid)
+	if err != nil || token == "" {
+		log.Warnf("139yun: fast login Step 2 failed: %v", err)
+		return false
+	}
+
+	log.Infof("139yun: Step 2 success. Proceeding to Step 3.")
+	auth, err := d.step3_third_party_login(token)
+	if err != nil {
+		log.Warnf("139yun: fast login Step 3 failed: %v", err)
+		return false
+	}
+
+	d.Authorization = auth
+	op.MustSaveDriverStorage(d)
+	log.Infof("139yun: fast login success (Step 2 -> Step 3).")
+	return true
+}
+
+func (d *Yun139) validateAndInitCredentials() error {
+	state, err := d.credentialState()
+	if err != nil {
+		return err
+	}
+
+	switch state {
+	case credentialStateAuthorization:
+		// Authorization is refreshed by Init immediately after this helper returns.
+		log.Debugf("139yun: Authorization exists, skipping initialization login.")
+		return nil
+	case credentialStateFullLogin, credentialStateCookiesOnly:
+		log.Infof("139yun: Authorization missing, attempting login...")
+		if d.tryFastLoginWithCookies() {
+			return nil
+		}
+
+		if state == credentialStateCookiesOnly {
+			return fmt.Errorf("fast login with cookies failed, and cannot fallback to password login (missing username/password)")
+		}
+
+		log.Infof("139yun: fast login failed or not possible, performing full password login (Step 1).")
+		_, err := d.loginWithPassword()
+		if err != nil {
+			return fmt.Errorf("login with password failed: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported credential state: %d", state)
+	}
+}
+
+func (d *Yun139) credentialState() (credentialState, error) {
+	d.Authorization = strings.TrimSpace(d.Authorization)
+	d.Username = strings.TrimSpace(d.Username)
+	d.MailCookies = strings.TrimSpace(d.MailCookies)
+
+	if d.Authorization != "" {
+		if strings.HasPrefix(strings.ToLower(d.Authorization), "basic ") {
+			return 0, fmt.Errorf("authorization should not include Basic prefix")
+		}
+		return credentialStateAuthorization, nil
+	}
+
+	if d.MailCookies != "" && !hasCookiePair(d.MailCookies) {
+		return 0, fmt.Errorf("MailCookies format is invalid, please check your configuration")
+	}
+
+	hasUsername := d.Username != ""
+	hasPassword := strings.TrimSpace(d.Password) != ""
+	hasCookies := d.MailCookies != ""
+
+	if hasUsername || hasPassword {
+		if !hasUsername || !hasPassword || !hasCookies {
+			return 0, fmt.Errorf("if username or password is provided, all three (mail_cookies, username, password) must be provided")
+		}
+		return credentialStateFullLogin, nil
+	}
+
+	if hasCookies {
+		return credentialStateCookiesOnly, nil
+	}
+
+	return 0, fmt.Errorf("authorization is empty and credentials are not provided")
+}
+
 func (d *Yun139) loginWithPassword() (string, error) {
 	if d.Username == "" || d.Password == "" || d.MailCookies == "" {
 		return "", errors.New("username, password or mail_cookies is empty")
@@ -1237,10 +2047,9 @@ func (d *Yun139) loginWithPassword() (string, error) {
 }
 
 func (d *Yun139) andAlbumRequest(pathname string, body interface{}, resp interface{}) ([]byte, error) {
-	url := "https://group.yun.139.com/hcy/family/adapter/andAlbum/openApi" + pathname
+	url := d.getFamilyCloudHost() + "/andAlbum/openApi" + pathname
 
 	headers := map[string]string{
-		"Host":                "group.yun.139.com",
 		"authorization":       "Basic " + d.getAuthorization(),
 		"x-svctype":           "2",
 		"hcy-cool-flag":       "1",
@@ -1323,6 +2132,21 @@ func (d *Yun139) getGroupRootByCloudID(cloudID string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no root found in group response")
+}
+
+// dirPath returns the full path for a directory object.
+// For family root (Path="" from framework), needs "root:/"+id prefix.
+// Non-root objects already have their API path in GetPath() from List responses.
+func (d *Yun139) dirPath(dir model.Obj) string {
+	p := dir.GetPath()
+	id := dir.GetID()
+	if p == "" {
+		if d.isFamily() {
+			return "root:/" + id
+		}
+		return id
+	}
+	return path.Join(p, id)
 }
 
 // getFamilyRootPath 查询 family 的上层 path（data.path）
