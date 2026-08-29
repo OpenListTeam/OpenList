@@ -31,6 +31,8 @@ type TransferTask struct {
 	DeletePolicy    DeletePolicy `json:"delete_policy"`
 	DeleteAfterTime time.Time    `json:"delete_after_time,omitempty"`
 	Url             string       `json:"url"`
+	CleanupID       string       `json:"cleanup_id,omitempty"`
+	CleanupFailed   bool         `json:"cleanup_failed,omitempty"`
 	groupID         string       `json:"-"`
 }
 
@@ -99,7 +101,16 @@ func (t *TransferTask) OnSucceeded() {
 			removeObjTemp(t)
 		}
 	case DeleteAfterSeeding:
-		t.removeTempAfterSeeding()
+		if t.CleanupID == "" {
+			t.removeTempAfterSeeding()
+		}
+	}
+	if t.CleanupID != "" {
+		if err := CleanupTaskManager.TransferSucceeded(t.CleanupID); err != nil {
+			log.Errorf("failed to update cleanup lifecycle after transfer succeeded: %v", err)
+		}
+		t.CleanupFailed = false
+		t.Persist()
 	}
 	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), t.groupID, true)
 }
@@ -112,7 +123,26 @@ func (t *TransferTask) OnFailed() {
 			removeObjTemp(t)
 		}
 	}
+	if t.CleanupID != "" {
+		if err := CleanupTaskManager.TransferFailed(t.CleanupID, t.GetErr()); err != nil {
+			log.Errorf("failed to block cleanup lifecycle after transfer failed: %v", err)
+		}
+		t.CleanupFailed = true
+		t.Persist()
+	}
 	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), t.groupID, false)
+}
+
+func (t *TransferTask) OnBeforeRetry() {
+	if t.CleanupID == "" || !t.CleanupFailed {
+		return
+	}
+	if err := CleanupTaskManager.RetryTransfer(t.CleanupID); err != nil {
+		log.Errorf("failed to resume cleanup lifecycle for transfer retry: %v", err)
+		return
+	}
+	t.CleanupFailed = false
+	t.Persist()
 }
 
 func (t *TransferTask) SetRetry(retry int, maxRetry int) {
@@ -148,7 +178,20 @@ var (
 	TransferTaskManager *tache.Manager[*TransferTask]
 )
 
-func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy DeletePolicy, deleteAfterTime time.Time) error {
+func addTransferTask(t *TransferTask) error {
+	if t.CleanupID != "" {
+		if CleanupTaskManager == nil {
+			return fmt.Errorf("offline cleanup manager is not initialized")
+		}
+		if err := CleanupTaskManager.AddTransfer(t.CleanupID); err != nil {
+			return err
+		}
+	}
+	TransferTaskManager.Add(t)
+	return nil
+}
+
+func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy DeletePolicy, deleteAfterTime time.Time, cleanupID string) error {
 	dstStorage, dstDirActualPath, err := op.GetStorageAndActualPath(dstDirPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed get dst storage")
@@ -172,10 +215,13 @@ func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 			},
 			DeletePolicy:    deletePolicy,
 			DeleteAfterTime: deleteAfterTime,
+			CleanupID:       cleanupID,
 		}
 		t.groupID = path.Join(t.DstStorageMp, t.DstActualPath)
 		task_group.TransferCoordinator.AddTask(t.groupID, nil)
-		TransferTaskManager.Add(t)
+		if err := addTransferTask(t); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -214,9 +260,12 @@ func transferStdPath(t *TransferTask) error {
 				groupID:         t.groupID,
 				DeletePolicy:    t.DeletePolicy,
 				DeleteAfterTime: t.DeleteAfterTime,
+				CleanupID:       t.CleanupID,
 			}
 			task_group.TransferCoordinator.AddTask(t.groupID, nil)
-			TransferTaskManager.Add(task)
+			if err := addTransferTask(task); err != nil {
+				return err
+			}
 		}
 		t.Status = "src object is dir, added all transfer tasks of files"
 		return nil
@@ -285,7 +334,7 @@ func removeStdTemp(t *TransferTask) {
 	}
 }
 
-func transferObj(ctx context.Context, tempDir, dstDirPath string, deletePolicy DeletePolicy, deleteAfterTime time.Time) error {
+func transferObj(ctx context.Context, tempDir, dstDirPath string, deletePolicy DeletePolicy, deleteAfterTime time.Time, cleanupID string) error {
 	srcStorage, srcObjActualPath, err := op.GetStorageAndActualPath(tempDir)
 	if err != nil {
 		return errors.WithMessage(err, "failed get src storage")
@@ -315,10 +364,13 @@ func transferObj(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 			},
 			DeletePolicy:    deletePolicy,
 			DeleteAfterTime: deleteAfterTime,
+			CleanupID:       cleanupID,
 		}
 		t.groupID = path.Join(t.DstStorageMp, t.DstActualPath)
 		task_group.TransferCoordinator.AddTask(t.groupID, nil)
-		TransferTaskManager.Add(t)
+		if err := addTransferTask(t); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -346,7 +398,7 @@ func transferObjPath(t *TransferTask) error {
 			}
 			srcObjPath := stdpath.Join(t.SrcActualPath, obj.GetName())
 			task_group.TransferCoordinator.AddTask(t.groupID, nil)
-			TransferTaskManager.Add(&TransferTask{
+			childTask := &TransferTask{
 				TaskData: fs.TaskData{
 					TaskExtension: task.TaskExtension{
 						Creator: t.Creator,
@@ -362,7 +414,11 @@ func transferObjPath(t *TransferTask) error {
 				groupID:         t.groupID,
 				DeletePolicy:    t.DeletePolicy,
 				DeleteAfterTime: t.DeleteAfterTime,
-			})
+				CleanupID:       t.CleanupID,
+			}
+			if err := addTransferTask(childTask); err != nil {
+				return err
+			}
 		}
 		t.Status = "src object is dir, added all transfer tasks of objs"
 		return nil

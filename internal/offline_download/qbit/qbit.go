@@ -116,6 +116,11 @@ func (a *QBittorrent) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	}
 	if info.SavePath != "" {
 		task.TempDir = info.SavePath
+		if task.CleanupID != "" {
+			if err := tool.CleanupTaskManager.SetTempDir(task.CleanupID, info.SavePath); err != nil {
+				return nil, err
+			}
+		}
 	}
 	s := &tool.Status{}
 	s.TotalBytes = info.Size

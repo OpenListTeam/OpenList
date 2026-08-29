@@ -183,6 +183,21 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 		Toolname:     args.Tool,
 		tool:         tool,
 	}
+	if deletePolicy == DeleteAfterSeeding && isSeedingToolName(args.Tool) {
+		if CleanupTaskManager == nil {
+			return nil, fmt.Errorf("offline cleanup manager is not initialized")
+		}
+		t.CleanupID = uid
+		t.SetID(uid)
+		if err := CleanupTaskManager.Register(CleanupJob{
+			ID:             uid,
+			DownloadTaskID: uid,
+			TempDir:        tempDir,
+			Toolname:       args.Tool,
+		}); err != nil {
+			return nil, errors.WithMessage(err, "failed to register offline cleanup")
+		}
+	}
 	DownloadTaskManager.Add(t)
 	return t, nil
 }

@@ -27,9 +27,11 @@ type DownloadTask struct {
 	DeletePolicy      DeletePolicy `json:"delete_policy"`
 	DeleteAfterTime   time.Time    `json:"delete_after_time,omitempty"`
 	Toolname          string       `json:"toolname"`
+	CleanupID         string       `json:"cleanup_id,omitempty"`
+	TransferStarted   bool         `json:"transfer_started,omitempty"`
 	Status            string       `json:"-"`
 	Signal            chan int     `json:"-"`
-	GID               string       `json:"-"`
+	GID               string       `json:"gid,omitempty"`
 	tool              Tool
 	callStatusRetried int
 }
@@ -47,27 +49,41 @@ func (t *DownloadTask) Run() error {
 	}
 	if err := t.tool.Run(t); !errs.IsNotSupportError(err) {
 		if err == nil {
-			return t.Transfer()
+			return t.startTransfer()
 		}
 		return err
+	}
+	if t.TransferStarted {
+		return nil
 	}
 	t.Signal = make(chan int)
 	defer func() {
 		t.Signal = nil
 	}()
-	gid, err := t.tool.AddURL(&AddUrlArgs{
-		Ctx:         t.Ctx(),
-		Url:         t.Url,
-		TorrentData: t.TorrentData,
-		UID:         t.ID,
-		TempDir:     t.TempDir,
-		Signal:      t.Signal,
-	})
-	if err != nil {
-		return err
+	if t.GID == "" {
+		gid, err := t.tool.AddURL(&AddUrlArgs{
+			Ctx:         t.Ctx(),
+			Url:         t.Url,
+			TorrentData: t.TorrentData,
+			UID:         t.ID,
+			TempDir:     t.TempDir,
+			Signal:      t.Signal,
+		})
+		if err != nil {
+			return err
+		}
+		t.GID = gid
+		t.Persist()
+		if t.CleanupID != "" {
+			if err := CleanupTaskManager.SetGID(t.CleanupID, gid); err != nil {
+				return errors.WithMessage(err, "failed to persist cleanup gid")
+			}
+		}
 	}
-	t.GID = gid
-	var ok bool
+	var (
+		ok  bool
+		err error
+	)
 outer:
 	for {
 		select {
@@ -87,6 +103,9 @@ outer:
 		}
 	}
 	if err != nil {
+		return err
+	}
+	if err := t.startTransfer(); err != nil {
 		return err
 	}
 	if t.tool.Name() == "Pikpak" {
@@ -114,6 +133,10 @@ outer:
 		return nil
 	}
 	if t.tool.Name() == "123 Open" {
+		return nil
+	}
+	if t.CleanupID != "" {
+		t.Status = "offline download completed, cleanup lifecycle is waiting for transfers and seeding"
 		return nil
 	}
 	t.Status = "offline download completed, maybe transferring"
@@ -170,8 +193,7 @@ func (t *DownloadTask) Update() (bool, error) {
 	// if download completed
 	if info.Completed {
 		t.setDeleteAfterTime()
-		err := t.Transfer()
-		return true, errors.WithMessage(err, "failed to transfer file")
+		return true, nil
 	}
 	// if download failed
 	if info.Err != nil {
@@ -189,6 +211,7 @@ func (t *DownloadTask) setDeleteAfterTime() {
 		return
 	}
 	t.DeleteAfterTime = time.Now().Add(seedDuration)
+	t.Persist()
 }
 
 func (t *DownloadTask) transferDeletePolicy() DeletePolicy {
@@ -199,7 +222,10 @@ func (t *DownloadTask) transferDeletePolicy() DeletePolicy {
 }
 
 func (t *DownloadTask) isSeedingTool() bool {
-	toolName := t.tool.Name()
+	return isSeedingToolName(t.tool.Name())
+}
+
+func isSeedingToolName(toolName string) bool {
 	return toolName == "qBittorrent" || toolName == "Transmission"
 }
 
@@ -223,13 +249,54 @@ func (t *DownloadTask) seedingDuration() (time.Duration, bool) {
 	return time.Minute * time.Duration(seedTime), true
 }
 
+func (t *DownloadTask) startTransfer() error {
+	if t.TransferStarted {
+		return nil
+	}
+	if t.CleanupID != "" {
+		if err := CleanupTaskManager.BeginTransfer(t.CleanupID, t.GID, t.DeleteAfterTime); err != nil {
+			return errors.WithMessage(err, "failed to begin cleanup transfer lifecycle")
+		}
+	}
+	if err := t.Transfer(); err != nil {
+		if t.CleanupID != "" {
+			_ = CleanupTaskManager.DownloadFailed(t.CleanupID, err)
+		}
+		return errors.WithMessage(err, "failed to transfer file")
+	}
+	t.TransferStarted = true
+	t.Persist()
+	if t.CleanupID != "" {
+		if err := CleanupTaskManager.FinishTransferSetup(t.CleanupID); err != nil {
+			return errors.WithMessage(err, "failed to finish cleanup transfer setup")
+		}
+	}
+	return nil
+}
+
+func (t *DownloadTask) OnFailed() {
+	if t.CleanupID != "" {
+		if err := CleanupTaskManager.DownloadFailed(t.CleanupID, t.GetErr()); err != nil {
+			log.Errorf("failed to block cleanup lifecycle: %v", err)
+		}
+	}
+}
+
+func (t *DownloadTask) OnBeforeRetry() {
+	if t.CleanupID != "" {
+		if err := CleanupTaskManager.RetryDownload(t.CleanupID); err != nil {
+			log.Errorf("failed to resume cleanup lifecycle: %v", err)
+		}
+	}
+}
+
 func (t *DownloadTask) Transfer() error {
 	toolName := t.tool.Name()
 	deletePolicy := t.transferDeletePolicy()
 	if toolName == "115 Cloud" || toolName == "115 Open" || toolName == "123 Open" || toolName == "123Pan" || toolName == "PikPak" || toolName == "Thunder" || toolName == "ThunderX" || toolName == "ThunderBrowser" {
 		// 如果不是直接下载到目标路径，则进行转存
 		if t.TempDir != t.DstDirPath {
-			return transferObj(t.Ctx(), t.TempDir, t.DstDirPath, deletePolicy, t.DeleteAfterTime)
+			return transferObj(t.Ctx(), t.TempDir, t.DstDirPath, deletePolicy, t.DeleteAfterTime, t.CleanupID)
 		}
 		return nil
 	}
@@ -253,14 +320,14 @@ func (t *DownloadTask) Transfer() error {
 			DeletePolicy:    deletePolicy,
 			DeleteAfterTime: t.DeleteAfterTime,
 			Url:             t.Url,
+			CleanupID:       t.CleanupID,
 		}
 		tsk.SetTotalBytes(t.GetTotalBytes())
 		tsk.groupID = path.Join(tsk.DstStorageMp, tsk.DstActualPath)
 		task_group.TransferCoordinator.AddTask(tsk.groupID, nil)
-		TransferTaskManager.Add(tsk)
-		return nil
+		return addTransferTask(tsk)
 	}
-	return transferStd(t.Ctx(), t.TempDir, t.DstDirPath, deletePolicy, t.DeleteAfterTime)
+	return transferStd(t.Ctx(), t.TempDir, t.DstDirPath, deletePolicy, t.DeleteAfterTime, t.CleanupID)
 }
 
 func (t *DownloadTask) GetName() string {
