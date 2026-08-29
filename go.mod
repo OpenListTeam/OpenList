@@ -10,7 +10,7 @@ require (
 	github.com/KarpelesLab/reflink v1.0.2
 	github.com/KirCute/zip v1.0.1
 	github.com/OpenListTeam/go-cache v0.1.0
-	github.com/OpenListTeam/gofakes3 v0.8.0
+	github.com/OpenListTeam/gofakes3 v0.8.1
 	github.com/OpenListTeam/sftpd-openlist v1.0.1
 	github.com/OpenListTeam/tache v0.2.2
 	github.com/OpenListTeam/times v0.1.0
