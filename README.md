@@ -1,7 +1,8 @@
 <div align="center">
+  <h1>Open-Box</h1>
   <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
 
-  <p><em>OpenList is a resilient, long-term governance, community-driven fork of AList — built to defend open source against trust-based attacks.</em></p>
+  <p><em>HillStreet's managed storage gateway, powered by the OpenList engine.</em></p>
 
   <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
   <a href="https://github.com/OpenListTeam/OpenList/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OpenListTeam/OpenList" alt="License" /></a>
@@ -11,6 +12,9 @@
   <a href="https://github.com/OpenListTeam/OpenList/discussions"><img src="https://img.shields.io/github/discussions/OpenListTeam/OpenList?color=%23ED8936" alt="discussions" /></a>
   <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/downloads/OpenListTeam/OpenList/total?color=%239F7AEA&logo=github" alt="Downloads" /></a>
 </div>
+
+> Open-Box is a downstream distribution. OpenList remains the upstream engine and
+> retains its original project names, package paths, notices, and AGPL-3.0 license.
 
 ---
 
@@ -172,4 +176,3 @@ We sincerely thank the author [Xhofe](https://github.com/Xhofe) of the original 
 Thanks goes to these wonderful people:
 
 [![Contributors](https://contrib.rocks/image?repo=OpenListTeam/OpenList)](https://github.com/OpenListTeam/OpenList/graphs/contributors)
-

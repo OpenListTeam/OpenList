@@ -22,6 +22,10 @@ output/
 # vendor/
 /bin/*
 *.json
+!railway.json
+!deploy/cloudflare/package.json
+!deploy/cloudflare/package-lock.json
+deploy/cloudflare/node_modules/
 !renovate.json
 /build
 /data/
