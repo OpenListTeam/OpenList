@@ -1,0 +1,37 @@
+# Open-Box source-storage template.
+# Keep real OAuth tokens/credentials OUT of Git and inject them at runtime.
+
+[google-personal-01]
+type = drive
+scope = drive.readonly
+
+[google-personal-02]
+type = drive
+scope = drive.readonly
+
+[google-workspace-01]
+type = drive
+scope = drive.readonly
+
+[google-shared-drive-01]
+type = drive
+scope = drive.readonly
+# team_drive = <shared-drive-id>
+
+[dropbox-account-01]
+type = dropbox
+
+[dropbox-account-02]
+type = dropbox
+
+[onedrive-personal-01]
+type = onedrive
+
+[onedrive-business-01]
+type = onedrive
+
+[onedrive-business-02]
+type = onedrive
+
+# MASTER STORAGE is intentionally not defined with credentials here.
+# Configure a runtime remote named `master` (S3-compatible, filesystem, etc.).

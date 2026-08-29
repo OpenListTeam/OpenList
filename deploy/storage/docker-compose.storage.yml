@@ -1,0 +1,17 @@
+services:
+  storage-collector:
+    image: rclone/rclone:latest
+    container_name: open-box-storage-collector
+    restart: "no"
+    environment:
+      MASTER_REMOTE: ${MASTER_REMOTE:-master}
+      MASTER_ROOT: ${MASTER_ROOT:-open-box}
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+    volumes:
+      - ${RCLONE_CONFIG_HOST_PATH:-./rclone.conf}:/config/rclone/rclone.conf:ro
+      - ./collect.sh:/scripts/collect.sh:ro
+      - open-box-storage-logs:/logs
+    entrypoint: ["/bin/sh", "/scripts/collect.sh"]
+
+volumes:
+  open-box-storage-logs:
