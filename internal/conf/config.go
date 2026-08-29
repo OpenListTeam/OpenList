@@ -230,9 +230,10 @@ func DefaultConfig(dataDir string) *Config {
 			AllowHeaders: []string{"*"},
 		},
 		S3: S3{
-			Enable: false,
-			Port:   5246,
-			SSL:    false,
+			Enable:       false,
+			Port:         5246,
+			SSL:          false,
+			MultipartTTL: "24h",
 		},
 		FTP: FTP{
 			Enable:                  false,
