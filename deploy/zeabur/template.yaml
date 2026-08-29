@@ -1,0 +1,69 @@
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+  name: Open-Box
+spec:
+  description: Open-Box file and storage gateway, powered by the OpenList engine.
+  variables:
+    - key: PUBLIC_DOMAIN
+      type: DOMAIN
+      name: Public domain
+      description: Domain that Zeabur should bind to Open-Box.
+    - key: DB_HOST
+      type: STRING
+      name: Supabase database host
+      description: Use the IPv4 session-pooler host for the Supabase project.
+    - key: DB_USER
+      type: STRING
+      name: Supabase database user
+      description: Session-pooler database username.
+    - key: DB_PASSWORD
+      type: STRING
+      name: Supabase database password
+      description: Enter this only in Zeabur; never commit it.
+  tags:
+    - Tool
+    - Storage
+  readme: |-
+    # Open-Box
+
+    This template deploys the stateful Open-Box service. It persists runtime data at
+    `/opt/openlist/data` and connects directly to Supabase Postgres. Do not attach a
+    second empty database or reuse the production database for a staging instance.
+  services:
+    - name: Open-Box
+      template: PREBUILT
+      domainKey: PUBLIC_DOMAIN
+      spec:
+        source:
+          image: huxleysee/open-box:latest
+        ports:
+          - id: web
+            port: 5244
+            type: HTTP
+        volumes:
+          - id: open-box-data
+            dir: /opt/openlist/data
+        env:
+          PORT:
+            default: "5244"
+          SITE_URL:
+            default: https://${PUBLIC_DOMAIN}
+          TZ:
+            default: Asia/Manila
+          UMASK:
+            default: "022"
+          DB_TYPE:
+            default: postgres
+          DB_HOST:
+            default: ${DB_HOST}
+          DB_PORT:
+            default: "5432"
+          DB_USER:
+            default: ${DB_USER}
+          DB_PASSWORD:
+            default: ${DB_PASSWORD}
+          DB_NAME:
+            default: postgres
+          DB_SSL_MODE:
+            default: require

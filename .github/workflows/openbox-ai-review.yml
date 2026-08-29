@@ -1,0 +1,51 @@
+name: Open-Box AI Review
+
+on:
+  pull_request:
+    branches: [staging, main, develop]
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Optional prompt for agent"
+        required: false
+        default: "Summarize repository health for Open-Box production."
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect diff context
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin ${{ github.base_ref }} --depth=50
+            git diff --stat origin/${{ github.base_ref }}...HEAD | head -80 > /tmp/ctx.txt
+            git diff --name-only origin/${{ github.base_ref }}...HEAD | head -80 >> /tmp/ctx.txt
+          else
+            echo "Manual agent run" > /tmp/ctx.txt
+            ls .github/workflows >> /tmp/ctx.txt
+          fi
+
+      - name: Call AI agent
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          USER_PROMPT: ${{ github.event.inputs.prompt }}
+        run: python3 scripts/platform/ai_review.py
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "## Open-Box AI agent review" > /tmp/comment.md
+          echo >> /tmp/comment.md
+          cat /tmp/ai-review.md >> /tmp/comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/comment.md || true
