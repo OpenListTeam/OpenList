@@ -13,6 +13,7 @@ import (
 	_123 "github.com/OpenListTeam/OpenList/v4/drivers/123"
 	_123_open "github.com/OpenListTeam/OpenList/v4/drivers/123_open"
 	"github.com/OpenListTeam/OpenList/v4/drivers/guangyapan"
+	halalcloudopen "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud_open"
 	"github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
@@ -178,6 +179,11 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 			}
 			tempDir = filepath.Join(tempBase, uid)
 		}
+	case "HalalCloudOpen":
+		if _, ok := storage.(*halalcloudopen.HalalCloudOpen); !ok {
+			return nil, errors.New("HalalCloudOpen offline download only supports HalalCloudOpen destination storage")
+		}
+		tempDir = args.DstDirPath
 	}
 
 	taskCreator, _ := ctx.Value(conf.UserKey).(*model.User) // taskCreator is nil when convert failed
@@ -243,6 +249,8 @@ func toolNameForStorage(storage driver.Driver) string {
 		return "123 Open"
 	case *guangyapan.GuangYaPan:
 		return "GuangYaPan"
+	case *halalcloudopen.HalalCloudOpen:
+		return "HalalCloudOpen"
 	case *pikpak.PikPak:
 		return "PikPak"
 	case *thunder.Thunder:

@@ -6,6 +6,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/halalcloud/golang-sdk-lite/halalcloud/apiclient"
+	sdkOffline "github.com/halalcloud/golang-sdk-lite/halalcloud/services/offline"
 	sdkUser "github.com/halalcloud/golang-sdk-lite/halalcloud/services/user"
 	sdkUserFile "github.com/halalcloud/golang-sdk-lite/halalcloud/services/userfile"
 )
@@ -40,6 +41,7 @@ func (d *HalalCloudOpen) Init(ctx context.Context) error {
 	d.sdkClient = client
 	d.sdkUserFileService = sdkUserFile.NewUserFileService(client)
 	d.sdkUserService = sdkUser.NewUserService(client)
+	d.offlineTaskService = sdkOffline.NewOfflineTaskService(client)
 	userInfo, err := d.sdkUserService.Get(ctx, &sdkUser.User{})
 	if err != nil {
 		return err
