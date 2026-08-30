@@ -126,6 +126,8 @@ func (d *PikPak) login() error {
 	d.RefreshToken = jsoniter.Get(data, "refresh_token").ToString()
 	d.AccessToken = jsoniter.Get(data, "access_token").ToString()
 	d.Common.SetUserID(jsoniter.Get(data, "sub").ToString())
+	d.Addition.RefreshToken = d.RefreshToken
+	op.MustSaveDriverStorage(d)
 	return nil
 }
 
@@ -145,8 +147,8 @@ func (d *PikPak) refreshToken(refreshToken string) error {
 		return err
 	}
 	if e.ErrorCode != 0 {
-		if e.ErrorCode == 4126 {
-			// 1. 未填写 username 或 password
+		if e.ErrorCode == 4126 || e.ErrorCode == 401 || strings.Contains(strings.ToLower(e.ErrorMsg), "unauthenticated") {
+			// refresh_token invalid or unauthenticated, try re-login
 			if d.Addition.Username == "" || d.Addition.Password == "" {
 				return errors.New("refresh_token invalid, please re-provide refresh_token")
 			} else {
@@ -197,12 +199,27 @@ func (d *PikPak) request(url string, method string, callback base.ReqCallback, r
 	case 0:
 		return res.Body(), nil
 	case 4122, 4121, 16:
-		// access_token 过期
+		if strings.Contains(url, "/v1/auth/") || strings.Contains(url, "/v1/shield/captcha/") {
+			return nil, errors.New(e.Error())
+		}
+		// access_token expired
 		if err1 := d.refreshToken(d.RefreshToken); err1 != nil {
 			return nil, err1
 		}
 		return d.request(url, method, callback, resp)
-	case 9: // 验证码token过期
+	case 4126:
+		if strings.Contains(url, "/v1/auth/") || strings.Contains(url, "/v1/shield/captcha/") {
+			return nil, errors.New(e.Error())
+		}
+		// refresh_token invalid, re-login
+		if err1 := d.login(); err1 != nil {
+			return nil, err1
+		}
+		return d.request(url, method, callback, resp)
+	case 9: // captcha token expired
+		if strings.Contains(url, "/v1/shield/captcha/") {
+			return nil, errors.New(e.Error())
+		}
 		if err = d.RefreshCaptchaTokenAtLogin(GetAction(method, url), d.GetUserID()); err != nil {
 			return nil, err
 		}
@@ -369,6 +386,9 @@ func (d *PikPak) RefreshCaptchaTokenInLogin(action, username string) error {
 	} else {
 		metas["username"] = username
 	}
+	metas["client_version"] = d.ClientVersion
+	metas["package_name"] = d.PackageName
+	metas["timestamp"], metas["captcha_sign"] = d.Common.GetCaptchaSign()
 	return d.refreshCaptchaToken(action, metas)
 }
 

@@ -86,7 +86,14 @@ func (d *PikPak) Init(ctx context.Context) (err error) {
 	// 如果已经有RefreshToken，直接获取AccessToken
 	if d.Addition.RefreshToken != "" {
 		if err = d.refreshToken(d.Addition.RefreshToken); err != nil {
-			return err
+			// refreshToken failed, fall back to login if credentials available
+			if d.Addition.Username != "" && d.Addition.Password != "" {
+				if err = d.login(); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
 		}
 	} else {
 		// 如果没有填写RefreshToken，尝试登录 获取 refreshToken
