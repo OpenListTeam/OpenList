@@ -313,7 +313,7 @@ var findSubFolderReg = regexp.MustCompile(`(?i)(?:folderlink|mbxfolder).+href="/
 var findDownPageParamReg = regexp.MustCompile(`<iframe.*?src="(.+?)"`)
 
 // 获取文件ID
-var findFileIDReg = regexp.MustCompile(`'/ajaxm\.php\?file=(\d+)'`)
+var findFileIDReg = regexp.MustCompile(`'/ajax(?:file|m)\.php\?file=(\d+)'`)
 
 // 获取分享链接主界面
 func (d *LanZou) getShareUrlHtml(shareID string) (string, error) {
@@ -412,15 +412,13 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 		}
 		param["p"] = pwd
 
-		fileIDs := findFileIDReg.FindStringSubmatch(sharePageData)
-		var fileID string
-		if len(fileIDs) > 1 {
-			fileID = fileIDs[1]
-		} else {
+		matches := findFileIDReg.FindStringSubmatch(sharePageData)
+		if len(matches) < 2 {
 			return nil, fmt.Errorf("not find file id")
 		}
+		ajaxUrl := d.ShareUrl + matches[0][1:len(matches[0])-1]
 		var resp FileShareInfoAndUrlResp[string]
-		_, err = d.post(d.ShareUrl+"/ajaxm.php?file="+fileID, func(req *resty.Request) { req.SetFormData(param) }, &resp)
+		_, err = d.post(ajaxUrl, func(req *resty.Request) { req.SetFormData(param) }, &resp)
 		if err != nil {
 			return nil, err
 		}
@@ -444,15 +442,13 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 			return nil, err
 		}
 
-		fileIDs := findFileIDReg.FindStringSubmatch(nextPageData)
-		var fileID string
-		if len(fileIDs) > 1 {
-			fileID = fileIDs[1]
-		} else {
+		matches := findFileIDReg.FindStringSubmatch(nextPageData)
+		if len(matches) < 2 {
 			return nil, fmt.Errorf("not find file id")
 		}
+		ajaxUrl := d.ShareUrl + matches[0][1:len(matches[0])-1]
 		var resp FileShareInfoAndUrlResp[int]
-		_, err = d.post(d.ShareUrl+"/ajaxm.php?file="+fileID, func(req *resty.Request) { req.SetFormData(param) }, &resp)
+		_, err = d.post(ajaxUrl, func(req *resty.Request) { req.SetFormData(param) }, &resp)
 		if err != nil {
 			return nil, err
 		}

@@ -2,7 +2,6 @@ package onedrive_sharelink
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,30 +12,28 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	internalNet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/html"
 )
 
 // NewNoRedirectClient creates an HTTP client that doesn't follow redirects
 func NewNoRedirectCLient() *http.Client {
-	return &http.Client{
-		Timeout: time.Hour * 48,
-		Transport: &http.Transport{
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
-		},
-		// Prevent following redirects
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	client := internalNet.NewHttpClient()
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
+	return client
 }
 
 // getCookiesWithPassword fetches cookies required for authenticated access using the provided password
-func getCookiesWithPassword(link, password string) (string, error) {
+func getCookiesWithPassword(ctx context.Context, link, password string) (string, error) {
 	// Send GET request
-	resp, err := http.Get(link)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := base.HttpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -95,16 +92,18 @@ func getCookiesWithPassword(link, password string) (string, error) {
 		"__VIEWSTATEENCRYPTED": []string{""},
 	}
 
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := NewNoRedirectCLient()
 	// Send the POST request, preventing redirects
-	resp, err = client.PostForm(newURL, data)
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, newURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err = client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
 
 	// Extract the desired cookie value
 	cookie := resp.Cookies()
@@ -153,6 +152,7 @@ func (d *OnedriveSharelink) getHeaders(ctx context.Context) (http.Header, error)
 		if err != nil {
 			return nil, err
 		}
+		defer answerNoRedirect.Body.Close()
 		redirectUrl := answerNoRedirect.Header.Get("Location")
 		log.Debugln("redirectUrl:", redirectUrl)
 		if redirectUrl == "" {
@@ -169,7 +169,7 @@ func (d *OnedriveSharelink) getHeaders(ctx context.Context) (http.Header, error)
 		header.Set("authority", u.Host)
 		return header, nil
 	} else {
-		cookie, err := getCookiesWithPassword(d.ShareLinkURL, d.ShareLinkPassword)
+		cookie, err := getCookiesWithPassword(ctx, d.ShareLinkURL, d.ShareLinkPassword)
 		if err != nil {
 			return nil, err
 		}
@@ -197,6 +197,7 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 		if err != nil {
 			return nil, err
 		}
+		_ = answerNoRedirect.Body.Close()
 		redirectUrl = answerNoRedirect.Header.Get("Location")
 	} else {
 		header = d.Headers
@@ -205,6 +206,7 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 		if err != nil {
 			return nil, err
 		}
+		_ = answerNoRedirect.Body.Close()
 		redirectUrl = answerNoRedirect.Header.Get("Location")
 	}
 	redirectSplitURL := strings.Split(redirectUrl, "/")
@@ -289,9 +291,9 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 	}
 	tempHeader["Content-Type"] = []string{"application/json;odata=verbose"}
 
-	client := &http.Client{}
+	client := base.HttpClient
 	postUrl := strings.Join(redirectSplitURL[:len(redirectSplitURL)-3], "/") + "/_api/v2.1/graphql"
-	req, err = http.NewRequest(http.MethodPost, postUrl, strings.NewReader(graphqlVar))
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, postUrl, strings.NewReader(graphqlVar))
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +328,10 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 			log.Debugln("nextHref:", nextHref)
 			graphqlReqNEW := GraphQLNEWRequest{}
 			postUrl = strings.Join(redirectSplitURL[:len(redirectSplitURL)-3], "/") + "/_api/web/GetListUsingPath(DecodedUrl=@a1)/RenderListDataAsStream" + nextHref
-			req, _ = http.NewRequest(http.MethodPost, postUrl, strings.NewReader(renderListDataAsStreamVar))
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, postUrl, strings.NewReader(renderListDataAsStreamVar))
+			if err != nil {
+				return nil, err
+			}
 			req.Header = tempHeader
 
 			resp, err := client.Do(req)

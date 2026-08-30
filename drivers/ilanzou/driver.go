@@ -1,4 +1,4 @@
-package template
+package ilanzou
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strconv"
 	"strings"
@@ -27,11 +28,13 @@ type ILanZou struct {
 	model.Storage
 	Addition
 
-	userID   string
-	account  string
-	upClient *resty.Client
-	conf     Conf
-	config   driver.Config
+	userID     string
+	account    string
+	apiClient  *resty.Client
+	linkClient *resty.Client
+	upClient   *resty.Client
+	conf       Conf
+	config     driver.Config
 }
 
 func (d *ILanZou) Config() driver.Config {
@@ -43,6 +46,18 @@ func (d *ILanZou) GetAddition() driver.Additional {
 }
 
 func (d *ILanZou) Init(ctx context.Context) error {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return err
+	}
+	// Keep state isolated per storage. The console and CDN issue cookies that
+	// must survive a retry but must never leak to another configured account.
+	d.apiClient = base.NewRestyClient().SetCookieJar(jar)
+	d.linkClient = base.NewRestyClient().SetCookieJar(jar).SetRedirectPolicy(
+		resty.RedirectPolicyFunc(func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}),
+	)
 	d.upClient = base.NewRestyClient().SetTimeout(time.Minute * 10)
 	if d.UUID == "" {
 		res, err := d.unproved("/getUuid", http.MethodGet, nil)
@@ -77,8 +92,7 @@ func (d *ILanZou) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 				"folderId=" + dir.GetID(),
 				"type=0",
 			}
-			queryString := strings.Join(params, "&")
-			req.SetQueryString(queryString).SetResult(&resp)
+			req.SetQueryString(strings.Join(params, "&")).SetResult(&resp)
 		})
 		if err != nil {
 			return nil, err
@@ -96,14 +110,12 @@ func (d *ILanZou) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 			return nil, err
 		}
 		obj := model.Object{
-			ID: strconv.FormatInt(f.FileId, 10),
-			// Path:     "",
+			ID:       strconv.FormatInt(f.FileId, 10),
 			Name:     f.FileName,
 			Size:     f.FileSize * 1024,
 			Modified: updTime,
 			Ctime:    updTime,
 			IsFolder: false,
-			// HashInfo: utils.HashInfo{},
 		}
 		if f.FileType == 2 {
 			obj.IsFolder = true
@@ -133,26 +145,23 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 		"devVersion=" + url.QueryEscape(d.conf.devVersion),
 		"appVersion=",
 		"timestamp=" + tsStr,
-		"appToken=" + url.QueryEscape(d.Token),
+		"appToken=" + appTokenQueryValue(d.Token),
 		"enable=1",
 	}
-
-	downloadId, err := mopan.AesEncrypt([]byte(fmt.Sprintf("%s|%s", file.GetID(), d.userID)), d.conf.secret)
+	downloadID, err := mopan.AesEncrypt([]byte(fmt.Sprintf("%s|%s", file.GetID(), d.userID)), d.conf.secret)
 	if err != nil {
 		return nil, err
 	}
-	params = append(params, "downloadId="+url.QueryEscape(hex.EncodeToString(downloadId)))
-
+	params = append(params, "downloadId="+url.QueryEscape(hex.EncodeToString(downloadID)))
 	auth, err := mopan.AesEncrypt([]byte(fmt.Sprintf("%s|%d", file.GetID(), ts)), d.conf.secret)
 	if err != nil {
 		return nil, err
 	}
 	params = append(params, "auth="+url.QueryEscape(hex.EncodeToString(auth)))
-
 	u.RawQuery = strings.Join(params, "&")
 	realURL := u.String()
-	// get the url after redirect
-	req := base.NoRedirectClient.R().SetContext(ctx)
+
+	req := d.linkClient.R().SetContext(ctx)
 	req.SetHeaders(map[string]string{
 		"Origin":          d.conf.site,
 		"Referer":         d.conf.site + "/",
@@ -162,7 +171,6 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	if d.Addition.Ip != "" {
 		req.SetHeader("X-Forwarded-For", d.Addition.Ip)
 	}
-
 	res, err := req.Get(realURL)
 	if err != nil {
 		return nil, err
@@ -172,49 +180,50 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 		realURL = location
 	} else if res.StatusCode() == http.StatusOK && location != "" {
 		realURL = location
+	} else if res.StatusCode() == http.StatusOK {
+		// Some file types return a 200 JSON resolver response instead of a 3xx.
+		realURL = utils.Json.Get(res.Body(), "url").ToString()
+		if realURL == "" {
+			realURL = utils.Json.Get(res.Body(), "data", "url").ToString()
+		}
+		if realURL == "" {
+			return nil, fmt.Errorf("download resolver returned no URL: %s", utils.Json.Get(res.Body(), "msg").ToString())
+		}
 	} else {
 		return nil, fmt.Errorf("redirect failed, status: %d, location: %s, msg: %s", res.StatusCode(), location, utils.Json.Get(res.Body(), "msg").ToString())
 	}
-	link := model.Link{URL: realURL}
-	return &link, nil
+	link := &model.Link{URL: realURL}
+	// Probe the CDN for the actual object size; API metadata can differ from
+	// the bytes served by the final URL. The timeout bounds Link latency.
+	headCtx, cancel := context.WithTimeout(ctx, linkHeadTimeout)
+	defer cancel()
+	if response, err := d.apiClient.R().SetContext(headCtx).Head(realURL); err == nil && response.StatusCode() >= http.StatusOK && response.StatusCode() < http.StatusMultipleChoices {
+		if size, parseErr := strconv.ParseInt(response.Header().Get("Content-Length"), 10, 64); parseErr == nil && size > 0 {
+			link.ContentLength = size
+		}
+	}
+	return link, nil
 }
 
 func (d *ILanZou) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	res, err := d.proved("/file/folder/save", http.MethodPost, func(req *resty.Request) {
-		req.SetBody(base.Json{
-			"folderDesc": "",
-			"folderId":   parentDir.GetID(),
-			"folderName": dirName,
-		})
+		req.SetBody(base.Json{"folderDesc": "", "folderId": parentDir.GetID(), "folderName": dirName})
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &model.Object{
-		ID: utils.Json.Get(res, "list", 0, "id").ToString(),
-		// Path:     "",
-		Name:     dirName,
-		Size:     0,
-		Modified: time.Now(),
-		Ctime:    time.Now(),
-		IsFolder: true,
-		// HashInfo: utils.HashInfo{},
-	}, nil
+	return &model.Object{ID: utils.Json.Get(res, "list", 0, "id").ToString(), Name: dirName, Modified: time.Now(), Ctime: time.Now(), IsFolder: true}, nil
 }
 
 func (d *ILanZou) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	var fileIds, folderIds []string
+	var fileIDs, folderIDs []string
 	if srcObj.IsDir() {
-		folderIds = []string{srcObj.GetID()}
+		folderIDs = []string{srcObj.GetID()}
 	} else {
-		fileIds = []string{srcObj.GetID()}
+		fileIDs = []string{srcObj.GetID()}
 	}
 	_, err := d.proved("/file/folder/move", http.MethodPost, func(req *resty.Request) {
-		req.SetBody(base.Json{
-			"folderIds": strings.Join(folderIds, ","),
-			"fileIds":   strings.Join(fileIds, ","),
-			"targetId":  dstDir.GetID(),
-		})
+		req.SetBody(base.Json{"folderIds": strings.Join(folderIDs, ","), "fileIds": strings.Join(fileIDs, ","), "targetId": dstDir.GetID()})
 	})
 	if err != nil {
 		return nil, err
@@ -226,58 +235,47 @@ func (d *ILanZou) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 	var err error
 	if srcObj.IsDir() {
 		_, err = d.proved("/file/folder/edit", http.MethodPost, func(req *resty.Request) {
-			req.SetBody(base.Json{
-				"folderDesc": "",
-				"folderId":   srcObj.GetID(),
-				"folderName": newName,
-			})
+			req.SetBody(base.Json{"folderDesc": "", "folderId": srcObj.GetID(), "folderName": newName})
 		})
 	} else {
 		_, err = d.proved("/file/edit", http.MethodPost, func(req *resty.Request) {
-			req.SetBody(base.Json{
-				"fileDesc": "",
-				"fileId":   srcObj.GetID(),
-				"fileName": newName,
-			})
+			req.SetBody(base.Json{"fileDesc": "", "fileId": srcObj.GetID(), "fileName": newName})
 		})
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &model.Object{
-		ID: srcObj.GetID(),
-		// Path:     "",
-		Name:     newName,
-		Size:     srcObj.GetSize(),
-		Modified: time.Now(),
-		Ctime:    srcObj.CreateTime(),
-		IsFolder: srcObj.IsDir(),
-	}, nil
+	return &model.Object{ID: srcObj.GetID(), Name: newName, Size: srcObj.GetSize(), Modified: time.Now(), Ctime: srcObj.CreateTime(), IsFolder: srcObj.IsDir()}, nil
 }
 
+// iLanzou has no server-side copy primitive. Returning NotImplement delegates
+// to OpenList's persistent CopyTaskManager instead of blocking the HTTP request.
 func (d *ILanZou) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// TODO copy obj, optional
 	return nil, errs.NotImplement
 }
 
 func (d *ILanZou) Remove(ctx context.Context, obj model.Obj) error {
-	var fileIds, folderIds []string
+	var fileIDs, folderIDs []string
 	if obj.IsDir() {
-		folderIds = []string{obj.GetID()}
+		folderIDs = []string{obj.GetID()}
 	} else {
-		fileIds = []string{obj.GetID()}
+		fileIDs = []string{obj.GetID()}
 	}
 	_, err := d.proved("/file/delete", http.MethodPost, func(req *resty.Request) {
-		req.SetBody(base.Json{
-			"folderIds": strings.Join(folderIds, ","),
-			"fileIds":   strings.Join(fileIds, ","),
-			"status":    0,
-		})
+		req.SetBody(base.Json{"folderIds": strings.Join(folderIDs, ","), "fileIds": strings.Join(fileIDs, ","), "status": 0})
 	})
 	return err
 }
 
-const DefaultPartSize = 1024 * 1024 * 8
+const (
+	DefaultPartSize = 1024 * 1024 * 8
+
+	// The results endpoint is eventually consistent after the upload commit.
+	maxUploadCommitRetries = 10
+	uploadCommitRetryDelay = time.Second
+
+	linkHeadTimeout = 5 * time.Second
+)
 
 func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	etag := s.GetHash().GetHash(utils.MD5)
@@ -288,55 +286,31 @@ func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 			return nil, err
 		}
 	}
-	// get upToken
+	fileSizeKiB := (s.GetSize() + 1023) / 1024
+	if fileSizeKiB < 1 {
+		fileSizeKiB = 1
+	}
 	res, err := d.proved("/7n/getUpToken", http.MethodPost, func(req *resty.Request) {
-		req.SetBody(base.Json{
-			"fileId":   "",
-			"fileName": s.GetName(),
-			"fileSize": s.GetSize()/1024 + 1,
-			"folderId": dstDir.GetID(),
-			"md5":      etag,
-			"type":     1,
-		})
+		req.SetBody(base.Json{"fileId": "", "fileName": s.GetName(), "fileSize": fileSizeKiB, "folderId": dstDir.GetID(), "md5": etag, "type": 1})
 	})
 	if err != nil {
 		return nil, err
 	}
 	upToken := utils.Json.Get(res, "upToken").ToString()
 	if upToken == "-1" {
-		// 支持秒传
 		var resp UploadTokenRapidResp
-		err := utils.Json.Unmarshal(res, &resp)
-		if err != nil {
+		if err := utils.Json.Unmarshal(res, &resp); err != nil {
 			return nil, err
 		}
-		return &model.Object{
-			ID:       strconv.FormatInt(resp.Map.FileID, 10),
-			Name:     resp.Map.FileName,
-			Size:     s.GetSize(),
-			Modified: s.ModTime(),
-			Ctime:    s.CreateTime(),
-			IsFolder: false,
-			HashInfo: utils.NewHashInfo(utils.MD5, etag),
-		}, nil
+		return &model.Object{ID: strconv.FormatInt(resp.Map.FileID, 10), Name: resp.Map.FileName, Size: s.GetSize(), Modified: s.ModTime(), Ctime: s.CreateTime(), IsFolder: false, HashInfo: utils.NewHashInfo(utils.MD5, etag)}, nil
 	}
 	now := time.Now()
-	key := fmt.Sprintf("disk/%d/%d/%d/%s/%016d", now.Year(), now.Month(), now.Day(), d.account, now.UnixMilli())
-	reader := driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
-		Reader: &driver.SimpleReaderWithSize{
-			Reader: s,
-			Size:   s.GetSize(),
-		},
-		UpdateProgress: up,
-	})
+	// Match the current console's generated Qiniu object key.
+	key := fmt.Sprintf("disk/%04d/%02d/%02d/%s/%d.rar", now.Year(), now.Month(), now.Day(), d.account, now.UnixMilli())
+	reader := driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{Reader: &driver.SimpleReaderWithSize{Reader: s, Size: s.GetSize()}, UpdateProgress: up})
 	var token string
 	if s.GetSize() <= DefaultPartSize {
-		res, err := d.upClient.R().SetContext(ctx).SetMultipartFormData(map[string]string{
-			"token": upToken,
-			"key":   key,
-			"fname": s.GetName(),
-		}).SetMultipartField("file", s.GetName(), s.GetMimetype(), reader).
-			Post("https://upload.qiniup.com/")
+		res, err := d.upClient.R().SetContext(ctx).SetMultipartFormData(map[string]string{"token": upToken, "key": key, "fname": s.GetName()}).SetMultipartField("file", s.GetName(), s.GetMimetype(), reader).Post("https://upload.qiniup.com/")
 		if err != nil {
 			return nil, err
 		}
@@ -347,40 +321,27 @@ func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 		if err != nil {
 			return nil, err
 		}
-		uploadId := utils.Json.Get(res.Body(), "uploadId").ToString()
+		uploadID := utils.Json.Get(res.Body(), "uploadId").ToString()
 		parts := make([]Part, 0)
 		partNum := (s.GetSize() + DefaultPartSize - 1) / DefaultPartSize
 		for i := 1; i <= int(partNum); i++ {
-			u := fmt.Sprintf("https://upload.qiniup.com/buckets/%s/objects/%s/uploads/%s/%d", d.conf.bucket, keyBase64, uploadId, i)
+			u := fmt.Sprintf("https://upload.qiniup.com/buckets/%s/objects/%s/uploads/%s/%d", d.conf.bucket, keyBase64, uploadID, i)
 			res, err = d.upClient.R().SetContext(ctx).SetHeader("Authorization", "UpToken "+upToken).SetBody(io.LimitReader(reader, DefaultPartSize)).Put(u)
 			if err != nil {
 				return nil, err
 			}
-			etag := utils.Json.Get(res.Body(), "etag").ToString()
-			parts = append(parts, Part{
-				PartNumber: i,
-				ETag:       etag,
-			})
+			parts = append(parts, Part{PartNumber: i, ETag: utils.Json.Get(res.Body(), "etag").ToString()})
 		}
-		res, err = d.upClient.R().SetHeader("Authorization", "UpToken "+upToken).SetBody(base.Json{
-			"fnmae": s.GetName(),
-			"parts": parts,
-		}).Post(fmt.Sprintf("https://upload.qiniup.com/buckets/%s/objects/%s/uploads/%s", d.conf.bucket, keyBase64, uploadId))
+		res, err = d.upClient.R().SetHeader("Authorization", "UpToken "+upToken).SetBody(base.Json{"fnmae": s.GetName(), "parts": parts}).Post(fmt.Sprintf("https://upload.qiniup.com/buckets/%s/objects/%s/uploads/%s", d.conf.bucket, keyBase64, uploadID))
 		if err != nil {
 			return nil, err
 		}
 		token = utils.Json.Get(res.Body(), "token").ToString()
 	}
-	// commit upload
 	var resp UploadResultResp
-	for i := 0; i < 10; i++ {
+	for i := 0; i < maxUploadCommitRetries; i++ {
 		_, err = d.unproved("/7n/results", http.MethodPost, func(req *resty.Request) {
-			params := []string{
-				"tokenList=" + token,
-				"tokenTime=" + time.Now().Format("Mon Jan 02 2006 15:04:05 GMT-0700 (MST)"),
-			}
-			queryString := strings.Join(params, "&")
-			req.SetQueryString(queryString).SetResult(&resp)
+			req.SetQueryString("tokenList=" + token + "&tokenTime=" + time.Now().Format("Mon Jan 02 2006 15:04:05 GMT-0700 (MST)")).SetResult(&resp)
 		})
 		if err != nil {
 			return nil, err
@@ -391,22 +352,17 @@ func (d *ILanZou) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 		if resp.List[0].Status == 1 {
 			break
 		}
-		time.Sleep(time.Second * 1)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(uploadCommitRetryDelay):
+		}
 	}
 	file := resp.List[0]
 	if file.Status != 1 {
-		return nil, fmt.Errorf("upload failed, status: %d", resp.List[0].Status)
+		return nil, fmt.Errorf("upload failed, status: %d", file.Status)
 	}
-	return &model.Object{
-		ID: strconv.FormatInt(file.FileId, 10),
-		// Path:     ,
-		Name:     file.FileName,
-		Size:     s.GetSize(),
-		Modified: s.ModTime(),
-		Ctime:    s.CreateTime(),
-		IsFolder: false,
-		HashInfo: utils.NewHashInfo(utils.MD5, etag),
-	}, nil
+	return &model.Object{ID: strconv.FormatInt(file.FileId, 10), Name: file.FileName, Size: s.GetSize(), Modified: s.ModTime(), Ctime: s.CreateTime(), IsFolder: false, HashInfo: utils.NewHashInfo(utils.MD5, etag)}, nil
 }
 
 func (d *ILanZou) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
@@ -419,18 +375,8 @@ func (d *ILanZou) GetDetails(ctx context.Context) (*model.StorageDetails, error)
 	vipSize := utils.Json.Get(res, "map", "vipSize").ToInt64() * 1024
 	totalSize := utils.Json.Get(res, "map", "totalSize").ToInt64() * 1024
 	rewardSize := utils.Json.Get(res, "map", "rewardSize").ToInt64() * 1024
-	total := totalSize + rewardSize + vipSize
 	used := utils.Json.Get(res, "map", "usedSize").ToInt64() * 1024
-	return &model.StorageDetails{
-		DiskUsage: model.DiskUsage{
-			TotalSpace: total,
-			UsedSpace:  used,
-		},
-	}, nil
+	return &model.StorageDetails{DiskUsage: model.DiskUsage{TotalSpace: totalSize + rewardSize + vipSize, UsedSpace: used}}, nil
 }
-
-//func (d *ILanZou) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
-//	return nil, errs.NotSupport
-//}
 
 var _ driver.Driver = (*ILanZou)(nil)

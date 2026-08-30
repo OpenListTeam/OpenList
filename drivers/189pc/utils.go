@@ -195,9 +195,10 @@ func (y *Cloud189PC) put(ctx context.Context, url string, headers map[string]str
 }
 
 func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool) ([]model.Obj, error) {
+    pageSize := 1000  // 每一页返回的文件数量
 	res := make([]model.Obj, 0, 100)
 	for pageNum := 1; ; pageNum++ {
-		resp, err := y.getFilesWithPage(ctx, fileId, isFamily, pageNum, 1000, y.OrderBy, y.OrderDirection)
+		resp, err := y.getFilesWithPage(ctx, fileId, isFamily, pageNum, pageSize, y.OrderBy, y.OrderDirection)
 		if err != nil {
 			return nil, err
 		}
@@ -205,14 +206,23 @@ func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool)
 		if resp.FileListAO.Count == 0 {
 			break
 		}
+		
+		FolderCount := len(resp.FileListAO.FolderList) // 当前文件夹总数
+        FileCount := len(resp.FileListAO.FileList) // 当前文件总数
+        PageCount := FolderCount + FileCount // 当前页数总数
 
-		for i := 0; i < len(resp.FileListAO.FolderList); i++ {
+		for i := 0; i < FolderCount; i++ {
 			res = append(res, &resp.FileListAO.FolderList[i])
 		}
-		for i := 0; i < len(resp.FileListAO.FileList); i++ {
+		for i := 0; i < FileCount; i++ {
 			resp.FileListAO.FileList[i].ParentID = fileId
 			res = append(res, &resp.FileListAO.FileList[i])
 		}
+		
+		// 当前文件数量小于设定数量则跳出
+		if PageCount < pageSize {
+            break
+        }
 	}
 	return res, nil
 }
