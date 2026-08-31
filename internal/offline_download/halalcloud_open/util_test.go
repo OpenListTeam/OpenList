@@ -101,10 +101,19 @@ func TestStatusFromTask(t *testing.T) {
 }
 
 func TestStatusFromTaskClampsProgress(t *testing.T) {
-	if got := statusFromTask(&sdkOffline.UserTask{Status: 100, Progress: -1}).Progress; got != 0 {
-		t.Errorf("negative Progress = %v, want 0", got)
+	negative := statusFromTask(&sdkOffline.UserTask{Status: 100, Progress: -1})
+	if negative.Progress != 0 {
+		t.Errorf("negative Progress = %v, want 0", negative.Progress)
 	}
-	if got := statusFromTask(&sdkOffline.UserTask{Status: 100, Progress: 101}).Progress; got != 100 {
-		t.Errorf("oversized Progress = %v, want 100", got)
+	if negative.Status != "downloading (0%)" {
+		t.Errorf("negative status text = %q, want normalized progress", negative.Status)
+	}
+
+	oversized := statusFromTask(&sdkOffline.UserTask{Status: 100, Progress: 101})
+	if oversized.Progress != 100 {
+		t.Errorf("oversized Progress = %v, want 100", oversized.Progress)
+	}
+	if oversized.Status != "downloading (100%)" {
+		t.Errorf("oversized status text = %q, want normalized progress", oversized.Status)
 	}
 }

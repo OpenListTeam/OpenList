@@ -45,6 +45,9 @@ func (h *HalalCloudOpen) getTasks(driver *halalcloudopendriver.HalalCloudOpen) (
 	}
 
 	tasks, err, _ := taskGroup.Do(key, func() ([]*sdkOffline.UserTask, error) {
+		// A single provider request is shared by several OpenList tasks. Do not
+		// bind it to one task's context, which could cancel the request for all
+		// other waiters; the SDK client's configured timeout still bounds it.
 		tasks, err := driver.OfflineList(context.Background())
 		if err != nil {
 			return nil, err
@@ -59,6 +62,8 @@ func (*HalalCloudOpen) invalidateTaskCache(driver *halalcloudopendriver.HalalClo
 	taskCache.Del(taskCacheKey(driver))
 }
 
+// statusFromTask translates the provider's numeric contract into the generic
+// status shape consumed by OpenList's download-task manager.
 func statusFromTask(task *sdkOffline.UserTask) *tool.Status {
 	// Some List responses omit Size while still returning BytesTotal.
 	totalBytes := task.Size
@@ -82,7 +87,7 @@ func statusFromTask(task *sdkOffline.UserTask) *tool.Status {
 		TotalBytes: totalBytes,
 		Progress:   progress,
 		Completed:  task.Status == offlineStatusComplete,
-		Status:     taskStatusText(task),
+		Status:     taskStatusText(task, progress),
 	}
 	if task.Status < 0 {
 		status.Err = taskStatusError(task)
@@ -90,7 +95,7 @@ func statusFromTask(task *sdkOffline.UserTask) *tool.Status {
 	return status
 }
 
-func taskStatusText(task *sdkOffline.UserTask) string {
+func taskStatusText(task *sdkOffline.UserTask, normalizedProgress float64) string {
 	message := strings.TrimSpace(task.Message)
 	switch {
 	case task.Status == offlineStatusComplete:
@@ -107,7 +112,7 @@ func taskStatusText(task *sdkOffline.UserTask) string {
 	default:
 		// HalalCloud documents every other non-negative status as downloading.
 		// Known observed values include 100, 200, and 710.
-		return fmt.Sprintf("downloading (%d%%)", task.Progress)
+		return fmt.Sprintf("downloading (%.0f%%)", normalizedProgress)
 	}
 }
 

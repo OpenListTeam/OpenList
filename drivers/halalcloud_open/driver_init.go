@@ -2,6 +2,7 @@ package halalcloudopen
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -37,7 +38,15 @@ func (d *HalalCloudOpen) Init(ctx context.Context) error {
 		host = "openapi.2dland.cn"
 	}
 
-	client := apiclient.NewClient(nil, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, apiclient.WithTimeout(time.Second*time.Duration(timeout)))
+	// The public API documents quotas per APP key. Put the limiter below every
+	// SDK service so file operations and offline-task polling share one budget.
+	httpClient := &http.Client{
+		Transport: &rateLimitedTransport{
+			base:    http.DefaultTransport,
+			limiter: halalCloudAPILimiter(host, d.Addition.ClientID),
+		},
+	}
+	client := apiclient.NewClient(httpClient, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, apiclient.WithTimeout(time.Second*time.Duration(timeout)))
 	d.sdkClient = client
 	d.sdkUserFileService = sdkUserFile.NewUserFileService(client)
 	d.sdkUserService = sdkUser.NewUserService(client)

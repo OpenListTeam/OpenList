@@ -11,14 +11,18 @@ import (
 	sdkOffline "github.com/halalcloud/golang-sdk-lite/halalcloud/services/offline"
 )
 
+// Use a large page because every page consumes the same documented API quota.
 const offlineTaskListPageSize int64 = 200
 
+// offlineTaskService narrows the SDK dependency to the operations used here,
+// allowing request construction and pagination to be tested without live API calls.
 type offlineTaskService interface {
 	Add(ctx context.Context, req *sdkOffline.UserTask) (*sdkOffline.UserTask, error)
 	List(ctx context.Context, req *sdkOffline.OfflineTaskListRequest) (*sdkOffline.OfflineTaskListResponse, error)
 	Delete(ctx context.Context, req *sdkOffline.OfflineTaskDeleteRequest) (*sdkOffline.OfflineTaskDeleteResponse, error)
 }
 
+// OfflineDownload creates a URL-based task that writes directly into parentDir.
 func (d *HalalCloudOpen) OfflineDownload(ctx context.Context, fileURL string, parentDir model.Obj) (*sdkOffline.UserTask, error) {
 	if d.offlineTaskService == nil {
 		return nil, errors.New("HalalCloudOpen offline task service is not initialized")
@@ -43,9 +47,14 @@ func (d *HalalCloudOpen) OfflineDownload(ctx context.Context, fileURL string, pa
 	if task == nil || strings.TrimSpace(task.Identity) == "" {
 		return nil, errors.New("failed to create HalalCloudOpen offline task: empty task identity")
 	}
+	// UserTask.Identity is the user task ID returned by List and consumed by
+	// Delete. TaskIdentity identifies the parsed provider task and is not the ID
+	// OpenList should poll or cancel.
 	return task, nil
 }
 
+// OfflineList returns every user task, following the opaque pagination token
+// until the API reports that traversal is complete.
 func (d *HalalCloudOpen) OfflineList(ctx context.Context) ([]*sdkOffline.UserTask, error) {
 	if d.offlineTaskService == nil {
 		return nil, errors.New("HalalCloudOpen offline task service is not initialized")
@@ -87,6 +96,7 @@ func (d *HalalCloudOpen) OfflineList(ctx context.Context) ([]*sdkOffline.UserTas
 	return tasks, nil
 }
 
+// DeleteOfflineTasks removes task records and optionally their downloaded files.
 func (d *HalalCloudOpen) DeleteOfflineTasks(ctx context.Context, taskIDs []string, deleteFiles bool) error {
 	if d.offlineTaskService == nil {
 		return errors.New("HalalCloudOpen offline task service is not initialized")

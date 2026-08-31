@@ -102,6 +102,8 @@ outer:
 		return nil
 	}
 	if t.tool.Name() == "HalalCloudOpen" {
+		// The provider task has already written into DstDirPath. Unlike tools
+		// backed by a temporary directory, there is nothing to transfer or clean.
 		return nil
 	}
 	if t.tool.Name() == "115 Cloud" {
