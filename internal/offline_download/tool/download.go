@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"time"
@@ -69,8 +70,12 @@ outer:
 	for {
 		select {
 		case <-t.CtxDone():
+			t.Status = "offline download canceled"
 			err := t.tool.Remove(t)
-			return err
+			if err != nil {
+				return err
+			}
+			return context.Canceled
 		case <-t.Signal:
 			ok, err = t.Update()
 			if ok {
