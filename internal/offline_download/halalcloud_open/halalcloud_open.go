@@ -33,8 +33,7 @@ func (*HalalCloudOpen) Init() (string, error) {
 }
 
 func (*HalalCloudOpen) IsReady() bool {
-	// HalalCloudOpen is a destination-bound tool without a global temporary directory.
-	// NamesForPath exposes it only when the destination uses the matching storage driver.
+	// Availability is resolved from the destination storage by NamesForPath.
 	return false
 }
 
@@ -51,8 +50,7 @@ func (h *HalalCloudOpen) AddURL(args *tool.AddUrlArgs) (string, error) {
 	if err := op.MakeDir(args.Ctx, storage, actualPath); err != nil {
 		return "", err
 	}
-	// Resolve the OpenList path to the provider object before creating the task:
-	// the API expects its native absolute path, not the storage mount path.
+	// The provider object carries the native destination path expected by the API.
 	parentDir, err := op.GetUnwrap(args.Ctx, storage, actualPath)
 	if err != nil {
 		return "", err
@@ -76,13 +74,10 @@ func (h *HalalCloudOpen) Remove(task *tool.DownloadTask) error {
 		return errors.New("HalalCloudOpen offline download only supports HalalCloudOpen destination storage")
 	}
 
-	// A canceled task may have written partial files outside OpenList's normal
-	// mutation path. Invalidate both caches even when provider-side cleanup fails.
+	// Provider-side writes can leave cached task and directory data stale.
 	defer op.Cache.DeleteDirectory(storage, actualPath)
 	defer h.invalidateTaskCache(driver)
-	// The task context is already canceled when Remove is called, so use an
-	// independent context for the provider-side cleanup. Delete the task record
-	// without deleting files that may already have reached the destination.
+	// Cleanup runs independently after the download task context is canceled.
 	if err := driver.DeleteOfflineTasks(context.Background(), []string{task.GID}, false); err != nil {
 		return err
 	}
@@ -107,18 +102,13 @@ func (h *HalalCloudOpen) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		if providerTask != nil && providerTask.Identity == task.GID {
 			status := statusFromTask(providerTask)
 			if status.Completed || status.Err != nil {
-				// HalalCloud writes directly to the destination, bypassing op's
-				// normal cache invalidation. Refresh the directory after any
-				// terminal state so completed or partial files become visible.
+				// Terminal provider writes invalidate the destination listing.
 				op.Cache.DeleteDirectory(storage, actualPath)
 			}
 			return status, nil
 		}
 	}
-	// A newly added provider task may not be visible immediately. Do not retain
-	// a list that missed it; OpenList will retry Status and fetch a fresh page.
-	// Also drop the destination listing in case the provider removed a terminal
-	// task before OpenList observed its final state.
+	// Refresh provider and destination data before retrying a missing task.
 	h.invalidateTaskCache(driver)
 	op.Cache.DeleteDirectory(storage, actualPath)
 	return nil, fmt.Errorf("HalalCloudOpen offline task %s not found", task.GID)

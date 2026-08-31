@@ -11,11 +11,9 @@ import (
 	sdkOffline "github.com/halalcloud/golang-sdk-lite/halalcloud/services/offline"
 )
 
-// Use a large page because every page consumes the same documented API quota.
+// A larger page reduces requests during status polling.
 const offlineTaskListPageSize int64 = 200
 
-// offlineTaskService narrows the SDK dependency to the operations used here,
-// allowing request construction and pagination to be tested without live API calls.
 type offlineTaskService interface {
 	Add(ctx context.Context, req *sdkOffline.UserTask) (*sdkOffline.UserTask, error)
 	List(ctx context.Context, req *sdkOffline.OfflineTaskListRequest) (*sdkOffline.OfflineTaskListResponse, error)
@@ -33,10 +31,7 @@ func (d *HalalCloudOpen) OfflineDownload(ctx context.Context, fileURL string, pa
 		return nil, errors.New("HalalCloudOpen offline download URL is empty")
 	}
 
-	// The API accepts a generic task URL. Do not restrict URL schemes here; the
-	// HalalCloud service is the source of truth for supported task types.
-	// OpenList's Tool interface submits a whole URL and has no per-file selection
-	// data, so Parse/File/IgnoreFiles belong to a future selective-download flow.
+	// Let HalalCloud dispatch the URL to its supported task type.
 	task, err := d.offlineTaskService.Add(ctx, &sdkOffline.UserTask{
 		Url:      fileURL,
 		SavePath: parentDir.GetPath(),
@@ -47,9 +42,7 @@ func (d *HalalCloudOpen) OfflineDownload(ctx context.Context, fileURL string, pa
 	if task == nil || strings.TrimSpace(task.Identity) == "" {
 		return nil, errors.New("failed to create HalalCloudOpen offline task: empty task identity")
 	}
-	// UserTask.Identity is the user task ID returned by List and consumed by
-	// Delete. TaskIdentity identifies the parsed provider task and is not the ID
-	// OpenList should poll or cancel.
+	// Identity is the user-task handle shared by Add, List, and Delete.
 	return task, nil
 }
 

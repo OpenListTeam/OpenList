@@ -180,8 +180,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 			tempDir = filepath.Join(tempBase, uid)
 		}
 	case "HalalCloudOpen":
-		// HalalCloud has no global scratch directory: its native API writes
-		// directly into a directory on the matching destination storage.
+		// Native tasks write directly to the selected HalalCloud directory.
 		if _, ok := storage.(*halalcloudopen.HalalCloudOpen); !ok {
 			return nil, errors.New("HalalCloudOpen offline download only supports HalalCloudOpen destination storage")
 		}

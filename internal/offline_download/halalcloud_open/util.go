@@ -20,7 +20,7 @@ import (
 //   - 10: waiting for download
 //   - 1000: completed
 //   - negative: failed
-//   - every other non-negative value: downloading (for example 100, 200, 710)
+//   - every other non-negative value: downloading
 const (
 	offlineStatusWaitingToAdd      = 0
 	offlineStatusWaitingToDownload = 10
@@ -45,9 +45,7 @@ func (h *HalalCloudOpen) getTasks(driver *halalcloudopendriver.HalalCloudOpen) (
 	}
 
 	tasks, err, _ := taskGroup.Do(key, func() ([]*sdkOffline.UserTask, error) {
-		// A single provider request is shared by several OpenList tasks. Do not
-		// bind it to one task's context, which could cancel the request for all
-		// other waiters; the SDK client's configured timeout still bounds it.
+		// The SDK timeout bounds this request shared across task waiters.
 		tasks, err := driver.OfflineList(context.Background())
 		if err != nil {
 			return nil, err
@@ -110,8 +108,7 @@ func taskStatusText(task *sdkOffline.UserTask, normalizedProgress float64) strin
 	case task.Status == offlineStatusWaitingToDownload:
 		return "waiting for download"
 	default:
-		// HalalCloud documents every other non-negative status as downloading.
-		// Known observed values include 100, 200, and 710.
+		// All other non-negative statuses represent downloading.
 		return fmt.Sprintf("downloading (%.0f%%)", normalizedProgress)
 	}
 }

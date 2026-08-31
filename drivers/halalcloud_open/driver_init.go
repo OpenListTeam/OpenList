@@ -38,8 +38,7 @@ func (d *HalalCloudOpen) Init(ctx context.Context) error {
 		host = "openapi.2dland.cn"
 	}
 
-	// The public API documents quotas per APP key. Put the limiter below every
-	// SDK service so file operations and offline-task polling share one budget.
+	// All SDK services share the quota associated with these credentials.
 	httpClient := &http.Client{
 		Transport: &rateLimitedTransport{
 			base:    http.DefaultTransport,
