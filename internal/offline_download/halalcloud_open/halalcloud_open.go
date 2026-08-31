@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	halalcloudopendriver "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud_open"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
@@ -74,8 +75,8 @@ func (h *HalalCloudOpen) Remove(task *tool.DownloadTask) error {
 		return errors.New("HalalCloudOpen offline download only supports HalalCloudOpen destination storage")
 	}
 
-	// Provider-side writes can leave cached task and directory data stale.
-	defer op.Cache.DeleteDirectory(storage, actualPath)
+	// Provider-side writes can leave cached task and directory-tree data stale.
+	defer invalidateDestinationCache(storage, actualPath)
 	defer h.invalidateTaskCache(driver)
 	// Cleanup runs independently after the download task context is canceled.
 	if err := driver.DeleteOfflineTasks(context.Background(), []string{task.GID}, false); err != nil {
@@ -102,16 +103,20 @@ func (h *HalalCloudOpen) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		if providerTask != nil && providerTask.Identity == task.GID {
 			status := statusFromTask(providerTask)
 			if status.Completed || status.Err != nil {
-				// Terminal provider writes invalidate the destination listing.
-				op.Cache.DeleteDirectory(storage, actualPath)
+				// Terminal provider writes invalidate the destination tree.
+				invalidateDestinationCache(storage, actualPath)
 			}
 			return status, nil
 		}
 	}
 	// Refresh provider and destination data before retrying a missing task.
 	h.invalidateTaskCache(driver)
-	op.Cache.DeleteDirectory(storage, actualPath)
+	invalidateDestinationCache(storage, actualPath)
 	return nil, fmt.Errorf("HalalCloudOpen offline task %s not found", task.GID)
+}
+
+func invalidateDestinationCache(storage driver.Driver, actualPath string) {
+	op.Cache.DeleteDirectoryTree(storage, actualPath)
 }
 
 var _ tool.Tool = (*HalalCloudOpen)(nil)
