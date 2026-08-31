@@ -100,6 +100,9 @@ func (d *PikPak) login() error {
 		return errors.New("username or password is empty")
 	}
 
+	// Clear expired access token so captcha requests don't carry a stale bearer
+	d.AccessToken = ""
+
 	url := "https://user.mypikpak.net/v1/auth/signin"
 	// Always refresh captcha token before signin (it may be expired)
 	if err := d.RefreshCaptchaTokenInLogin(GetAction(http.MethodPost, url), d.Username); err != nil {
@@ -424,7 +427,7 @@ func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string) err
 		return errors.New(e.Error())
 	}
 
-	if resp.Url != "" {
+	if resp.Url != "" && !d.Addition.SkipVerification {
 		return fmt.Errorf(`need verify: <a target="_blank" href="%s">Click Here</a>`, resp.Url)
 	}
 
