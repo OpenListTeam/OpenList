@@ -260,6 +260,56 @@ type UpAuthResp struct {
 	Metadata struct{} `json:"metadata"`
 }
 
+type ShareFile struct {
+	Fid           string `json:"fid"`
+	FileName      string `json:"file_name"`
+	ShareFidToken string `json:"share_fid_token"`
+	File          bool   `json:"file"`
+}
+
+type ShareTokenResp struct {
+	Resp
+	Data struct {
+		Stoken string `json:"stoken"`
+		Title  string `json:"title"`
+	} `json:"data"`
+}
+
+type ShareDetailResp struct {
+	Resp
+	Data struct {
+		List []ShareFile `json:"list"`
+	} `json:"data"`
+	Metadata struct {
+		Size  int `json:"_size"`
+		Page  int `json:"_page"`
+		Count int `json:"_count"`
+		Total int `json:"_total"`
+	} `json:"metadata"`
+}
+
+type ShareSaveResp struct {
+	Resp
+	Data struct {
+		TaskId string `json:"task_id"`
+	} `json:"data"`
+	Metadata struct {
+		TqGap int `json:"tq_gap"`
+	} `json:"metadata"`
+}
+
+type ShareTaskResp struct {
+	Resp
+	Data struct {
+		TaskId   string `json:"task_id"`
+		Status   int    `json:"status"`
+		Progress int    `json:"progress"`
+	} `json:"data"`
+	Metadata struct {
+		TqGap int `json:"tq_gap"`
+	} `json:"metadata"`
+}
+
 type MemberResp struct {
 	Resp
 	Data struct {

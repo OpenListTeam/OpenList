@@ -115,6 +115,14 @@ type SharingLinkArgs struct {
 	LinkArgs
 }
 
+type SaveFromShareArgs struct {
+	// URL is a share link. It may also contain a passcode in the same line,
+	// for example: "https://pan.quark.cn/s/xxxx 提取码: abcd"
+	URL string
+	// Password is an optional explicit passcode. It overrides any passcode parsed from URL.
+	Password string
+}
+
 type RangeReaderIF interface {
 	RangeRead(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error)
 }

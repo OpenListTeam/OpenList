@@ -226,6 +226,7 @@ func _fs(g *gin.RouterGroup) {
 	// g.POST("/add_qbit", handles.AddQbittorrent)
 	// g.POST("/add_transmission", handles.SetTransmission)
 	g.POST("/add_offline_download", handles.AddOfflineDownload)
+	g.POST("/save_from_share", handles.SaveFromShare)
 	g.POST("/archive/decompress", handles.FsArchiveDecompress)
 	// Torrent 相关接口
 	g.POST("/torrent/parse", handles.ParseTorrent)

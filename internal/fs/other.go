@@ -5,6 +5,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
@@ -37,6 +38,20 @@ func remove(ctx context.Context, path string) error {
 		return errors.WithMessage(err, "failed get storage")
 	}
 	return op.Remove(ctx, storage, actualPath)
+}
+
+func saveFromShare(ctx context.Context, path, urlStr, password string) error {
+	storage, dstDirActualPath, err := op.GetStorageAndActualPath(path)
+	if err != nil {
+		return errors.WithMessage(err, "failed get storage")
+	}
+	if storage.Config().NoUpload {
+		return errors.WithStack(errs.UploadNotSupported)
+	}
+	return op.SaveFromShare(ctx, storage, dstDirActualPath, model.SaveFromShareArgs{
+		URL:      urlStr,
+		Password: password,
+	})
 }
 
 func other(ctx context.Context, args model.FsOtherArgs) (interface{}, error) {

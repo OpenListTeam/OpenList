@@ -183,6 +183,14 @@ func Other(ctx context.Context, args model.FsOtherArgs) (interface{}, error) {
 	return res, err
 }
 
+func SaveFromShare(ctx context.Context, path, urlStr, password string) error {
+	err := saveFromShare(ctx, path, urlStr, password)
+	if err != nil {
+		log.Errorf("failed save from share %s to %s: %+v", urlStr, path, err)
+	}
+	return err
+}
+
 func PutURL(ctx context.Context, path, dstName, urlStr string) error {
 	storage, dstDirActualPath, err := op.GetStorageAndActualPath(path)
 	if err != nil {

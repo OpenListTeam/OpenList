@@ -235,4 +235,7 @@ func (d *QuarkOrUC) GetDetails(ctx context.Context) (*model.StorageDetails, erro
 	}, nil
 }
 
-var _ driver.Driver = (*QuarkOrUC)(nil)
+var (
+	_ driver.Driver        = (*QuarkOrUC)(nil)
+	_ driver.SaveFromShare = (*QuarkOrUC)(nil)
+)

@@ -779,6 +779,50 @@ func GetDirectUploadTools(storage driver.Driver) []string {
 	return du.GetDirectUploadTools()
 }
 
+func SupportsSaveFromShare(storage driver.Driver) bool {
+	_, ok := storage.(driver.SaveFromShare)
+	if !ok {
+		return false
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return false
+	}
+	return true
+}
+
+func SaveFromShare(ctx context.Context, storage driver.Driver, dstDirPath string, args model.SaveFromShareArgs) error {
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	s, ok := storage.(driver.SaveFromShare)
+	if !ok {
+		return errors.WithStack(errs.NotImplement)
+	}
+	dstDirPath = utils.FixAndCleanPath(dstDirPath)
+	if err := MakeDir(ctx, storage, dstDirPath); err != nil {
+		return errors.WithMessagef(err, "failed to make dir [%s]", dstDirPath)
+	}
+	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
+	}
+	if !dstDir.IsDir() {
+		return errors.WithStack(errs.NotFolder)
+	}
+	if model.ObjHasMask(dstDir, model.NoWrite) {
+		return errors.WithStack(errs.PermissionDenied)
+	}
+	if err = s.SaveFromShare(ctx, dstDir, args); err != nil {
+		return errors.WithStack(err)
+	}
+	Cache.DeleteDirectory(storage, dstDirPath)
+	if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
+	}
+	log.Debugf("save from share [%s] to [%s] done", args.URL, dstDirPath)
+	return nil
+}
+
 func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64, overwrite bool) (any, error) {
 	du, ok := storage.(driver.DirectUploader)
 	if !ok {

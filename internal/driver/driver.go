@@ -218,3 +218,9 @@ type DirectUploader interface {
 	// return errs.NotImplement if the driver does not support the given direct upload tool
 	GetDirectUploadInfo(ctx context.Context, tool string, dstDir model.Obj, fileName string, fileSize int64) (any, error)
 }
+
+type SaveFromShare interface {
+	// SaveFromShare saves files from a cloud-drive share link into dstDir.
+	// Drivers that natively support saving from share links should implement this.
+	SaveFromShare(ctx context.Context, dstDir model.Obj, args model.SaveFromShareArgs) error
+}
