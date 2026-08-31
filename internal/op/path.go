@@ -30,6 +30,28 @@ func GetStorageAndActualPath(rawPath string) (storage driver.Driver, actualPath 
 	return
 }
 
+// GetStorageAndActualPathByMountPath resolves rawPath against a specific
+// storage mount. This is needed for balance mounts, where resolving the same
+// virtual path repeatedly may intentionally select different backends.
+func GetStorageAndActualPathByMountPath(rawPath, mountPath string) (storage driver.Driver, actualPath string, err error) {
+	rawPath = utils.FixAndCleanPath(rawPath)
+	mountPath = utils.FixAndCleanPath(mountPath)
+	storage, err = GetStorageByMountPath(mountPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	actualMountPath := utils.GetActualMountPath(storage.GetStorage().MountPath)
+	if !utils.IsSubPath(actualMountPath, rawPath) {
+		return nil, "", errs.NewErr(errs.StorageNotFound, "rawPath %q is outside storage mount %q", rawPath, mountPath)
+	}
+	actualPath = strings.TrimPrefix(rawPath, actualMountPath)
+	if actualPath == "" {
+		actualPath = "/"
+	}
+	return storage, utils.FixAndCleanPath(actualPath), nil
+}
+
 // urlTreeSplitLineFormPath 分割path中分割真实路径和UrlTree定义字符串
 func urlTreeSplitLineFormPath(path string) (pp string, file string) {
 	// url.PathUnescape 会移除 // ，手动加回去

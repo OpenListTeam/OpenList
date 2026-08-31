@@ -4,8 +4,45 @@ import (
 	"strings"
 	"testing"
 
+	halalcloudopendriver "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud_open"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	sdkOffline "github.com/halalcloud/golang-sdk-lite/halalcloud/services/offline"
 )
+
+func TestTaskCacheKeyDistinguishesBalanceMounts(t *testing.T) {
+	first := &halalcloudopendriver.HalalCloudOpen{
+		Storage: model.Storage{MountPath: "/downloads"},
+	}
+	balanced := &halalcloudopendriver.HalalCloudOpen{
+		Storage: model.Storage{MountPath: "/downloads.balance"},
+	}
+
+	if taskCacheKey(first) == taskCacheKey(balanced) {
+		t.Fatal("task cache key collapsed distinct balance mounts")
+	}
+}
+
+func TestTaskCacheKeyIncludesEndpointAndCredentials(t *testing.T) {
+	base := &halalcloudopendriver.HalalCloudOpen{
+		Storage:  model.Storage{MountPath: "/downloads"},
+		Addition: halalcloudopendriver.Addition{ClientID: "client-a", Host: "api.example"},
+	}
+	differentHost := &halalcloudopendriver.HalalCloudOpen{
+		Storage:  model.Storage{MountPath: "/downloads"},
+		Addition: halalcloudopendriver.Addition{ClientID: "client-a", Host: "other.example"},
+	}
+	differentClient := &halalcloudopendriver.HalalCloudOpen{
+		Storage:  model.Storage{MountPath: "/downloads"},
+		Addition: halalcloudopendriver.Addition{ClientID: "client-b", Host: "api.example"},
+	}
+
+	if taskCacheKey(base) == taskCacheKey(differentHost) {
+		t.Fatal("task cache key collapsed distinct API hosts")
+	}
+	if taskCacheKey(base) == taskCacheKey(differentClient) {
+		t.Fatal("task cache key collapsed distinct credentials")
+	}
+}
 
 func TestStatusFromTask(t *testing.T) {
 	tests := []struct {

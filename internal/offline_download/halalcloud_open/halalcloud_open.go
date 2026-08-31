@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	halalcloudopendriver "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud_open"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -16,6 +17,8 @@ import (
 // HalalCloudOpen adapts the storage driver's native offline-task API to the
 // generic OpenList download-task lifecycle.
 type HalalCloudOpen struct{}
+
+const halalCloudOfflineCleanupTimeout = 15 * time.Second
 
 func (*HalalCloudOpen) Name() string {
 	return "HalalCloudOpen"
@@ -39,7 +42,7 @@ func (*HalalCloudOpen) IsReady() bool {
 }
 
 func (h *HalalCloudOpen) AddURL(args *tool.AddUrlArgs) (string, error) {
-	storage, actualPath, err := op.GetStorageAndActualPath(args.TempDir)
+	storage, actualPath, err := storageAndActualPath(args.TempDir, args.StorageMountPath)
 	if err != nil {
 		return "", err
 	}
@@ -66,7 +69,7 @@ func (h *HalalCloudOpen) AddURL(args *tool.AddUrlArgs) (string, error) {
 }
 
 func (h *HalalCloudOpen) Remove(task *tool.DownloadTask) error {
-	storage, actualPath, err := op.GetStorageAndActualPath(task.TempDir)
+	storage, actualPath, err := storageAndActualPath(task.TempDir, task.StorageMountPath)
 	if err != nil {
 		return err
 	}
@@ -78,15 +81,18 @@ func (h *HalalCloudOpen) Remove(task *tool.DownloadTask) error {
 	// Provider-side writes can leave cached task and directory-tree data stale.
 	defer invalidateDestinationCache(storage, actualPath)
 	defer h.invalidateTaskCache(driver)
-	// Cleanup runs independently after the download task context is canceled.
-	if err := driver.DeleteOfflineTasks(context.Background(), []string{task.GID}, false); err != nil {
+	// Cleanup runs independently after the download task context is canceled,
+	// while the timeout keeps a stalled provider from holding the worker.
+	cleanupCtx, cancel := context.WithTimeout(detachedContext(task.Ctx()), halalCloudOfflineCleanupTimeout)
+	defer cancel()
+	if err := driver.DeleteOfflineTasks(cleanupCtx, []string{task.GID}, false); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (h *HalalCloudOpen) Status(task *tool.DownloadTask) (*tool.Status, error) {
-	storage, actualPath, err := op.GetStorageAndActualPath(task.TempDir)
+	storage, actualPath, err := storageAndActualPath(task.TempDir, task.StorageMountPath)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +101,7 @@ func (h *HalalCloudOpen) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		return nil, errors.New("HalalCloudOpen offline download only supports HalalCloudOpen destination storage")
 	}
 
-	tasks, err := h.getTasks(driver)
+	tasks, err := h.getTasks(task.Ctx(), driver)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +123,20 @@ func (h *HalalCloudOpen) Status(task *tool.DownloadTask) (*tool.Status, error) {
 
 func invalidateDestinationCache(storage driver.Driver, actualPath string) {
 	op.Cache.DeleteDirectoryTree(storage, actualPath)
+}
+
+func storageAndActualPath(rawPath, mountPath string) (driver.Driver, string, error) {
+	if mountPath != "" {
+		return op.GetStorageAndActualPathByMountPath(rawPath, mountPath)
+	}
+	return op.GetStorageAndActualPath(rawPath)
+}
+
+func detachedContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
 }
 
 var _ tool.Tool = (*HalalCloudOpen)(nil)

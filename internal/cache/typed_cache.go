@@ -81,6 +81,18 @@ func (c *TypedCache[T]) DeleteKey(key string) {
 	delete(c.entries, key)
 }
 
+// DeleteKeyPrefix removes a key and all descendant path keys.
+func (c *TypedCache[T]) DeleteKeyPrefix(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for key := range c.entries {
+		if pathPrefixMatch(key, prefix) {
+			delete(c.entries, key)
+		}
+	}
+}
+
 func (c *TypedCache[T]) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -20,9 +20,12 @@ import (
 
 type DownloadTask struct {
 	task.TaskExtension
-	Url               string       `json:"url"`
-	DstDirPath        string       `json:"dst_dir_path"`
-	TempDir           string       `json:"temp_dir"`
+	Url        string `json:"url"`
+	DstDirPath string `json:"dst_dir_path"`
+	TempDir    string `json:"temp_dir"`
+	// StorageMountPath pins destination-bound native tools to the storage
+	// selected when the task was created, including balance mounts.
+	StorageMountPath  string       `json:"storage_mount_path,omitempty"`
 	DeletePolicy      DeletePolicy `json:"delete_policy"`
 	Toolname          string       `json:"toolname"`
 	Status            string       `json:"-"`
@@ -54,11 +57,12 @@ func (t *DownloadTask) Run() error {
 		t.Signal = nil
 	}()
 	gid, err := t.tool.AddURL(&AddUrlArgs{
-		Ctx:     t.Ctx(),
-		Url:     t.Url,
-		UID:     t.ID,
-		TempDir: t.TempDir,
-		Signal:  t.Signal,
+		Ctx:              t.Ctx(),
+		Url:              t.Url,
+		UID:              t.ID,
+		TempDir:          t.TempDir,
+		StorageMountPath: t.StorageMountPath,
+		Signal:           t.Signal,
 	})
 	if err != nil {
 		return err

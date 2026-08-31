@@ -116,6 +116,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	uid := uuid.NewString()
 	tempDir := filepath.Join(conf.Conf.TempDir, args.Tool, uid)
 	deletePolicy := args.DeletePolicy
+	storageMountPath := ""
 
 	// 如果当前 storage 是对应网盘，则直接下载到目标路径，无需转存
 	switch args.Tool {
@@ -185,6 +186,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 			return nil, errors.New("HalalCloudOpen offline download only supports HalalCloudOpen destination storage")
 		}
 		tempDir = args.DstDirPath
+		storageMountPath = storage.GetStorage().MountPath
 	}
 
 	taskCreator, _ := ctx.Value(conf.UserKey).(*model.User) // taskCreator is nil when convert failed
@@ -193,12 +195,13 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 			Creator: taskCreator,
 			ApiUrl:  common.GetApiUrl(ctx),
 		},
-		Url:          args.URL,
-		DstDirPath:   args.DstDirPath,
-		TempDir:      tempDir,
-		DeletePolicy: deletePolicy,
-		Toolname:     args.Tool,
-		tool:         tool,
+		Url:              args.URL,
+		DstDirPath:       args.DstDirPath,
+		TempDir:          tempDir,
+		StorageMountPath: storageMountPath,
+		DeletePolicy:     deletePolicy,
+		Toolname:         args.Tool,
+		tool:             tool,
 	}
 	DownloadTaskManager.Add(t)
 	return t, nil

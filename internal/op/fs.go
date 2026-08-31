@@ -49,6 +49,7 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 
 	objs, err, _ := listG.Do(key, func() ([]model.Obj, error) {
+		cacheVersion := Cache.directoryVersion(storage)
 		dir, err := GetUnwrap(ctx, storage, path)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed get dir")
@@ -105,10 +106,12 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 				}
 
 				duration := time.Minute * time.Duration(ttl)
-				Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), duration)
+				if !Cache.updateDirectoryCache(storage, key, cacheVersion, newDirectoryCache(files), duration) {
+					log.Debugf("skip stale cache update: %s", key)
+				}
 			} else {
 				log.Debugf("del cache: %s", key)
-				Cache.deleteDirectoryTree(key)
+				Cache.updateDirectoryCache(storage, key, cacheVersion, nil, 0)
 			}
 		}
 		return files, nil
@@ -420,7 +423,7 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(srcKey); exist {
 			if srcRawObj.IsDir() {
-				Cache.deleteDirectoryTree(stdpath.Join(srcKey, srcRawObj.GetName()))
+				Cache.DeleteDirectoryTree(storage, stdpath.Join(srcDirPath, srcRawObj.GetName()))
 			}
 			cache.RemoveObject(srcRawObj.GetName())
 		}
@@ -484,7 +487,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 	if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(dirKey); exist {
 			if srcRawObj.IsDir() {
-				Cache.deleteDirectoryTree(stdpath.Join(dirKey, oldName))
+				Cache.DeleteDirectoryTree(storage, stdpath.Join(stdpath.Dir(srcPath), oldName))
 			}
 			if newObj == nil {
 				newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
