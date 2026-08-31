@@ -11,9 +11,15 @@ import (
 
 type cancelTestTool struct {
 	removeCalled bool
+	signalOnAdd  bool
+	onStatus     func()
+	name         string
 }
 
-func (*cancelTestTool) Name() string {
+func (t *cancelTestTool) Name() string {
+	if t.name != "" {
+		return t.name
+	}
 	return "cancel-test"
 }
 
@@ -33,7 +39,15 @@ func (*cancelTestTool) Run(*DownloadTask) error {
 	return errs.NotSupport
 }
 
-func (*cancelTestTool) AddURL(*AddUrlArgs) (string, error) {
+func (t *cancelTestTool) AddURL(args *AddUrlArgs) (string, error) {
+	if t.signalOnAdd {
+		go func() {
+			select {
+			case args.Signal <- 1:
+			case <-args.Ctx.Done():
+			}
+		}()
+	}
 	return "provider-task-id", nil
 }
 
@@ -42,8 +56,38 @@ func (t *cancelTestTool) Remove(*DownloadTask) error {
 	return nil
 }
 
-func (*cancelTestTool) Status(*DownloadTask) (*Status, error) {
-	return nil, nil
+func (t *cancelTestTool) Status(*DownloadTask) (*Status, error) {
+	if t.onStatus != nil {
+		t.onStatus()
+	}
+	return &Status{Completed: true}, nil
+}
+
+func TestDownloadTaskRunPrioritizesCancellationAfterCompletionUpdate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cleanup := &cancelTestTool{
+		signalOnAdd: true,
+		onStatus:    cancel,
+		name:        "Thunder",
+	}
+	download := &DownloadTask{
+		DstDirPath: "/dst",
+		TempDir:    "/dst",
+		Url:        "https://example.com/file",
+		tool:       cleanup,
+	}
+	download.SetCtx(ctx)
+
+	err := download.Run()
+	if !stderrors.Is(err, context.Canceled) {
+		t.Fatalf("DownloadTask.Run() error = %v, want context.Canceled", err)
+	}
+	if !cleanup.removeCalled {
+		t.Fatal("DownloadTask.Run() did not clean up the provider task")
+	}
+	if download.Status != "offline download canceled" {
+		t.Fatalf("DownloadTask status after cancellation = %q, want cancellation status", download.Status)
+	}
 }
 
 func TestDownloadTaskRunReturnsCanceledAfterCleanup(t *testing.T) {

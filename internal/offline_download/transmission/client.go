@@ -130,7 +130,7 @@ func (t *Transmission) Remove(task *tool.DownloadTask) error {
 	if err != nil {
 		return err
 	}
-	err = t.client.TorrentRemove(task.Ctx(), transmissionrpc.TorrentRemovePayload{
+	err = t.client.TorrentRemove(context.WithoutCancel(task.Ctx()), transmissionrpc.TorrentRemovePayload{
 		IDs:             []int64{gid},
 		DeleteLocalData: false,
 	})

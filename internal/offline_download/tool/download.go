@@ -65,28 +65,39 @@ func (t *DownloadTask) Run() error {
 		return err
 	}
 	t.GID = gid
+	cancel := func() error {
+		t.Status = "offline download canceled"
+		if err := t.tool.Remove(t); err != nil {
+			return err
+		}
+		return context.Canceled
+	}
 	var ok bool
 outer:
 	for {
 		select {
 		case <-t.CtxDone():
-			t.Status = "offline download canceled"
-			err := t.tool.Remove(t)
-			if err != nil {
-				return err
-			}
-			return context.Canceled
+			return cancel()
 		case <-t.Signal:
 			ok, err = t.Update()
 			if ok {
+				if t.Ctx().Err() != nil {
+					return cancel()
+				}
 				break outer
 			}
 		case <-time.After(time.Second * 3):
 			ok, err = t.Update()
 			if ok {
+				if t.Ctx().Err() != nil {
+					return cancel()
+				}
 				break outer
 			}
 		}
+	}
+	if t.Ctx().Err() != nil {
+		return cancel()
 	}
 	if err != nil {
 		return err
