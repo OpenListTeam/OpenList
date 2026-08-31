@@ -90,6 +90,27 @@ func TestDownloadTaskRunPrioritizesCancellationAfterCompletionUpdate(t *testing.
 	}
 }
 
+func TestDownloadTaskUpdateStopsBeforeTransferWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cleanup := &cancelTestTool{onStatus: cancel}
+	download := &DownloadTask{
+		DstDirPath:   "/missing-destination",
+		TempDir:      "/provider-task",
+		DeletePolicy: UploadDownloadStream,
+		Url:          "https://example.com/file",
+		tool:         cleanup,
+	}
+	download.SetCtx(ctx)
+
+	ok, err := download.Update()
+	if !ok {
+		t.Fatal("DownloadTask.Update() did not report completion")
+	}
+	if !stderrors.Is(err, context.Canceled) {
+		t.Fatalf("DownloadTask.Update() error = %v, want context.Canceled", err)
+	}
+}
+
 func TestDownloadTaskRunReturnsCanceledAfterCleanup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

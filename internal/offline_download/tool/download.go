@@ -183,6 +183,9 @@ func (t *DownloadTask) Update() (bool, error) {
 	}
 	// if download completed
 	if info.Completed {
+		if err := t.Ctx().Err(); err != nil {
+			return true, err
+		}
 		err := t.Transfer()
 		return true, errors.WithMessage(err, "failed to transfer file")
 	}
