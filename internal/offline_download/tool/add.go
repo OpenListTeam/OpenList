@@ -59,9 +59,6 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	if storage.Config().NoUpload {
 		return nil, errors.WithStack(errs.UploadNotSupported)
 	}
-	if len(args.TorrentData) > 0 && args.Tool != "qBittorrent" {
-		return nil, fmt.Errorf("%s does not support uploaded torrent files, please submit a magnet link or use qBittorrent", args.Tool)
-	}
 	// check path is valid
 	obj, err := op.Get(ctx, storage, dstDirActualPath)
 	if err != nil {
@@ -108,6 +105,9 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	tool, err := Tools.Get(args.Tool)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed get offline download tool")
+	}
+	if len(args.TorrentData) > 0 && !CapabilitiesOf(tool).TorrentData {
+		return nil, fmt.Errorf("%s does not support uploaded torrent files", args.Tool)
 	}
 	// check tool is ready
 	if !tool.IsReady() {

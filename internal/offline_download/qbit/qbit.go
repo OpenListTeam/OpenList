@@ -26,6 +26,10 @@ func (a *QBittorrent) Name() string {
 	return "qBittorrent"
 }
 
+func (*QBittorrent) Capabilities() tool.Capabilities {
+	return tool.Capabilities{TorrentData: true}
+}
+
 func (a *QBittorrent) Items() []model.SettingItem {
 	// qBittorrent settings
 	return []model.SettingItem{

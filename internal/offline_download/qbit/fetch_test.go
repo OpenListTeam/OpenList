@@ -91,6 +91,13 @@ func TestIsPublicTorrentAddress(t *testing.T) {
 	}
 }
 
+func TestQBittorrentCapabilities(t *testing.T) {
+	capabilities := (&QBittorrent{}).Capabilities()
+	if !capabilities.TorrentData {
+		t.Fatal("qBittorrent did not advertise torrent data support")
+	}
+}
+
 func TestQBittorrentRejectsPrivateTorrentURLWithoutFallback(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
