@@ -518,7 +518,7 @@ func SetGuangYaPan(c *gin.Context) {
 }
 
 func OfflineDownloadTools(c *gin.Context) {
-	tools := tool.Tools.Names()
+	tools := tool.Tools.NamesForPath(c.Query("path"))
 	common.SuccessResp(c, tools)
 }
 

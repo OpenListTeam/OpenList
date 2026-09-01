@@ -241,6 +241,7 @@ func (d *GuangYaPan) multipartUploadToOSS(ctx context.Context, bucket *oss.Bucke
 	}
 
 	parts := make([]oss.UploadPart, 0, partCount)
+	var uploaded int64
 	for i := 0; i < partCount; i++ {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -273,6 +274,10 @@ func (d *GuangYaPan) multipartUploadToOSS(ctx context.Context, bucket *oss.Bucke
 			return fmt.Errorf("failed to upload part %d: %w", i+1, err)
 		}
 		parts = append(parts, part)
+		uploaded += length
+		if total > 0 {
+			up(100 * float64(uploaded) / float64(total))
+		}
 	}
 
 	_, err = bucket.CompleteMultipartUpload(imur, parts)
