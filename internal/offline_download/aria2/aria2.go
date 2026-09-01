@@ -109,17 +109,16 @@ func (a *Aria2) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		notify.Signals.Store(s.NewGID, task.Signal)
 	}
 	switch info.Status {
-	case "complete":
-		s.Completed = true
-		s.Progress = 100
-	case "error":
-		s.Err = errors.Errorf("failed to download %s, error: %s", task.GID, info.ErrorMessage)
-	case "active":
-		s.Status = "aria2: " + info.Status
-		if info.Seeder == "true" {
+	case "complete", "active":
+		if info.Status == "active" {
+			s.Status = "aria2: " + info.Status
+		}
+		if info.Status == "complete" || info.Seeder == "true" {
 			s.Completed = true
 			s.Progress = 100
 		}
+	case "error":
+		s.Err = errors.Errorf("failed to download %s, error: %s", task.GID, info.ErrorMessage)
 	case "waiting", "paused":
 		s.Status = "aria2: " + info.Status
 	case "removed":
