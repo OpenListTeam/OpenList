@@ -19,6 +19,10 @@ type ObjUnwrap interface {
 	Unwrap() Obj
 }
 
+type ObjDisplayName interface {
+	GetDisplayName() string
+}
+
 type Obj interface {
 	GetSize() int64
 	GetName() string
@@ -132,13 +136,17 @@ func ExtractFolder(objs []Obj, extractFolder string) {
 	})
 }
 
-func WrapObjName(objs Obj) Obj {
-	return &ObjWrapName{Name: utils.MappingName(objs.GetName()), Obj: objs}
+func WrapObjName(obj Obj) Obj {
+	name := obj.GetName()
+	if displayName, ok := obj.(ObjDisplayName); ok {
+		name = displayName.GetDisplayName()
+	}
+	return &ObjWrapName{Name: utils.MappingName(name), Obj: obj}
 }
 
 func WrapObjsName(objs []Obj) {
 	for i := range objs {
-		objs[i] = &ObjWrapName{Name: utils.MappingName(objs[i].GetName()), Obj: objs[i]}
+		objs[i] = WrapObjName(objs[i])
 	}
 }
 
