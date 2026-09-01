@@ -92,6 +92,12 @@ func (s SimpleHttp) Run(task *tool.DownloadTask) error {
 			return nil
 		}
 		// fallback to download the file to temp dir
+		if task.TempDir == "" {
+			task.TempDir, err = os.MkdirTemp("", "simplehttp-*")
+			if err != nil {
+				return err
+			}
+		}
 		task.DeletePolicy = tool.DeleteAlways
 		task.Persist()
 		return s.Run(task)
