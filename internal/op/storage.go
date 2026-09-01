@@ -484,6 +484,9 @@ func GetBalancedStorage(path string) driver.Driver {
 	}
 }
 
+// lastDoneExpireThreshold defines the expiration duration in seconds (24 hours) for recorded storage details cooldown timestamps.
+const lastDoneExpireThreshold = 86400
+
 var (
 	detailsG      singleflight.Group[*model.StorageDetails]
 	detailsLock   sync.RWMutex
@@ -493,13 +496,13 @@ var (
 func InvalidateStorageDetailsState(mountPath string) {
 	detailsLock.Lock()
 	delete(lastDoneTimes, utils.GetActualMountPath(mountPath))
+	cleanExpiredLastDoneTimesLocked(time.Now().Unix())
 	detailsLock.Unlock()
 }
 
 func cleanExpiredLastDoneTimesLocked(now int64) {
-	const expireThreshold = 86400
 	for k, t := range lastDoneTimes {
-		if now-t > expireThreshold {
+		if now-t > lastDoneExpireThreshold {
 			delete(lastDoneTimes, k)
 		}
 	}
