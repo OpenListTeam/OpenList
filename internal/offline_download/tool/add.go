@@ -211,12 +211,11 @@ func fileNameFromURL(urlStr string) string {
 	if err != nil {
 		return ""
 	}
+	// u.Path is already decoded by url.Parse; do not unescape again,
+	// otherwise names like "a%2Fb.txt" would be double-decoded into "a/b.txt".
 	name := stdpath.Base(u.Path)
 	if name == "." || name == "/" {
 		return ""
-	}
-	if decodedName, err := url.PathUnescape(name); err == nil {
-		name = decodedName
 	}
 	return name
 }
