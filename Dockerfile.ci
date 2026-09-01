@@ -1,4 +1,4 @@
-ARG BASE_IMAGE_TAG=base@sha256:26aeec9effb7ca01c4c4811692e4e01c4d258c4a8505cae1dea20d308e46db63
+ARG BASE_IMAGE_TAG=base
 FROM ghcr.io/openlistteam/openlist-base-image:${BASE_IMAGE_TAG}
 LABEL MAINTAINER="OpenList"
 ARG TARGETPLATFORM
