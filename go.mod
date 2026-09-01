@@ -312,7 +312,7 @@ require (
 	golang.org/x/text v0.41.0
 	golang.org/x/tools v0.48.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260715232425-e75dac1f907d // indirect
-	google.golang.org/grpc v1.84.0-dev.0.20260723093437-b6eac429d7b6
+	google.golang.org/grpc v1.85.0-dev
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
