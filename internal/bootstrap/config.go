@@ -85,7 +85,7 @@ func InitConfig() {
 			if conf.Conf.Log.Enable {
 				conf.Conf.Log.Name = filepath.Join(flags.DataDir, "log/log.log")
 			}
-			if conf.Conf.DistDir != "" {
+			if conf.Conf.DistDir == "" {
 				conf.Conf.DistDir = filepath.Join(flags.DataDir, "dist")
 			}
 		}
