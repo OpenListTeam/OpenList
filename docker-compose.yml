@@ -17,7 +17,7 @@ services:
       DB_NAME: ${DB_NAME:-open-box}
       DB_SSL_MODE: ${DB_SSL_MODE:-require}
     container_name: open-box
-    image: 'huxleysee/open-box:latest'
+    image: 'openclose8/open-box:latest'
 
 volumes:
   open-box-data:

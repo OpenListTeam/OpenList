@@ -7,7 +7,7 @@
 | System | Owner account | Resource |
 |--------|---------------|----------|
 | GitHub | hillstreet-ph / master-kanor | `hillstreet-ph/open-box` |
-| Docker Hub | huxleysee | `huxleysee/open-box` |
+| Docker Hub | openclose8 | `openclose8/open-box` |
 | Railway | Kobeplay Workspace | project `open-box`, service `openlist-railway` |
 | Supabase | HillStreet | project `open-box` (`ymhiwerqyegvondndkjn`) |
 

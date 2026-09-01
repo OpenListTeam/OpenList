@@ -36,7 +36,7 @@ spec:
       domainKey: PUBLIC_DOMAIN
       spec:
         source:
-          image: huxleysee/open-box:latest
+          image: openclose8/open-box:latest
         ports:
           - id: web
             port: 5244

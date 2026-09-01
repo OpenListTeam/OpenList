@@ -7,7 +7,7 @@ Reconstruct production without “starting from scratch” using artifacts you c
 ## Minimum recovery set
 
 1. **Git** — `hillstreet-ph/open-box` at known tag/SHA  
-2. **Image** — preferred `huxleysee/open-box@sha256:…` (until then `openlistteam/openlist` digests)  
+2. **Image** — preferred `openclose8/open-box@sha256:…` (until then `openlistteam/openlist` digests)  
 3. **Database** — Supabase logical backup / PITR of project `ymhiwerqyegvondndkjn`  
 4. **Volume** — archive of `/opt/openlist/data` (config, local files, indexes)  
 5. **Env** — Railway variable names from `config/railway.env.example` (values from secret store)  
