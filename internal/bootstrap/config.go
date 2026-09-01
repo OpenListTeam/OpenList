@@ -82,12 +82,7 @@ func InitConfig() {
 			conf.Conf.Database.DBFile = filepath.Join(flags.DataDir, "data.db")
 			conf.Conf.TempDir = filepath.Join(flags.DataDir, "temp")
 			conf.Conf.BleveDir = filepath.Join(flags.DataDir, "bleve")
-			if conf.Conf.Log.Enable {
-				conf.Conf.Log.Name = filepath.Join(flags.DataDir, "log/log.log")
-			}
-			if conf.Conf.DistDir == "" {
-				conf.Conf.DistDir = filepath.Join(flags.DataDir, "dist")
-			}
+			conf.Conf.Log.Name = filepath.Join(flags.DataDir, "log/log.log")
 		}
 		LastLaunchedVersion = conf.Conf.LastLaunchedVersion
 		if strings.HasPrefix(conf.Version, "v") || LastLaunchedVersion == "" {
