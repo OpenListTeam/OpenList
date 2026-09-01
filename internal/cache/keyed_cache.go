@@ -75,6 +75,9 @@ func (c *KeyedCache[T]) Pop(key string) (T, bool) {
 	defer c.mu.Unlock()
 	if entry, exists := c.entries[key]; exists {
 		delete(c.entries, key)
+		if entry.Expired() {
+			return *new(T), false
+		}
 		return entry.data, true
 	}
 	return *new(T), false
