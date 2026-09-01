@@ -1,24 +1,14 @@
 package qbit
 
 import (
-	"io"
-	"net/http"
-	"net/url"
-	"strings"
-
-	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/qbittorrent"
-	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/pkg/errors"
 )
-
-const maxQbittorrentTorrentSize = 10 * 1024 * 1024
 
 type QBittorrent struct {
 	client qbittorrent.Client
@@ -63,45 +53,21 @@ func (a *QBittorrent) AddURL(args *tool.AddUrlArgs) (string, error) {
 	var err error
 	if len(args.TorrentData) > 0 {
 		err = a.client.AddFromTorrent(args.TorrentData, args.TempDir, args.UID)
-	} else if torrentData, ok := fetchTorrentDataFromURL(args); ok {
-		err = a.client.AddFromTorrent(torrentData, args.TempDir, args.UID)
-	} else {
+	} else if isRemoteTorrentURL(args.Url) {
+		var torrentData []byte
+		torrentData, err = fetchTorrentDataFromURL(args)
+		if err == nil {
+			err = a.client.AddFromTorrent(torrentData, args.TempDir, args.UID)
+		}
+	} else if isMagnetURL(args.Url) {
 		err = a.client.AddFromLink(args.Url, args.TempDir, args.UID)
+	} else {
+		err = errors.New("qBittorrent only supports magnet links, public HTTP(S) torrent URLs, or uploaded torrent files")
 	}
 	if err != nil {
 		return "", err
 	}
 	return args.UID, nil
-}
-
-func fetchTorrentDataFromURL(args *tool.AddUrlArgs) ([]byte, bool) {
-	u, err := url.Parse(strings.TrimSpace(args.Url))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return nil, false
-	}
-
-	resp, err := net.RequestHttp(
-		args.Ctx,
-		http.MethodGet,
-		http.Header{"User-Agent": []string{base.UserAgent}},
-		args.Url,
-	)
-	if err != nil {
-		return nil, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, false
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxQbittorrentTorrentSize+1))
-	if err != nil || len(data) > maxQbittorrentTorrentSize {
-		return nil, false
-	}
-	if _, err := torrent.Decode(data); err != nil {
-		return nil, false
-	}
-	return data, true
 }
 
 func (a *QBittorrent) Remove(task *tool.DownloadTask) error {
