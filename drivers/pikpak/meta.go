@@ -14,7 +14,7 @@ type Addition struct {
 	CaptchaToken     string `json:"captcha_token" default:""`
 	DeviceID         string `json:"device_id"  required:"false" default:""`
 	DisableMediaLink bool   `json:"disable_media_link" default:"true"`
-	SkipVerification bool   `json:"skip_verification" default:"true"`
+	SkipVerification bool   `json:"skip_verification" default:"false" help:"ignore the human verification URL returned by the captcha API instead of failing; enabling this may trigger PikPak risk control"`
 }
 
 var config = driver.Config{
