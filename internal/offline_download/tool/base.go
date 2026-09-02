@@ -7,11 +7,12 @@ import (
 )
 
 type AddUrlArgs struct {
-	Url     string
-	UID     string
-	TempDir string
-	Signal  chan int
-	Ctx     context.Context
+	Url         string
+	TorrentData []byte
+	UID         string
+	TempDir     string
+	Signal      chan int
+	Ctx         context.Context
 }
 
 type Status struct {
@@ -21,6 +22,26 @@ type Status struct {
 	Completed  bool
 	Status     string
 	Err        error
+}
+
+// Capabilities describes optional input features supported by an offline download tool.
+// The zero value represents a tool with no optional capabilities.
+type Capabilities struct {
+	TorrentData bool
+}
+
+// CapabilityProvider is implemented by tools that support optional capabilities.
+type CapabilityProvider interface {
+	Capabilities() Capabilities
+}
+
+// CapabilitiesOf returns the optional capabilities advertised by a tool.
+func CapabilitiesOf(downloadTool Tool) Capabilities {
+	provider, ok := downloadTool.(CapabilityProvider)
+	if !ok {
+		return Capabilities{}
+	}
+	return provider.Capabilities()
 }
 
 type Tool interface {
