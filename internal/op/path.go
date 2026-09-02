@@ -50,6 +50,18 @@ func GetStorageAndActualPathByMountPath(rawPath, mountPath string) (storage driv
 		actualPath = "/"
 	}
 	return storage, utils.FixAndCleanPath(actualPath), nil
+// GetStorageVirtualMountPath returns the deterministic virtual mount path
+// without advancing the balanced-storage counter.
+func GetStorageVirtualMountPath(rawPath string) (string, error) {
+	rawPath = utils.FixAndCleanPath(rawPath)
+	storages := getStoragesByPath(rawPath)
+	if len(storages) == 0 {
+		if rawPath == "/" {
+			return "", errs.NewErr(errs.StorageNotFound, "please add a storage first")
+		}
+		return "", errs.NewErr(errs.StorageNotFound, "rawPath: %s", rawPath)
+	}
+	return utils.FixAndCleanPath(utils.GetActualMountPath(storages[0].GetStorage().MountPath)), nil
 }
 
 // urlTreeSplitLineFormPath 分割path中分割真实路径和UrlTree定义字符串
