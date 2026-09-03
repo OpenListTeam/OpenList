@@ -60,7 +60,7 @@ func needSign(meta *model.Meta, path string) bool {
 	if meta == nil || meta.Password == "" {
 		return false
 	}
-	if !meta.PSub && path != meta.Path {
+	if !meta.PSub && !common.MetaCoversPath(meta.Path, path, false) {
 		return false
 	}
 	return true
