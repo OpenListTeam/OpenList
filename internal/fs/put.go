@@ -117,3 +117,14 @@ func getDirectUploadInfo(ctx context.Context, tool, dstDirPath, dstName string, 
 	}
 	return op.GetDirectUploadInfo(ctx, tool, storage, dstDirActualPath, dstName, fileSize, overwrite)
 }
+
+func completeDirectUpload(ctx context.Context, tool, dstDirPath, dstName, uploadToken string) (model.Obj, error) {
+	storage, dstDirActualPath, err := op.GetStorageAndActualPath(dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed get storage")
+	}
+	if storage.Config().NoUpload {
+		return nil, errors.WithStack(errs.UploadNotSupported)
+	}
+	return op.CompleteDirectUpload(ctx, tool, storage, dstDirActualPath, dstName, uploadToken)
+}
