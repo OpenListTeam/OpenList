@@ -164,7 +164,10 @@ func (d *PDS) CompleteDirectUpload(ctx context.Context, tool string, dstDir mode
 	}
 	if token.DomainID != d.DomainID || token.DriveID != d.DriveID ||
 		token.ParentFileID != d.fileID(dstDir) {
-		return nil, fmt.Errorf("direct upload token does not match request")
+		return nil, fmt.Errorf("direct upload token does not match request destination")
+	}
+	if token.FileName != "" && token.FileName != fileName {
+		return nil, fmt.Errorf("direct upload token filename (%s) does not match request (%s)", token.FileName, fileName)
 	}
 	if token.FileID == "" || token.UploadID == "" {
 		return nil, fmt.Errorf("direct upload token is incomplete")
@@ -222,7 +225,7 @@ func (d *PDS) verifyDirectUploadToken(raw string) (*directUploadToken, error) {
 	if err := json.Unmarshal(payload, &token); err != nil {
 		return nil, err
 	}
-	if token.ExpiresAt > 0 && time.Now().Unix() > token.ExpiresAt {
+	if token.ExpiresAt <= 0 || time.Now().Unix() > token.ExpiresAt {
 		return nil, fmt.Errorf("direct upload token expired")
 	}
 	return &token, nil
@@ -241,14 +244,20 @@ func (d *PDS) signDirectUploadPayload(payload string) (string, error) {
 }
 
 func (d *PDS) directUploadSecret() []byte {
+	var baseSecret string
 	if conf.Conf != nil && conf.Conf.JwtSecret != "" {
-		return []byte(conf.Conf.JwtSecret)
+		baseSecret = conf.Conf.JwtSecret
+	} else if d.RefreshToken != "" {
+		baseSecret = d.RefreshToken
+	} else {
+		baseSecret = d.AccessToken
 	}
-	if d.RefreshToken != "" {
-		return []byte(d.RefreshToken)
+	if baseSecret == "" {
+		return nil
 	}
-	return []byte(d.AccessToken)
+	return []byte(fmt.Sprintf("%s:%s:%s", baseSecret, d.DomainID, d.DriveID))
 }
 
 var _ driver.DirectUploader = (*PDS)(nil)
 var _ driver.DirectUploadCompleter = (*PDS)(nil)
+

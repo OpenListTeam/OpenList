@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 type FsGetDirectUploadInfoReq struct {
@@ -167,14 +168,17 @@ func FsCompleteDirectUpload(c *gin.Context) {
 		return
 	}
 	if parentMountPath != targetMountPath {
+		log.Warnf("[DirectUpload] cross-mount completion rejected: user=%s, path=%s, file=%s", user.Username, path, req.FileName)
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
 	obj, err := fs.CompleteDirectUpload(c.Request.Context(), req.Tool, path, req.FileName, req.UploadToken)
 	if err != nil {
+		log.Errorf("[DirectUpload] complete failed: user=%s, path=%s, file=%s, tool=%s, err=%v", user.Username, path, req.FileName, req.Tool, err)
 		common.ErrorResp(c, err, 500)
 		return
 	}
+	log.Infof("[DirectUpload] completed successfully: user=%s, path=%s, file=%s, tool=%s", user.Username, path, req.FileName, req.Tool)
 	common.SuccessResp(c, obj)
 }
 
