@@ -2,5 +2,12 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:best-practices"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "matchPackageNames": ["alpine", "ghcr.io/openlistteam/openlist-base-image", "openlistteam/openlist:latest"],
+      "enabled": false
+    }
   ]
 }

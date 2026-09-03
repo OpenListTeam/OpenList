@@ -1,4 +1,4 @@
-package template
+package ilanzou
 
 type ListResp struct {
 	Msg       string     `json:"msg"`
