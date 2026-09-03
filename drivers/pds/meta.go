@@ -9,7 +9,7 @@ type Addition struct {
 	driver.RootID
 	DomainID     string `json:"domain_id" required:"true" help:"PDS domain id"`
 	DriveID      string `json:"drive_id" required:"true" help:"PDS drive id"`
-	ClientID     string `json:"client_id" default:"lMNVp25Sd1MfqZDQ"`
+	ClientID     string `json:"client_id" default:"lMNVp25Sd1MfqZDQ" help:"PDS client id (optional, defaults to official client id)"`
 	AccessToken  string `json:"access_token" type:"text" help:"Short-lived PDS access token; either access_token or refresh_token is required"`
 	RefreshToken string `json:"refresh_token" type:"text"`
 	TokenType    string `json:"token_type" default:"Bearer"`

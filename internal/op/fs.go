@@ -832,7 +832,11 @@ func CompleteDirectUpload(ctx context.Context, tool string, storage driver.Drive
 		return nil, errors.WithStack(err)
 	}
 	if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
+		hookCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+		go func() {
+			defer cancel()
+			objsUpdateHook(hookCtx, storage, dstDirPath, false)
+		}()
 	}
 	return obj, nil
 }
