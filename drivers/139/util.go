@@ -1224,6 +1224,13 @@ func mailXMLHeaders(cookie string) map[string]string {
 	}
 }
 
+func new139RestyClient() *resty.Client {
+	if base.RestyClient != nil {
+		return base.RestyClient.Clone()
+	}
+	return base.NewRestyClient()
+}
+
 func (d *Yun139) sendSMSVerificationCode(riskCode string) error {
 	scene, ok := smsSceneForRisk(riskCode)
 	if !ok {
@@ -1246,7 +1253,7 @@ func (d *Yun139) sendSMSVerificationCode(riskCode string) error {
 		mailXMLField("scene", strconv.Itoa(scene)),
 		"</object>",
 	}, "")
-	res, err := base.RestyClient.Clone().SetRetryCount(0).R().
+	res, err := new139RestyClient().SetRetryCount(0).R().
 		SetHeaders(mailXMLHeaders(d.MailCookies)).
 		SetBody(body).
 		Post(mailSMSURL + "?func=" + url.QueryEscape("login:sendSmsCodeByScene") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
@@ -1299,7 +1306,7 @@ func (d *Yun139) verifySMSCode(riskCode string) (string, error) {
 		pwdType,
 		"</object>",
 	}, "")
-	res, err := base.RestyClient.Clone().SetRetryCount(0).R().
+	res, err := new139RestyClient().SetRetryCount(0).R().
 		SetHeaders(mailXMLHeaders(d.MailCookies)).
 		SetBody(body).
 		Post(mailSMSURL + "?func=" + url.QueryEscape("/login/inlogin.action") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
@@ -1375,7 +1382,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("DEBUG: 登录请求 URL: %s", loginURL)
 	log.Debugf("DEBUG: 登录请求已准备")
 
-	res, err := base.RestyClient.Clone().
+	res, err := new139RestyClient().
 		SetRetryCount(0).
 		SetRedirectPolicy(resty.RedirectPolicyFunc(func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
