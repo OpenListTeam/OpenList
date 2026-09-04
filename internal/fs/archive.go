@@ -147,6 +147,21 @@ func (t *ArchiveContentUploadTask) GetName() string {
 	return fmt.Sprintf("upload %s to [%s](%s)", t.ObjName, t.DstStorageMp, t.DstActualPath)
 }
 
+func (t *ArchiveContentUploadTask) GetSrcPath() string {
+	return ""
+}
+
+func (t *ArchiveContentUploadTask) GetDstPath() string {
+	if t.DstStorageMp == "" {
+		return ""
+	}
+	path := stdpath.Join(t.DstStorageMp, t.DstActualPath)
+	if t.InPlace {
+		return path
+	}
+	return stdpath.Join(path, t.ObjName)
+}
+
 func (t *ArchiveContentUploadTask) GetStatus() string {
 	return t.status
 }
