@@ -127,11 +127,20 @@ func (*Pan123) Status(task *tool.DownloadTask) (*tool.Status, error) {
 
 	return &tool.Status{
 		TotalBytes: t.Size,
+		FileName:   offlineTaskFileName(t.Name, t.UploadName),
+		FileSize:   t.Size,
 		Progress:   t.Progress,
 		Completed:  completed,
 		Status:     statusStr,
 		Err:        taskErr,
 	}, nil
+}
+
+func offlineTaskFileName(name, uploadName string) string {
+	if uploadName != "" {
+		return uploadName
+	}
+	return name
 }
 
 var _ tool.Tool = (*Pan123)(nil)

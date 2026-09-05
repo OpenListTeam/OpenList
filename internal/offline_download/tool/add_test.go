@@ -84,3 +84,69 @@ func TestToolNameForStorage(t *testing.T) {
 		})
 	}
 }
+
+func TestFileNameFromURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		url    string
+		expect string
+	}{
+		{
+			name:   "plain path",
+			url:    "https://example.com/path/file.txt",
+			expect: "file.txt",
+		},
+		{
+			name:   "encoded name decoded once",
+			url:    "https://example.com/path/my%20file.txt",
+			expect: "my file.txt",
+		},
+		{
+			name:   "double-encoded slash is not double-decoded",
+			url:    "https://example.com/path/a%252Fb.txt",
+			expect: "a%2Fb.txt",
+		},
+		{
+			name:   "double-encoded name decoded once",
+			url:    "https://example.com/path/%2520.txt",
+			expect: "%20.txt",
+		},
+		{
+			name:   "query ignored",
+			url:    "https://example.com/file.txt?sign=abc%2Fdef",
+			expect: "file.txt",
+		},
+		{
+			name:   "trailing slash",
+			url:    "https://example.com/path/",
+			expect: "path",
+		},
+		{
+			name:   "root path",
+			url:    "https://example.com/",
+			expect: "",
+		},
+		{
+			name:   "no path",
+			url:    "https://example.com",
+			expect: "",
+		},
+		{
+			name:   "magnet link",
+			url:    "magnet:?xt=urn:btih:0123456789abcdef",
+			expect: "",
+		},
+		{
+			name:   "invalid url",
+			url:    "http://example.com/%zz\x7f",
+			expect: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fileNameFromURL(tt.url); got != tt.expect {
+				t.Errorf("fileNameFromURL(%q) = %q, want %q", tt.url, got, tt.expect)
+			}
+		})
+	}
+}
