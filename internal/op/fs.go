@@ -514,7 +514,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == stdpath.Dir(srcPath) {
-		return errors.New("copy in place")
+		return errors.WithStack(errs.NotImplement)
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath, true)
 	if err != nil {
@@ -632,7 +632,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			if err != nil {
 				return errors.WithMessagef(err, "while uploading, failed remove existing file which size = 0")
 			}
-		} else if storage.Config().NoOverwriteUpload {
+		} else if storage.Config().NoOverwriteUpload && ctx.Value(conf.SkipNoOverwriteKey) == nil {
 			// try to rename old obj
 			err = Rename(ctx, storage, dstPath, tempName)
 			if err != nil {
