@@ -2,10 +2,12 @@ package halalcloudopen
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/halalcloud/golang-sdk-lite/halalcloud/apiclient"
+	sdkOffline "github.com/halalcloud/golang-sdk-lite/halalcloud/services/offline"
 	sdkUser "github.com/halalcloud/golang-sdk-lite/halalcloud/services/user"
 	sdkUserFile "github.com/halalcloud/golang-sdk-lite/halalcloud/services/userfile"
 )
@@ -36,10 +38,18 @@ func (d *HalalCloudOpen) Init(ctx context.Context) error {
 		host = "openapi.2dland.cn"
 	}
 
-	client := apiclient.NewClient(nil, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, apiclient.WithTimeout(time.Second*time.Duration(timeout)))
+	// All SDK services share the quota associated with these credentials.
+	httpClient := &http.Client{
+		Transport: &rateLimitedTransport{
+			base:    http.DefaultTransport,
+			limiter: halalCloudAPILimiter(host, d.Addition.ClientID),
+		},
+	}
+	client := apiclient.NewClient(httpClient, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, apiclient.WithTimeout(time.Second*time.Duration(timeout)))
 	d.sdkClient = client
 	d.sdkUserFileService = sdkUserFile.NewUserFileService(client)
 	d.sdkUserService = sdkUser.NewUserService(client)
+	d.offlineTaskService = sdkOffline.NewOfflineTaskService(client)
 	userInfo, err := d.sdkUserService.Get(ctx, &sdkUser.User{})
 	if err != nil {
 		return err
