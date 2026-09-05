@@ -25,7 +25,7 @@ func Init(d *gorm.DB) {
 	if err := migrateWebDAVProperties(); err != nil {
 		log.Fatalf("failed migrate webdav_properties: %s", err.Error())
 	}
-	err := AutoMigrate(new(model.Storage), new(model.User), new(model.Meta), new(model.SettingItem), new(model.SearchNode), new(model.TaskItem), new(model.SSHPublicKey), new(model.SharingDB), new(model.WebDAVProperty), new(model.MediaItem), new(model.MediaConfig), new(model.MediaScanPath), new(model.MediaAppKey), new(model.MediaUserData), new(model.MediaPlaylist), new(model.MediaPlaylistItem), new(model.EmbyDevice), new(model.MediaAnnotation))
+	err := AutoMigrate(new(model.Storage), new(model.User), new(model.Meta), new(model.SettingItem), new(model.SearchNode), new(model.TaskItem), new(model.SSHPublicKey), new(model.SharingDB), new(model.WebDAVProperty), new(model.CronJob), new(model.MediaItem), new(model.MediaConfig), new(model.MediaScanPath), new(model.MediaAppKey), new(model.MediaUserData), new(model.MediaPlaylist), new(model.MediaPlaylistItem), new(model.EmbyDevice), new(model.MediaAnnotation))
 	if err != nil {
 		// 典型场景：未确认清库时，旧 media_items 数据违反新建的唯一索引。
 		// 这里把解决办法直接写进日志，避免用户只看到一句 failed migrate database。
@@ -79,7 +79,7 @@ func migrateMediaItems() error {
 	const idx = "idx_media_folder_file_album"
 	if m.HasIndex(table, idx) {
 		// 已是新索引：仅清理软删除残留数据，避免与唯一索引冲突
-		if err := db.Exec("DELETE FROM "+quoteIdent(table)+" WHERE deleted_at IS NOT NULL").Error; err != nil {
+		if err := db.Exec("DELETE FROM " + quoteIdent(table) + " WHERE deleted_at IS NOT NULL").Error; err != nil {
 			log.Warnf("media_items: 清理软删除残留数据失败: %v", err)
 		}
 		return nil
@@ -137,6 +137,5 @@ func Close() {
 	err = sqlDB.Close()
 	if err != nil {
 		log.Errorf("failed to close db: %s", err.Error())
-		return
 	}
 }

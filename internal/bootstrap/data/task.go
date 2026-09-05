@@ -25,6 +25,8 @@ func InitialTasks() []model.TaskItem {
 		{Key: "move", PersistData: "[]"},
 		{Key: "download", PersistData: "[]"},
 		{Key: "transfer", PersistData: "[]"},
+		// cron_sync 保存同步编排任务；它不是普通的 copy/move 文件传输任务。
+		{Key: "cron_sync", PersistData: "[]"},
 	}
 	return initialTaskItems
 }

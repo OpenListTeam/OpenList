@@ -222,6 +222,18 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_thunder_browser", handles.SetThunderBrowser)
 	setting.POST("/set_guangyapan", handles.SetGuangYaPan)
 
+	// cronjobs 仅管理员可用；同步任务具有删除能力，暂时不开放给普通用户。
+	cronjobs := g.Group("/cronjobs")
+	cronjobs.GET("/types", handles.ListCronJobTypes)
+	cronjobs.GET("/list", handles.ListCronJobs)
+	cronjobs.GET("/get", handles.GetCronJob)
+	cronjobs.POST("/create", handles.CreateCronJob)
+	cronjobs.POST("/update", handles.UpdateCronJob)
+	cronjobs.POST("/delete", handles.DeleteCronJob)
+	cronjobs.POST("/run", handles.RunCronJob)
+
+	// cron_sync 保留在 /admin/task 下，便于前端任务页复用现有查询、取消、重试接口。
+	_task(g.Group("/task/cron_sync"))
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
 	_task(g.Group("/task"))
 
