@@ -1,5 +1,5 @@
 ### Default image is base. You can add other support by modifying BASE_IMAGE_TAG. The following parameters are supported: base (default), aria2, ffmpeg, aio
-ARG BASE_IMAGE_TAG=base
+ARG BASE_IMAGE_TAG=base@sha256:0f870832242d41d2f03be9ef8ffc78538d1d878825be79c8ffc1bb6f51cb8d2f
 
 FROM alpine:edge AS builder
 LABEL stage=go-builder
