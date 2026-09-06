@@ -192,7 +192,7 @@ func (d *QuarkOrUC) Put(ctx context.Context, dstDir model.Obj, stream model.File
 		}
 		err = retry.Do(func() error {
 			rd.Seek(0, io.SeekStart)
-			m, err := d.upPart(ctx, pre, stream.GetMimetype(), partIndex+1, driver.NewLimitedUploadStream(ctx, rd))
+			m, err := d.upPart(ctx, pre, uploadMimetype(stream), partIndex+1, driver.NewLimitedUploadStream(ctx, rd))
 			if err != nil {
 				return err
 			}

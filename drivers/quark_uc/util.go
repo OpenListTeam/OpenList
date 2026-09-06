@@ -167,13 +167,25 @@ func (d *QuarkOrUC) getTranscodingLink(file model.Obj) (*model.Link, error) {
 	return nil, errors.New("no link found")
 }
 
+// uploadMimetype returns the MIME type to report to quark for an upload.
+// Quark's /file/upload/pre endpoint rejects an empty format_type, so when the
+// caller did not supply a MIME type (e.g. an S3 PUT without Content-Type) we
+// fall back to guessing it from the file name; utils.GetMimeType never returns
+// an empty string.
+func uploadMimetype(file model.FileStreamer) string {
+	if mt := file.GetMimetype(); mt != "" {
+		return mt
+	}
+	return utils.GetMimeType(file.GetName())
+}
+
 func (d *QuarkOrUC) upPre(file model.FileStreamer, parentId string) (UpPreResp, error) {
 	now := time.Now()
 	data := base.Json{
 		"ccp_hash_update": true,
 		"dir_name":        "",
 		"file_name":       file.GetName(),
-		"format_type":     file.GetMimetype(),
+		"format_type":     uploadMimetype(file),
 		"l_created_at":    now.UnixMilli(),
 		"l_updated_at":    now.UnixMilli(),
 		"pdir_fid":        parentId,
