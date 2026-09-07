@@ -14,12 +14,20 @@ type QBittorrent struct {
 	client qbittorrent.Client
 }
 
+func New(client qbittorrent.Client) *QBittorrent {
+	return &QBittorrent{client: client}
+}
+
 func (a *QBittorrent) Run(task *tool.DownloadTask) error {
 	return errs.NotSupport
 }
 
 func (a *QBittorrent) Name() string {
 	return "qBittorrent"
+}
+
+func (*QBittorrent) Capabilities() tool.Capabilities {
+	return tool.Capabilities{TorrentData: true}
 }
 
 func (a *QBittorrent) Items() []model.SettingItem {
@@ -46,7 +54,20 @@ func (a *QBittorrent) IsReady() bool {
 }
 
 func (a *QBittorrent) AddURL(args *tool.AddUrlArgs) (string, error) {
-	err := a.client.AddFromLink(args.Url, args.TempDir, args.UID)
+	var err error
+	if len(args.TorrentData) > 0 {
+		err = a.client.AddFromTorrent(args.TorrentData, args.TempDir, args.UID)
+	} else if isRemoteTorrentURL(args.Url) {
+		var torrentData []byte
+		torrentData, err = fetchTorrentDataFromURL(args)
+		if err == nil {
+			err = a.client.AddFromTorrent(torrentData, args.TempDir, args.UID)
+		}
+	} else if isMagnetURL(args.Url) {
+		err = a.client.AddFromLink(args.Url, args.TempDir, args.UID)
+	} else {
+		err = errors.New("qBittorrent only supports magnet links, public HTTP(S) torrent URLs, or uploaded torrent files")
+	}
 	if err != nil {
 		return "", err
 	}
@@ -63,9 +84,21 @@ func (a *QBittorrent) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	if err != nil {
 		return nil, err
 	}
+	if info.SavePath != "" {
+		task.TempDir = info.SavePath
+		if task.CleanupID != "" {
+			if err := tool.CleanupTaskManager.SetTempDir(task.CleanupID, info.SavePath); err != nil {
+				return nil, err
+			}
+		}
+	}
 	s := &tool.Status{}
 	s.TotalBytes = info.Size
-	s.Progress = float64(info.Completed) / float64(info.Size) * 100
+	if info.Size > 0 {
+		s.Progress = float64(info.Completed) / float64(info.Size) * 100
+	} else {
+		s.Progress = info.Progress * 100
+	}
 	switch info.State {
 	case qbittorrent.UPLOADING, qbittorrent.PAUSEDUP, qbittorrent.QUEUEDUP, qbittorrent.STALLEDUP, qbittorrent.FORCEDUP, qbittorrent.CHECKINGUP:
 		s.Completed = true

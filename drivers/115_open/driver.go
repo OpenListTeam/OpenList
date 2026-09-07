@@ -343,6 +343,9 @@ func (d *Open115) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 		return err
 	}
 	if resp.Status == 2 {
+		if err := d.finishUpload(ctx, dstDir, file, resp.FileID); err != nil {
+			return err
+		}
 		up(100)
 		return nil
 	}
@@ -378,6 +381,9 @@ func (d *Open115) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 			return err
 		}
 		if resp.Status == 2 {
+			if err := d.finishUpload(ctx, dstDir, file, resp.FileID); err != nil {
+				return err
+			}
 			up(100)
 			return nil
 		}
@@ -388,9 +394,41 @@ func (d *Open115) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 		return err
 	}
 	// 4. upload
-	err = d.multpartUpload(ctx, file, up, tokenResp, resp)
+	callbackResp, err := d.multpartUpload(ctx, file, up, tokenResp, resp)
 	if err != nil {
 		return err
+	}
+	if err := d.finishUpload(ctx, dstDir, file, callbackResp.Data.FileID); err != nil {
+		return err
+	}
+	up(100)
+	return nil
+}
+
+func (d *Open115) finishUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, fileID string) error {
+	if fileID == "" {
+		return errors.New("upload returned empty file id")
+	}
+
+	// The 115 Open upload API always creates a file and has no overwrite flag.
+	// Keep the old file until the new file ID is confirmed, then remove the old
+	// file by ID so overwrites do not depend on path lookup or rename semantics.
+	existing := file.GetExist()
+	if existing == nil || existing.GetID() == fileID {
+		return nil
+	}
+	if existing.GetID() == "" {
+		return errors.New("existing file has empty file id")
+	}
+	if err := d.WaitLimit(ctx); err != nil {
+		return err
+	}
+	_, err := d.client.DelFile(ctx, &sdk.DelFileReq{
+		FileIDs:  existing.GetID(),
+		ParentID: dstDir.GetID(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to remove overwritten file %q: %w", existing.GetName(), err)
 	}
 	return nil
 }

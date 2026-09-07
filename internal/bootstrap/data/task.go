@@ -25,6 +25,7 @@ func InitialTasks() []model.TaskItem {
 		{Key: "move", PersistData: "[]"},
 		{Key: "download", PersistData: "[]"},
 		{Key: "transfer", PersistData: "[]"},
+		{Key: "offline_cleanup", PersistData: "[]"},
 	}
 	return initialTaskItems
 }

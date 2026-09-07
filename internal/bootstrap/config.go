@@ -11,6 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/caarlos0/env/v9"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -194,12 +195,22 @@ func initURL() {
 }
 
 func CleanTempDir() {
+	if tool.CleanupTaskManager == nil {
+		log.Warn("offline cleanup manager is not initialized, skip temp cleanup")
+		return
+	}
 	files, err := os.ReadDir(conf.Conf.TempDir)
 	if err != nil {
 		log.Errorln("failed list temp file: ", err)
+		return
 	}
 	for _, file := range files {
-		if err := os.RemoveAll(filepath.Join(conf.Conf.TempDir, file.Name())); err != nil {
+		entryPath := filepath.Join(conf.Conf.TempDir, file.Name())
+		if tool.CleanupTaskManager.Protects(entryPath) {
+			log.Infof("skip protected temp path: %s", entryPath)
+			continue
+		}
+		if err := os.RemoveAll(entryPath); err != nil {
 			log.Errorln("failed delete temp file: ", err)
 		}
 	}
