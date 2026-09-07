@@ -120,7 +120,7 @@ func isConsistent(a, b model.Obj) bool {
 	return true
 }
 
-func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(err error) (bool, error)) (BalancedObjs, error) {
+func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(err error) (bool, error), autoMakeDir bool) (BalancedObjs, error) {
 	objs := bObj.(BalancedObjs)
 	length := 0
 	for _, o := range objs {
@@ -138,6 +138,14 @@ func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(
 					}
 				} else if !obj.IsDir() {
 					err = errs.NotFolder
+				}
+			}
+			// 目标为目录但该后端不存在时，按需自动创建，使新加入的存储也能参与写入
+			if err != nil && autoMakeDir && bObj.IsDir() && errs.IsObjectNotFound(err) {
+				if mkErr := fs.MakeDir(ctx, o.GetPath()); mkErr == nil {
+					err = nil
+				} else {
+					log.Debugf("auto make dir %s failed: %+v", o.GetPath(), mkErr)
 				}
 			}
 		} else if o == nil {
@@ -180,8 +188,14 @@ func (d *Alias) getBalancedPath(ctx context.Context, file model.Obj) string {
 	if rand.Intn(len(files)) == 0 {
 		return file.GetPath()
 	}
-	files, _ = d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllRWP))
+	files, _ = d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllRWP), false)
 	return files[rand.Intn(len(files))].GetPath()
+}
+
+// isAllWritePolicy 判断是否为"写入所有有效路径"类策略，
+// 此类策略下目标目录缺失时可自动补建，使新加入的存储也能参与写入
+func isAllWritePolicy(policy string) bool {
+	return policy == AllRWP || policy == AllStrictWP
 }
 
 func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
@@ -226,14 +240,14 @@ func (d *Alias) getWriteObjs(ctx context.Context, obj model.Obj) (BalancedObjs, 
 	if d.WriteConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
-	return d.getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.WriteConflictPolicy))
+	return d.getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.WriteConflictPolicy), isAllWritePolicy(d.WriteConflictPolicy))
 }
 
 func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) (BalancedObjs, error) {
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
-	objs, err := d.getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.PutConflictPolicy))
+	objs, err := d.getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.PutConflictPolicy))
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +354,7 @@ func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
 	}
-	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy))
+	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.PutConflictPolicy))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -355,7 +369,7 @@ func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 		dstStorageMap[mp] = append(dstStorageMap[mp], o)
 		allocatingDst[o] = struct{}{}
 	}
-	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllRWP))
+	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllRWP), false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -391,11 +405,11 @@ func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
 	}
-	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy))
+	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.PutConflictPolicy))
 	if err != nil {
 		return nil, nil, err
 	}
-	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllRWP))
+	tmpSrcObjs, err := d.getAllObjs(ctx, srcObj, getWriteAndPutFilterFunc(AllRWP), false)
 	if err != nil {
 		return nil, nil, err
 	}
