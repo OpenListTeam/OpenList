@@ -65,10 +65,13 @@ func (a *QBittorrent) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	}
 	s := &tool.Status{}
 	s.TotalBytes = info.Size
-	s.Progress = float64(info.Completed) / float64(info.Size) * 100
+	if info.Size > 0 {
+		s.Progress = float64(info.Completed) / float64(info.Size) * 100
+	}
 	switch info.State {
 	case qbittorrent.UPLOADING, qbittorrent.PAUSEDUP, qbittorrent.QUEUEDUP, qbittorrent.STALLEDUP, qbittorrent.FORCEDUP, qbittorrent.CHECKINGUP:
 		s.Completed = true
+		s.Progress = 100
 	case qbittorrent.ALLOCATING, qbittorrent.DOWNLOADING, qbittorrent.METADL, qbittorrent.PAUSEDDL, qbittorrent.QUEUEDDL, qbittorrent.STALLEDDL, qbittorrent.CHECKINGDL, qbittorrent.FORCEDDL, qbittorrent.CHECKINGRESUMEDATA, qbittorrent.MOVING:
 		s.Status = "[qBittorrent] downloading"
 	case qbittorrent.ERROR, qbittorrent.MISSINGFILES, qbittorrent.UNKNOWN:
