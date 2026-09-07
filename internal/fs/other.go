@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -61,4 +62,21 @@ type TaskData struct {
 
 func (t *TaskData) GetStatus() string {
 	return t.Status
+}
+
+// GetSrcPath returns the virtual source path for task filtering.
+// Local temp paths without a storage mount are excluded.
+func (t *TaskData) GetSrcPath() string {
+	if t.SrcStorageMp == "" {
+		return ""
+	}
+	return stdpath.Join(t.SrcStorageMp, t.SrcActualPath)
+}
+
+// GetDstPath returns the virtual destination path for task filtering.
+func (t *TaskData) GetDstPath() string {
+	if t.DstStorageMp == "" {
+		return ""
+	}
+	return stdpath.Join(t.DstStorageMp, t.DstActualPath)
 }
