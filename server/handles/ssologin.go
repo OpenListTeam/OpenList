@@ -1,6 +1,7 @@
 package handles
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -22,12 +23,25 @@ import (
 	"github.com/coreos/go-oidc"
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
+	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/oauth2"
 	"gorm.io/gorm"
 )
 
 const stateLength = 16
 const stateExpire = time.Minute * 5
+const ssoBindingExpire = time.Minute * 5
+const ssoBindingCookie = "openlist_sso_binding"
+const ssoBindingStatePurpose = "sso_binding_state"
+const ssoBindingProofPurpose = "sso_binding_proof"
+
+type ssoBindingClaims struct {
+	Purpose       string `json:"purpose"`
+	Method        string `json:"method"`
+	SessionDigest string `json:"session_digest"`
+	SsoID         string `json:"sso_id,omitempty"`
+	jwt.RegisteredClaims
+}
 
 var stateCache = cache.NewMemCache[string](cache.WithShards[string](stateLength))
 
@@ -44,6 +58,68 @@ func generateState(clientID, ip string) string {
 func verifyState(clientID, ip, state string) bool {
 	value, ok := stateCache.Get(_keyState(clientID, state))
 	return ok && value == ip
+}
+
+func ssoBindingSessionDigest(session string) string {
+	digest := sha256.Sum256([]byte(session))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func parseSSOBindingToken(c *gin.Context, rawToken, purpose string) (*ssoBindingClaims, error) {
+	claims := &ssoBindingClaims{}
+	token, err := jwt.ParseWithClaims(rawToken, claims, func(token *jwt.Token) (interface{}, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, errors.New("invalid SSO binding token algorithm")
+		}
+		return common.SecretKey, nil
+	})
+	if err != nil || !token.Valid || claims.ExpiresAt == nil || claims.Purpose != purpose ||
+		claims.Method != "get_sso_id" || len(claims.SessionDigest) != 43 {
+		return nil, errors.New("invalid or expired SSO binding token")
+	}
+	if (purpose == ssoBindingStatePurpose && claims.SsoID != "") ||
+		(purpose == ssoBindingProofPurpose && claims.SsoID == "") {
+		return nil, errors.New("invalid SSO binding token payload")
+	}
+	session, err := c.Cookie(ssoBindingCookie)
+	if err != nil || ssoBindingSessionDigest(session) != claims.SessionDigest {
+		return nil, errors.New("invalid SSO binding session")
+	}
+	return claims, nil
+}
+
+func generateSSOBindingToken(c *gin.Context, purpose, ssoID string) (string, error) {
+	session, err := c.Cookie(ssoBindingCookie)
+	expire := ssoBindingExpire
+	if purpose == ssoBindingStatePurpose {
+		session = random.String(32)
+		expire = stateExpire
+		c.SetSameSite(http.SameSiteLaxMode)
+		c.SetCookie(
+			ssoBindingCookie,
+			session,
+			int((stateExpire+ssoBindingExpire).Seconds()),
+			path.Join(conf.URL.Path, "/api"),
+			"",
+			strings.HasPrefix(common.GetApiUrl(c), "https://"),
+			true,
+		)
+	} else if err != nil {
+		return "", errors.New("missing SSO binding session")
+	}
+	now := time.Now()
+	claims := ssoBindingClaims{
+		Purpose:       purpose,
+		Method:        "get_sso_id",
+		SessionDigest: ssoBindingSessionDigest(session),
+		SsoID:         ssoID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(expire)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+		},
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(common.SecretKey)
 }
 
 func ssoRedirectUri(c *gin.Context, useCompatibility bool, method string) string {
@@ -74,6 +150,16 @@ func SSOLoginRedirect(c *gin.Context) {
 	urlValues.Add("response_type", "code")
 	urlValues.Add("redirect_uri", redirectUri)
 	urlValues.Add("client_id", clientId)
+	bindingState := ""
+	var err error
+	if method == "get_sso_id" {
+		bindingState, err = generateSSOBindingToken(c, ssoBindingStatePurpose, "")
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		urlValues.Add("state", bindingState)
+	}
 	switch platform {
 	case "Github":
 		rUrl = "https://github.com/login/oauth/authorize?"
@@ -94,15 +180,19 @@ func SSOLoginRedirect(c *gin.Context) {
 		endpoint := strings.TrimSuffix(setting.GetStr(conf.SSOEndpointName), "/")
 		rUrl = endpoint + "/login/oauth/authorize?"
 		urlValues.Add("scope", "profile")
-		urlValues.Add("state", endpoint)
+		if bindingState == "" {
+			urlValues.Add("state", endpoint)
+		}
 	case "OIDC":
 		oauth2Config, err := GetOIDCClient(c, useCompatibility, redirectUri, method)
 		if err != nil {
 			common.ErrorStrResp(c, err.Error(), 400)
 			return
 		}
-		state := generateState(clientId, c.ClientIP())
-		c.Redirect(http.StatusFound, oauth2Config.AuthCodeURL(state))
+		if bindingState == "" {
+			bindingState = generateState(clientId, c.ClientIP())
+		}
+		c.Redirect(http.StatusFound, oauth2Config.AuthCodeURL(bindingState))
 		return
 	default:
 		common.ErrorStrResp(c, "invalid platform", 400)
@@ -201,11 +291,15 @@ func OIDCLoginCallback(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if !verifyState(clientId, c.ClientIP(), c.Query("state")) {
+	if method == "get_sso_id" {
+		if _, err := parseSSOBindingToken(c, c.Query("state"), ssoBindingStatePurpose); err != nil {
+			common.ErrorStrResp(c, "incorrect or expired state parameter", 400)
+			return
+		}
+	} else if !verifyState(clientId, c.ClientIP(), c.Query("state")) {
 		common.ErrorStrResp(c, "incorrect or expired state parameter", 400)
 		return
 	}
-
 	oauth2Token, err := oauth2Config.Exchange(c, c.Query("code"))
 	if err != nil {
 		common.ErrorResp(c, err, 400)
@@ -235,8 +329,13 @@ func OIDCLoginCallback(c *gin.Context) {
 		return
 	}
 	if method == "get_sso_id" {
+		bindingProof, err := generateSSOBindingToken(c, ssoBindingProofPurpose, userID)
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
 		if useCompatibility {
-			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+userID)
+			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+bindingProof)
 			return
 		}
 		html := fmt.Sprintf(`<!DOCTYPE html>
@@ -246,7 +345,7 @@ func OIDCLoginCallback(c *gin.Context) {
 				window.opener.postMessage({"sso_id": "%s"}, "*")
 				window.close()
 				</script>
-				</body>`, userID)
+				</body>`, bindingProof)
 		c.Data(200, "text/html; charset=utf-8", []byte(html))
 		return
 	}
@@ -352,6 +451,12 @@ func SSOLoginCallback(c *gin.Context) {
 		common.ErrorStrResp(c, "No code provided", 400)
 		return
 	}
+	if argument == "get_sso_id" {
+		if _, err := parseSSOBindingToken(c, c.Query("state"), ssoBindingStatePurpose); err != nil {
+			common.ErrorStrResp(c, "incorrect or expired state parameter", 400)
+			return
+		}
+	}
 	var resp *resty.Response
 	var err error
 	if platform == "Dingtalk" {
@@ -402,8 +507,13 @@ func SSOLoginCallback(c *gin.Context) {
 		return
 	}
 	if argument == "get_sso_id" {
+		bindingProof, err := generateSSOBindingToken(c, ssoBindingProofPurpose, userID)
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
 		if usecompatibility {
-			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+userID)
+			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+bindingProof)
 			return
 		}
 		html := fmt.Sprintf(`<!DOCTYPE html>
@@ -413,7 +523,7 @@ func SSOLoginCallback(c *gin.Context) {
 				window.opener.postMessage({"sso_id": "%s"}, "*")
 				window.close()
 				</script>
-				</body>`, userID)
+				</body>`, bindingProof)
 		c.Data(200, "text/html; charset=utf-8", []byte(html))
 		return
 	}
