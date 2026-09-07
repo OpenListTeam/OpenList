@@ -319,6 +319,9 @@ func (b *s3Backend) putStream(
 		Reader:   input,
 		Mimetype: meta["Content-Type"],
 	}
+	if stream.Mimetype == "" {
+		stream.Mimetype = "application/octet-stream"
+	}
 
 	err = fs.PutDirectly(ctx, reqPath, stream)
 	if err != nil {
