@@ -2,6 +2,7 @@ package sjtu_netdisk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,18 +25,20 @@ func (d *SJTUNetdisk) refreshToken(ctx context.Context) error {
 		return nil
 	}
 
-	client := d.newClient()
 	var resp TokenResp
 
-	_, err := client.R().
+	_, err := d.client.R().
 		SetContext(ctx).
 		SetQueryParam("user_token", d.UserToken).
 		SetBody("{}").
 		SetResult(&resp).
-		Execute(http.MethodPost, TOKEN_URL)
+		Execute(http.MethodPost, tokenURL)
 
 	if err != nil {
 		return err
+	}
+	if resp.AccessToken == "" {
+		return errors.New("sjtu_netdisk: empty access_token in response")
 	}
 
 	d.accessToken = resp.AccessToken
@@ -59,6 +62,12 @@ func (d *SJTUNetdisk) newClient() *resty.Client {
 		client.SetCookie(&http.Cookie{Name: "keep_alive", Value: d.KeepAlive, Path: "/"})
 	}
 	return client
+}
+
+func (d *SJTUNetdisk) withAccessToken(req *resty.Request) *resty.Request {
+	// The upstream SMH API documents access_token as a query parameter, and SJTU's
+	// web client uses that contract; no Authorization-header alternative is verified.
+	return req.SetQueryParam("access_token", d.accessToken)
 }
 
 // standardize and encode the internal path of alist
@@ -87,11 +96,10 @@ func (d *SJTUNetdisk) moveItem(ctx context.Context, srcPath, dstDirPath, name st
 		endpoint = "file"
 	}
 
-	moveItemURL := fmt.Sprintf("%s/%s/%s/%s/%s", API_URL, endpoint, d.libraryId, d.spaceId, d.encodePath(path.Join(dstDirPath, name)))
+	moveItemURL := fmt.Sprintf("%s/%s/%s/%s/%s", apiURL, endpoint, d.libraryId, d.spaceId, d.encodePath(path.Join(dstDirPath, name)))
 
-	req := d.newClient().R().
-		SetContext(ctx).
-		SetQueryParam("access_token", d.accessToken).
+	req := d.withAccessToken(d.client.R().
+		SetContext(ctx)).
 		SetQueryParam("conflict_resolution_strategy", strategy).
 		SetBody(map[string]interface{}{"from": srcPath})
 

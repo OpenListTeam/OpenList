@@ -30,6 +30,8 @@ type SJTUNetdisk struct {
 	spaceId      string
 	tokenExpires time.Time
 	tokenMutex   sync.Mutex
+	client       *resty.Client
+	linkClient   *resty.Client
 }
 
 func (d *SJTUNetdisk) Config() driver.Config {
@@ -41,6 +43,10 @@ func (d *SJTUNetdisk) GetAddition() driver.Additional {
 }
 
 func (d *SJTUNetdisk) Init(ctx context.Context) error {
+	d.client = d.newClient()
+	d.linkClient = d.newClient().SetRedirectPolicy(resty.RedirectPolicyFunc(func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}))
 	return d.refreshToken(ctx)
 }
 
@@ -55,6 +61,8 @@ func (d *SJTUNetdisk) InitReference(storage driver.Driver) error {
 
 func (d *SJTUNetdisk) Drop(ctx context.Context) error {
 	d.ref = nil
+	d.client = nil
+	d.linkClient = nil
 	return nil
 }
 
@@ -73,24 +81,23 @@ func (d *SJTUNetdisk) List(ctx context.Context, dir model.Obj, args model.ListAr
 		return nil, err
 	}
 
-	listURL := fmt.Sprintf("%s/directory/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(dir.GetPath()))
+	listURL := fmt.Sprintf("%s/directory/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(dir.GetPath()))
 
 	var allObjs []model.Obj
 	page := 1
 
 	for {
 		var resp FolderListResp
-		_, err := d.newClient().R().
+		req := d.withAccessToken(d.client.R().
 			SetContext(ctx).
 			SetQueryParams(map[string]string{
-				"access_token":  d.accessToken,
 				"page":          strconv.Itoa(page),
 				"page_size":     "200",
 				"order_by":      d.OrderBy,
 				"order_by_type": d.OrderByType,
 				"space_org_id":  "1",
-			}).
-			SetResult(&resp).
+			}))
+		_, err := req.SetResult(&resp).
 			Execute(http.MethodGet, listURL)
 
 		if err != nil {
@@ -139,22 +146,16 @@ func (d *SJTUNetdisk) Link(ctx context.Context, file model.Obj, args model.LinkA
 		return nil, err
 	}
 
-	linkURL := fmt.Sprintf("%s/file/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(file.GetPath()))
+	linkURL := fmt.Sprintf("%s/file/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(file.GetPath()))
 
-	client := d.newClient()
-	client.SetRedirectPolicy(resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	}))
-
-	resp, err := client.R().
+	resp, err := d.withAccessToken(d.linkClient.R().
 		SetContext(ctx).
 		SetQueryParams(map[string]string{
-			"access_token":        d.accessToken,
 			"user_id":             d.UserId,
 			"content_disposition": "attachment",
 			"purpose":             "download",
 			"space_org_id":        "1",
-		}).
+		})).
 		Execute(http.MethodGet, linkURL)
 
 	if err != nil {
@@ -190,11 +191,10 @@ func (d *SJTUNetdisk) MakeDir(ctx context.Context, parentDir model.Obj, dirName 
 		return nil, err
 	}
 
-	infoURL := fmt.Sprintf("%s/directory/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(parentDir.GetPath()+"/"+dirName))
+	infoURL := fmt.Sprintf("%s/directory/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(parentDir.GetPath()+"/"+dirName))
 
-	resp, err := d.newClient().R().
-		SetContext(ctx).
-		SetQueryParam("access_token", d.accessToken).
+	resp, err := d.withAccessToken(d.client.R().
+		SetContext(ctx)).
 		SetQueryParam("user_id", d.UserId).
 		SetQueryParam("conflict_resolution_strategy", "ask").
 		Execute(http.MethodPut, infoURL)
@@ -227,16 +227,15 @@ func (d *SJTUNetdisk) Move(ctx context.Context, srcObj, dstDir model.Obj) (model
 
 	// file move: use overwrite strategy
 	if !srcObj.IsDir() {
-		apiURL := fmt.Sprintf("%s/file/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(targetPath))
+		moveURL := fmt.Sprintf("%s/file/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(targetPath))
 
 		var moveResp MoveCopyResp
-		_, err := d.newClient().R().
-			SetContext(ctx).
-			SetQueryParam("access_token", d.accessToken).
+		_, err := d.withAccessToken(d.client.R().
+			SetContext(ctx)).
 			SetQueryParam("conflict_resolution_strategy", "overwrite").
 			SetBody(map[string]interface{}{"from": srcPath}).
 			SetResult(&moveResp).
-			Execute(http.MethodPut, apiURL)
+			Execute(http.MethodPut, moveURL)
 
 		if err != nil {
 			return nil, err
@@ -339,12 +338,11 @@ func (d *SJTUNetdisk) Rename(ctx context.Context, srcObj model.Obj, newName stri
 
 	// file rename
 	if !srcObj.IsDir() {
-		renameURL := fmt.Sprintf("%s/file/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(dstPath))
+		renameURL := fmt.Sprintf("%s/file/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(dstPath))
 
 		var moveResp MoveCopyResp
-		_, err := d.newClient().R().
-			SetContext(ctx).
-			SetQueryParam("access_token", d.accessToken).
+		_, err := d.withAccessToken(d.client.R().
+			SetContext(ctx)).
 			SetQueryParam("conflict_resolution_strategy", "overwrite").
 			SetBody(map[string]interface{}{"from": srcObj.GetPath()}).
 			SetResult(&moveResp).
@@ -368,11 +366,10 @@ func (d *SJTUNetdisk) Rename(ctx context.Context, srcObj model.Obj, newName stri
 		}, nil
 	} else {
 		// folder rename
-		renameURL := fmt.Sprintf("%s/directory/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(dstPath))
+		renameURL := fmt.Sprintf("%s/directory/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(dstPath))
 
-		resp, err := d.newClient().R().
-			SetContext(ctx).
-			SetQueryParam("access_token", d.accessToken).
+		resp, err := d.withAccessToken(d.client.R().
+			SetContext(ctx)).
 			SetQueryParam("conflict_resolution_strategy", "ask").
 			SetQueryParam("move_authority", "true").
 			SetBody(map[string]interface{}{"from": srcObj.GetPath()}).
@@ -448,12 +445,11 @@ func (d *SJTUNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 
 	// file copy
 	if !srcObj.IsDir() {
-		copyURL := fmt.Sprintf("%s/file/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(targetPath))
+		copyURL := fmt.Sprintf("%s/file/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(targetPath))
 
 		var copyResp MoveCopyResp
-		_, err := d.newClient().R().
-			SetContext(ctx).
-			SetQueryParam("access_token", d.accessToken).
+		_, err := d.withAccessToken(d.client.R().
+			SetContext(ctx)).
 			SetQueryParam("conflict_resolution_strategy", "overwrite").
 			SetBody(map[string]interface{}{"copyFrom": srcPath}).
 			SetResult(&copyResp).
@@ -477,11 +473,10 @@ func (d *SJTUNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 		}, nil
 	} else {
 		// folder copy
-		infoURL := fmt.Sprintf("%s/directory/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(targetPath))
+		infoURL := fmt.Sprintf("%s/directory/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(targetPath))
 
-		resp, err := d.newClient().R().
-			SetContext(ctx).
-			SetQueryParam("access_token", d.accessToken).
+		resp, err := d.withAccessToken(d.client.R().
+			SetContext(ctx)).
 			SetQueryParam("conflict_resolution_strategy", "ask").
 			SetBody(map[string]interface{}{"copyFrom": srcPath}).
 			Execute(http.MethodPut, infoURL)
@@ -517,10 +512,9 @@ func (d *SJTUNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 					}
 				} else {
 					childEncoded := d.encodePath(path.Join(targetPath, child.GetName()))
-					childURL := fmt.Sprintf("%s/file/%s/%s/%s", API_URL, d.libraryId, d.spaceId, childEncoded)
-					if _, fileErr := d.newClient().R().
-						SetContext(ctx).
-						SetQueryParam("access_token", d.accessToken).
+					childURL := fmt.Sprintf("%s/file/%s/%s/%s", apiURL, d.libraryId, d.spaceId, childEncoded)
+					if _, fileErr := d.withAccessToken(d.client.R().
+						SetContext(ctx)).
 						SetQueryParam("conflict_resolution_strategy", "overwrite").
 						SetBody(map[string]interface{}{"copyFrom": childSrcPath}).
 						Execute(http.MethodPut, childURL); fileErr != nil {
@@ -549,7 +543,7 @@ func (d *SJTUNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 			return nil, fmt.Errorf("failed to parse task id: %w", err)
 		}
 
-		taskURL := fmt.Sprintf("%s/task/%s/%s/%d", API_URL, d.libraryId, d.spaceId, taskResp.TaskId)
+		taskURL := fmt.Sprintf("%s/task/%s/%s/%d", apiURL, d.libraryId, d.spaceId, taskResp.TaskId)
 		actualName := srcObj.GetName()
 		taskDone := false
 
@@ -561,9 +555,8 @@ func (d *SJTUNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model
 			}
 
 			var taskStatus []TaskStatusItem
-			_, pollErr := d.newClient().R().
-				SetContext(ctx).
-				SetQueryParam("access_token", d.accessToken).
+			_, pollErr := d.withAccessToken(d.client.R().
+				SetContext(ctx)).
 				SetResult(&taskStatus).
 				Execute(http.MethodGet, taskURL)
 
@@ -608,10 +601,9 @@ func (d *SJTUNetdisk) Remove(ctx context.Context, obj model.Obj) error {
 		endpoint = "file"
 	}
 
-	removeURL := fmt.Sprintf("%s/%s/%s/%s/%s", API_URL, endpoint, d.libraryId, d.spaceId, d.encodePath(obj.GetPath()))
-	resp, err := d.newClient().R().
-		SetContext(ctx).
-		SetQueryParam("access_token", d.accessToken).
+	removeURL := fmt.Sprintf("%s/%s/%s/%s/%s", apiURL, endpoint, d.libraryId, d.spaceId, d.encodePath(obj.GetPath()))
+	resp, err := d.withAccessToken(d.client.R().
+		SetContext(ctx)).
 		SetQueryParam("permanent", "0").
 		SetQueryParam("space_org_id", "1").
 		Execute(http.MethodDelete, removeURL)
@@ -635,19 +627,16 @@ func (d *SJTUNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 	parentPath := strings.TrimPrefix(strings.ReplaceAll(dstDir.GetPath(), "\\", "/"), "/")
 
 	// step 1: apply for confirm key
-	initURL := fmt.Sprintf("%s/file/%s/%s/%s", API_URL, d.libraryId, d.spaceId, d.encodePath(buildPath(parentPath, stream.GetName())))
-
-	mainClient := d.newClient()
+	initURL := fmt.Sprintf("%s/file/%s/%s/%s", apiURL, d.libraryId, d.spaceId, d.encodePath(buildPath(parentPath, stream.GetName())))
 
 	var initResp UploadInitResp
-	_, err := mainClient.R().
+	_, err := d.withAccessToken(d.client.R().
 		SetContext(ctx).
 		SetQueryParams(map[string]string{
-			"access_token":                 d.accessToken,
 			"user_id":                      d.UserId,
 			"conflict_resolution_strategy": "overwrite",
 			"filesize":                     strconv.FormatInt(stream.GetSize(), 10),
-		}).
+		})).
 		SetBody("{}").
 		SetResult(&initResp).
 		Execute(http.MethodPut, initURL)
@@ -677,16 +666,15 @@ func (d *SJTUNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 	}
 
 	// step 3: confirm the upload
-	confirmURL := fmt.Sprintf("%s/file/%s/%s/%s?confirm", API_URL, d.libraryId, d.spaceId, initResp.ConfirmKey)
+	confirmURL := fmt.Sprintf("%s/file/%s/%s/%s?confirm", apiURL, d.libraryId, d.spaceId, initResp.ConfirmKey)
 
 	var confirmResp ConfirmResp
-	_, err = mainClient.R().
+	_, err = d.withAccessToken(d.client.R().
 		SetContext(ctx).
 		SetQueryParams(map[string]string{
-			"access_token":                 d.accessToken,
 			"user_id":                      d.UserId,
 			"conflict_resolution_strategy": "overwrite",
-		}).
+		})).
 		SetBody("{}").
 		SetResult(&confirmResp).
 		Execute(http.MethodPost, confirmURL)
