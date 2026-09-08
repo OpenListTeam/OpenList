@@ -1,6 +1,7 @@
 package _139
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,12 +14,13 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-func TestSanitizeLoginCookiesDropsStaleJSessionIDWhenFreshOneMissing(t *testing.T) {
-	got := sanitizeMailLoginCookies("JSESSIONID=old; behaviorid=b", "")
-	want := "behaviorid=b"
-	if got != want {
-		t.Fatalf("sanitizeMailLoginCookies() = %q, want %q", got, want)
-	}
+func useRetryingTestClient(t *testing.T) {
+	t.Helper()
+	oldClient := base.RestyClient
+	base.RestyClient = resty.New().SetRetryCount(3)
+	t.Cleanup(func() {
+		base.RestyClient = oldClient
+	})
 }
 
 func TestMergeMailCookiesPreservesExistingOrderAndAppendsNewNames(t *testing.T) {
@@ -58,6 +60,14 @@ func TestCredentialState(t *testing.T) {
 				MailCookies: "RMKEY=rm; Os_SSo_Sid=sid",
 				Username:    "user",
 				Password:    "password",
+			}},
+			want: credentialStateFullLogin,
+		},
+		{
+			name: "full login without initial cookies",
+			d: Yun139{Addition: Addition{
+				Username: "user",
+				Password: "password",
 			}},
 			want: credentialStateFullLogin,
 		},
@@ -142,32 +152,31 @@ func TestIntegrationLoginObtainsAuthorization(t *testing.T) {
 		t.Fatal("OPENLIST_139_MAIL_COOKIES is required")
 	}
 
-	runFastLogin := func(t *testing.T, mailCookies string) {
-		t.Helper()
+	runFastLogin := func(mailCookies string) error {
 		d := Yun139{Addition: Addition{MailCookies: mailCookies}}
 		state, err := d.credentialState()
 		if err != nil {
-			t.Fatalf("credentialState() unexpected error: %v", err)
+			return fmt.Errorf("credentialState() error: %w", err)
 		}
 		if state != credentialStateCookiesOnly {
-			t.Fatalf("credentialState() = %v, want cookies only", state)
+			return fmt.Errorf("credentialState() = %v, want cookies only", state)
 		}
 		sid, rmkey := extractFastLoginCookies(d.MailCookies)
 		if sid == "" || rmkey == "" {
-			t.Fatal("mail cookies are missing Os_SSo_Sid or RMKEY")
+			return fmt.Errorf("mail cookies are missing Os_SSo_Sid or RMKEY")
 		}
 		token, err := d.step2_get_single_token(sid)
 		if err != nil {
-			t.Fatalf("step2_get_single_token() error: %v", err)
+			return fmt.Errorf("step2_get_single_token() error: %w", err)
 		}
 		auth, err := d.step3_third_party_login(token)
 		if err != nil {
-			t.Fatalf("step3_third_party_login() error: %v", err)
+			return fmt.Errorf("step3_third_party_login() error: %w", err)
 		}
-		d.Authorization = auth
-		if d.Authorization == "" {
-			t.Fatal("authorization is empty after fast login")
+		if auth == "" {
+			return fmt.Errorf("authorization is empty after fast login")
 		}
+		return nil
 	}
 
 	if username == "" || password == "" {
@@ -231,44 +240,19 @@ func TestIntegrationLoginObtainsAuthorization(t *testing.T) {
 		if sid == "" || rmkey == "" {
 			t.Skip("input mail cookies are missing Os_SSo_Sid or RMKEY")
 		}
-		runFastLogin(t, mailCookies)
+		if err := runFastLogin(mailCookies); err != nil {
+			t.Skipf("input mail cookies are stale or unusable: %v", err)
+		}
 	})
 
 	t.Run("mail cookies fast login after password login", func(t *testing.T) {
 		if refreshedMailCookies == "" {
 			t.Fatal("password login did not refresh mail cookies")
 		}
-		runFastLogin(t, refreshedMailCookies)
+		if err := runFastLogin(refreshedMailCookies); err != nil {
+			t.Fatalf("refreshed mail cookies fast login failed: %v", err)
+		}
 	})
-}
-
-func TestIsRedirectStatus(t *testing.T) {
-	for _, status := range []int{300, 301, 302, 307, 399} {
-		if !isRedirectStatus(status) {
-			t.Fatalf("isRedirectStatus(%d) = false, want true", status)
-		}
-	}
-	for _, status := range []int{200, 299, 400, 500} {
-		if isRedirectStatus(status) {
-			t.Fatalf("isRedirectStatus(%d) = true, want false", status)
-		}
-	}
-}
-
-func TestFetchMailJSessionIDAcceptsRedirectResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "fresh"})
-		http.Redirect(w, r, "/next", http.StatusFound)
-	}))
-	defer server.Close()
-
-	got, err := fetchMailJSessionID(server.URL)
-	if err != nil {
-		t.Fatalf("fetchMailJSessionID() error: %v", err)
-	}
-	if got != "fresh" {
-		t.Fatalf("fetchMailJSessionID() = %q, want fresh", got)
-	}
 }
 
 func TestInvalidAuthorizationDoesNotUseCookieFastLogin(t *testing.T) {
@@ -304,18 +288,9 @@ func TestSMSSceneForRisk(t *testing.T) {
 	}
 }
 
-func TestSanitizeMailLoginCookiesKeepsDeviceContext(t *testing.T) {
-	got := sanitizeMailLoginCookies(
-		"behaviorid=device; Os_SSo_Sid=old-sid; RMKEY=old-rmkey; JSESSIONID=old-session; S_DEVICE_TOKEN=fingerprint",
-		"new-session",
-	)
-	want := "behaviorid=device;JSESSIONID=new-session;S_DEVICE_TOKEN=fingerprint"
-	if got != want {
-		t.Fatalf("sanitizeMailLoginCookies() = %q, want %q", got, want)
-	}
-}
-
 func TestSendSMSVerificationCode(t *testing.T) {
+	useRetryingTestClient(t)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -349,6 +324,8 @@ func TestSendSMSVerificationCode(t *testing.T) {
 }
 
 func TestSendSMSVerificationCodeStopsAtPictureChallenge(t *testing.T) {
+	useRetryingTestClient(t)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"code":"PML401010021"}`)
 	}))
@@ -366,6 +343,8 @@ func TestSendSMSVerificationCodeStopsAtPictureChallenge(t *testing.T) {
 }
 
 func TestVerifySMSCode(t *testing.T) {
+	useRetryingTestClient(t)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -404,5 +383,92 @@ func TestVerifySMSCode(t *testing.T) {
 	}
 	if !strings.Contains(d.MailCookies, "RMKEY=new-rmkey") {
 		t.Fatalf("MailCookies = %q", d.MailCookies)
+	}
+}
+
+func TestPasswordLoginWithoutInitialCookiesStopsAtRedirectAndPersistsCookies(t *testing.T) {
+	useRetryingTestClient(t)
+
+	var loginRequests, redirectRequests int
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Login/Login.ashx":
+			loginRequests++
+			http.SetCookie(w, &http.Cookie{Name: "RMKEY", Value: "new-rm"})
+			http.SetCookie(w, &http.Cookie{Name: "Os_SSo_Sid", Value: "new-sid"})
+			w.Header().Set("Location", server.URL+"/appmail?sid=single-sid")
+			w.WriteHeader(http.StatusFound)
+		case "/appmail":
+			redirectRequests++
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	oldURL := mailPasswordURL
+	mailPasswordURL = server.URL + "/Login/Login.ashx"
+	defer func() { mailPasswordURL = oldURL }()
+
+	d := Yun139{Addition: Addition{Username: "18800000000", Password: "password"}}
+	sid, err := d.step1_password_login()
+	if err != nil || sid != "single-sid" {
+		t.Fatalf("sid=%q err=%v", sid, err)
+	}
+	if loginRequests != 1 || redirectRequests != 0 {
+		t.Fatalf("login/redirect requests=%d/%d, want 1/0", loginRequests, redirectRequests)
+	}
+	if !strings.Contains(d.MailCookies, "RMKEY=new-rm") || !strings.Contains(d.MailCookies, "Os_SSo_Sid=new-sid") {
+		t.Fatalf("response cookies were not persisted: %q", d.MailCookies)
+	}
+}
+
+func TestPasswordLoginReusesRawRefreshedCookies(t *testing.T) {
+	useRetryingTestClient(t)
+
+	var n int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		cookie := r.Header.Get("Cookie")
+		if !strings.Contains(cookie, "JSESSIONID=stale") || !strings.Contains(cookie, "behaviorid=device") {
+			t.Errorf("login %d lost raw cookie context: %q", n, cookie)
+		}
+		if n == 1 {
+			http.SetCookie(w, &http.Cookie{Name: "RMKEY", Value: "rm-1"})
+			http.SetCookie(w, &http.Cookie{Name: "Os_SSo_Sid", Value: "sid-1"})
+			w.Header().Set("Location", "https://mail.10086.cn/?sid=first")
+		} else {
+			if !strings.Contains(cookie, "RMKEY=rm-1") || !strings.Contains(cookie, "Os_SSo_Sid=sid-1") {
+				t.Errorf("second login did not reuse first refreshed cookies: %q", cookie)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "RMKEY", Value: "rm-2"})
+			http.SetCookie(w, &http.Cookie{Name: "Os_SSo_Sid", Value: "sid-2"})
+			w.Header().Set("Location", "https://mail.10086.cn/?sid=second")
+		}
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+
+	oldURL := mailPasswordURL
+	mailPasswordURL = server.URL
+	defer func() { mailPasswordURL = oldURL }()
+
+	d := Yun139{Addition: Addition{Username: "18800000000", Password: "password", MailCookies: "Os_SSo_Sid=old; RMKEY=old; JSESSIONID=stale; behaviorid=device"}}
+	if sid, err := d.step1_password_login(); err != nil || sid != "first" {
+		t.Fatalf("first login sid=%q err=%v", sid, err)
+	}
+	refreshed := d.MailCookies
+	if !strings.Contains(refreshed, "RMKEY=rm-1") || !strings.Contains(refreshed, "Os_SSo_Sid=sid-1") {
+		t.Fatalf("first login did not persist refreshed cookies: %q", refreshed)
+	}
+	d.Authorization = ""
+	d.MailCookies = refreshed
+	if sid, err := d.step1_password_login(); err != nil || sid != "second" {
+		t.Fatalf("second login sid=%q err=%v", sid, err)
+	}
+	if n != 2 {
+		t.Fatalf("login count=%d, want 2", n)
 	}
 }
