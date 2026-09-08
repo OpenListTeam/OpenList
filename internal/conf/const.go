@@ -68,6 +68,7 @@ const (
 	SeedSingleDirectPreview = "seed_single_direct_preview"
 	SeedCASDirectAccess     = "seed_cas_direct_access"
 	SeedAutoGeneratePolicy  = "seed_auto_generate_policy"
+	SeedDefaultTrackers     = "seed_default_trackers"
 
 	// index
 	SearchIndex     = "search_index"

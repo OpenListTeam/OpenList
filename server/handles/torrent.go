@@ -499,6 +499,8 @@ type SeedGenerateReq struct {
 	SavePath            string                `json:"save_path"`
 	IncludeShare        bool                  `json:"include_share"`
 	IncludeDirectSource bool                  `json:"include_direct_source"`
+	ShareFiles          []string              `json:"share_files"`
+	DirectFiles         []string              `json:"direct_files"`
 }
 
 // SeedCapabilityReq supports source preflight and destination import planning.
@@ -849,15 +851,33 @@ func GenerateSeedForPaths(c *gin.Context) {
 	seed.Comment = req.Comment
 	seed.Trackers = req.Trackers
 	seed.Channels = req.Channels
-	if req.IncludeShare && !user.CanShare() {
+	// Per-file share/direct selection. When either list is empty, fall back to the
+	// legacy global flags so existing callers keep working.
+	shareSet := make(map[string]bool, len(req.ShareFiles))
+	for _, p := range req.ShareFiles {
+		if strings.TrimSpace(p) != "" {
+			shareSet[p] = true
+		}
+	}
+	directSet := make(map[string]bool, len(req.DirectFiles))
+	for _, p := range req.DirectFiles {
+		if strings.TrimSpace(p) != "" {
+			directSet[p] = true
+		}
+	}
+	useGlobalShare := len(shareSet) == 0 && req.IncludeShare
+	useGlobalDirect := len(directSet) == 0 && req.IncludeDirectSource
+	hasShare := useGlobalShare || len(shareSet) > 0
+	hasDirect := useGlobalDirect || len(directSet) > 0
+	if hasShare && !user.CanShare() {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	if req.IncludeDirectSource && setting.GetBool(conf.SignAll) && !req.IncludeShare {
+	if hasDirect && setting.GetBool(conf.SignAll) && !hasShare {
 		common.ErrorStrResp(c, "direct sources require an automatic share when global signing is enabled", 400)
 		return
 	}
-	if (req.IncludeShare || req.IncludeDirectSource) && strings.TrimSpace(setting.GetStr(conf.SeedSiteURL)) == "" {
+	if (hasShare || hasDirect) && strings.TrimSpace(setting.GetStr(conf.SeedSiteURL)) == "" {
 		common.ErrorStrResp(c, "seed_site_url must be configured before embedding download sources", 400)
 		return
 	}
@@ -936,7 +956,7 @@ func GenerateSeedForPaths(c *gin.Context) {
 		} else if comment := strings.TrimSpace(req.FileComments[obj.GetName()]); comment != "" {
 			seedFile.Comment = comment
 		}
-		if req.IncludeDirectSource {
+		if useGlobalDirect || directSet[requestedPath] {
 			baseURL := strings.TrimRight(setting.GetStr(conf.SeedSiteURL), "/")
 			seedFile.Sources = []torrent.SeedSource{{Type: "openlist-direct", URL: baseURL + utils.EncodePath("/d"+fullPath)}}
 		}
@@ -953,8 +973,11 @@ func GenerateSeedForPaths(c *gin.Context) {
 			}
 		}
 	}()
-	if req.IncludeShare {
+	if hasShare {
 		for index, fullPath := range fullPaths {
+			if !useGlobalShare && !shareSet[req.Paths[index]] {
+				continue
+			}
 			sharing := &model.Sharing{
 				SharingDB: &model.SharingDB{Remark: "Transfer seed source"},
 				Files:     []string{fullPath}, Creator: user,
@@ -1074,6 +1097,34 @@ func encodeGeneratedSeed(seed *torrent.Seed, format string, standardPieces []byt
 	return t.Encode()
 }
 
+// loadSeedDefaultTrackers returns the configured default tracker list, one per line.
+func loadSeedDefaultTrackers() []string {
+	raw := strings.TrimSpace(setting.GetStr(conf.SeedDefaultTrackers))
+	if raw == "" {
+		return nil
+	}
+	var trackers []string
+	for _, line := range strings.Split(raw, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			trackers = append(trackers, trimmed)
+		}
+	}
+	return trackers
+}
+
+// directSourceAvailable reports whether an unauthenticated /d/ direct source can be embedded.
+// Direct sources are only safe when the file is not encrypted and guest access is allowed.
+func directSourceAvailable(meta *model.Meta, path string) bool {
+	if setting.GetBool(conf.SignAll) {
+		return false
+	}
+	if isEncrypt(meta, path) {
+		return false
+	}
+	guest, err := op.GetGuest()
+	return err == nil && !guest.Disabled
+}
+
 // SeedCapabilities reports whether files can use hashes, source URLs or require downloading.
 func SeedCapabilities(c *gin.Context) {
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
@@ -1129,10 +1180,20 @@ func SeedCapabilities(c *gin.Context) {
 				fileTraffic = obj.GetSize()
 				estimatedTraffic += fileTraffic
 			}
+			// Probe whether the storage can be streamed for server-side hashing.
+			streamable := false
+			if link, _, linkErr := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{}); linkErr == nil && link != nil {
+				if _, rrErr := stream.GetRangeReaderFromLink(obj.GetSize(), link); rrErr == nil {
+					streamable = true
+				}
+				_ = link.Close()
+			}
 			files = append(files, gin.H{
 				"path": requestedPath, "name": obj.GetName(), "size": obj.GetSize(),
 				"available_hashes": available, "requires_download": requiresDownload,
 				"requires_fetch": requiresDownload, "estimated_traffic": fileTraffic,
+				"streamable": streamable, "share_available": user.CanShare(),
+				"direct_source_available": directSourceAvailable(meta, fullPath),
 			})
 		}
 		existingHashes := make([]string, 0, len(existing))
@@ -1144,7 +1205,7 @@ func SeedCapabilities(c *gin.Context) {
 		common.SuccessResp(c, gin.H{
 			"formats": gin.H{"oss": true, "torrent": true, "cas": len(files) == 1},
 			"files":   files, "existing_hashes": existingHashes, "estimated_traffic": estimatedTraffic,
-			"default_matrix": loadSeedDefaultMatrix(),
+			"default_matrix": loadSeedDefaultMatrix(), "trackers": loadSeedDefaultTrackers(),
 		})
 		return
 	}
