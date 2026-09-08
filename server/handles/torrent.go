@@ -603,7 +603,7 @@ func ParseSeed(c *gin.Context) {
 		"diagnostics": seedDiagnostics(seed),
 		"conversions": seedConversionStates(seed),
 		"capabilities": gin.H{
-			"rapid_upload": hasRapidHashes, "offline_download": hasSource,
+			"rapid_upload": hasRapidHashes, "offline_download": hasSource || format == "torrent",
 			"transfer": hasSource, "convert": true, "edit": true, "recalculate": true,
 		},
 		"direct_preview": len(seed.Files) == 1 && setting.GetBool(conf.SeedSingleDirectPreview),
@@ -787,6 +787,27 @@ func normalizedSeedMatrix(matrix SeedHashMatrix, formats []string) SeedHashMatri
 	return matrix
 }
 
+// canReuseListedHashes reports whether a file's hashes can be sourced entirely
+// from the storage driver's file listing (no download) for the given matrix.
+// Piece hashes are never available from listings, so any piece requirement forces
+// a streamed download. Whole-file hashes are reused only when the driver actually
+// provides each one the matrix requests.
+func canReuseListedHashes(hashInfo utils.HashInfo, matrix SeedHashMatrix) bool {
+	if matrix.MD5.Pieces || matrix.SHA1.Pieces || matrix.SHA256.Pieces {
+		return false
+	}
+	if matrix.MD5.Whole && hashInfo.GetHash(utils.MD5) == "" {
+		return false
+	}
+	if matrix.SHA1.Whole && hashInfo.GetHash(utils.SHA1) == "" {
+		return false
+	}
+	if matrix.SHA256.Whole && hashInfo.GetHash(utils.SHA256) == "" {
+		return false
+	}
+	return true
+}
+
 func applySeedMatrix(file *torrent.SeedFile, matrix SeedHashMatrix) {
 	if !matrix.MD5.Whole {
 		file.Hashes.MD5 = ""
@@ -914,6 +935,44 @@ func GenerateSeedForPaths(c *gin.Context) {
 			return
 		}
 		total += obj.GetSize()
+		modified := ""
+		if !obj.ModTime().IsZero() {
+			modified = obj.ModTime().UTC().Format(time.RFC3339)
+		}
+		seedPath := stdpath.Base(requestedPath)
+		if len(req.Paths) > 1 {
+			seedPath = strings.TrimPrefix(stdpath.Clean(requestedPath), "/")
+		}
+
+		// Reuse whole-file hashes from the storage driver's listing when the
+		// matrix needs no piece hashes. This skips the download entirely.
+		hashInfo := obj.GetHash()
+		if canReuseListedHashes(hashInfo, matrix) {
+			seedFile := torrent.SeedFile{
+				Path:     seedPath,
+				Size:     obj.GetSize(),
+				Modified: modified,
+				Hashes: torrent.SeedHashes{
+					MD5:    strings.ToLower(hashInfo.GetHash(utils.MD5)),
+					SHA1:   strings.ToLower(hashInfo.GetHash(utils.SHA1)),
+					SHA256: strings.ToLower(hashInfo.GetHash(utils.SHA256)),
+				},
+			}
+			applySeedMatrix(&seedFile, matrix)
+			if comment := strings.TrimSpace(req.FileComments[requestedPath]); comment != "" {
+				seedFile.Comment = comment
+			} else if comment := strings.TrimSpace(req.FileComments[obj.GetName()]); comment != "" {
+				seedFile.Comment = comment
+			}
+			if useGlobalDirect || directSet[requestedPath] {
+				baseURL := strings.TrimRight(setting.GetStr(conf.SeedSiteURL), "/")
+				seedFile.Sources = []torrent.SeedSource{{Type: "openlist-direct", URL: baseURL + utils.EncodePath("/d"+fullPath)}}
+			}
+			seed.Files = append(seed.Files, seedFile)
+			fullPaths = append(fullPaths, fullPath)
+			continue
+		}
+
 		link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{})
 		if err != nil {
 			common.ErrorResp(c, fmt.Errorf("storage cannot stream %s: %v", requestedPath, err), 400)
@@ -941,14 +1000,6 @@ func GenerateSeedForPaths(c *gin.Context) {
 			return
 		}
 		fileHasher.Finish()
-		modified := ""
-		if !obj.ModTime().IsZero() {
-			modified = obj.ModTime().UTC().Format(time.RFC3339)
-		}
-		seedPath := stdpath.Base(requestedPath)
-		if len(req.Paths) > 1 {
-			seedPath = strings.TrimPrefix(stdpath.Clean(requestedPath), "/")
-		}
 		seedFile := fileHasher.BuildSeedFile(seedPath, modified)
 		applySeedMatrix(&seedFile, matrix)
 		if comment := strings.TrimSpace(req.FileComments[requestedPath]); comment != "" {
@@ -1259,7 +1310,19 @@ func SeedCapabilities(c *gin.Context) {
 		common.ErrorStrResp(c, "policy must be off, on, or inherit", 400)
 		return
 	}
-	common.SuccessResp(c, gin.H{"driver": storage.Config().Name, "global_policy": globalPolicy, "resolved_policy": policy, "files": files})
+	// Describe the destination driver's rapid-transfer capability surface so the
+	// frontend can show which hashes are reusable for instant upload.
+	driverSupports := gin.H{
+		"cas_rapid":         rapid189,
+		"put_url":           putURL || putURLResult,
+		"offline_download":  true,
+		"rapid_hash_algos":  []string{"md5", "sha1"},
+		"rapid_uses_pieces": rapid189,
+	}
+	common.SuccessResp(c, gin.H{
+		"driver": storage.Config().Name, "global_policy": globalPolicy,
+		"resolved_policy": policy, "files": files, "driver_supports": driverSupports,
+	})
 }
 
 // UpdateSeedChannels updates public discovery metadata and keeps the requested container.
