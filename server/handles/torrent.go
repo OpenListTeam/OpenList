@@ -2,6 +2,7 @@ package handles
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -507,15 +508,40 @@ type SeedUpdateChannelsReq struct {
 	Channels []torrent.SeedChannel `json:"channels"`
 }
 
+// SeedRecalcFile maps one seed file to a server-side path for re-hashing.
+type SeedRecalcFile struct {
+	Path       string `json:"path"`        // seed file relative path
+	SourcePath string `json:"source_path"` // server-side readable file path
+}
+
+// SeedUpdateReq edits metadata and optionally recalculates hashes.
+type SeedUpdateReq struct {
+	SeedDataReq
+	Comment      *string                         `json:"comment"`
+	Trackers     []string                        `json:"trackers"`
+	Channels     []torrent.SeedChannel           `json:"channels"`
+	FileComments map[string]string               `json:"file_comments"`
+	FileSources  map[string][]torrent.SeedSource `json:"file_sources"`
+	Recalculate  bool                            `json:"recalculate"`
+	RecalcFiles  []SeedRecalcFile                `json:"recalc_files"`
+	HashMatrix   SeedHashMatrix                  `json:"hash_matrix"`
+	PieceSize    int64                           `json:"piece_size"`
+	OutputPath   string                          `json:"output_path"`
+	SavePath     string                          `json:"save_path"`
+	Options      map[string]any                  `json:"options"`
+}
+
 // SeedQuickSaveReq imports selected seed files using rapid upload or an existing source URL.
 type SeedQuickSaveReq struct {
 	SeedDataReq
-	Path          string   `json:"path" binding:"required"`
-	Files         []string `json:"files"`
-	SelectedFiles []int    `json:"selected_files"`
-	Tool          string   `json:"tool"`
-	DeletePolicy  string   `json:"delete_policy"`
-	Overwrite     bool     `json:"overwrite"`
+	Path          string         `json:"path" binding:"required"`
+	Files         []string       `json:"files"`
+	SelectedFiles []int          `json:"selected_files"`
+	Tool          string         `json:"tool"`
+	DeletePolicy  string         `json:"delete_policy"`
+	Overwrite     bool           `json:"overwrite"`
+	TransitPath   string         `json:"transit_path"`
+	Options       map[string]any `json:"options"`
 }
 
 func decodeSeedData(req SeedDataReq) ([]byte, *torrent.Seed, string, error) {
@@ -564,7 +590,7 @@ func ParseSeed(c *gin.Context) {
 		"conversions": seedConversionStates(seed),
 		"capabilities": gin.H{
 			"rapid_upload": hasRapidHashes, "offline_download": hasSource,
-			"transfer": false, "convert": true, "edit": false, "recalculate": false,
+			"transfer": hasSource, "convert": true, "edit": true, "recalculate": true,
 		},
 		"direct_preview": len(seed.Files) == 1 && setting.GetBool(conf.SeedSingleDirectPreview),
 	})
@@ -1143,23 +1169,389 @@ func SeedCapabilities(c *gin.Context) {
 
 // UpdateSeedChannels updates public discovery metadata and keeps the requested container.
 func UpdateSeedChannels(c *gin.Context) {
-	var req SeedUpdateChannelsReq
+	UpdateSeed(c)
+}
+
+// applySeedUpdateOptions folds the frontend options passthrough into typed fields.
+func applySeedUpdateOptions(req *SeedUpdateReq) {
+	if req.Options == nil {
+		return
+	}
+	if req.Comment == nil {
+		if v, ok := req.Options["comment"].(string); ok {
+			req.Comment = &v
+		}
+	}
+	if !req.Recalculate {
+		if v, ok := req.Options["recalculate"].(bool); ok {
+			req.Recalculate = v
+		}
+	}
+}
+
+// validateSeedSource enforces the metadata contract for editable share/direct sources.
+func validateSeedSource(src torrent.SeedSource) error {
+	if src.Type != "openlist-direct" && src.Type != "openlist-share" {
+		return fmt.Errorf("unsupported seed source type %q", src.Type)
+	}
+	u, err := url.Parse(src.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+		return fmt.Errorf("invalid seed source URL for %q", src.Type)
+	}
+	if configured := strings.TrimSpace(setting.GetStr(conf.SeedSiteURL)); configured != "" {
+		if site, parseErr := url.Parse(configured); parseErr == nil && !strings.EqualFold(u.Host, site.Host) {
+			return fmt.Errorf("seed source host must match the configured site URL")
+		}
+	}
+	if src.Type == "openlist-direct" && !strings.HasPrefix(u.EscapedPath(), "/d/") {
+		return fmt.Errorf("openlist-direct source URL must start with /d/")
+	}
+	if src.Type == "openlist-share" && !strings.HasPrefix(u.EscapedPath(), "/sd/") {
+		return fmt.Errorf("openlist-share source URL must start with /sd/")
+	}
+	return nil
+}
+
+// rehashSeedFile reads one server-side file and recomputes its whole and piece hashes.
+func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSize int64) (torrent.SeedFile, error) {
+	var out torrent.SeedFile
+	fullPath, err := user.JoinPath(sourcePath)
+	if err != nil {
+		return out, err
+	}
+	meta, err := op.GetNearestMeta(fullPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return out, err
+	}
+	if !common.CanRead(user, meta, fullPath) {
+		return out, errs.PermissionDenied
+	}
+	storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
+	if err != nil {
+		return out, err
+	}
+	obj, err := op.Get(c.Request.Context(), storage, actualPath)
+	if err != nil || obj.IsDir() {
+		return out, fmt.Errorf("recalculate path must be a readable file: %s", sourcePath)
+	}
+	if obj.GetSize() < 0 || obj.GetSize() > maxTorrentGenFileSize {
+		return out, fmt.Errorf("recalculate file exceeds 1GB limit: %s", sourcePath)
+	}
+	link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{})
+	if err != nil || link.RangeReader == nil {
+		return out, fmt.Errorf("storage cannot stream %s", sourcePath)
+	}
+	rc, err := link.RangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
+	if err != nil {
+		return out, err
+	}
+	defer rc.Close()
+	hasher := torrent.NewHashWriter(pieceSize, pieceSize)
+	n, copyErr := io.Copy(hasher, io.LimitReader(rc, obj.GetSize()+1))
+	if copyErr != nil {
+		return out, fmt.Errorf("read %s: %w", sourcePath, copyErr)
+	}
+	if n != obj.GetSize() {
+		return out, fmt.Errorf("read %s: got %d of %d bytes", sourcePath, n, obj.GetSize())
+	}
+	hasher.Finish()
+	modified := ""
+	if !obj.ModTime().IsZero() {
+		modified = obj.ModTime().UTC().Format(time.RFC3339)
+	}
+	return hasher.BuildSeedFile(stdpath.Base(sourcePath), modified), nil
+}
+
+// UpdateSeed edits seed metadata and optionally recalculates hashes from server files.
+func UpdateSeed(c *gin.Context) {
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	var req SeedUpdateReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	applySeedUpdateOptions(&req)
 	_, seed, format, err := decodeSeedData(req.SeedDataReq)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	seed.Channels = req.Channels
+	if req.Comment != nil {
+		seed.Comment = strings.TrimSpace(*req.Comment)
+	}
+	if req.Trackers != nil {
+		seed.Trackers = req.Trackers
+	}
+	if req.Channels != nil {
+		seed.Channels = req.Channels
+	}
+	for i := range seed.Files {
+		if comment, ok := req.FileComments[seed.Files[i].Path]; ok {
+			seed.Files[i].Comment = strings.TrimSpace(comment)
+		}
+		if sources, ok := req.FileSources[seed.Files[i].Path]; ok {
+			for _, src := range sources {
+				if srcErr := validateSeedSource(src); srcErr != nil {
+					common.ErrorResp(c, srcErr, 400)
+					return
+				}
+			}
+			seed.Files[i].Sources = sources
+		}
+	}
+	if req.Recalculate {
+		pieceSize := req.PieceSize
+		if pieceSize <= 0 {
+			pieceSize = seed.PieceSize
+		}
+		if pieceSize <= 0 {
+			pieceSize = torrent.DefaultPieceSize
+		}
+		if pieceSize < 16*1024 || pieceSize > 64*1024*1024 {
+			common.ErrorStrResp(c, "piece_size must be between 16384 and 67108864", 400)
+			return
+		}
+		seed.PieceSize = pieceSize
+		matrix := normalizedSeedMatrix(req.HashMatrix, []string{format})
+		recalcMap := make(map[string]string, len(req.RecalcFiles))
+		for _, rf := range req.RecalcFiles {
+			if strings.TrimSpace(rf.SourcePath) != "" {
+				recalcMap[rf.Path] = rf.SourcePath
+			}
+		}
+		if len(recalcMap) == 0 {
+			common.ErrorStrResp(c, "recalculate requires at least one source_path", 400)
+			return
+		}
+		for i := range seed.Files {
+			srcPath, ok := recalcMap[seed.Files[i].Path]
+			if !ok {
+				continue
+			}
+			rehashed, rehashErr := rehashSeedFile(c, user, srcPath, pieceSize)
+			if rehashErr != nil {
+				common.ErrorResp(c, rehashErr, 400)
+				return
+			}
+			rehashed.Path = seed.Files[i].Path
+			rehashed.Comment = seed.Files[i].Comment
+			rehashed.Sources = seed.Files[i].Sources
+			rehashed.CASSliceMD5 = ""
+			rehashed.CASCreateTime = ""
+			applySeedMatrix(&rehashed, matrix)
+			seed.Files[i] = rehashed
+		}
+	}
 	data, err := torrent.EncodeSeed(seed, format)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	common.SuccessResp(c, gin.H{"format": format, "seed_data": base64.StdEncoding.EncodeToString(data), "seed": seed})
+	result := gin.H{"format": format, "seed_data": base64.StdEncoding.EncodeToString(data), "seed": seed}
+	outputPath := strings.TrimSpace(req.OutputPath)
+	if outputPath == "" {
+		outputPath = strings.TrimSpace(req.SavePath)
+	}
+	if outputPath != "" {
+		fileName := stdpath.Base(seed.Name) + "." + format
+		dstDir, joinErr := user.JoinPath(outputPath)
+		if joinErr != nil {
+			common.ErrorResp(c, joinErr, 403)
+			return
+		}
+		meta, metaErr := op.GetNearestMeta(dstDir)
+		if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
+			common.ErrorResp(c, metaErr, 500, true)
+			return
+		}
+		if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstDir)) || !common.CanWrite(user, meta, dstDir) {
+			common.ErrorResp(c, errs.PermissionDenied, 403)
+			return
+		}
+		fileStream := &stream.FileStream{Ctx: c.Request.Context(), Obj: &model.Object{Name: fileName, Size: int64(len(data)), Modified: time.Now()}, Reader: bytes.NewReader(data), Mimetype: "application/octet-stream"}
+		if putErr := fs.PutDirectly(c.Request.Context(), dstDir, fileStream); putErr != nil {
+			common.ErrorResp(c, putErr, 500)
+			return
+		}
+		result["path"] = stdpath.Join(outputPath, fileName)
+	}
+	common.SuccessResp(c, result)
+}
+
+// saveSeedFilesToPath saves selected seed files into one target directory.
+func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, dstPath string, rapidOnly bool) ([]gin.H, error) {
+	results := make([]gin.H, 0, len(seed.Files))
+	fullPath, err := user.JoinPath(dstPath)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := op.GetNearestMeta(fullPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return nil, err
+	}
+	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, fullPath)) || !common.CanWrite(user, meta, fullPath) {
+		return nil, errs.PermissionDenied
+	}
+	storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	dstDir, err := op.Get(c.Request.Context(), storage, actualPath)
+	if err != nil || !dstDir.IsDir() {
+		return nil, errs.NotFolder
+	}
+	selected := make(map[string]struct{}, len(req.Files))
+	for _, name := range req.Files {
+		selected[name] = struct{}{}
+	}
+	selectedIndexes := make(map[int]struct{}, len(req.SelectedFiles))
+	for _, index := range req.SelectedFiles {
+		if index < 0 || index >= len(seed.Files) {
+			return nil, fmt.Errorf("selected_files contains an invalid index")
+		}
+		selectedIndexes[index] = struct{}{}
+	}
+	cloud189, is189 := storage.(*_189pc.Cloud189PC)
+	_, putURL := storage.(driver.PutURL)
+	_, putURLResult := storage.(driver.PutURLResult)
+	for index, file := range seed.Files {
+		if len(selected) > 0 {
+			if _, ok := selected[file.Path]; !ok {
+				continue
+			}
+		} else if len(selectedIndexes) > 0 {
+			if _, ok := selectedIndexes[index]; !ok {
+				continue
+			}
+		}
+		name := stdpath.Base(file.Path)
+		if is189 && file.Hashes.MD5 != "" && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 && len(file.Hashes.Pieces.SHA1) > 0 {
+			one := *seed
+			one.Name = name
+			one.Files = []torrent.SeedFile{file}
+			if data, encodeErr := torrent.EncodeSeed(&one, "torrent"); encodeErr == nil {
+				if obj, rapidErr := cloud189.RapidUploadFromTorrent(c.Request.Context(), dstDir, data, req.Overwrite); rapidErr == nil {
+					results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "189pc_cas"})
+					continue
+				}
+			}
+		}
+		if rapidOnly {
+			results = append(results, gin.H{"path": file.Path, "name": name, "method": "unavailable", "error": "target driver cannot reuse the available hashes"})
+			continue
+		}
+		source := firstUsableSeedSource(file)
+		if source == "" {
+			results = append(results, gin.H{"path": file.Path, "name": name, "method": "unavailable", "error": "no usable source URL or compatible rapid-upload hashes"})
+			continue
+		}
+		if putURL || putURLResult {
+			if putErr := fs.PutURL(c.Request.Context(), fullPath, name, source); putErr == nil {
+				results = append(results, gin.H{"path": file.Path, "name": name, "method": "put_url"})
+				continue
+			}
+		}
+		if !user.CanAddOfflineDownloadTasks() {
+			results = append(results, gin.H{"path": file.Path, "name": name, "method": "offline_download", "error": "offline download permission is required"})
+			continue
+		}
+		if req.Tool == "" {
+			results = append(results, gin.H{"path": file.Path, "name": name, "method": "offline_download", "error": "offline download tool is required"})
+			continue
+		}
+		t, addErr := tool.AddURL(c, &tool.AddURLArgs{URL: source, DstDirPath: fullPath, Tool: req.Tool, DeletePolicy: tool.DeletePolicy(req.DeletePolicy)})
+		if addErr != nil {
+			results = append(results, gin.H{"path": file.Path, "name": name, "method": "offline_download", "error": addErr.Error()})
+			continue
+		}
+		result := gin.H{"path": file.Path, "name": name, "method": "offline_download"}
+		if t != nil {
+			result["task"] = getTaskInfo(t)
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+// resolveSeedTransitPath extracts the optional transit destination for a relayed save.
+func resolveSeedTransitPath(req SeedQuickSaveReq) string {
+	transitPath := strings.TrimSpace(req.TransitPath)
+	if transitPath == "" && req.Options != nil {
+		if mode, ok := req.Options["mode"].(string); ok && mode == "transfer" {
+			if tp, ok := req.Options["transit_path"].(string); ok {
+				transitPath = strings.TrimSpace(tp)
+			}
+		}
+	}
+	return transitPath
+}
+
+// transferSeedViaTransit first saves to an intermediate directory then relays to the final target.
+func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, transitPath string) {
+	if !user.CanCopy() {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
+	transitResults, err := saveSeedFilesToPath(c, user, seed, req, transitPath, false)
+	if err != nil {
+		common.ErrorResp(c, err, seedSaveErrorCode(err))
+		return
+	}
+	finalDst, err := user.JoinPath(req.Path)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
+	finalMeta, err := op.GetNearestMeta(finalDst)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(finalMeta, finalDst)) || !common.CanWrite(user, finalMeta, finalDst) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
+	transitFullPath, err := user.JoinPath(transitPath)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
+	finalResults := make([]gin.H, 0, len(transitResults))
+	for _, res := range transitResults {
+		method, _ := res["method"].(string)
+		if method == "unavailable" {
+			finalResults = append(finalResults, res)
+			continue
+		}
+		name, _ := res["name"].(string)
+		if name == "" {
+			continue
+		}
+		// Asynchronous offline downloads cannot be relayed synchronously.
+		if method == "offline_download" {
+			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": "transit requires a synchronous intermediate save (rapid upload or PutURL)"})
+			continue
+		}
+		srcObjPath := stdpath.Join(transitFullPath, name)
+		_, copyErr := fs.Copy(context.WithValue(c.Request.Context(), conf.NoTaskKey, struct{}{}), srcObjPath, finalDst)
+		if copyErr != nil {
+			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": copyErr.Error()})
+			continue
+		}
+		finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer"})
+	}
+	common.SuccessResp(c, gin.H{"results": finalResults})
+}
+
+// seedSaveErrorCode maps a save error to an HTTP status code.
+func seedSaveErrorCode(err error) int {
+	if errors.Is(errors.Cause(err), errs.PermissionDenied) {
+		return 403
+	}
+	if errors.Is(errors.Cause(err), errs.NotFolder) || errors.Is(errors.Cause(err), errs.ObjectNotFound) {
+		return 400
+	}
+	return 500
 }
 
 // QuickSaveSeed imports selected files without downloading when the target supports it.
@@ -1175,105 +1567,15 @@ func QuickSaveSeed(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	dstPath, err := user.JoinPath(req.Path)
-	if err != nil {
-		common.ErrorResp(c, err, 403)
-		return
-	}
-	meta, err := op.GetNearestMeta(dstPath)
-	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-		common.ErrorResp(c, err, 500, true)
-		return
-	}
-	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstPath)) || !common.CanWrite(user, meta, dstPath) {
-		common.ErrorResp(c, errs.PermissionDenied, 403)
-		return
-	}
-	storage, actualPath, err := op.GetStorageAndActualPath(dstPath)
-	if err != nil {
-		common.ErrorResp(c, err, 400)
-		return
-	}
-	dstDir, err := op.Get(c.Request.Context(), storage, actualPath)
-	if err != nil || !dstDir.IsDir() {
-		common.ErrorResp(c, errs.NotFolder, 400)
-		return
-	}
-	selected := make(map[string]struct{}, len(req.Files))
-	for _, name := range req.Files {
-		selected[name] = struct{}{}
-	}
-	cloud189, is189 := storage.(*_189pc.Cloud189PC)
-	_, putURL := storage.(driver.PutURL)
-	_, putURLResult := storage.(driver.PutURLResult)
-	selectedIndexes := make(map[int]struct{}, len(req.SelectedFiles))
-	for _, index := range req.SelectedFiles {
-		if index < 0 || index >= len(seed.Files) {
-			common.ErrorStrResp(c, "selected_files contains an invalid index", 400)
-			return
-		}
-		selectedIndexes[index] = struct{}{}
-	}
 	rapidOnly := strings.HasSuffix(c.FullPath(), "/rapid_upload")
-	results := make([]gin.H, 0, len(seed.Files))
-	for index, file := range seed.Files {
-		if len(selected) > 0 {
-			if _, ok := selected[file.Path]; !ok {
-				continue
-			}
-		} else if len(selectedIndexes) > 0 {
-			if _, ok := selectedIndexes[index]; !ok {
-				continue
-			}
-		}
-		if is189 && file.Hashes.MD5 != "" && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 && len(file.Hashes.Pieces.SHA1) > 0 {
-			one := *seed
-			one.Name = stdpath.Base(file.Path)
-			one.Files = []torrent.SeedFile{file}
-			data, encodeErr := torrent.EncodeSeed(&one, "torrent")
-			if encodeErr == nil {
-				obj, rapidErr := cloud189.RapidUploadFromTorrent(c.Request.Context(), dstDir, data, req.Overwrite)
-				if rapidErr == nil {
-					results = append(results, gin.H{"path": file.Path, "method": "189pc_cas", "name": obj.GetName()})
-					continue
-				}
-				err = rapidErr
-			}
-		}
-		if rapidOnly {
-			results = append(results, gin.H{"path": file.Path, "method": "unavailable", "error": "target driver cannot reuse the available hashes"})
-			continue
-		}
-		source := firstUsableSeedSource(file)
-		if source == "" {
-			results = append(results, gin.H{"path": file.Path, "method": "unavailable", "error": "no usable source URL or compatible rapid-upload hashes"})
-			continue
-		}
-		if putURL || putURLResult {
-			err = fs.PutURL(c.Request.Context(), dstPath, stdpath.Base(file.Path), source)
-			if err == nil {
-				results = append(results, gin.H{"path": file.Path, "method": "put_url"})
-				continue
-			}
-		}
-		if !user.CanAddOfflineDownloadTasks() {
-			results = append(results, gin.H{"path": file.Path, "method": "offline_download", "error": "offline download permission is required"})
-			continue
-		}
-		if req.Tool == "" {
-			results = append(results, gin.H{"path": file.Path, "method": "offline_download", "error": "offline download tool is required"})
-			continue
-		}
-		t, addErr := tool.AddURL(c, &tool.AddURLArgs{URL: source, DstDirPath: dstPath, Tool: req.Tool, DeletePolicy: tool.DeletePolicy(req.DeletePolicy)})
-		if addErr != nil {
-			results = append(results, gin.H{"path": file.Path, "method": "offline_download", "error": addErr.Error()})
-			continue
-		}
-		result := gin.H{"path": file.Path, "method": "offline_download"}
-		if t != nil {
-			result["task"] = getTaskInfo(t)
-		}
-		results = append(results, result)
+	if transitPath := resolveSeedTransitPath(req); transitPath != "" {
+		transferSeedViaTransit(c, user, seed, req, transitPath)
+		return
+	}
+	results, err := saveSeedFilesToPath(c, user, seed, req, req.Path, rapidOnly)
+	if err != nil {
+		common.ErrorResp(c, err, seedSaveErrorCode(err))
+		return
 	}
 	common.SuccessResp(c, gin.H{"results": results})
 }

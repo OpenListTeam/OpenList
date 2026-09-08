@@ -244,7 +244,7 @@ func _fs(g *gin.RouterGroup) {
 	seed.POST("/capabilities", handles.SeedCapabilities)
 	seed.POST("/rapid_upload", handles.QuickSaveSeed)
 	seed.POST("/offline_download", handles.QuickSaveSeed)
-	seed.POST("/update", handles.UpdateSeedChannels)
+	seed.POST("/update", handles.UpdateSeed)
 	seed.POST("/quick_save", handles.QuickSaveSeed)
 	seed.POST("/update_channels", handles.UpdateSeedChannels)
 	// Direct upload (client-side upload to storage)
