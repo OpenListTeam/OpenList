@@ -3,6 +3,7 @@ package torrent
 import (
 	"crypto/md5"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"hash"
@@ -15,10 +16,15 @@ import (
 type HashWriter struct {
 	// 整文件 MD5
 	fileMD5 hash.Hash
+	// fileSHA1 and fileSHA256 complete the portable full-file matrix.
+	fileSHA1   hash.Hash
+	fileSHA256 hash.Hash
 	// 当前分片 MD5
 	sliceMD5 hash.Hash
-	// 当前 piece 的 SHA-1
-	pieceSHA1 hash.Hash
+	// Per-piece hashers are updated in the same pass as whole-file hashes.
+	pieceMD5    hash.Hash
+	pieceSHA1   hash.Hash
+	pieceSHA256 hash.Hash
 
 	// 分片大小（默认 10MB）
 	sliceSize int64
@@ -34,8 +40,12 @@ type HashWriter struct {
 
 	// 每个分片的 MD5（大写十六进制）
 	sliceMD5Hexs []string
-	// 所有 piece 的 SHA-1 哈希拼接
+	// all standard BitTorrent SHA-1 piece hashes concatenated
 	pieceHashes []byte
+	// portable per-file piece matrix
+	pieceMD5Hexs    []string
+	pieceSHA1Hexs   []string
+	pieceSHA256Hexs []string
 }
 
 // NewHashWriter 创建一个新的 HashWriter
@@ -49,11 +59,15 @@ func NewHashWriter(sliceSize, pieceSize int64) *HashWriter {
 		pieceSize = DefaultPieceSize
 	}
 	return &HashWriter{
-		fileMD5:   md5.New(),
-		sliceMD5:  md5.New(),
-		pieceSHA1: sha1.New(),
-		sliceSize: sliceSize,
-		pieceSize: pieceSize,
+		fileMD5:     md5.New(),
+		fileSHA1:    sha1.New(),
+		fileSHA256:  sha256.New(),
+		sliceMD5:    md5.New(),
+		pieceMD5:    md5.New(),
+		pieceSHA1:   sha1.New(),
+		pieceSHA256: sha256.New(),
+		sliceSize:   sliceSize,
+		pieceSize:   pieceSize,
 	}
 }
 
@@ -76,12 +90,14 @@ func (hw *HashWriter) Write(p []byte) (n int, err error) {
 
 		chunk := p[offset : offset+int(canWrite)]
 
-		// 写入整文件 MD5
-		hw.fileMD5.Write(chunk)
-		// 写入当前分片 MD5
-		hw.sliceMD5.Write(chunk)
-		// 写入当前 piece SHA-1
-		hw.pieceSHA1.Write(chunk)
+		// Write all whole-file and boundary-specific hashes in one pass.
+		_, _ = hw.fileMD5.Write(chunk)
+		_, _ = hw.fileSHA1.Write(chunk)
+		_, _ = hw.fileSHA256.Write(chunk)
+		_, _ = hw.sliceMD5.Write(chunk)
+		_, _ = hw.pieceMD5.Write(chunk)
+		_, _ = hw.pieceSHA1.Write(chunk)
+		_, _ = hw.pieceSHA256.Write(chunk)
 
 		hw.sliceWritten += canWrite
 		hw.pieceWritten += canWrite
@@ -112,8 +128,16 @@ func (hw *HashWriter) finishSlice() {
 
 // finishPiece 完成当前 piece 的 SHA-1 计算
 func (hw *HashWriter) finishPiece() {
-	hw.pieceHashes = append(hw.pieceHashes, hw.pieceSHA1.Sum(nil)...)
+	md5Sum := hw.pieceMD5.Sum(nil)
+	sha1Sum := hw.pieceSHA1.Sum(nil)
+	sha256Sum := hw.pieceSHA256.Sum(nil)
+	hw.pieceMD5Hexs = append(hw.pieceMD5Hexs, hex.EncodeToString(md5Sum))
+	hw.pieceSHA1Hexs = append(hw.pieceSHA1Hexs, hex.EncodeToString(sha1Sum))
+	hw.pieceSHA256Hexs = append(hw.pieceSHA256Hexs, hex.EncodeToString(sha256Sum))
+	hw.pieceHashes = append(hw.pieceHashes, sha1Sum...)
+	hw.pieceMD5.Reset()
 	hw.pieceSHA1.Reset()
+	hw.pieceSHA256.Reset()
 	hw.pieceWritten = 0
 }
 
@@ -132,6 +156,50 @@ func (hw *HashWriter) Finish() {
 // GetFileMD5 获取整文件 MD5（大写十六进制）
 func (hw *HashWriter) GetFileMD5() string {
 	return strings.ToUpper(hex.EncodeToString(hw.fileMD5.Sum(nil)))
+}
+
+// GetFileSHA1 returns the lowercase whole-file SHA-1 digest.
+func (hw *HashWriter) GetFileSHA1() string {
+	return hex.EncodeToString(hw.fileSHA1.Sum(nil))
+}
+
+// GetFileSHA256 returns the lowercase whole-file SHA-256 digest.
+func (hw *HashWriter) GetFileSHA256() string {
+	return hex.EncodeToString(hw.fileSHA256.Sum(nil))
+}
+
+// GetPieceMD5s returns independent per-file MD5 piece hashes.
+func (hw *HashWriter) GetPieceMD5s() []string {
+	return append([]string(nil), hw.pieceMD5Hexs...)
+}
+
+// GetPieceSHA1s returns independent per-file SHA-1 piece hashes.
+func (hw *HashWriter) GetPieceSHA1s() []string {
+	return append([]string(nil), hw.pieceSHA1Hexs...)
+}
+
+// GetPieceSHA256s returns independent per-file SHA-256 piece hashes.
+func (hw *HashWriter) GetPieceSHA256s() []string {
+	return append([]string(nil), hw.pieceSHA256Hexs...)
+}
+
+// BuildSeedFile exports all hashes accumulated during this single stream pass.
+func (hw *HashWriter) BuildSeedFile(filePath string, modified string) SeedFile {
+	return SeedFile{
+		Path:     filePath,
+		Size:     hw.totalWritten,
+		Modified: modified,
+		Hashes: SeedHashes{
+			MD5:    strings.ToLower(hw.GetFileMD5()),
+			SHA1:   hw.GetFileSHA1(),
+			SHA256: hw.GetFileSHA256(),
+			Pieces: &SeedPieceHashes{
+				MD5:    hw.GetPieceMD5s(),
+				SHA1:   hw.GetPieceSHA1s(),
+				SHA256: hw.GetPieceSHA256s(),
+			},
+		},
+	}
 }
 
 // GetSliceMD5s 获取所有分片的 MD5 列表

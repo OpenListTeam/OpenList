@@ -1,8 +1,10 @@
 package torrent
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -120,4 +122,28 @@ func GenerateFromFileWithCAS(filePath string) ([]byte, error) {
 	}
 
 	return GenerateFromReaderWithCAS(f, info.Name(), info.Size(), DefaultPieceSize)
+}
+
+// GenerateSeedFromReader computes the complete OSS hash matrix in one stream pass.
+func GenerateSeedFromReader(reader io.Reader, filePath string, expectedSize, pieceSize int64, createdBy string) (*Seed, error) {
+	if pieceSize <= 0 {
+		pieceSize = DefaultPieceSize
+	}
+	if err := validateRelativeSeedPath(filePath); err != nil {
+		return nil, err
+	}
+	hw := NewHashWriter(pieceSize, pieceSize)
+	if _, err := CopyAndHash(nil, reader, hw); err != nil {
+		return nil, err
+	}
+	hw.Finish()
+	if expectedSize >= 0 && hw.GetTotalWritten() != expectedSize {
+		return nil, fmt.Errorf("stream size mismatch: read %d bytes, expected %d", hw.GetTotalWritten(), expectedSize)
+	}
+	seed := NewSeed(path.Base(filePath), createdBy, pieceSize)
+	seed.Files = []SeedFile{hw.BuildSeedFile(filePath, "")}
+	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
+		return nil, err
+	}
+	return seed, nil
 }

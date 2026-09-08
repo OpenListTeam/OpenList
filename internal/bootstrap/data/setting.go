@@ -187,6 +187,12 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.HandleHookAfterWriting, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PRIVATE},
 		{Key: conf.HandleHookRateLimit, Value: "0", Type: conf.TypeNumber, Group: model.GLOBAL, Flag: model.PRIVATE},
 		{Key: conf.IgnoreSystemFiles, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PRIVATE, Help: `When enabled, ignores common system files during upload (.DS_Store, desktop.ini, Thumbs.db, and files starting with ._)`},
+		{Key: conf.SeedSiteURL, Value: "", Type: conf.TypeString, Group: model.GLOBAL, Flag: model.PRIVATE, Help: `Public base URL embedded in generated transfer seed sources when configured`},
+		{Key: conf.SeedDefaultHashMatrix, Value: "md5,sha1,sha256", Type: conf.TypeString, Group: model.GLOBAL, Flag: model.PRIVATE},
+		{Key: conf.SeedFormatPolicies, Value: `{"oss":"off","torrent":"off","cas":"off"}`, Type: conf.TypeText, Group: model.GLOBAL, Flag: model.PRIVATE},
+		{Key: conf.SeedDefaultFormat, Value: "oss", Type: conf.TypeSelect, Options: "oss,torrent,cas", Group: model.GLOBAL, Flag: model.PRIVATE},
+		{Key: conf.SeedSingleDirectPreview, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PUBLIC},
+		{Key: conf.SeedAutoGeneratePolicy, Value: "off", Type: conf.TypeSelect, Options: "off,on", Group: model.GLOBAL, Flag: model.PRIVATE, Help: `Global upload sidecar policy; storage-specific inheritance can be layered without changing the safe default`},
 
 		// single settings
 		{Key: conf.Token, Value: token, Type: conf.TypeString, Group: model.SINGLE, Flag: model.PRIVATE},
