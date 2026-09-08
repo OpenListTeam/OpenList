@@ -62,10 +62,11 @@ const (
 
 	// transfer seeds
 	SeedSiteURL             = "seed_site_url"
-	SeedDefaultHashMatrix   = "seed_default_hash_matrix"
+	SeedDefaultMatrix       = "seed_default_matrix"
 	SeedFormatPolicies      = "seed_format_policies"
 	SeedDefaultFormat       = "seed_default_format"
 	SeedSingleDirectPreview = "seed_single_direct_preview"
+	SeedCASDirectAccess     = "seed_cas_direct_access"
 	SeedAutoGeneratePolicy  = "seed_auto_generate_policy"
 
 	// index

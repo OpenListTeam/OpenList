@@ -68,14 +68,15 @@ type SeedChannel struct {
 
 // SeedFile describes one relative file in a sharing seed.
 type SeedFile struct {
-	Path          string       `json:"path"`
-	Size          int64        `json:"size"`
-	Modified      string       `json:"modified,omitempty"`
-	Comment       string       `json:"comment,omitempty"`
-	Hashes        SeedHashes   `json:"hashes"`
-	Sources       []SeedSource `json:"sources,omitempty"`
-	CASSliceMD5   string       `json:"cas_slice_md5,omitempty"`
-	CASCreateTime string       `json:"cas_create_time,omitempty"`
+	Path            string       `json:"path"`
+	Size            int64        `json:"size"`
+	Modified        string       `json:"modified,omitempty"`
+	Comment         string       `json:"comment,omitempty"`
+	Hashes          SeedHashes   `json:"hashes"`
+	Sources         []SeedSource `json:"sources,omitempty"`
+	CASSliceMD5     string       `json:"cas_slice_md5,omitempty"`
+	CASCreateTime   string       `json:"cas_create_time,omitempty"`
+	MissingChannels []string     `json:"missing_channels,omitempty"`
 }
 
 // SeedHashes contains whole-file and optional per-piece hashes.
@@ -684,6 +685,11 @@ func ValidateSeed(seed *Seed, limits ParseLimits) error {
 				return fmt.Errorf("file %q has an invalid source URL", file.Path)
 			}
 		}
+		for _, channel := range file.MissingChannels {
+			if strings.TrimSpace(channel) == "" || strings.ContainsAny(channel, "/\\\x00") {
+				return fmt.Errorf("file %q has an invalid missing channel", file.Path)
+			}
+		}
 	}
 	for _, channel := range seed.Channels {
 		if strings.TrimSpace(channel.Driver) == "" {
@@ -1171,6 +1177,9 @@ func seedToBencode(seed *Seed) map[string]interface{} {
 		if file.CASCreateTime != "" {
 			item["cas_create_time"] = file.CASCreateTime
 		}
+		if len(file.MissingChannels) > 0 {
+			item["missing_channels"] = stringsToInterfaces(file.MissingChannels)
+		}
 		sources := make([]interface{}, 0, len(file.Sources))
 		for _, source := range file.Sources {
 			s := map[string]interface{}{"type": source.Type, "url": source.URL}
@@ -1246,6 +1255,7 @@ func seedFromBencode(value interface{}) (*Seed, error) {
 		file := SeedFile{
 			Path: bString(item["path"]), Size: bInt(item["size"]), Modified: bString(item["modified"]), Comment: bString(item["comment"]),
 			CASSliceMD5: bString(item["cas_slice_md5"]), CASCreateTime: bString(item["cas_create_time"]),
+			MissingChannels: bStrings(item["missing_channels"]),
 		}
 		if hashes, ok := item["hashes"].(map[string]interface{}); ok {
 			file.Hashes = SeedHashes{MD5: bString(hashes["md5"]), SHA1: bString(hashes["sha1"]), SHA256: bString(hashes["sha256"])}

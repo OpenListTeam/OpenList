@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -541,6 +542,7 @@ type SeedQuickSaveReq struct {
 	DeletePolicy  string         `json:"delete_policy"`
 	Overwrite     bool           `json:"overwrite"`
 	TransitPath   string         `json:"transit_path"`
+	UpdateChannel bool           `json:"update_channel"`
 	Options       map[string]any `json:"options"`
 }
 
@@ -739,8 +741,24 @@ func normalizedSeedFormats(req SeedGenerateReq) ([]string, error) {
 	return result, nil
 }
 
+func seedMatrixEmpty(matrix SeedHashMatrix) bool {
+	return !matrix.MD5.Whole && !matrix.MD5.Pieces && !matrix.SHA1.Whole && !matrix.SHA1.Pieces && !matrix.SHA256.Whole && !matrix.SHA256.Pieces
+}
+
+// loadSeedDefaultMatrix parses the configured default right-click hash matrix.
+func loadSeedDefaultMatrix() SeedHashMatrix {
+	var matrix SeedHashMatrix
+	if raw := strings.TrimSpace(setting.GetStr(conf.SeedDefaultMatrix)); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &matrix)
+	}
+	return matrix
+}
+
 func normalizedSeedMatrix(matrix SeedHashMatrix, formats []string) SeedHashMatrix {
-	if !matrix.MD5.Whole && !matrix.MD5.Pieces && !matrix.SHA1.Whole && !matrix.SHA1.Pieces && !matrix.SHA256.Whole && !matrix.SHA256.Pieces {
+	if seedMatrixEmpty(matrix) {
+		matrix = loadSeedDefaultMatrix()
+	}
+	if seedMatrixEmpty(matrix) {
 		matrix = SeedHashMatrix{
 			MD5: SeedHashSelection{Whole: true, Pieces: true}, SHA1: SeedHashSelection{Whole: true, Pieces: true},
 			SHA256: SeedHashSelection{Whole: true, Pieces: true},
@@ -1111,6 +1129,7 @@ func SeedCapabilities(c *gin.Context) {
 		common.SuccessResp(c, gin.H{
 			"formats": gin.H{"oss": true, "torrent": true, "cas": len(files) == 1},
 			"files":   files, "existing_hashes": existingHashes, "estimated_traffic": estimatedTraffic,
+			"default_matrix": loadSeedDefaultMatrix(),
 		})
 		return
 	}
@@ -1375,30 +1394,39 @@ func UpdateSeed(c *gin.Context) {
 		}
 		result["path"] = stdpath.Join(outputPath, fileName)
 	}
+	shareStatus := checkSeedShareValidity(seed)
+	if len(shareStatus) > 0 {
+		result["share_status"] = shareStatus
+	}
 	common.SuccessResp(c, result)
 }
 
 // saveSeedFilesToPath saves selected seed files into one target directory.
-func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, dstPath string, rapidOnly bool) ([]gin.H, error) {
+func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, dstPath string, rapidOnly bool) ([]gin.H, string, string, error) {
 	results := make([]gin.H, 0, len(seed.Files))
 	fullPath, err := user.JoinPath(dstPath)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	meta, err := op.GetNearestMeta(fullPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-		return nil, err
+		return nil, "", "", err
 	}
 	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, fullPath)) || !common.CanWrite(user, meta, fullPath) {
-		return nil, errs.PermissionDenied
+		return nil, "", "", errs.PermissionDenied
 	}
 	storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	dstDir, err := op.Get(c.Request.Context(), storage, actualPath)
 	if err != nil || !dstDir.IsDir() {
-		return nil, errs.NotFolder
+		return nil, "", "", errs.NotFolder
+	}
+	driverName, mountPath := "", ""
+	if mounted := storage.GetStorage(); mounted != nil {
+		driverName = strings.TrimSpace(mounted.Driver)
+		mountPath = strings.TrimSpace(mounted.MountPath)
 	}
 	selected := make(map[string]struct{}, len(req.Files))
 	for _, name := range req.Files {
@@ -1407,7 +1435,7 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 	selectedIndexes := make(map[int]struct{}, len(req.SelectedFiles))
 	for _, index := range req.SelectedFiles {
 		if index < 0 || index >= len(seed.Files) {
-			return nil, fmt.Errorf("selected_files contains an invalid index")
+			return nil, "", "", fmt.Errorf("selected_files contains an invalid index")
 		}
 		selectedIndexes[index] = struct{}{}
 	}
@@ -1470,7 +1498,7 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 		}
 		results = append(results, result)
 	}
-	return results, nil
+	return results, driverName, mountPath, nil
 }
 
 // resolveSeedTransitPath extracts the optional transit destination for a relayed save.
@@ -1492,7 +1520,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	transitResults, err := saveSeedFilesToPath(c, user, seed, req, transitPath, false)
+	transitResults, _, _, err := saveSeedFilesToPath(c, user, seed, req, transitPath, false)
 	if err != nil {
 		common.ErrorResp(c, err, seedSaveErrorCode(err))
 		return
@@ -1554,6 +1582,94 @@ func seedSaveErrorCode(err error) int {
 	return 500
 }
 
+// checkSeedShareValidity reports whether each openlist-share source still resolves to a valid sharing.
+func checkSeedShareValidity(seed *torrent.Seed) gin.H {
+	status := make(gin.H)
+	for _, file := range seed.Files {
+		for _, source := range file.Sources {
+			if source.Type != "openlist-share" || strings.TrimSpace(source.ShareID) == "" {
+				continue
+			}
+			shareID := strings.TrimSpace(source.ShareID)
+			if _, checked := status[shareID]; checked {
+				continue
+			}
+			valid := false
+			if sharing, err := op.GetSharingById(shareID, true); err == nil && sharing != nil {
+				valid = sharing.Valid()
+			}
+			status[shareID] = valid
+		}
+	}
+	return status
+}
+
+// applyChannelUpdate reflects successful saves as channels and failed saves as missing channels.
+func applyChannelUpdate(seed *torrent.Seed, driverName, mountPath string, results []gin.H) {
+	if driverName == "" {
+		return
+	}
+	successByPath := make(map[string]bool)
+	for _, res := range results {
+		filePath, _ := res["path"].(string)
+		if filePath == "" {
+			continue
+		}
+		method, _ := res["method"].(string)
+		successByPath[filePath] = method != "unavailable"
+	}
+	anySuccess := false
+	for _, ok := range successByPath {
+		if ok {
+			anySuccess = true
+			break
+		}
+	}
+	if anySuccess {
+		exists := false
+		for _, channel := range seed.Channels {
+			if channel.Driver == driverName {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			seed.Channels = append(seed.Channels, torrent.SeedChannel{Driver: driverName, MountPath: mountPath})
+		}
+	}
+	for i := range seed.Files {
+		file := &seed.Files[i]
+		ok, tracked := successByPath[file.Path]
+		if !tracked {
+			continue
+		}
+		if ok {
+			file.MissingChannels = removeString(file.MissingChannels, driverName)
+		} else if !containsString(file.MissingChannels, driverName) {
+			file.MissingChannels = append(file.MissingChannels, driverName)
+		}
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func removeString(values []string, target string) []string {
+	result := values[:0]
+	for _, value := range values {
+		if value != target {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 // QuickSaveSeed imports selected files without downloading when the target supports it.
 func QuickSaveSeed(c *gin.Context) {
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
@@ -1562,7 +1678,7 @@ func QuickSaveSeed(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	_, seed, _, err := decodeSeedData(req.SeedDataReq)
+	_, seed, format, err := decodeSeedData(req.SeedDataReq)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -1572,12 +1688,20 @@ func QuickSaveSeed(c *gin.Context) {
 		transferSeedViaTransit(c, user, seed, req, transitPath)
 		return
 	}
-	results, err := saveSeedFilesToPath(c, user, seed, req, req.Path, rapidOnly)
+	results, driverName, mountPath, err := saveSeedFilesToPath(c, user, seed, req, req.Path, rapidOnly)
 	if err != nil {
 		common.ErrorResp(c, err, seedSaveErrorCode(err))
 		return
 	}
-	common.SuccessResp(c, gin.H{"results": results})
+	resp := gin.H{"results": results}
+	if req.UpdateChannel {
+		applyChannelUpdate(seed, driverName, mountPath, results)
+		if data, encodeErr := torrent.EncodeSeed(seed, format); encodeErr == nil {
+			resp["seed_data"] = base64.StdEncoding.EncodeToString(data)
+			resp["seed"] = seed
+		}
+	}
+	common.SuccessResp(c, resp)
 }
 
 func firstUsableSeedSource(file torrent.SeedFile) string {
