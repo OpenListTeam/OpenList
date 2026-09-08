@@ -90,6 +90,13 @@ type CaptchaTokenResponse struct {
 	Url          string `json:"url"`
 }
 
+func (c *CaptchaTokenResponse) Expiry() time.Time {
+	if c == nil || c.ExpiresIn <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(time.Duration(c.ExpiresIn) * time.Second)
+}
+
 type ErrResp struct {
 	ErrorCode        int64  `json:"error_code"`
 	ErrorMsg         string `json:"error"`
