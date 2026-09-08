@@ -450,8 +450,12 @@ func GenerateTorrentForPath(c *gin.Context) {
 }
 
 // SeedDataReq carries a bounded base64-encoded seed document.
+// SeedData is intentionally NOT bound with `required` here: some requests that
+// embed SeedDataReq (e.g. SeedCapabilityReq preflight) accept `paths` instead of
+// `seed_data`. Required-ness is enforced inside decodeSeedData for the handlers
+// that actually consume a seed document.
 type SeedDataReq struct {
-	SeedData string `json:"seed_data" binding:"required"`
+	SeedData string `json:"seed_data"`
 	Format   string `json:"format"`
 	FileName string `json:"file_name"`
 }
@@ -547,6 +551,9 @@ type SeedQuickSaveReq struct {
 }
 
 func decodeSeedData(req SeedDataReq) ([]byte, *torrent.Seed, string, error) {
+	if strings.TrimSpace(req.SeedData) == "" {
+		return nil, nil, "", fmt.Errorf("seed_data is required")
+	}
 	if len(req.SeedData) > maxTorrentBase64Len {
 		return nil, nil, "", fmt.Errorf("seed data is too large")
 	}
