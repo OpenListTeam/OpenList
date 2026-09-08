@@ -409,13 +409,15 @@ func GenerateTorrentForPath(c *gin.Context) {
 	defer link.Close()
 
 	// 通过 RangeReader 获取文件内容并计算哈希生成 torrent
-	if link.RangeReader == nil {
-		common.ErrorResp(c, fmt.Errorf("该存储不支持流式读取，无法生成 torrent（请先下载文件到本地）"), 400)
+	// 对于仅返回 URL（无 RangeReader）的驱动，GetRangeReaderFromLink 会退化为 HTTP Range 流式读取
+	rangeReader, err := stream.GetRangeReaderFromLink(obj.GetSize(), link)
+	if err != nil {
+		common.ErrorResp(c, fmt.Errorf("该存储不支持流式读取，无法生成 torrent: %w", err), 400)
 		return
 	}
 
 	// 读取整个文件
-	rc, err := link.RangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
+	rc, err := rangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
 	if err != nil {
 		common.ErrorResp(c, fmt.Errorf("读取文件失败: %w", err), 500)
 		return
@@ -527,6 +529,7 @@ type SeedUpdateReq struct {
 	Channels     []torrent.SeedChannel           `json:"channels"`
 	FileComments map[string]string               `json:"file_comments"`
 	FileSources  map[string][]torrent.SeedSource `json:"file_sources"`
+	RemoveFiles  []string                        `json:"remove_files"`
 	Recalculate  bool                            `json:"recalculate"`
 	RecalcFiles  []SeedRecalcFile                `json:"recalc_files"`
 	HashMatrix   SeedHashMatrix                  `json:"hash_matrix"`
@@ -892,11 +895,16 @@ func GenerateSeedForPaths(c *gin.Context) {
 		}
 		total += obj.GetSize()
 		link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{})
-		if err != nil || link.RangeReader == nil {
+		if err != nil {
+			common.ErrorResp(c, fmt.Errorf("storage cannot stream %s: %v", requestedPath, err), 400)
+			return
+		}
+		rangeReader, err := stream.GetRangeReaderFromLink(obj.GetSize(), link)
+		if err != nil {
 			common.ErrorResp(c, fmt.Errorf("storage cannot stream %s", requestedPath), 400)
 			return
 		}
-		rc, err := link.RangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
+		rc, err := rangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
 		if err != nil {
 			common.ErrorResp(c, err, 500)
 			return
@@ -1264,10 +1272,14 @@ func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSi
 		return out, fmt.Errorf("recalculate file exceeds 1GB limit: %s", sourcePath)
 	}
 	link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{})
-	if err != nil || link.RangeReader == nil {
+	if err != nil {
+		return out, fmt.Errorf("storage cannot stream %s: %v", sourcePath, err)
+	}
+	rangeReader, err := stream.GetRangeReaderFromLink(obj.GetSize(), link)
+	if err != nil {
 		return out, fmt.Errorf("storage cannot stream %s", sourcePath)
 	}
-	rc, err := link.RangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
+	rc, err := rangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
 	if err != nil {
 		return out, err
 	}
@@ -1324,6 +1336,29 @@ func UpdateSeed(c *gin.Context) {
 			}
 			seed.Files[i].Sources = sources
 		}
+	}
+	if len(req.RemoveFiles) > 0 {
+		removeSet := make(map[string]struct{}, len(req.RemoveFiles))
+		for _, path := range req.RemoveFiles {
+			if trimmed := strings.TrimSpace(path); trimmed != "" {
+				removeSet[trimmed] = struct{}{}
+			}
+		}
+		if len(removeSet) == 0 {
+			common.ErrorStrResp(c, "remove_files requires at least one non-empty path", 400)
+			return
+		}
+		kept := make([]torrent.SeedFile, 0, len(seed.Files))
+		for _, file := range seed.Files {
+			if _, removed := removeSet[file.Path]; !removed {
+				kept = append(kept, file)
+			}
+		}
+		if len(kept) == 0 {
+			common.ErrorStrResp(c, "cannot remove all files from a seed", 400)
+			return
+		}
+		seed.Files = kept
 	}
 	if req.Recalculate {
 		pieceSize := req.PieceSize
