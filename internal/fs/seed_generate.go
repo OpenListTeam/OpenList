@@ -102,6 +102,61 @@ type SeedArtifact struct {
 	Path     string `json:"path,omitempty"`
 }
 
+// DeriveSeedName derives a sensible default seed name from the source paths:
+// single selection uses the file name, multi selection uses the common base
+// name (ignoring extensions) when all files share one, otherwise the folder name.
+func DeriveSeedName(paths []string) string {
+	if len(paths) == 0 {
+		return "OpenList Seed"
+	}
+	if len(paths) == 1 {
+		return seedBaseName(paths[0])
+	}
+	// Common base name ignoring extensions (e.g. a.docx + a.exe -> "a").
+	commonBase := seedBaseName(paths[0])
+	for _, p := range paths[1:] {
+		if base := seedBaseName(p); base != commonBase {
+			commonBase = ""
+			break
+		}
+	}
+	if commonBase != "" {
+		return commonBase
+	}
+	// Fall back to the common parent directory name.
+	dir := commonParentDir(paths)
+	if base := stdpath.Base(dir); base != "" && base != "/" && base != "." {
+		return base
+	}
+	return "OpenList Seed"
+}
+
+// seedBaseName returns the file name without its extension.
+func seedBaseName(p string) string {
+	base := stdpath.Base(p)
+	return strings.TrimSuffix(base, stdpath.Ext(base))
+}
+
+// commonParentDir returns the longest common parent directory of the given paths.
+func commonParentDir(paths []string) string {
+	if len(paths) == 0 {
+		return "/"
+	}
+	parts := strings.Split(strings.Trim(stdpath.Dir(paths[0]), "/"), "/")
+	for _, p := range paths[1:] {
+		cur := strings.Split(strings.Trim(stdpath.Dir(p), "/"), "/")
+		n := 0
+		for n < len(parts) && n < len(cur) && parts[n] == cur[n] {
+			n++
+		}
+		parts = parts[:n]
+	}
+	if len(parts) == 0 {
+		return "/"
+	}
+	return "/" + strings.Join(parts, "/")
+}
+
 // NormalizeSeedFormats validates and deduplicates a list of seed format names.
 func NormalizeSeedFormats(rawFormats []string) ([]string, error) {
 	formats := append([]string(nil), rawFormats...)
@@ -277,11 +332,7 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	}
 	seedName := strings.TrimSpace(params.Name)
 	if seedName == "" {
-		if len(params.Paths) == 1 {
-			seedName = stdpath.Base(params.Paths[0])
-		} else {
-			seedName = "OpenList Seed"
-		}
+		seedName = DeriveSeedName(params.Paths)
 	}
 	seed := torrent.NewSeed(seedName, "OpenList", pieceSize)
 	seed.Comment = params.Comment
@@ -490,26 +541,6 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 			continue
 		}
 		seenFormats[format] = struct{}{}
-
-		// CAS is inherently a single-file container: emit one .cas per file
-		// instead of rejecting multi-file selection.
-		if format == "cas" {
-			for _, file := range seed.Files {
-				singleSeed := *seed
-				singleSeed.Files = []torrent.SeedFile{file}
-				data, err := EncodeGeneratedSeed(&singleSeed, format, nil)
-				if err != nil {
-					return nil, nil, fmt.Errorf("generate %s seed for %s: %w", format, file.Path, err)
-				}
-				fileName := stdpath.Base(file.Path) + ".cas"
-				artifact, err := writeArtifact(format, fileName, data)
-				if err != nil {
-					return nil, nil, err
-				}
-				artifacts = append(artifacts, artifact)
-			}
-			continue
-		}
 
 		data, err := EncodeGeneratedSeed(seed, format, globalHasher.GetPieceHashes())
 		if err != nil {

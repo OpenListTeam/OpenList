@@ -102,13 +102,25 @@ type SeedSource struct {
 	ShareID   string `json:"share_id,omitempty"`
 }
 
-// CASPayload exactly matches the five-field reference .cas JSON payload.
-type CASPayload struct {
+// CASFileEntry describes one file inside a multi-file .cas payload.
+type CASFileEntry struct {
 	Name       string `json:"name"`
 	Size       int64  `json:"size"`
 	MD5        string `json:"md5"`
 	SliceMD5   string `json:"sliceMd5"`
 	CreateTime string `json:"create_time"`
+}
+
+// CASPayload matches the reference .cas JSON payload. The five legacy fields
+// describe a single file (byte-for-byte compatible with the reference project);
+// the optional "files" array extends it to multi-file seeds.
+type CASPayload struct {
+	Name       string         `json:"name"`
+	Size       int64          `json:"size"`
+	MD5        string         `json:"md5"`
+	SliceMD5   string         `json:"sliceMd5"`
+	CreateTime string         `json:"create_time"`
+	Files      []CASFileEntry `json:"files,omitempty"`
 }
 
 // ParseLimits controls resource use while parsing untrusted seeds.
@@ -804,20 +816,13 @@ func DecodeOSS(data []byte, limits ParseLimits) (*Seed, error) {
 	return &seed, nil
 }
 
-// EncodeCAS writes the reference-compatible base64 encoded JSON payload.
-func EncodeCAS(seed *Seed) ([]byte, error) {
-	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
-		return nil, err
-	}
-	if len(seed.Files) != 1 {
-		return nil, fmt.Errorf("CAS requires exactly one file")
-	}
-	file := seed.Files[0]
+// buildCASFileEntry computes the reference-compatible five fields for one file.
+func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 	if file.Hashes.MD5 == "" {
-		return nil, fmt.Errorf("CAS requires a whole-file MD5")
+		return CASFileEntry{}, fmt.Errorf("CAS requires a whole-file MD5 for %s", file.Path)
 	}
 	sliceMD5 := strings.ToUpper(file.CASSliceMD5)
-	if sliceMD5 == "" && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 && seed.PieceSize == DefaultPieceSize {
+	if sliceMD5 == "" && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 && pieceSize == DefaultPieceSize {
 		pieces := upperStrings(file.Hashes.Pieces.MD5)
 		sliceMD5 = pieces[0]
 		if len(pieces) > 1 {
@@ -826,7 +831,7 @@ func EncodeCAS(seed *Seed) ([]byte, error) {
 	}
 	if sliceMD5 == "" {
 		if file.Size > DefaultPieceSize {
-			return nil, fmt.Errorf("CAS requires a legacy slice MD5 or complete 10 MiB MD5 pieces")
+			return CASFileEntry{}, fmt.Errorf("CAS requires a legacy slice MD5 or complete 10 MiB MD5 pieces for %s", file.Path)
 		}
 		sliceMD5 = strings.ToUpper(file.Hashes.MD5)
 	}
@@ -834,9 +839,44 @@ func EncodeCAS(seed *Seed) ([]byte, error) {
 	if createTime == "" {
 		createTime = fmt.Sprintf("%d", time.Now().Unix())
 	}
-	payload := CASPayload{
+	return CASFileEntry{
 		Name: path.Base(file.Path), Size: file.Size, MD5: strings.ToUpper(file.Hashes.MD5),
 		SliceMD5: sliceMD5, CreateTime: createTime,
+	}, nil
+}
+
+// EncodeCAS writes the reference-compatible base64 encoded JSON payload. A
+// single-file seed uses the legacy five fields; multiple files are stored in
+// the "files" array.
+func EncodeCAS(seed *Seed) ([]byte, error) {
+	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
+		return nil, err
+	}
+	if len(seed.Files) == 0 {
+		return nil, fmt.Errorf("CAS requires at least one file")
+	}
+	var payload CASPayload
+	if len(seed.Files) == 1 {
+		entry, err := buildCASFileEntry(seed.Files[0], seed.PieceSize)
+		if err != nil {
+			return nil, err
+		}
+		payload = CASPayload{
+			Name: entry.Name, Size: entry.Size, MD5: entry.MD5,
+			SliceMD5: entry.SliceMD5, CreateTime: entry.CreateTime,
+		}
+	} else {
+		entries := make([]CASFileEntry, 0, len(seed.Files))
+		var totalSize int64
+		for _, file := range seed.Files {
+			entry, err := buildCASFileEntry(file, seed.PieceSize)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, entry)
+			totalSize += entry.Size
+		}
+		payload = CASPayload{Name: seed.Name, Size: totalSize, Files: entries}
 	}
 	content, err := json.Marshal(payload)
 	if err != nil {
@@ -864,6 +904,31 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 	if err = json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("decode CAS: %w", err)
 	}
+	seed := NewSeed(payload.Name, "OpenList CAS", DefaultPieceSize)
+	if len(payload.Files) > 0 {
+		// Multi-file extension.
+		if len(payload.Files) > limits.MaxFiles {
+			return nil, fmt.Errorf("CAS seed exceeds %d files", limits.MaxFiles)
+		}
+		for _, entry := range payload.Files {
+			if entry.Name == "" || entry.Size < 0 || !validHexHash(entry.MD5, 32) {
+				return nil, fmt.Errorf("invalid CAS file entry")
+			}
+			sliceMD5 := entry.SliceMD5
+			if sliceMD5 == "" {
+				sliceMD5 = entry.MD5
+			}
+			if !validHexHash(sliceMD5, 32) {
+				return nil, fmt.Errorf("invalid CAS sliceMd5")
+			}
+			seed.Files = append(seed.Files, SeedFile{
+				Path: entry.Name, Size: entry.Size, CASCreateTime: entry.CreateTime,
+				CASSliceMD5: strings.ToLower(sliceMD5),
+				Hashes:      SeedHashes{MD5: strings.ToLower(entry.MD5)},
+			})
+		}
+		return seed, ValidateSeed(seed, limits)
+	}
 	if payload.Name == "" || payload.Size < 0 || !validHexHash(payload.MD5, 32) {
 		return nil, fmt.Errorf("invalid CAS payload")
 	}
@@ -873,7 +938,6 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 	if !validHexHash(payload.SliceMD5, 32) {
 		return nil, fmt.Errorf("invalid CAS sliceMd5")
 	}
-	seed := NewSeed(payload.Name, "OpenList CAS", DefaultPieceSize)
 	seed.Files = []SeedFile{{
 		Path: payload.Name, Size: payload.Size, CASCreateTime: payload.CreateTime,
 		CASSliceMD5: strings.ToLower(payload.SliceMD5),
@@ -961,10 +1025,7 @@ func DiagnoseConversion(seed *Seed, format string) []string {
 			}
 		}
 	case "cas":
-		if len(seed.Files) != 1 {
-			diagnostics = append(diagnostics, "CAS supports exactly one file")
-		} else {
-			file := seed.Files[0]
+		for _, file := range seed.Files {
 			if file.Hashes.MD5 == "" {
 				diagnostics = append(diagnostics, file.Path+": missing whole-file MD5")
 			}
