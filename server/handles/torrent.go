@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/url"
 	stdpath "path"
-	"slices"
 	"strings"
 	"time"
 

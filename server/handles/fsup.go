@@ -331,7 +331,7 @@ func writeUploadSeedSidecar(c *gin.Context, dir, name string, expectedSize int64
 	if formatsHeader == "" {
 		formatsHeader = configuredSeedFormats()
 	}
-	formats, err := normalizedSeedFormats(SeedGenerateReq{Formats: strings.Split(formatsHeader, ",")})
+	formats, err := fs.NormalizeSeedFormats(strings.Split(formatsHeader, ","))
 	if err != nil {
 		return err
 	}
@@ -355,7 +355,7 @@ func writeUploadSeedSidecar(c *gin.Context, dir, name string, expectedSize int64
 			continue
 		}
 		seen[format] = struct{}{}
-		data, err := encodeGeneratedSeed(seed, format, hasher.GetPieceHashes())
+		data, err := fs.EncodeGeneratedSeed(seed, format, hasher.GetPieceHashes())
 		if err != nil {
 			return fmt.Errorf("generate %s seed sidecar: %w", format, err)
 		}

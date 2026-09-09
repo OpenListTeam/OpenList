@@ -102,8 +102,9 @@ type SeedArtifact struct {
 	Path     string `json:"path,omitempty"`
 }
 
-func seedFormats(params SeedGenerateParams) ([]string, error) {
-	formats := append([]string(nil), params.Formats...)
+// NormalizeSeedFormats validates and deduplicates a list of seed format names.
+func NormalizeSeedFormats(rawFormats []string) ([]string, error) {
+	formats := append([]string(nil), rawFormats...)
 	if len(formats) == 1 && strings.TrimSpace(formats[0]) == "" {
 		formats[0] = setting.GetStr(conf.SeedDefaultFormat, "oss")
 	}
@@ -127,6 +128,17 @@ func seedFormats(params SeedGenerateParams) ([]string, error) {
 		result = append(result, format)
 	}
 	return result, nil
+}
+
+func seedFormats(params SeedGenerateParams) ([]string, error) {
+	formats, err := NormalizeSeedFormats(params.Formats)
+	if err != nil {
+		return nil, err
+	}
+	if len(formats) == 0 {
+		formats = []string{setting.GetStr(conf.SeedDefaultFormat, "oss")}
+	}
+	return formats, nil
 }
 
 func seedMatrixEmpty(matrix SeedHashMatrix) bool {
@@ -205,7 +217,8 @@ func applySeedMatrix(file *torrent.SeedFile, matrix SeedHashMatrix) {
 	}
 }
 
-func encodeGeneratedSeed(seed *torrent.Seed, format string, standardPieces []byte) ([]byte, error) {
+// EncodeGeneratedSeed serializes a seed in the requested container format.
+func EncodeGeneratedSeed(seed *torrent.Seed, format string, standardPieces []byte) ([]byte, error) {
 	if format != "torrent" {
 		return torrent.EncodeSeed(seed, format)
 	}
@@ -440,7 +453,7 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 			continue
 		}
 		seenFormats[format] = struct{}{}
-		data, err := encodeGeneratedSeed(seed, format, globalHasher.GetPieceHashes())
+		data, err := EncodeGeneratedSeed(seed, format, globalHasher.GetPieceHashes())
 		if err != nil {
 			return nil, nil, fmt.Errorf("generate %s seed: %w", format, err)
 		}
