@@ -723,36 +723,6 @@ func DiagnoseSeed(c *gin.Context) {
 	common.SuccessResp(c, seedDiagnostics(seed))
 }
 
-func normalizedSeedFormats(req SeedGenerateReq) ([]string, error) {
-	formats := append([]string(nil), req.Formats...)
-	if len(formats) == 0 {
-		formats = []string{req.Format}
-	}
-	if len(formats) == 1 && strings.TrimSpace(formats[0]) == "" {
-		formats[0] = setting.GetStr(conf.SeedDefaultFormat, "oss")
-	}
-	if len(formats) > 3 {
-		return nil, fmt.Errorf("at most three seed formats may be generated")
-	}
-	result := make([]string, 0, len(formats))
-	seen := make(map[string]struct{}, len(formats))
-	for _, rawFormat := range formats {
-		format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(rawFormat), "."))
-		if format == "bt" {
-			format = "torrent"
-		}
-		if format != "oss" && format != "torrent" && format != "cas" {
-			return nil, fmt.Errorf("unsupported seed format %q", rawFormat)
-		}
-		if _, exists := seen[format]; exists {
-			continue
-		}
-		seen[format] = struct{}{}
-		result = append(result, format)
-	}
-	return result, nil
-}
-
 func seedMatrixEmpty(matrix SeedHashMatrix) bool {
 	return !matrix.MD5.Whole && !matrix.MD5.Pieces && !matrix.SHA1.Whole && !matrix.SHA1.Pieces && !matrix.SHA256.Whole && !matrix.SHA256.Pieces
 }
@@ -787,27 +757,6 @@ func normalizedSeedMatrix(matrix SeedHashMatrix, formats []string) SeedHashMatri
 	return matrix
 }
 
-// canReuseListedHashes reports whether a file's hashes can be sourced entirely
-// from the storage driver's file listing (no download) for the given matrix.
-// Piece hashes are never available from listings, so any piece requirement forces
-// a streamed download. Whole-file hashes are reused only when the driver actually
-// provides each one the matrix requests.
-func canReuseListedHashes(hashInfo utils.HashInfo, matrix SeedHashMatrix) bool {
-	if matrix.MD5.Pieces || matrix.SHA1.Pieces || matrix.SHA256.Pieces {
-		return false
-	}
-	if matrix.MD5.Whole && hashInfo.GetHash(utils.MD5) == "" {
-		return false
-	}
-	if matrix.SHA1.Whole && hashInfo.GetHash(utils.SHA1) == "" {
-		return false
-	}
-	if matrix.SHA256.Whole && hashInfo.GetHash(utils.SHA256) == "" {
-		return false
-	}
-	return true
-}
-
 func applySeedMatrix(file *torrent.SeedFile, matrix SeedHashMatrix) {
 	if !matrix.MD5.Whole {
 		file.Hashes.MD5 = ""
@@ -835,7 +784,33 @@ func applySeedMatrix(file *torrent.SeedFile, matrix SeedHashMatrix) {
 	}
 }
 
+// toSeedGenerateParams converts the HTTP request into the transport-agnostic
+// params consumed by fs.GenerateSeedArtifacts.
+func toSeedGenerateParams(req SeedGenerateReq) fs.SeedGenerateParams {
+	return fs.SeedGenerateParams{
+		Paths:        req.Paths,
+		Formats:      req.Formats,
+		Name:         req.Name,
+		Comment:      req.Comment,
+		FileComments: req.FileComments,
+		HashMatrix: fs.SeedHashMatrix{
+			MD5:    fs.SeedHashSelection(req.HashMatrix.MD5),
+			SHA1:   fs.SeedHashSelection(req.HashMatrix.SHA1),
+			SHA256: fs.SeedHashSelection(req.HashMatrix.SHA256),
+		},
+		PieceSize:           req.PieceSize,
+		Trackers:            req.Trackers,
+		Channels:            req.Channels,
+		OutputPath:          req.OutputPath,
+		IncludeShare:        req.IncludeShare,
+		IncludeDirectSource: req.IncludeDirectSource,
+		ShareFiles:          req.ShareFiles,
+		DirectFiles:         req.DirectFiles,
+	}
+}
+
 // GenerateSeedForPaths reads each file once while calculating complete hashes.
+// Requests exceeding the synchronous size limit are queued as a background task.
 func GenerateSeedForPaths(c *gin.Context) {
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	var req SeedGenerateReq
@@ -847,305 +822,43 @@ func GenerateSeedForPaths(c *gin.Context) {
 		common.ErrorStrResp(c, "invalid seed file count", 400)
 		return
 	}
-	formats, err := normalizedSeedFormats(req)
+	if len(req.Formats) == 0 {
+		req.Formats = []string{req.Format}
+	}
+	params := toSeedGenerateParams(req)
+	async, err := fs.SeedGenerateNeedsAsync(c.Request.Context(), user, req.Paths)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	matrix := normalizedSeedMatrix(req.HashMatrix, formats)
-	pieceSize := req.PieceSize
-	if pieceSize <= 0 {
-		pieceSize = torrent.DefaultPieceSize
-	}
-	if slices.Contains(formats, "cas") {
-		pieceSize = torrent.DefaultPieceSize
-	}
-	seedName := strings.TrimSpace(req.Name)
-	if seedName == "" {
-		if len(req.Paths) == 1 {
-			seedName = stdpath.Base(req.Paths[0])
-		} else {
-			seedName = "OpenList Seed"
+	if async {
+		outputPath := strings.TrimSpace(req.OutputPath)
+		if outputPath == "" {
+			outputPath = strings.TrimSpace(req.SavePath)
 		}
-	}
-	seed := torrent.NewSeed(seedName, "OpenList", pieceSize)
-	seed.Comment = req.Comment
-	seed.Trackers = req.Trackers
-	seed.Channels = req.Channels
-	// Per-file share/direct selection. When either list is empty, fall back to the
-	// legacy global flags so existing callers keep working.
-	shareSet := make(map[string]bool, len(req.ShareFiles))
-	for _, p := range req.ShareFiles {
-		if strings.TrimSpace(p) != "" {
-			shareSet[p] = true
+		if outputPath == "" {
+			common.ErrorStrResp(c, "asynchronous seed generation requires an output_path", 400)
+			return
 		}
-	}
-	directSet := make(map[string]bool, len(req.DirectFiles))
-	for _, p := range req.DirectFiles {
-		if strings.TrimSpace(p) != "" {
-			directSet[p] = true
+		params.OutputPath = outputPath
+		taskInfo, addErr := fs.AddSeedGenerateTask(c.Request.Context(), user, params)
+		if addErr != nil {
+			common.ErrorResp(c, addErr, 500)
+			return
 		}
-	}
-	useGlobalShare := len(shareSet) == 0 && req.IncludeShare
-	useGlobalDirect := len(directSet) == 0 && req.IncludeDirectSource
-	hasShare := useGlobalShare || len(shareSet) > 0
-	hasDirect := useGlobalDirect || len(directSet) > 0
-	if hasShare && !user.CanShare() {
-		common.ErrorResp(c, errs.PermissionDenied, 403)
+		common.SuccessResp(c, gin.H{"task": getTaskInfo(taskInfo), "async": true})
 		return
 	}
-	if hasDirect && setting.GetBool(conf.SignAll) && !hasShare {
-		common.ErrorStrResp(c, "direct sources require an automatic share when global signing is enabled", 400)
+	artifacts, seed, genErr := fs.GenerateSeedArtifacts(c.Request.Context(), user, params)
+	if genErr != nil {
+		status := 400
+		if errors.Is(genErr, errs.PermissionDenied) {
+			status = 403
+		}
+		common.ErrorResp(c, genErr, status)
 		return
 	}
-	if (hasShare || hasDirect) && strings.TrimSpace(setting.GetStr(conf.SeedSiteURL)) == "" {
-		common.ErrorStrResp(c, "seed_site_url must be configured before embedding download sources", 400)
-		return
-	}
-	globalHasher := torrent.NewHashWriter(pieceSize, pieceSize)
-	fullPaths := make([]string, 0, len(req.Paths))
-	var total int64
-	for _, requestedPath := range req.Paths {
-		fullPath, err := user.JoinPath(requestedPath)
-		if err != nil {
-			common.ErrorResp(c, err, 403)
-			return
-		}
-		meta, err := op.GetNearestMeta(fullPath)
-		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			common.ErrorResp(c, err, 500, true)
-			return
-		}
-		if !common.CanRead(user, meta, fullPath) {
-			common.ErrorResp(c, errs.PermissionDenied, 403)
-			return
-		}
-		storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
-		if err != nil {
-			common.ErrorResp(c, err, 400)
-			return
-		}
-		obj, err := op.Get(c.Request.Context(), storage, actualPath)
-		if err != nil || obj.IsDir() {
-			common.ErrorResp(c, fmt.Errorf("seed path must be a readable file: %s", requestedPath), 400)
-			return
-		}
-		if obj.GetSize() < 0 || total > maxTorrentGenFileSize-obj.GetSize() {
-			common.ErrorStrResp(c, "synchronous seed generation is limited to 1GB", 400)
-			return
-		}
-		total += obj.GetSize()
-		modified := ""
-		if !obj.ModTime().IsZero() {
-			modified = obj.ModTime().UTC().Format(time.RFC3339)
-		}
-		seedPath := stdpath.Base(requestedPath)
-		if len(req.Paths) > 1 {
-			seedPath = strings.TrimPrefix(stdpath.Clean(requestedPath), "/")
-		}
-
-		// Reuse whole-file hashes from the storage driver's listing when the
-		// matrix needs no piece hashes. This skips the download entirely.
-		hashInfo := obj.GetHash()
-		if canReuseListedHashes(hashInfo, matrix) {
-			seedFile := torrent.SeedFile{
-				Path:     seedPath,
-				Size:     obj.GetSize(),
-				Modified: modified,
-				Hashes: torrent.SeedHashes{
-					MD5:    strings.ToLower(hashInfo.GetHash(utils.MD5)),
-					SHA1:   strings.ToLower(hashInfo.GetHash(utils.SHA1)),
-					SHA256: strings.ToLower(hashInfo.GetHash(utils.SHA256)),
-				},
-			}
-			applySeedMatrix(&seedFile, matrix)
-			if comment := strings.TrimSpace(req.FileComments[requestedPath]); comment != "" {
-				seedFile.Comment = comment
-			} else if comment := strings.TrimSpace(req.FileComments[obj.GetName()]); comment != "" {
-				seedFile.Comment = comment
-			}
-			if useGlobalDirect || directSet[requestedPath] {
-				baseURL := strings.TrimRight(setting.GetStr(conf.SeedSiteURL), "/")
-				seedFile.Sources = []torrent.SeedSource{{Type: "openlist-direct", URL: baseURL + utils.EncodePath("/d"+fullPath)}}
-			}
-			seed.Files = append(seed.Files, seedFile)
-			fullPaths = append(fullPaths, fullPath)
-			continue
-		}
-
-		link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{})
-		if err != nil {
-			common.ErrorResp(c, fmt.Errorf("storage cannot stream %s: %v", requestedPath, err), 400)
-			return
-		}
-		rangeReader, err := stream.GetRangeReaderFromLink(obj.GetSize(), link)
-		if err != nil {
-			common.ErrorResp(c, fmt.Errorf("storage cannot stream %s", requestedPath), 400)
-			return
-		}
-		rc, err := rangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
-		if err != nil {
-			common.ErrorResp(c, err, 500)
-			return
-		}
-		fileHasher := torrent.NewHashWriter(pieceSize, pieceSize)
-		n, copyErr := io.Copy(io.MultiWriter(globalHasher, fileHasher), rc)
-		_ = rc.Close()
-		if copyErr != nil {
-			common.ErrorResp(c, fmt.Errorf("read %s: %w", requestedPath, copyErr), 500)
-			return
-		}
-		if n != obj.GetSize() {
-			common.ErrorResp(c, fmt.Errorf("read %s: got %d of %d bytes", requestedPath, n, obj.GetSize()), 500)
-			return
-		}
-		fileHasher.Finish()
-		seedFile := fileHasher.BuildSeedFile(seedPath, modified)
-		applySeedMatrix(&seedFile, matrix)
-		if comment := strings.TrimSpace(req.FileComments[requestedPath]); comment != "" {
-			seedFile.Comment = comment
-		} else if comment := strings.TrimSpace(req.FileComments[obj.GetName()]); comment != "" {
-			seedFile.Comment = comment
-		}
-		if useGlobalDirect || directSet[requestedPath] {
-			baseURL := strings.TrimRight(setting.GetStr(conf.SeedSiteURL), "/")
-			seedFile.Sources = []torrent.SeedSource{{Type: "openlist-direct", URL: baseURL + utils.EncodePath("/d"+fullPath)}}
-		}
-		seed.Files = append(seed.Files, seedFile)
-		fullPaths = append(fullPaths, fullPath)
-	}
-	globalHasher.Finish()
-	createdShares := make([]string, 0, len(seed.Files))
-	keepCreatedShares := false
-	defer func() {
-		if !keepCreatedShares {
-			for _, createdID := range createdShares {
-				_ = op.DeleteSharing(createdID)
-			}
-		}
-	}()
-	if hasShare {
-		for index, fullPath := range fullPaths {
-			if !useGlobalShare && !shareSet[req.Paths[index]] {
-				continue
-			}
-			sharing := &model.Sharing{
-				SharingDB: &model.SharingDB{Remark: "Transfer seed source"},
-				Files:     []string{fullPath}, Creator: user,
-			}
-			shareID, createErr := op.CreateSharing(sharing)
-			if createErr != nil {
-				common.ErrorResp(c, fmt.Errorf("create seed share: %w", createErr), 500)
-				return
-			}
-			createdShares = append(createdShares, shareID)
-			seed.Files[index].Sources = []torrent.SeedSource{{
-				Type: "openlist-share", URL: strings.TrimRight(setting.GetStr(conf.SeedSiteURL), "/") + "/sd/" + shareID,
-				ShareID: shareID,
-			}}
-		}
-	}
-	if err := torrent.ValidateSeed(seed, torrent.DefaultParseLimits()); err != nil {
-		common.ErrorResp(c, err, 400)
-		return
-	}
-	outputPath := strings.TrimSpace(req.OutputPath)
-	if outputPath == "" {
-		outputPath = strings.TrimSpace(req.SavePath)
-	}
-	artifacts := make([]gin.H, 0, len(formats))
-	seenFormats := make(map[string]struct{}, len(formats))
-	for _, requestedFormat := range formats {
-		format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(requestedFormat), "."))
-		if format == "bt" {
-			format = "torrent"
-		}
-		if _, exists := seenFormats[format]; exists {
-			continue
-		}
-		seenFormats[format] = struct{}{}
-		data, err := encodeGeneratedSeed(seed, format, globalHasher.GetPieceHashes())
-		if err != nil {
-			common.ErrorResp(c, fmt.Errorf("generate %s seed: %w", format, err), 400)
-			return
-		}
-		fileName := stdpath.Base(seed.Name) + "." + format
-		artifact := gin.H{
-			"format":    format,
-			"name":      fileName,
-			"file_name": fileName,
-			"data":      base64.StdEncoding.EncodeToString(data),
-			"seed_data": base64.StdEncoding.EncodeToString(data),
-			"size":      len(data),
-		}
-		if outputPath != "" {
-			dstDir, err := user.JoinPath(outputPath)
-			if err != nil {
-				common.ErrorResp(c, err, 403)
-				return
-			}
-			meta, metaErr := op.GetNearestMeta(dstDir)
-			if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
-				common.ErrorResp(c, metaErr, 500, true)
-				return
-			}
-			if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstDir)) || !common.CanWrite(user, meta, dstDir) {
-				common.ErrorResp(c, errs.PermissionDenied, 403)
-				return
-			}
-			fileStream := &stream.FileStream{
-				Ctx:    c.Request.Context(),
-				Obj:    &model.Object{Name: fileName, Size: int64(len(data)), Modified: time.Now()},
-				Reader: bytes.NewReader(data), Mimetype: "application/octet-stream",
-			}
-			if err = fs.PutDirectly(c.Request.Context(), dstDir, fileStream); err != nil {
-				common.ErrorResp(c, err, 500)
-				return
-			}
-			artifact["path"] = stdpath.Join(outputPath, fileName)
-		}
-		artifacts = append(artifacts, artifact)
-	}
-	keepCreatedShares = true
 	common.SuccessResp(c, gin.H{"artifacts": artifacts, "seed": seed})
-}
-
-func encodeGeneratedSeed(seed *torrent.Seed, format string, standardPieces []byte) ([]byte, error) {
-	if format != "torrent" {
-		return torrent.EncodeSeed(seed, format)
-	}
-	t := &torrent.Torrent{
-		Info:         torrent.TorrentInfo{Name: seed.Name, PieceLength: seed.PieceSize, Pieces: standardPieces},
-		Comment:      seed.Comment,
-		CreatedBy:    seed.CreatedBy,
-		CreationDate: time.Now().Unix(),
-		OpenList:     seed,
-	}
-	if len(seed.Trackers) > 0 {
-		t.Announce = seed.Trackers[0]
-		for _, tracker := range seed.Trackers {
-			t.AnnounceList = append(t.AnnounceList, []string{tracker})
-		}
-	}
-	if len(seed.Files) == 1 {
-		file := seed.Files[0]
-		t.Info.Name = stdpath.Base(file.Path)
-		t.Info.Length = file.Size
-		t.Info.MD5Sum = file.Hashes.MD5
-		if file.CASSliceMD5 != "" {
-			t.SetCASInfo(&torrent.CASInfo{
-				FileMD5: strings.ToUpper(file.Hashes.MD5), SliceMD5: strings.ToUpper(file.CASSliceMD5),
-				SliceSize: torrent.DefaultPieceSize, Cloud: "189",
-			})
-		} else if seed.PieceSize == torrent.DefaultPieceSize && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
-			t.SetCASInfo(torrent.BuildCASInfoFromMD5s(file.Hashes.MD5, file.Hashes.Pieces.MD5, torrent.DefaultPieceSize))
-		}
-	} else {
-		for _, file := range seed.Files {
-			t.Info.Files = append(t.Info.Files, torrent.TorrentFile{Length: file.Size, Path: strings.Split(file.Path, "/"), MD5Sum: file.Hashes.MD5})
-		}
-	}
-	return t.Encode()
 }
 
 // loadSeedDefaultTrackers returns the configured default tracker list, one per line.
