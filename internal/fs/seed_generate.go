@@ -444,6 +444,43 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	outputPath := strings.TrimSpace(params.OutputPath)
 	artifacts := make([]SeedArtifact, 0, len(formats))
 	seenFormats := make(map[string]struct{}, len(formats))
+
+	// writeArtifact persists the encoded container into the destination folder
+	// when an output path is configured, returning the fully-populated artifact.
+	writeArtifact := func(format, fileName string, data []byte) (SeedArtifact, error) {
+		artifact := SeedArtifact{
+			Format:   format,
+			Name:     fileName,
+			FileName: fileName,
+			SeedData: base64.StdEncoding.EncodeToString(data),
+			Size:     len(data),
+		}
+		if outputPath == "" {
+			return artifact, nil
+		}
+		dstDir, err := user.JoinPath(outputPath)
+		if err != nil {
+			return artifact, err
+		}
+		meta, metaErr := op.GetNearestMeta(dstDir)
+		if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
+			return artifact, metaErr
+		}
+		if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstDir)) || !common.CanWrite(user, meta, dstDir) {
+			return artifact, errs.PermissionDenied
+		}
+		fileStream := &stream.FileStream{
+			Ctx:    ctx,
+			Obj:    &model.Object{Name: fileName, Size: int64(len(data)), Modified: time.Now()},
+			Reader: bytes.NewReader(data), Mimetype: "application/octet-stream",
+		}
+		if err = PutDirectly(ctx, dstDir, fileStream); err != nil {
+			return artifact, err
+		}
+		artifact.Path = stdpath.Join(outputPath, fileName)
+		return artifact, nil
+	}
+
 	for _, requestedFormat := range formats {
 		format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(requestedFormat), "."))
 		if format == "bt" {
@@ -453,39 +490,35 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 			continue
 		}
 		seenFormats[format] = struct{}{}
+
+		// CAS is inherently a single-file container: emit one .cas per file
+		// instead of rejecting multi-file selection.
+		if format == "cas" {
+			for _, file := range seed.Files {
+				singleSeed := *seed
+				singleSeed.Files = []torrent.SeedFile{file}
+				data, err := EncodeGeneratedSeed(&singleSeed, format, nil)
+				if err != nil {
+					return nil, nil, fmt.Errorf("generate %s seed for %s: %w", format, file.Path, err)
+				}
+				fileName := stdpath.Base(file.Path) + ".cas"
+				artifact, err := writeArtifact(format, fileName, data)
+				if err != nil {
+					return nil, nil, err
+				}
+				artifacts = append(artifacts, artifact)
+			}
+			continue
+		}
+
 		data, err := EncodeGeneratedSeed(seed, format, globalHasher.GetPieceHashes())
 		if err != nil {
 			return nil, nil, fmt.Errorf("generate %s seed: %w", format, err)
 		}
 		fileName := stdpath.Base(seed.Name) + "." + format
-		artifact := SeedArtifact{
-			Format:   format,
-			Name:     fileName,
-			FileName: fileName,
-			SeedData: base64.StdEncoding.EncodeToString(data),
-			Size:     len(data),
-		}
-		if outputPath != "" {
-			dstDir, err := user.JoinPath(outputPath)
-			if err != nil {
-				return nil, nil, err
-			}
-			meta, metaErr := op.GetNearestMeta(dstDir)
-			if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
-				return nil, nil, metaErr
-			}
-			if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstDir)) || !common.CanWrite(user, meta, dstDir) {
-				return nil, nil, errs.PermissionDenied
-			}
-			fileStream := &stream.FileStream{
-				Ctx:    ctx,
-				Obj:    &model.Object{Name: fileName, Size: int64(len(data)), Modified: time.Now()},
-				Reader: bytes.NewReader(data), Mimetype: "application/octet-stream",
-			}
-			if err = PutDirectly(ctx, dstDir, fileStream); err != nil {
-				return nil, nil, err
-			}
-			artifact.Path = stdpath.Join(outputPath, fileName)
+		artifact, err := writeArtifact(format, fileName, data)
+		if err != nil {
+			return nil, nil, err
 		}
 		artifacts = append(artifacts, artifact)
 	}

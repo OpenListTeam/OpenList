@@ -966,7 +966,7 @@ func SeedCapabilities(c *gin.Context) {
 			}
 		}
 		common.SuccessResp(c, gin.H{
-			"formats": gin.H{"oss": true, "torrent": true, "cas": len(files) == 1},
+			"formats": gin.H{"oss": true, "torrent": true, "cas": true},
 			"files":   files, "existing_hashes": existingHashes, "estimated_traffic": estimatedTraffic,
 			"default_matrix": loadSeedDefaultMatrix(), "trackers": loadSeedDefaultTrackers(),
 		})
