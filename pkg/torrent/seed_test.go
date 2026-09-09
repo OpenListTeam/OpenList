@@ -60,9 +60,8 @@ func TestCASWireFormatIsLegacyCompatible(t *testing.T) {
 	if err = json.Unmarshal(decodedJSON, &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if len(payload) != 5 {
-		t.Fatalf("CAS field count = %d, want 5: %#v", len(payload), payload)
-	}
+	// The five legacy fields must always be present so the reference client can
+	// parse the payload. slice_md5s / slice_size are optional extensions.
 	for _, key := range []string{"name", "size", "md5", "sliceMd5", "create_time"} {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("CAS payload missing %q: %#v", key, payload)
@@ -74,6 +73,10 @@ func TestCASWireFormatIsLegacyCompatible(t *testing.T) {
 	}
 	if decoded.Files[0].Hashes.MD5 != strings.Repeat("1", 32) {
 		t.Fatalf("DecodeCAS() MD5 = %q", decoded.Files[0].Hashes.MD5)
+	}
+	// Per-piece MD5 list must round-trip through the slice_md5s extension.
+	if decoded.Files[0].Hashes.Pieces == nil || len(decoded.Files[0].Hashes.Pieces.MD5) != 2 {
+		t.Fatalf("DecodeCAS() piece MD5 list = %#v", decoded.Files[0].Hashes.Pieces)
 	}
 }
 

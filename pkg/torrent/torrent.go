@@ -104,22 +104,27 @@ type SeedSource struct {
 
 // CASFileEntry describes one file inside a multi-file .cas payload.
 type CASFileEntry struct {
-	Name       string `json:"name"`
-	Size       int64  `json:"size"`
-	MD5        string `json:"md5"`
-	SliceMD5   string `json:"sliceMd5"`
-	CreateTime string `json:"create_time"`
+	Name       string   `json:"name"`
+	Size       int64    `json:"size"`
+	MD5        string   `json:"md5"`
+	SliceMD5   string   `json:"sliceMd5"`
+	CreateTime string   `json:"create_time"`
+	SliceMD5s  []string `json:"slice_md5s,omitempty"`
+	SliceSize  int64    `json:"slice_size,omitempty"`
 }
 
 // CASPayload matches the reference .cas JSON payload. The five legacy fields
 // describe a single file (byte-for-byte compatible with the reference project);
-// the optional "files" array extends it to multi-file seeds.
+// the optional "files" array extends it to multi-file seeds, and the optional
+// slice_md5s/slice_size preserve the per-piece MD5 list.
 type CASPayload struct {
 	Name       string         `json:"name"`
 	Size       int64          `json:"size"`
 	MD5        string         `json:"md5"`
 	SliceMD5   string         `json:"sliceMd5"`
 	CreateTime string         `json:"create_time"`
+	SliceMD5s  []string       `json:"slice_md5s,omitempty"`
+	SliceSize  int64          `json:"slice_size,omitempty"`
 	Files      []CASFileEntry `json:"files,omitempty"`
 }
 
@@ -816,17 +821,21 @@ func DecodeOSS(data []byte, limits ParseLimits) (*Seed, error) {
 	return &seed, nil
 }
 
-// buildCASFileEntry computes the reference-compatible five fields for one file.
+// buildCASFileEntry computes the reference-compatible five fields for one file,
+// preserving the per-piece MD5 list and piece size when available.
 func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 	if file.Hashes.MD5 == "" {
 		return CASFileEntry{}, fmt.Errorf("CAS requires a whole-file MD5 for %s", file.Path)
 	}
+	var sliceMD5s []string
+	if file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
+		sliceMD5s = upperStrings(file.Hashes.Pieces.MD5)
+	}
 	sliceMD5 := strings.ToUpper(file.CASSliceMD5)
-	if sliceMD5 == "" && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 && pieceSize == DefaultPieceSize {
-		pieces := upperStrings(file.Hashes.Pieces.MD5)
-		sliceMD5 = pieces[0]
-		if len(pieces) > 1 {
-			sliceMD5 = strings.ToUpper(GetMD5Str(strings.Join(pieces, "\n")))
+	if sliceMD5 == "" && len(sliceMD5s) > 0 && pieceSize == DefaultPieceSize {
+		sliceMD5 = sliceMD5s[0]
+		if len(sliceMD5s) > 1 {
+			sliceMD5 = strings.ToUpper(GetMD5Str(strings.Join(sliceMD5s, "\n")))
 		}
 	}
 	if sliceMD5 == "" {
@@ -839,10 +848,18 @@ func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 	if createTime == "" {
 		createTime = fmt.Sprintf("%d", time.Now().Unix())
 	}
-	return CASFileEntry{
+	entry := CASFileEntry{
 		Name: path.Base(file.Path), Size: file.Size, MD5: strings.ToUpper(file.Hashes.MD5),
 		SliceMD5: sliceMD5, CreateTime: createTime,
-	}, nil
+	}
+	if len(sliceMD5s) > 0 {
+		entry.SliceMD5s = sliceMD5s
+		entry.SliceSize = pieceSize
+		if entry.SliceSize <= 0 {
+			entry.SliceSize = DefaultPieceSize
+		}
+	}
+	return entry, nil
 }
 
 // EncodeCAS writes the reference-compatible base64 encoded JSON payload. A
@@ -864,6 +881,7 @@ func EncodeCAS(seed *Seed) ([]byte, error) {
 		payload = CASPayload{
 			Name: entry.Name, Size: entry.Size, MD5: entry.MD5,
 			SliceMD5: entry.SliceMD5, CreateTime: entry.CreateTime,
+			SliceMD5s: entry.SliceMD5s, SliceSize: entry.SliceSize,
 		}
 	} else {
 		entries := make([]CASFileEntry, 0, len(seed.Files))
@@ -911,39 +929,50 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 			return nil, fmt.Errorf("CAS seed exceeds %d files", limits.MaxFiles)
 		}
 		for _, entry := range payload.Files {
-			if entry.Name == "" || entry.Size < 0 || !validHexHash(entry.MD5, 32) {
-				return nil, fmt.Errorf("invalid CAS file entry")
+			file, err := casEntryToSeedFile(entry.Name, entry.Size, entry.MD5, entry.SliceMD5, entry.CreateTime, entry.SliceMD5s)
+			if err != nil {
+				return nil, err
 			}
-			sliceMD5 := entry.SliceMD5
-			if sliceMD5 == "" {
-				sliceMD5 = entry.MD5
+			if entry.SliceSize > 0 {
+				seed.PieceSize = entry.SliceSize
 			}
-			if !validHexHash(sliceMD5, 32) {
-				return nil, fmt.Errorf("invalid CAS sliceMd5")
-			}
-			seed.Files = append(seed.Files, SeedFile{
-				Path: entry.Name, Size: entry.Size, CASCreateTime: entry.CreateTime,
-				CASSliceMD5: strings.ToLower(sliceMD5),
-				Hashes:      SeedHashes{MD5: strings.ToLower(entry.MD5)},
-			})
+			seed.Files = append(seed.Files, file)
 		}
 		return seed, ValidateSeed(seed, limits)
 	}
-	if payload.Name == "" || payload.Size < 0 || !validHexHash(payload.MD5, 32) {
-		return nil, fmt.Errorf("invalid CAS payload")
+	file, err := casEntryToSeedFile(payload.Name, payload.Size, payload.MD5, payload.SliceMD5, payload.CreateTime, payload.SliceMD5s)
+	if err != nil {
+		return nil, err
 	}
-	if payload.SliceMD5 == "" {
-		payload.SliceMD5 = payload.MD5
+	if payload.SliceSize > 0 {
+		seed.PieceSize = payload.SliceSize
 	}
-	if !validHexHash(payload.SliceMD5, 32) {
-		return nil, fmt.Errorf("invalid CAS sliceMd5")
-	}
-	seed.Files = []SeedFile{{
-		Path: payload.Name, Size: payload.Size, CASCreateTime: payload.CreateTime,
-		CASSliceMD5: strings.ToLower(payload.SliceMD5),
-		Hashes:      SeedHashes{MD5: strings.ToLower(payload.MD5)},
-	}}
+	seed.Files = []SeedFile{file}
 	return seed, ValidateSeed(seed, limits)
+}
+
+// casEntryToSeedFile converts a CAS payload entry into a SeedFile, restoring the
+// per-piece MD5 list when it is present.
+func casEntryToSeedFile(name string, size int64, md5Hex, sliceMD5Hex, createTime string, sliceMD5s []string) (SeedFile, error) {
+	if name == "" || size < 0 || !validHexHash(md5Hex, 32) {
+		return SeedFile{}, fmt.Errorf("invalid CAS payload")
+	}
+	sliceMD5 := sliceMD5Hex
+	if sliceMD5 == "" {
+		sliceMD5 = md5Hex
+	}
+	if !validHexHash(sliceMD5, 32) {
+		return SeedFile{}, fmt.Errorf("invalid CAS sliceMd5")
+	}
+	file := SeedFile{
+		Path: name, Size: size, CASCreateTime: createTime,
+		CASSliceMD5: strings.ToLower(sliceMD5),
+		Hashes:      SeedHashes{MD5: strings.ToLower(md5Hex)},
+	}
+	if len(sliceMD5s) > 0 {
+		file.Hashes.Pieces = &SeedPieceHashes{MD5: lowerStrings(sliceMD5s)}
+	}
+	return file, nil
 }
 
 // DetectFormat determines the seed container from a file name and content.
@@ -1380,6 +1409,14 @@ func upperStrings(values []string) []string {
 	result := make([]string, len(values))
 	for i, value := range values {
 		result[i] = strings.ToUpper(value)
+	}
+	return result
+}
+
+func lowerStrings(values []string) []string {
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = strings.ToLower(value)
 	}
 	return result
 }
