@@ -100,12 +100,13 @@ func (d *PikPak) login() error {
 		return errors.New("username or password is empty")
 	}
 
+	// Clear expired access token so captcha requests don't carry a stale bearer
+	d.AccessToken = ""
+
 	url := "https://user.mypikpak.net/v1/auth/signin"
-	// 使用 用户填写的 CaptchaToken —————— (验证后的captcha_token)
-	if d.GetCaptchaToken() == "" {
-		if err := d.RefreshCaptchaTokenInLogin(GetAction(http.MethodPost, url), d.Username); err != nil {
-			return err
-		}
+	// Always refresh captcha token before signin (it may be expired)
+	if err := d.RefreshCaptchaTokenInLogin(GetAction(http.MethodPost, url), d.Username); err != nil {
+		return err
 	}
 
 	var e ErrResp
@@ -125,7 +126,12 @@ func (d *PikPak) login() error {
 	data := res.Body()
 	d.RefreshToken = jsoniter.Get(data, "refresh_token").ToString()
 	d.AccessToken = jsoniter.Get(data, "access_token").ToString()
+	if d.AccessToken == "" || d.RefreshToken == "" {
+		return errors.New("login failed: server returned empty tokens")
+	}
 	d.Common.SetUserID(jsoniter.Get(data, "sub").ToString())
+	d.Addition.RefreshToken = d.RefreshToken
+	op.MustSaveDriverStorage(d)
 	return nil
 }
 
@@ -159,9 +165,14 @@ func (d *PikPak) refreshToken(refreshToken string) error {
 		return errors.New(e.Error())
 	}
 	data := res.Body()
+	newAccessToken := jsoniter.Get(data, "access_token").ToString()
+	newRefreshToken := jsoniter.Get(data, "refresh_token").ToString()
+	if newAccessToken == "" || newRefreshToken == "" {
+		return errors.New("refresh failed: server returned empty tokens")
+	}
 	d.Status = "work"
-	d.RefreshToken = jsoniter.Get(data, "refresh_token").ToString()
-	d.AccessToken = jsoniter.Get(data, "access_token").ToString()
+	d.RefreshToken = newRefreshToken
+	d.AccessToken = newAccessToken
 	d.Common.SetUserID(jsoniter.Get(data, "sub").ToString())
 	d.Addition.RefreshToken = d.RefreshToken
 	op.MustSaveDriverStorage(d)
@@ -197,12 +208,18 @@ func (d *PikPak) request(url string, method string, callback base.ReqCallback, r
 	case 0:
 		return res.Body(), nil
 	case 4122, 4121, 16:
-		// access_token 过期
+		if strings.Contains(url, "/v1/auth/") || strings.Contains(url, "/v1/shield/captcha/") {
+			return nil, errors.New(e.Error())
+		}
+		// access_token expired, refresh and retry
 		if err1 := d.refreshToken(d.RefreshToken); err1 != nil {
 			return nil, err1
 		}
 		return d.request(url, method, callback, resp)
-	case 9: // 验证码token过期
+	case 9: // captcha token expired
+		if strings.Contains(url, "/v1/shield/captcha/") {
+			return nil, errors.New(e.Error())
+		}
 		if err = d.RefreshCaptchaTokenAtLogin(GetAction(method, url), d.GetUserID()); err != nil {
 			return nil, err
 		}
@@ -369,6 +386,9 @@ func (d *PikPak) RefreshCaptchaTokenInLogin(action, username string) error {
 	} else {
 		metas["username"] = username
 	}
+	metas["client_version"] = d.ClientVersion
+	metas["package_name"] = d.PackageName
+	metas["timestamp"], metas["captcha_sign"] = d.Common.GetCaptchaSign()
 	return d.refreshCaptchaToken(action, metas)
 }
 
@@ -407,7 +427,7 @@ func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string) err
 		return errors.New(e.Error())
 	}
 
-	if resp.Url != "" {
+	if resp.Url != "" && !d.Addition.SkipVerification {
 		return fmt.Errorf(`need verify: <a target="_blank" href="%s">Click Here</a>`, resp.Url)
 	}
 
