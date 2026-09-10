@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 var (
@@ -32,6 +33,31 @@ func (t ToolsManager) Names() []string {
 		}
 	}
 	sort.Strings(names)
+	return names
+}
+
+// NamesForPath returns ready tools and the native tool for the destination storage.
+// Native tools can write directly to their own storage even without a temporary path setting.
+func (t ToolsManager) NamesForPath(path string) []string {
+	names := t.Names()
+	storage, _, err := op.GetStorageAndActualPath(path)
+	if err != nil {
+		return names
+	}
+
+	name := toolNameForStorage(storage)
+	if name == "" {
+		return names
+	}
+	for _, existing := range names {
+		if existing == name {
+			return names
+		}
+	}
+	if _, ok := t[name]; ok {
+		names = append(names, name)
+		sort.Strings(names)
+	}
 	return names
 }
 

@@ -13,7 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
-	"github.com/itsHenry35/gofakes3"
+	"github.com/OpenListTeam/gofakes3"
 )
 
 type Bucket struct {
@@ -42,10 +42,12 @@ func getBucketByName(name string) (Bucket, error) {
 	return Bucket{}, gofakes3.BucketNotFound(name)
 }
 
-func getDirEntries(path string) ([]model.Obj, error) {
-	ctx := context.Background()
+func getDirEntries(ctx context.Context, path string) ([]model.Obj, error) {
 	meta, _ := op.GetNearestMeta(path)
 	fi, err := fs.Get(context.WithValue(ctx, conf.MetaKey, meta), path, &fs.GetArgs{})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if errs.IsNotFoundError(err) {
 		return nil, gofakes3.ErrNoSuchKey
 	} else if err != nil {
@@ -57,6 +59,9 @@ func getDirEntries(path string) ([]model.Obj, error) {
 	}
 
 	dirEntries, err := fs.List(context.WithValue(ctx, conf.MetaKey, meta), path, &fs.ListArgs{})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if err != nil {
 		return nil, err
 	}

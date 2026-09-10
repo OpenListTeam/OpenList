@@ -503,9 +503,11 @@ func (d *PikPak) UploadByMultipart(ctx context.Context, params *S3Params, fileSi
 			for chunk := range chunksCh {
 				var part oss.UploadPart // 出现错误就继续尝试，共尝试3次
 				for retry := 0; retry < 3; retry++ {
-					select {
-					case <-ctx.Done():
+					if utils.IsCanceled(ctx) {
+						err = ctx.Err()
 						break
+					}
+					select {
 					case <-ticker.C:
 						errCh <- errors.Wrap(err, "ossToken 过期")
 					default:

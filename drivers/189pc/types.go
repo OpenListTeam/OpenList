@@ -191,6 +191,10 @@ type Cloud189File struct {
 	// StarLabel   int64  `json:"starLabel"`
 }
 
+func normalizeCloud189Name(name string) string {
+	return strings.ReplaceAll(name, "\\'", "'")
+}
+
 func (c *Cloud189File) CreateTime() time.Time {
 	return time.Time(c.CreateDate)
 }
@@ -206,6 +210,8 @@ func (c *Cloud189File) IsDir() bool        { return false }
 func (c *Cloud189File) GetID() string      { return string(c.ID) }
 func (c *Cloud189File) GetPath() string    { return "" }
 func (c *Cloud189File) Thumb() string      { return c.Icon.SmallUrl }
+
+func (c *Cloud189File) GetDisplayName() string { return normalizeCloud189Name(c.Name) }
 
 // 文件夹
 type Cloud189Folder struct {
@@ -237,6 +243,8 @@ func (c *Cloud189Folder) ModTime() time.Time { return time.Time(c.LastOpTime) }
 func (c *Cloud189Folder) IsDir() bool        { return true }
 func (c *Cloud189Folder) GetID() string      { return string(c.ID) }
 func (c *Cloud189Folder) GetPath() string    { return "" }
+
+func (c *Cloud189Folder) GetDisplayName() string { return normalizeCloud189Name(c.Name) }
 
 type Cloud189FilesResp struct {
 	//ResCode    int    `json:"res_code"`

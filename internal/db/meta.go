@@ -13,6 +13,14 @@ func GetMetaByPath(path string) (*model.Meta, error) {
 	return &meta, nil
 }
 
+func GetAllMetas() ([]model.Meta, error) {
+	var metas []model.Meta
+	if err := db.Find(&metas).Error; err != nil {
+		return nil, errors.Wrapf(err, "failed get all metas")
+	}
+	return metas, nil
+}
+
 func GetMetaById(id uint) (*model.Meta, error) {
 	var u model.Meta
 	if err := db.First(&u, id).Error; err != nil {

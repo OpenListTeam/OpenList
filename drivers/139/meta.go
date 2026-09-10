@@ -7,10 +7,11 @@ import (
 
 type Addition struct {
 	//Account       string `json:"account" required:"true"`
-	Authorization string `json:"authorization" type:"text" required:"true"`
-	Username      string `json:"username" required:"true"`
-	Password      string `json:"password" required:"true" secret:"true"`
-	MailCookies   string `json:"mail_cookies" required:"true" type:"text" help:"Cookies from mail.139.com used for login authentication."`
+	Authorization string `json:"authorization" type:"text" help:"Authorization can be used alone. If empty, use username + password; mail_cookies is optional and will be established/updated automatically. Existing mail_cookies can also be used alone for fast login."`
+	Username      string `json:"username" help:"Use together with password when Authorization is empty. mail_cookies may be left empty on the first login."`
+	Password      string `json:"password" secret:"true" help:"Use together with username when Authorization is empty. mail_cookies may be left empty on the first login."`
+	SmsCode       string `json:"sms_code" secret:"true" help:"Fill this only after OpenList reports that a 139 Mail SMS verification code was sent, then save the storage again."`
+	MailCookies   string `json:"mail_cookies" type:"text" help:"Optional cookies from mail.10086.cn. Leave empty for a first username/password login; cookies created or updated by password/SMS login are persisted and reused as device context. Existing cookies may also be used alone for fast login."`
 	driver.RootID
 	Type                 string `json:"type" type:"select" options:"personal_new,family,group,personal,share" default:"personal_new"`
 	LinkID               string `json:"link_id" type:"text" help:"Multiple shares are separated by commas or new lines. Use link_id#password for password-protected shares."`
