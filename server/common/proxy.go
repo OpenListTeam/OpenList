@@ -97,8 +97,8 @@ func GetEtag(file model.Obj, size int64) string {
 	if len(hash) > 0 {
 		return fmt.Sprintf(`"%s"`, hash)
 	}
-	// 参考nginx
-	return fmt.Sprintf(`"%x-%x"`, file.ModTime().Unix(), size)
+	// Preserve sub-second changes when files of the same size are overwritten.
+	return fmt.Sprintf(`"%x-%x"`, file.ModTime().UnixNano(), size)
 }
 
 func ProxyRange(ctx context.Context, link *model.Link, size int64) *model.Link {
