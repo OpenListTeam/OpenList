@@ -12,8 +12,8 @@ import (
 type TaskExtension struct {
 	tache.Base
 	Creator    *model.User
-	startTime  *time.Time
-	endTime    *time.Time
+	StartTime  *time.Time `json:"start_time,omitempty"`
+	EndTime    *time.Time `json:"end_time,omitempty"`
 	TotalBytes int64
 	ApiUrl     string
 }
@@ -38,23 +38,23 @@ func (t *TaskExtension) GetCreator() *model.User {
 }
 
 func (t *TaskExtension) SetStartTime(startTime time.Time) {
-	t.startTime = &startTime
+	t.StartTime = &startTime
 }
 
 func (t *TaskExtension) GetStartTime() *time.Time {
-	return t.startTime
+	return t.StartTime
 }
 
 func (t *TaskExtension) SetEndTime(endTime time.Time) {
-	t.endTime = &endTime
+	t.EndTime = &endTime
 }
 
 func (t *TaskExtension) GetEndTime() *time.Time {
-	return t.endTime
+	return t.EndTime
 }
 
 func (t *TaskExtension) ClearEndTime() {
-	t.endTime = nil
+	t.EndTime = nil
 }
 
 func (t *TaskExtension) SetTotalBytes(totalBytes int64) {
