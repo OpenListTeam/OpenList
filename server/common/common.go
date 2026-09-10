@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	stdnet "net"
 	"net/http"
 	"strings"
 
@@ -154,4 +155,15 @@ func ContentWithValues(ctx context.Context, keyAndValue ...any) context.Context 
 		keyAndValue = keyAndValue[2:]
 	}
 	return ctx
+}
+
+// StripHostPort 从 Host 头中去掉端口部分，返回纯域名。
+// 支持 IPv4、IPv6（[::1]:port）及无端口的裸域名/IP。
+func StripHostPort(host string) string {
+	h, _, err := stdnet.SplitHostPort(host)
+	if err != nil {
+		// 无端口，原样返回
+		return host
+	}
+	return h
 }
