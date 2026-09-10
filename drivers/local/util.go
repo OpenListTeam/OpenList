@@ -2,6 +2,7 @@ package local
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -127,7 +128,19 @@ func (d *Local) removeThumbCache(fullPath string) {
 	_ = os.Remove(thumbPath)
 }
 
-func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
+func (d *Local) supportsThumbnail(name string) bool {
+	typeName := utils.GetFileType(name)
+	if typeName == conf.IMAGE || typeName == conf.VIDEO {
+		return true
+	}
+	return d.supportsPDFThumbnail(name)
+}
+
+func (d *Local) supportsPDFThumbnail(name string) bool {
+	return d.PDFThumbnail && pdfThumbnailSupported() && strings.EqualFold(filepath.Ext(name), ".pdf")
+}
+
+func (d *Local) getThumb(ctx context.Context, file model.Obj) (*bytes.Buffer, *string, error) {
 	fullPath := file.GetPath()
 	if d.ThumbCacheFolder != "" {
 		// skip if the file is a thumbnail
@@ -140,12 +153,19 @@ func (d *Local) getThumb(file model.Obj) (*bytes.Buffer, *string, error) {
 		}
 	}
 	var srcBuf *bytes.Buffer
-	if utils.GetFileType(file.GetName()) == conf.VIDEO {
+	typeName := utils.GetFileType(file.GetName())
+	if typeName == conf.VIDEO {
 		videoBuf, err := d.GetSnapshot(fullPath)
 		if err != nil {
 			return nil, nil, err
 		}
 		srcBuf = videoBuf
+	} else if d.supportsPDFThumbnail(file.GetName()) {
+		pdfBuf, err := renderPDFThumbnail(ctx, fullPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		srcBuf = pdfBuf
 	} else {
 		imgData, err := os.ReadFile(fullPath)
 		if err != nil {
