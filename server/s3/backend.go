@@ -4,9 +4,11 @@ package s3
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/http"
 	"path"
 	"strings"
 	"sync"
@@ -30,7 +32,7 @@ import (
 
 var (
 	emptyPrefix = &gofakes3.Prefix{}
-	timeFormat  = "Mon, 2 Jan 2006 15:04:05 GMT"
+	timeFormat  = http.TimeFormat
 )
 
 // s3Backend implements the gofakes3.Backend interface to make an S3
@@ -117,9 +119,13 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 
 	fp := path.Join(bucketPath, objectName)
 	fmeta, _ := op.GetNearestMeta(fp)
-	node, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{})
+	ctx = context.WithValue(ctx, conf.MetaKey, fmeta)
+	node, err := fs.Get(ctx, fp, &fs.GetArgs{})
 	if err != nil {
-		return nil, gofakes3.KeyNotFound(objectName)
+		if errs.IsObjectNotFound(err) {
+			return nil, gofakes3.KeyNotFound(objectName)
+		}
+		return nil, err
 	}
 
 	if node.IsDir() {
@@ -127,23 +133,27 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 	}
 
 	size := node.GetSize()
-	// hash := getFileHashByte(fobj)
+	hash, err := getObjectHash(ctx, fp, node)
+	if err != nil {
+		return nil, err
+	}
 
 	meta := map[string]string{
-		"Last-Modified": node.ModTime().Format(timeFormat),
+		"Last-Modified": node.ModTime().UTC().Format(timeFormat),
 		"Content-Type":  utils.GetMimeType(fp),
 	}
 
-	if val, ok := b.meta.Load(fp); ok {
-		metaMap := val.(map[string]string)
-		for k, v := range metaMap {
+	stored, etag := b.loadMetadata(fp, hash)
+	for k, v := range stored {
+		if k != "Last-Modified" {
 			meta[k] = v
 		}
 	}
 
 	return &gofakes3.Object{
-		Name: objectName,
-		// Hash:     hash,
+		Name:     objectName,
+		Hash:     hash,
+		ETag:     etag,
 		Metadata: meta,
 		Size:     size,
 		Contents: noOpReadCloser{},
@@ -160,13 +170,22 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 
 	fp := path.Join(bucketPath, objectName)
 	fmeta, _ := op.GetNearestMeta(fp)
-	node, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{})
+	ctx = context.WithValue(ctx, conf.MetaKey, fmeta)
+	node, err := fs.Get(ctx, fp, &fs.GetArgs{})
 	if err != nil {
-		return nil, gofakes3.KeyNotFound(objectName)
+		if errs.IsObjectNotFound(err) {
+			return nil, gofakes3.KeyNotFound(objectName)
+		}
+		return nil, err
 	}
 
 	if node.IsDir() {
 		return nil, gofakes3.KeyNotFound(objectName)
+	}
+
+	hash, err := getObjectHash(ctx, fp, node)
+	if err != nil {
+		return nil, err
 	}
 
 	link, file, err := fs.Link(ctx, fp, model.LinkArgs{})
@@ -193,7 +212,7 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		return nil, fmt.Errorf("the remote storage driver need to be enhanced to support s3")
 	}
 
-	var rd io.Reader
+	var rd io.ReadCloser
 	if rnge != nil {
 		rd, err = rrf.RangeRead(ctx, http_range.Range(*rnge))
 	} else {
@@ -204,26 +223,34 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 	}
 
 	meta := map[string]string{
-		"Last-Modified":       node.ModTime().Format(timeFormat),
+		"Last-Modified":       node.ModTime().UTC().Format(timeFormat),
 		"Content-Disposition": utils.GenerateContentDisposition(file.GetName()),
 		"Content-Type":        utils.GetMimeType(fp),
 	}
 
-	if val, ok := b.meta.Load(fp); ok {
-		metaMap := val.(map[string]string)
-		for k, v := range metaMap {
+	stored, etag := b.loadMetadata(fp, hash)
+	for k, v := range stored {
+		if k != "Last-Modified" {
 			meta[k] = v
 		}
 	}
 
 	return &gofakes3.Object{
 		// Name: gofakes3.URLEncode(objectName),
-		Name: objectName,
-		// Hash:     "",
+		Name:     objectName,
+		Hash:     hash,
+		ETag:     etag,
 		Metadata: meta,
 		Size:     size,
 		Range:    rnge,
-		Contents: utils.ReadCloser{Reader: rd, Closer: link},
+		Contents: utils.NewReadCloser(rd, func() error {
+			readErr := rd.Close()
+			linkErr := link.Close()
+			if readErr != nil {
+				return readErr
+			}
+			return linkErr
+		}),
 	}, nil
 }
 
@@ -239,7 +266,7 @@ func (b *s3Backend) PutObject(
 	meta map[string]string,
 	input io.Reader, size int64,
 ) (result gofakes3.PutObjectResult, err error) {
-	return result, b.putStream(ctx, bucketName, objectName, meta, input, size)
+	return result, b.putStream(ctx, bucketName, objectName, meta, input, size, "")
 }
 
 // putStream stores the given object into the underlying storage. It is shared
@@ -249,6 +276,7 @@ func (b *s3Backend) putStream(
 	ctx context.Context, bucketName, objectName string,
 	meta map[string]string,
 	input io.Reader, size int64,
+	etag string,
 ) error {
 	bucket, err := getBucketByName(bucketName)
 	if err != nil {
@@ -314,9 +342,10 @@ func (b *s3Backend) putStream(
 	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
 		return errs.IgnoredSystemFile
 	}
+	hash := md5.New()
 	stream := &stream.FileStream{
 		Obj:      &obj,
-		Reader:   input,
+		Reader:   io.TeeReader(input, hash),
 		Mimetype: meta["Content-Type"],
 	}
 	if stream.Mimetype == "" {
@@ -328,7 +357,7 @@ func (b *s3Backend) putStream(
 		return err
 	}
 
-	b.meta.Store(fp, meta)
+	b.meta.Store(fp, objectMetadata{headers: meta, hash: hash.Sum(nil), etag: etag})
 
 	return nil
 }
@@ -374,7 +403,10 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 		return err
 	}
 
-	fs.Remove(ctx, fp)
+	if err := fs.Remove(ctx, fp); err != nil {
+		return err
+	}
+	b.meta.Delete(fp)
 	return nil
 }
 
@@ -418,6 +450,9 @@ func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket
 	srcFp := path.Join(srcBucketPath, srcKey)
 	fmeta, _ := op.GetNearestMeta(srcFp)
 	srcNode, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), srcFp, &fs.GetArgs{})
+	if err != nil {
+		return result, err
+	}
 
 	c, err := b.GetObject(ctx, srcBucket, srcKey, nil)
 	if err != nil {
