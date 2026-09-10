@@ -31,7 +31,7 @@ func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 		}
 		common.GinAppendValues(c, conf.MetaKey, meta)
 		// verify sign
-		if needSign(meta, rawPath) {
+		if !IsUnixFileTrusted(c) && needSign(meta, rawPath) {
 			s := c.Query("sign")
 			err = verifyFunc(rawPath, strings.TrimSuffix(s, "/"))
 			if err != nil {
