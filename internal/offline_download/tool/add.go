@@ -191,6 +191,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 		TempDir:      tempDir,
 		DeletePolicy: deletePolicy,
 		Toolname:     args.Tool,
+		FileName:     fileNameFromURL(args.URL),
 		tool:         tool,
 	}
 	DownloadTaskManager.Add(t)
@@ -198,14 +199,25 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 }
 
 func tryPutUrl(ctx context.Context, path, urlStr string) error {
-	var dstName string
-	u, err := url.Parse(urlStr)
-	if err == nil {
-		dstName = stdpath.Base(u.Path)
-	} else {
+	dstName := fileNameFromURL(urlStr)
+	if dstName == "" {
 		dstName = "UnnamedURL"
 	}
 	return fs.PutURL(ctx, path, dstName, urlStr)
+}
+
+func fileNameFromURL(urlStr string) string {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return ""
+	}
+	// u.Path is already decoded by url.Parse; do not unescape again,
+	// otherwise names like "a%2Fb.txt" would be double-decoded into "a/b.txt".
+	name := stdpath.Base(u.Path)
+	if name == "." || name == "/" {
+		return ""
+	}
+	return name
 }
 
 func isSimpleHttpSchemeUnsupported(urlStr string) bool {
