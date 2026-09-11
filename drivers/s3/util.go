@@ -25,6 +25,10 @@ const (
 	defaultCopyPartSize int64 = 100 * 1024 * 1024
 	maxCopyPartSize     int64 = 5 * 1024 * 1024 * 1024
 	maxCopyParts        int64 = 10000
+
+	minMultipartUploadPartSize     int64 = 5 * 1024 * 1024
+	defaultMultipartUploadPartSize int64 = 100 * 1024 * 1024
+	maxMultipartUploadPartSize     int64 = 5 * 1024 * 1024 * 1024
 )
 
 // do others that not defined in Driver interface
@@ -79,7 +83,9 @@ func (d *S3) getClient(clientType int) *s3.S3 {
 	}
 	if clientType == ClientTypeDirectUpload && d.DirectUploadHost != "" {
 		client.Handlers.Build.PushBack(func(r *request.Request) {
-			if r.HTTPRequest.Method != http.MethodPut {
+			switch r.HTTPRequest.Method {
+			case http.MethodPut, http.MethodPost, http.MethodDelete:
+			default:
 				return
 			}
 			split := strings.SplitN(d.DirectUploadHost, "://", 2)
@@ -100,6 +106,24 @@ func getKey(path string, dir bool) string {
 		path += "/"
 	}
 	return path
+}
+
+func getMultipartUploadPartSize(size, maxParts, chunkSize int64) (int64, error) {
+	if maxParts <= 1 {
+		if size > maxMultipartUploadPartSize {
+			return 0, fmt.Errorf("object size %d exceeds direct upload limit", size)
+		}
+		return size, nil
+	}
+	maxParts = min(maxParts, maxCopyParts)
+	if size > maxMultipartUploadPartSize*maxParts {
+		return 0, fmt.Errorf("object size %d exceeds multipart upload limit", size)
+	}
+	if chunkSize <= 0 {
+		chunkSize = defaultMultipartUploadPartSize
+	}
+	chunkSize = min(chunkSize, maxMultipartUploadPartSize)
+	return max(chunkSize, (size+maxParts-1)/maxParts, minMultipartUploadPartSize), nil
 }
 
 var defaultPlaceholderName = ".openlist"
@@ -339,6 +363,21 @@ func getCopyPartSize(size int64) (int64, error) {
 	partSize := max(defaultCopyPartSize, (size-1)/maxCopyParts+1)
 	if partSize > maxCopyPartSize {
 		return 0, fmt.Errorf("object size %d exceeds multipart copy limit", size)
+	}
+	return partSize, nil
+}
+
+func calculatePartSize(fileSize, maxParts, minPartSize, maxPartSize int64) (int64, error) {
+	if fileSize <= 0 {
+		return 0, errors.New("file size must be positive")
+	}
+	partSize := (fileSize + maxParts - 1) / maxParts
+	if partSize < minPartSize {
+		return minPartSize, nil
+	}
+	if partSize > maxPartSize {
+		return 0, fmt.Errorf("file size %d bytes exceeds S3 multipart upload limit (max %d parts x %d bytes/part = %d bytes total)",
+			fileSize, maxParts, maxPartSize, maxParts*maxPartSize)
 	}
 	return partSize, nil
 }
