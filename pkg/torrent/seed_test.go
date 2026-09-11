@@ -94,6 +94,49 @@ func TestTorrentRoundTripPreservesOpenListExtension(t *testing.T) {
 	}
 }
 
+func TestCASCloudGeneralizationRoundTrip(t *testing.T) {
+	seed := testSeed()
+	seed.Files[0].CASSliceMD5 = strings.Repeat("a", 32)
+	seed.Files[0].CASCloud = CloudAliyundriveOpen
+
+	// CAS (base64 JSON) round-trip must preserve the cloud identifier.
+	encoded, err := EncodeCAS(seed)
+	if err != nil {
+		t.Fatalf("EncodeCAS() error = %v", err)
+	}
+	decoded, err := DecodeCAS(encoded, DefaultParseLimits())
+	if err != nil {
+		t.Fatalf("DecodeCAS() error = %v", err)
+	}
+	if got := decoded.Files[0].CASCloud; got != CloudAliyundriveOpen {
+		t.Fatalf("DecodeCAS() cloud = %q, want %q", got, CloudAliyundriveOpen)
+	}
+
+	// Torrent bencode round-trip must preserve the cloud identifier too.
+	torrentData, err := EncodeSeed(seed, "torrent")
+	if err != nil {
+		t.Fatalf("EncodeSeed(torrent) error = %v", err)
+	}
+	decodedTorrent, err := DecodeSeed(torrentData, "torrent", DefaultParseLimits())
+	if err != nil {
+		t.Fatalf("DecodeSeed(torrent) error = %v", err)
+	}
+	if got := decodedTorrent.Files[0].CASCloud; got != CloudAliyundriveOpen {
+		t.Fatalf("DecodeSeed(torrent) cloud = %q, want %q", got, CloudAliyundriveOpen)
+	}
+}
+
+func TestBuildCASInfoFromMD5sDefaultsToCloud189(t *testing.T) {
+	info := BuildCASInfoFromMD5s(strings.Repeat("1", 32), []string{strings.Repeat("4", 32)}, DefaultPieceSize)
+	if info.Cloud != Cloud189 {
+		t.Fatalf("BuildCASInfoFromMD5s() cloud = %q, want %q", info.Cloud, Cloud189)
+	}
+	other := BuildCASInfoFromMD5sWithCloud(strings.Repeat("1", 32), []string{strings.Repeat("4", 32)}, DefaultPieceSize, Cloud115)
+	if other.Cloud != Cloud115 {
+		t.Fatalf("BuildCASInfoFromMD5sWithCloud() cloud = %q, want %q", other.Cloud, Cloud115)
+	}
+}
+
 func TestValidateSeedRejectsTraversalAndInvalidHash(t *testing.T) {
 	seed := testSeed()
 	seed.Files[0].Path = "../secret"

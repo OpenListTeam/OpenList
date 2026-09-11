@@ -34,6 +34,13 @@ const (
 	// CASCloudKey 云盘类型 key
 	CASCloudKey = "cloud"
 
+	// Cloud189 identifies the 天翼云 (189) PC driver CAS slice rule.
+	Cloud189 = "189"
+	// Cloud115 identifies the 115 driver rapid-upload rule (whole-file SHA1).
+	Cloud115 = "115"
+	// CloudAliyundriveOpen identifies the aliyundrive_open rapid-upload rule (whole-file SHA1).
+	CloudAliyundriveOpen = "aliyundrive_open"
+
 	// OpenListExtensionKey is the optional root-level extension key.
 	OpenListExtensionKey = "x-openlist"
 	// OSSFormat identifies OpenList sharing seed JSON documents.
@@ -76,6 +83,8 @@ type SeedFile struct {
 	Sources         []SeedSource `json:"sources,omitempty"`
 	CASSliceMD5     string       `json:"cas_slice_md5,omitempty"`
 	CASCreateTime   string       `json:"cas_create_time,omitempty"`
+	// CASCloud 标识该文件 CAS 元数据所属的云盘类型（如 "189"）。留空视为 189。
+	CASCloud        string       `json:"cas_cloud,omitempty"`
 	MissingChannels []string     `json:"missing_channels,omitempty"`
 }
 
@@ -84,6 +93,7 @@ type SeedHashes struct {
 	MD5    string           `json:"md5,omitempty"`
 	SHA1   string           `json:"sha1,omitempty"`
 	SHA256 string           `json:"sha256,omitempty"`
+	GCID   string           `json:"gcid,omitempty"`
 	Pieces *SeedPieceHashes `json:"pieces,omitempty"`
 }
 
@@ -111,6 +121,8 @@ type CASFileEntry struct {
 	CreateTime string   `json:"create_time"`
 	SliceMD5s  []string `json:"slice_md5s,omitempty"`
 	SliceSize  int64    `json:"slice_size,omitempty"`
+	// Cloud 标识该 CAS 条目所属的云盘类型（如 "189"）；留空视为 189。
+	Cloud string `json:"cloud,omitempty"`
 }
 
 // CASPayload matches the reference .cas JSON payload. The five legacy fields
@@ -125,7 +137,9 @@ type CASPayload struct {
 	CreateTime string         `json:"create_time"`
 	SliceMD5s  []string       `json:"slice_md5s,omitempty"`
 	SliceSize  int64          `json:"slice_size,omitempty"`
-	Files      []CASFileEntry `json:"files,omitempty"`
+	// Cloud 标识该 CAS 载荷所属的云盘类型（如 "189"）；留空视为 189。
+	Cloud string         `json:"cloud,omitempty"`
+	Files []CASFileEntry `json:"files,omitempty"`
 }
 
 // ParseLimits controls resource use while parsing untrusted seeds.
@@ -150,7 +164,8 @@ type CASInfo struct {
 	SliceMD5s []string
 	// SliceSize 分片大小（字节）
 	SliceSize int64
-	// Cloud 云盘类型标识
+	// Cloud 云盘类型标识。可为具体驱动名（如 "189"、"115"、"aliyundrive_open"），
+	// 或留空表示由使用方按目标驱动自行判定。不同类型的分片规则可能不同。
 	Cloud string
 }
 
@@ -548,8 +563,14 @@ func (t *Torrent) HasCASInfo() bool {
 	return t.CAS != nil && t.CAS.FileMD5 != "" && t.CAS.SliceMD5 != ""
 }
 
-// BuildCASInfoFromMD5s 从分片 MD5 列表构建 CAS 信息
+// BuildCASInfoFromMD5s 从分片 MD5 列表构建 CAS 信息（默认按天翼云分片规则标记 cloud=189）。
+// 新代码应优先使用 BuildCASInfoFromMD5sWithCloud 显式指定云盘类型。
 func BuildCASInfoFromMD5s(fileMD5 string, sliceMD5s []string, sliceSize int64) *CASInfo {
+	return BuildCASInfoFromMD5sWithCloud(fileMD5, sliceMD5s, sliceSize, Cloud189)
+}
+
+// BuildCASInfoFromMD5sWithCloud 从分片 MD5 列表构建 CAS 信息，并指定云盘类型标识。
+func BuildCASInfoFromMD5sWithCloud(fileMD5 string, sliceMD5s []string, sliceSize int64, cloud string) *CASInfo {
 	fileMD5 = strings.ToUpper(fileMD5)
 	sliceMD5s = upperStrings(sliceMD5s)
 	sliceMD5 := fileMD5
@@ -564,7 +585,7 @@ func BuildCASInfoFromMD5s(fileMD5 string, sliceMD5s []string, sliceSize int64) *
 		SliceMD5:  sliceMD5,
 		SliceMD5s: sliceMD5s,
 		SliceSize: sliceSize,
-		Cloud:     "189",
+		Cloud:     cloud,
 	}
 }
 
@@ -850,7 +871,7 @@ func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 	}
 	entry := CASFileEntry{
 		Name: path.Base(file.Path), Size: file.Size, MD5: strings.ToUpper(file.Hashes.MD5),
-		SliceMD5: sliceMD5, CreateTime: createTime,
+		SliceMD5: sliceMD5, CreateTime: createTime, Cloud: file.CASCloud,
 	}
 	if len(sliceMD5s) > 0 {
 		entry.SliceMD5s = sliceMD5s
@@ -881,7 +902,7 @@ func EncodeCAS(seed *Seed) ([]byte, error) {
 		payload = CASPayload{
 			Name: entry.Name, Size: entry.Size, MD5: entry.MD5,
 			SliceMD5: entry.SliceMD5, CreateTime: entry.CreateTime,
-			SliceMD5s: entry.SliceMD5s, SliceSize: entry.SliceSize,
+			SliceMD5s: entry.SliceMD5s, SliceSize: entry.SliceSize, Cloud: entry.Cloud,
 		}
 	} else {
 		entries := make([]CASFileEntry, 0, len(seed.Files))
@@ -929,7 +950,7 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 			return nil, fmt.Errorf("CAS seed exceeds %d files", limits.MaxFiles)
 		}
 		for _, entry := range payload.Files {
-			file, err := casEntryToSeedFile(entry.Name, entry.Size, entry.MD5, entry.SliceMD5, entry.CreateTime, entry.SliceMD5s)
+			file, err := casEntryToSeedFile(entry.Name, entry.Size, entry.MD5, entry.SliceMD5, entry.CreateTime, entry.SliceMD5s, entry.Cloud)
 			if err != nil {
 				return nil, err
 			}
@@ -940,7 +961,7 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 		}
 		return seed, ValidateSeed(seed, limits)
 	}
-	file, err := casEntryToSeedFile(payload.Name, payload.Size, payload.MD5, payload.SliceMD5, payload.CreateTime, payload.SliceMD5s)
+	file, err := casEntryToSeedFile(payload.Name, payload.Size, payload.MD5, payload.SliceMD5, payload.CreateTime, payload.SliceMD5s, payload.Cloud)
 	if err != nil {
 		return nil, err
 	}
@@ -953,7 +974,7 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 
 // casEntryToSeedFile converts a CAS payload entry into a SeedFile, restoring the
 // per-piece MD5 list when it is present.
-func casEntryToSeedFile(name string, size int64, md5Hex, sliceMD5Hex, createTime string, sliceMD5s []string) (SeedFile, error) {
+func casEntryToSeedFile(name string, size int64, md5Hex, sliceMD5Hex, createTime string, sliceMD5s []string, cloud string) (SeedFile, error) {
 	if name == "" || size < 0 || !validHexHash(md5Hex, 32) {
 		return SeedFile{}, fmt.Errorf("invalid CAS payload")
 	}
@@ -967,6 +988,7 @@ func casEntryToSeedFile(name string, size int64, md5Hex, sliceMD5Hex, createTime
 	file := SeedFile{
 		Path: name, Size: size, CASCreateTime: createTime,
 		CASSliceMD5: strings.ToLower(sliceMD5),
+		CASCloud:    cloud,
 		Hashes:      SeedHashes{MD5: strings.ToLower(md5Hex)},
 	}
 	if len(sliceMD5s) > 0 {
@@ -1111,12 +1133,20 @@ func TorrentFromSeed(seed *Seed) (*Torrent, []string) {
 	if len(seed.Files) == 1 {
 		file := seed.Files[0]
 		if file.Hashes.MD5 != "" && file.CASSliceMD5 != "" {
+			cloud := file.CASCloud
+			if cloud == "" {
+				cloud = Cloud189
+			}
 			t.CAS = &CASInfo{
 				FileMD5: strings.ToUpper(file.Hashes.MD5), SliceMD5: strings.ToUpper(file.CASSliceMD5),
-				SliceSize: DefaultPieceSize, Cloud: "189",
+				SliceSize: DefaultPieceSize, Cloud: cloud,
 			}
 		} else if file.Hashes.MD5 != "" && seed.PieceSize == DefaultPieceSize && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
-			t.CAS = BuildCASInfoFromMD5s(file.Hashes.MD5, upperStrings(file.Hashes.Pieces.MD5), DefaultPieceSize)
+			cloud := file.CASCloud
+			if cloud == "" {
+				cloud = Cloud189
+			}
+			t.CAS = BuildCASInfoFromMD5sWithCloud(file.Hashes.MD5, upperStrings(file.Hashes.Pieces.MD5), DefaultPieceSize, cloud)
 		}
 	}
 	return t, nil
@@ -1267,6 +1297,9 @@ func seedToBencode(seed *Seed) map[string]interface{} {
 		if file.CASCreateTime != "" {
 			item["cas_create_time"] = file.CASCreateTime
 		}
+		if file.CASCloud != "" {
+			item["cas_cloud"] = file.CASCloud
+		}
 		if len(file.MissingChannels) > 0 {
 			item["missing_channels"] = stringsToInterfaces(file.MissingChannels)
 		}
@@ -1345,6 +1378,7 @@ func seedFromBencode(value interface{}) (*Seed, error) {
 		file := SeedFile{
 			Path: bString(item["path"]), Size: bInt(item["size"]), Modified: bString(item["modified"]), Comment: bString(item["comment"]),
 			CASSliceMD5: bString(item["cas_slice_md5"]), CASCreateTime: bString(item["cas_create_time"]),
+			CASCloud:        bString(item["cas_cloud"]),
 			MissingChannels: bStrings(item["missing_channels"]),
 		}
 		if hashes, ok := item["hashes"].(map[string]interface{}); ok {

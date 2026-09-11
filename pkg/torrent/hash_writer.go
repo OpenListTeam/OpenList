@@ -9,6 +9,8 @@ import (
 	"hash"
 	"io"
 	"strings"
+
+	hash_extend "github.com/OpenListTeam/OpenList/v4/pkg/utils/hash"
 )
 
 // HashWriter 同时计算文件的 MD5、分片 MD5 和 SHA-1 piece hash
@@ -19,6 +21,8 @@ type HashWriter struct {
 	// fileSHA1 and fileSHA256 complete the portable full-file matrix.
 	fileSHA1   hash.Hash
 	fileSHA256 hash.Hash
+	// fileGCID 用于迅雷、PikPak 等
+	fileGCID hash.Hash
 	// 当前分片 MD5
 	sliceMD5 hash.Hash
 	// Per-piece hashers are updated in the same pass as whole-file hashes.
@@ -30,6 +34,8 @@ type HashWriter struct {
 	sliceSize int64
 	// piece 大小（与 sliceSize 相同，保持对齐）
 	pieceSize int64
+	// 文件总大小（用于 GCID 初始化）
+	fileSize int64
 
 	// 当前分片已写入字节数
 	sliceWritten int64
@@ -51,7 +57,8 @@ type HashWriter struct {
 // NewHashWriter 创建一个新的 HashWriter
 // sliceSize: CAS 分片大小（通常 10MB）
 // pieceSize: BT piece 大小（设为与 sliceSize 相同以保持对齐）
-func NewHashWriter(sliceSize, pieceSize int64) *HashWriter {
+// fileSize: 文件总大小（用于 GCID 初始化，0 表示未知）
+func NewHashWriter(sliceSize, pieceSize, fileSize int64) *HashWriter {
 	if sliceSize <= 0 {
 		sliceSize = DefaultPieceSize
 	}
@@ -62,18 +69,20 @@ func NewHashWriter(sliceSize, pieceSize int64) *HashWriter {
 		fileMD5:     md5.New(),
 		fileSHA1:    sha1.New(),
 		fileSHA256:  sha256.New(),
+		fileGCID:    hash_extend.GCID.New(fileSize),
 		sliceMD5:    md5.New(),
 		pieceMD5:    md5.New(),
 		pieceSHA1:   sha1.New(),
 		pieceSHA256: sha256.New(),
 		sliceSize:   sliceSize,
 		pieceSize:   pieceSize,
+		fileSize:    fileSize,
 	}
 }
 
 // NewDefaultHashWriter 创建默认的 HashWriter（10MB 分片）
 func NewDefaultHashWriter() *HashWriter {
-	return NewHashWriter(DefaultPieceSize, DefaultPieceSize)
+	return NewHashWriter(DefaultPieceSize, DefaultPieceSize, 0)
 }
 
 // Write 实现 io.Writer 接口
@@ -94,6 +103,7 @@ func (hw *HashWriter) Write(p []byte) (n int, err error) {
 		_, _ = hw.fileMD5.Write(chunk)
 		_, _ = hw.fileSHA1.Write(chunk)
 		_, _ = hw.fileSHA256.Write(chunk)
+		_, _ = hw.fileGCID.Write(chunk)
 		_, _ = hw.sliceMD5.Write(chunk)
 		_, _ = hw.pieceMD5.Write(chunk)
 		_, _ = hw.pieceSHA1.Write(chunk)
@@ -168,6 +178,11 @@ func (hw *HashWriter) GetFileSHA256() string {
 	return hex.EncodeToString(hw.fileSHA256.Sum(nil))
 }
 
+// GetFileGCID returns the uppercase GCID digest for Thunder/PikPak.
+func (hw *HashWriter) GetFileGCID() string {
+	return strings.ToUpper(hex.EncodeToString(hw.fileGCID.Sum(nil)))
+}
+
 // GetPieceMD5s returns independent per-file MD5 piece hashes.
 func (hw *HashWriter) GetPieceMD5s() []string {
 	return append([]string(nil), hw.pieceMD5Hexs...)
@@ -193,6 +208,7 @@ func (hw *HashWriter) BuildSeedFile(filePath string, modified string) SeedFile {
 			MD5:    strings.ToLower(hw.GetFileMD5()),
 			SHA1:   hw.GetFileSHA1(),
 			SHA256: hw.GetFileSHA256(),
+			GCID:   strings.ToLower(hw.GetFileGCID()),
 			Pieces: &SeedPieceHashes{
 				MD5:    hw.GetPieceMD5s(),
 				SHA1:   hw.GetPieceSHA1s(),
@@ -238,7 +254,7 @@ func (hw *HashWriter) BuildTorrent(fileName string, fileSize int64) *Torrent {
 		SliceMD5:  sliceMD5,
 		SliceMD5s: hw.GetSliceMD5s(),
 		SliceSize: hw.sliceSize,
-		Cloud:     "189",
+		Cloud:     Cloud189,
 	})
 
 	return t

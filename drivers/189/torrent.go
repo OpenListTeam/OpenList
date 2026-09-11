@@ -30,7 +30,7 @@ func GenerateTorrent(fileName string, fileSize int64, fileMD5 string, sliceMD5s 
 		SliceMD5:  sliceMD5,
 		SliceMD5s: sliceMD5s,
 		SliceSize: sliceSize,
-		Cloud:     "189",
+		Cloud:     torrent.Cloud189,
 	})
 
 	return t.Encode()

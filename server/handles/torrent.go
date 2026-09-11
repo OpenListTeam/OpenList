@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	stdpath "path"
 	"strings"
 	"time"
 
-	_189pc "github.com/OpenListTeam/OpenList/v4/drivers/189pc"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -25,10 +25,105 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	hash_extend "github.com/OpenListTeam/OpenList/v4/pkg/utils/hash"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 )
+
+// seedRapidUploaderFor probes a storage driver for the generic
+// driver.SeedRapidUploader capability. It returns nil when the driver does not
+// support hash-driven rapid upload (秒传/CAS).
+func seedRapidUploaderFor(storage driver.Driver) driver.SeedRapidUploader {
+	if storage == nil {
+		return nil
+	}
+	if u, ok := storage.(driver.SeedRapidUploader); ok {
+		return u
+	}
+	return nil
+}
+
+// buildSeedRapidUploadRequest converts a parsed torrent's CAS metadata into a
+// driver.SeedRapidUploadRequest. open lazily provides the file content and may
+// be nil when no content source is available.
+func buildSeedRapidUploadRequest(t *torrent.Torrent, open func() (model.FileStreamer, error)) *driver.SeedRapidUploadRequest {
+	if t == nil {
+		return nil
+	}
+
+	wholeHashes := make(map[*utils.HashType]string)
+	req := &driver.SeedRapidUploadRequest{
+		Name: t.Info.Name,
+		Size: t.GetTotalSize(),
+		Open: open,
+	}
+
+	if t.CAS != nil {
+		req.SliceSize = t.CAS.SliceSize
+		req.SliceMD5s = t.CAS.SliceMD5s
+		if t.CAS.FileMD5 != "" {
+			wholeHashes[utils.MD5] = strings.ToUpper(t.CAS.FileMD5)
+		}
+	}
+
+	// 从种子文件的哈希矩阵补充整文件与分片哈希
+	if t.OpenList != nil {
+		if req.SliceSize == 0 {
+			req.SliceSize = t.OpenList.PieceSize
+		}
+		if len(t.OpenList.Files) > 0 {
+			sf := t.OpenList.Files[0]
+			if sf.Hashes.MD5 != "" {
+				wholeHashes[utils.MD5] = strings.ToUpper(sf.Hashes.MD5)
+			}
+			if sf.Hashes.SHA1 != "" {
+				wholeHashes[utils.SHA1] = strings.ToUpper(sf.Hashes.SHA1)
+			}
+			if sf.Hashes.SHA256 != "" {
+				wholeHashes[utils.SHA256] = strings.ToUpper(sf.Hashes.SHA256)
+			}
+			if sf.Hashes.GCID != "" {
+				wholeHashes[hash_extend.GCID] = strings.ToUpper(sf.Hashes.GCID)
+			}
+			if sf.Hashes.Pieces != nil {
+				if len(req.SliceMD5s) == 0 && len(sf.Hashes.Pieces.MD5) > 0 {
+					req.SliceMD5s = sf.Hashes.Pieces.MD5
+				}
+				if len(sf.Hashes.Pieces.SHA1) > 0 {
+					req.SliceSHA1s = sf.Hashes.Pieces.SHA1
+				}
+			}
+		}
+	}
+
+	req.Whole = &utils.HashInfo{}
+	*req.Whole = utils.NewHashInfoByMap(wholeHashes)
+	return req
+}
+
+// seedFileSupportsRapidUpload reports whether a seed file carries enough hash
+// metadata for the given rapid-upload driver to attempt an instant upload.
+func seedFileSupportsRapidUpload(uploader driver.SeedRapidUploader, file torrent.SeedFile) bool {
+	if uploader == nil {
+		return false
+	}
+	hasMD5 := file.Hashes.MD5 != ""
+	hasSHA1 := file.Hashes.SHA1 != ""
+	for _, ht := range uploader.RapidHashAlgos() {
+		switch ht.Name {
+		case utils.MD5.Name:
+			if hasMD5 {
+				return true
+			}
+		case utils.SHA1.Name:
+			if hasSHA1 {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // maxTorrentBase64Len is the max allowed Base64-encoded torrent size (~10MB decoded)
 const maxTorrentBase64Len = 14 * 1024 * 1024
@@ -230,15 +325,16 @@ func TorrentRapidUpload(c *gin.Context) {
 		return
 	}
 
-	// 检查是否是天翼云 PC 驱动
-	cloud189PC, ok := storage.(*_189pc.Cloud189PC)
+	// 探测目标驱动是否支持通用 CAS 秒传
+	rapid, ok := storage.(driver.SeedRapidUploader)
 	if !ok {
-		common.ErrorResp(c, fmt.Errorf("目标存储不是天翼云PC驱动，不支持 CAS 秒传"), 400)
+		common.ErrorResp(c, fmt.Errorf("目标存储驱动 %s 不支持哈希秒传（CAS）", storage.GetStorage().Driver), 400)
 		return
 	}
 
 	// 尝试秒传
-	obj, err := cloud189PC.RapidUploadFromTorrent(c.Request.Context(), dstDir, torrentData, true)
+	rapidReq := buildSeedRapidUploadRequest(t, nil)
+	obj, err := rapid.RapidUploadByHashes(c.Request.Context(), dstDir, rapidReq, true)
 	if err != nil {
 		common.ErrorResp(c, fmt.Errorf("秒传失败: %w", err), 400)
 		return
@@ -374,10 +470,10 @@ func GenerateTorrentForPath(c *gin.Context) {
 		return
 	}
 
-	// with_cas 仅支持天翼云PC驱动
+	// with_cas 需要目标驱动支持通用哈希秒传（CAS）
 	if req.WithCAS {
-		if _, is189pc := storage.(*_189pc.Cloud189PC); !is189pc {
-			common.ErrorResp(c, fmt.Errorf("CAS 秒传扩展仅支持天翼云PC驱动"), 400)
+		if _, ok := storage.(driver.SeedRapidUploader); !ok {
+			common.ErrorResp(c, fmt.Errorf("存储驱动 %s 不支持 CAS 秒传扩展", storage.GetStorage().Driver), 400)
 			return
 		}
 	}
@@ -996,16 +1092,16 @@ func SeedCapabilities(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	_, rapid189 := storage.(*_189pc.Cloud189PC)
+	rapidUploader := seedRapidUploaderFor(storage)
 	_, putURL := storage.(driver.PutURL)
 	_, putURLResult := storage.(driver.PutURLResult)
 	files := make([]gin.H, 0, len(seed.Files))
 	for _, file := range seed.Files {
-		hasCAS := rapid189 && file.Hashes.MD5 != "" && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0
+		hasCAS := seedFileSupportsRapidUpload(rapidUploader, file)
 		hasSource := firstUsableSeedSource(file) != ""
 		method := "download_required"
 		if hasCAS {
-			method = "189pc_cas"
+			method = "rapid_upload"
 		} else if hasSource && (putURL || putURLResult) {
 			method = "put_url"
 		} else if hasSource {
@@ -1024,12 +1120,20 @@ func SeedCapabilities(c *gin.Context) {
 	}
 	// Describe the destination driver's rapid-transfer capability surface so the
 	// frontend can show which hashes are reusable for instant upload.
+	rapidAlgos := []string{}
+	usesPieces := false
+	if rapidUploader != nil {
+		for _, ht := range rapidUploader.RapidHashAlgos() {
+			rapidAlgos = append(rapidAlgos, ht.Name)
+		}
+		usesPieces = rapidUploader.RapidHashNeedsPieces()
+	}
 	driverSupports := gin.H{
-		"cas_rapid":         rapid189,
+		"cas_rapid":         rapidUploader != nil,
 		"put_url":           putURL || putURLResult,
 		"offline_download":  true,
-		"rapid_hash_algos":  []string{"md5", "sha1"},
-		"rapid_uses_pieces": rapid189,
+		"rapid_hash_algos":  rapidAlgos,
+		"rapid_uses_pieces": usesPieces,
 	}
 	common.SuccessResp(c, gin.H{
 		"driver": storage.Config().Name, "global_policy": globalPolicy,
@@ -1317,7 +1421,7 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 		}
 		selectedIndexes[index] = struct{}{}
 	}
-	cloud189, is189 := storage.(*_189pc.Cloud189PC)
+	rapidUploader := seedRapidUploaderFor(storage)
 	_, putURL := storage.(driver.PutURL)
 	_, putURLResult := storage.(driver.PutURLResult)
 	for index, file := range seed.Files {
@@ -1331,14 +1435,17 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			}
 		}
 		name := stdpath.Base(file.Path)
-		if is189 && file.Hashes.MD5 != "" && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 && len(file.Hashes.Pieces.SHA1) > 0 {
+		if rapidUploader != nil && seedFileSupportsRapidUpload(rapidUploader, file) {
 			one := *seed
 			one.Name = name
 			one.Files = []torrent.SeedFile{file}
 			if data, encodeErr := torrent.EncodeSeed(&one, "torrent"); encodeErr == nil {
-				if obj, rapidErr := cloud189.RapidUploadFromTorrent(c.Request.Context(), dstDir, data, req.Overwrite); rapidErr == nil {
-					results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "189pc_cas"})
-					continue
+				if t, decErr := torrent.Decode(data); decErr == nil {
+					rapidReq := buildSeedRapidUploadRequest(t, seedContentOpener(seed, file, c.Request.Context()))
+					if obj, rapidErr := rapidUploader.RapidUploadByHashes(c.Request.Context(), dstDir, rapidReq, req.Overwrite); rapidErr == nil {
+						results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
+						continue
+					}
 				}
 			}
 		}
@@ -1580,6 +1687,50 @@ func QuickSaveSeed(c *gin.Context) {
 		}
 	}
 	common.SuccessResp(c, resp)
+}
+
+// seedContentOpener returns a lazy content provider for a seed file. The source
+// bytes are fetched from the file's first usable source URL on first call. It
+// returns nil when no usable source exists, letting hash-only drivers (e.g.
+// 189pc) skip content entirely.
+func seedContentOpener(seed *torrent.Seed, file torrent.SeedFile, _ context.Context) func() (model.FileStreamer, error) {
+	source := firstUsableSeedSource(file)
+	if source == "" {
+		return nil
+	}
+	return func() (model.FileStreamer, error) {
+		req, err := http.NewRequest(http.MethodGet, source, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("下载种子内容失败: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("下载种子内容失败: HTTP %d", resp.StatusCode)
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxTorrentGenFileSize+1))
+		if err != nil {
+			return nil, fmt.Errorf("读取种子内容失败: %w", err)
+		}
+		if file.Size > 0 && int64(len(data)) != file.Size {
+			return nil, fmt.Errorf("种子内容大小不匹配: 期望 %d，实际 %d", file.Size, len(data))
+		}
+		reader := bytes.NewReader(data)
+		obj := &model.Object{
+			Name:     stdpath.Base(file.Path),
+			Size:     int64(len(data)),
+			Modified: time.Now(),
+			IsFolder: false,
+		}
+		return &stream.FileStream{
+			Ctx:    context.Background(),
+			Obj:    obj,
+			Reader: reader,
+		}, nil
+	}
 }
 
 func firstUsableSeedSource(file torrent.SeedFile) string {

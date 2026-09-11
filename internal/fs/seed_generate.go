@@ -295,13 +295,17 @@ func EncodeGeneratedSeed(seed *torrent.Seed, format string, standardPieces []byt
 		t.Info.Name = stdpath.Base(file.Path)
 		t.Info.Length = file.Size
 		t.Info.MD5Sum = file.Hashes.MD5
+		casCloud := file.CASCloud
+		if casCloud == "" {
+			casCloud = torrent.Cloud189
+		}
 		if file.CASSliceMD5 != "" {
 			t.SetCASInfo(&torrent.CASInfo{
 				FileMD5: strings.ToUpper(file.Hashes.MD5), SliceMD5: strings.ToUpper(file.CASSliceMD5),
-				SliceSize: torrent.DefaultPieceSize, Cloud: "189",
+				SliceSize: torrent.DefaultPieceSize, Cloud: casCloud,
 			})
 		} else if seed.PieceSize == torrent.DefaultPieceSize && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
-			t.SetCASInfo(torrent.BuildCASInfoFromMD5s(file.Hashes.MD5, file.Hashes.Pieces.MD5, torrent.DefaultPieceSize))
+			t.SetCASInfo(torrent.BuildCASInfoFromMD5sWithCloud(file.Hashes.MD5, file.Hashes.Pieces.MD5, torrent.DefaultPieceSize, casCloud))
 		}
 	} else {
 		for _, file := range seed.Files {

@@ -32,7 +32,7 @@ func GenerateFromReader(reader io.Reader, fileName string, fileSize int64, piece
 		pieceSize = DefaultPieceSize
 	}
 
-	hw := NewHashWriter(pieceSize, pieceSize)
+	hw := NewHashWriter(pieceSize, pieceSize, fileSize)
 
 	buf := make([]byte, 32*1024)
 	for {
@@ -66,7 +66,7 @@ func GenerateFromReaderWithCAS(reader io.Reader, fileName string, fileSize int64
 		pieceSize = DefaultPieceSize
 	}
 
-	hw := NewHashWriter(pieceSize, pieceSize)
+	hw := NewHashWriter(pieceSize, pieceSize, fileSize)
 
 	buf := make([]byte, 32*1024)
 	for {
@@ -102,7 +102,7 @@ func GenerateFromReaderWithCAS(reader io.Reader, fileName string, fileSize int64
 		SliceMD5:  sliceMD5,
 		SliceMD5s: sliceMD5s,
 		SliceSize: pieceSize,
-		Cloud:     "189",
+		Cloud:     Cloud189,
 	})
 
 	return t.Encode()
