@@ -152,6 +152,8 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 
 // GetObject fetchs the object from the filesystem.
 func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (s3Obj *gofakes3.Object, err error) {
+	defer func() { err = mapBackendError(err) }()
+
 	bucket, err := getBucketByName(bucketName)
 	if err != nil {
 		return nil, err
