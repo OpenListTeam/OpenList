@@ -11,6 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
@@ -22,8 +23,9 @@ type AliyundriveOpen struct {
 
 	DriveId string
 
-	limiter *limiter
-	ref     *AliyundriveOpen
+	limiter  *limiter
+	ref      *AliyundriveOpen
+	callback *callbackRegistration
 }
 
 func (d *AliyundriveOpen) Config() driver.Config {
@@ -35,6 +37,7 @@ func (d *AliyundriveOpen) GetAddition() driver.Additional {
 }
 
 func (d *AliyundriveOpen) Init(ctx context.Context) error {
+	d.CallbackConcurrency = normalizeCallbackConcurrency(d.CallbackConcurrency)
 	d.limiter = getLimiterForUser(globalLimiterUserID) // First create a globally shared limiter to limit the initial requests.
 	if d.LIVPDownloadFormat == "" {
 		d.LIVPDownloadFormat = "jpeg"
@@ -52,6 +55,7 @@ func (d *AliyundriveOpen) Init(ctx context.Context) error {
 	userid := utils.Json.Get(res, "user_id").ToString()
 	d.limiter.free()
 	d.limiter = getLimiterForUser(userid) // Allocate a corresponding limiter for each user.
+	d.callback = registerCallbackLimiter(userid, d.CallbackConcurrency)
 	return nil
 }
 
@@ -65,6 +69,10 @@ func (d *AliyundriveOpen) InitReference(storage driver.Driver) error {
 }
 
 func (d *AliyundriveOpen) Drop(ctx context.Context) error {
+	if d.callback != nil {
+		d.callback.unregister()
+		d.callback = nil
+	}
 	d.limiter.free()
 	d.limiter = nil
 	d.ref = nil
@@ -119,10 +127,16 @@ func (d *AliyundriveOpen) Link(ctx context.Context, file model.Obj, args model.L
 		url = utils.Json.Get(res, "streamsUrl", d.LIVPDownloadFormat).ToString()
 	}
 	exp := time.Minute
-	return &model.Link{
+	link := &model.Link{
 		URL:        url,
 		Expiration: &exp,
-	}, nil
+	}
+	if args.Redirect {
+		return link, nil
+	}
+	link.URL = ""
+	link.RangeReader = stream.RateLimitRangeReaderFunc(d.callbackRangeReader(url, file.GetSize()))
+	return link, nil
 }
 
 func (d *AliyundriveOpen) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
