@@ -3,6 +3,7 @@ package s3
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -67,11 +68,21 @@ func setupMultipartBackend(t *testing.T) (*s3Backend, string) {
 		t.Fatalf("mkdir local root: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(localRoot) })
+	addition, err := json.Marshal(struct {
+		RootFolderPath string `json:"root_folder_path"`
+		Thumbnail      bool   `json:"thumbnail"`
+	}{
+		RootFolderPath: localRoot,
+		Thumbnail:      false,
+	})
+	if err != nil {
+		t.Fatalf("marshal local storage addition: %v", err)
+	}
 
 	_, err = op.CreateStorage(ctx, model.Storage{
 		Driver:    "Local",
 		MountPath: mount,
-		Addition:  `{"root_folder_path":"` + localRoot + `","thumbnail":false}`,
+		Addition:  string(addition),
 	})
 	if err != nil {
 		t.Fatalf("create local storage: %+v", err)
