@@ -60,6 +60,16 @@ const (
 	HandleHookRateLimit     = "handle_hook_rate_limit"
 	IgnoreSystemFiles       = "ignore_system_files"
 
+	// transfer seeds
+	SeedSiteURL             = "seed_site_url"
+	SeedDefaultMatrix       = "seed_default_matrix"
+	SeedFormatPolicies      = "seed_format_policies"
+	SeedDefaultFormat       = "seed_default_format"
+	SeedSingleDirectPreview = "seed_single_direct_preview"
+	SeedCASDirectAccess     = "seed_cas_direct_access"
+	SeedAutoGeneratePolicy  = "seed_auto_generate_policy"
+	SeedDefaultTrackers     = "seed_default_trackers"
+
 	// index
 	SearchIndex     = "search_index"
 	AutoUpdateIndex = "auto_update_index"

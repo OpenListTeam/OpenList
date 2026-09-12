@@ -145,15 +145,24 @@ func bencodeEncodeOrderedDict(w io.Writer, d OrderedDict) error {
 
 // BencodeDecode 从字节数组解码 bencode 数据
 func BencodeDecode(data []byte) (interface{}, error) {
+	if int64(len(data)) > DefaultMaxSeedSize {
+		return nil, fmt.Errorf("bencode: input exceeds %d bytes", DefaultMaxSeedSize)
+	}
 	reader := bytes.NewReader(data)
-	val, err := bencodeDecodeValue(reader)
+	val, err := bencodeDecodeValue(reader, 0)
 	if err != nil {
 		return nil, err
+	}
+	if reader.Len() != 0 {
+		return nil, fmt.Errorf("bencode: trailing data")
 	}
 	return val, nil
 }
 
-func bencodeDecodeValue(r *bytes.Reader) (interface{}, error) {
+func bencodeDecodeValue(r *bytes.Reader, depth int) (interface{}, error) {
+	if depth > DefaultParseLimits().MaxDepth {
+		return nil, fmt.Errorf("bencode: nesting depth exceeds limit")
+	}
 	b, err := r.ReadByte()
 	if err != nil {
 		return nil, err
@@ -163,9 +172,9 @@ func bencodeDecodeValue(r *bytes.Reader) (interface{}, error) {
 	case b == 'i':
 		return bencodeDecodeInt(r)
 	case b == 'l':
-		return bencodeDecodeList(r)
+		return bencodeDecodeList(r, depth+1)
 	case b == 'd':
-		return bencodeDecodeDict(r)
+		return bencodeDecodeDict(r, depth+1)
 	case b >= '0' && b <= '9':
 		r.UnreadByte()
 		return bencodeDecodeString(r)
@@ -206,10 +215,14 @@ func bencodeDecodeString(r *bytes.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bencode: invalid string length: %v", err)
 	}
-	if length < 0 || length > 100*1024*1024 {
-		return nil, fmt.Errorf("bencode: string length out of bounds: %d", length)
+	// A single string can never exceed the whole input, which BencodeDecode
+	// already caps at DefaultMaxSeedSize. Deriving the bound from the same
+	// constant keeps the constraint self-consistent instead of maintaining a
+	// second, unreachable 100MB ceiling.
+	if length < 0 || length > DefaultMaxSeedSize {
+		return nil, fmt.Errorf("bencode: string length out of bounds: %d (limit %d)", length, DefaultMaxSeedSize)
 	}
-	// Safe to convert to int: bounds check above ensures length <= 100MB which fits in int32
+	// Bounded by DefaultMaxSeedSize, so the int conversion cannot truncate.
 	data := make([]byte, int(length))
 	_, err = io.ReadFull(r, data)
 	if err != nil {
@@ -218,9 +231,12 @@ func bencodeDecodeString(r *bytes.Reader) ([]byte, error) {
 	return data, nil
 }
 
-func bencodeDecodeList(r *bytes.Reader) ([]interface{}, error) {
+func bencodeDecodeList(r *bytes.Reader, depth int) ([]interface{}, error) {
 	var list []interface{}
 	for {
+		if len(list) >= DefaultMaxSeedFiles*4 {
+			return nil, fmt.Errorf("bencode: list item limit exceeded")
+		}
 		b, err := r.ReadByte()
 		if err != nil {
 			return nil, err
@@ -228,8 +244,8 @@ func bencodeDecodeList(r *bytes.Reader) ([]interface{}, error) {
 		if b == 'e' {
 			return list, nil
 		}
-		r.UnreadByte()
-		val, err := bencodeDecodeValue(r)
+		_ = r.UnreadByte()
+		val, err := bencodeDecodeValue(r, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -237,9 +253,12 @@ func bencodeDecodeList(r *bytes.Reader) ([]interface{}, error) {
 	}
 }
 
-func bencodeDecodeDict(r *bytes.Reader) (map[string]interface{}, error) {
+func bencodeDecodeDict(r *bytes.Reader, depth int) (map[string]interface{}, error) {
 	dict := make(map[string]interface{})
 	for {
+		if len(dict) >= DefaultMaxSeedFiles*4 {
+			return nil, fmt.Errorf("bencode: dictionary item limit exceeded")
+		}
 		b, err := r.ReadByte()
 		if err != nil {
 			return nil, err
@@ -247,12 +266,12 @@ func bencodeDecodeDict(r *bytes.Reader) (map[string]interface{}, error) {
 		if b == 'e' {
 			return dict, nil
 		}
-		r.UnreadByte()
+		_ = r.UnreadByte()
 		keyBytes, err := bencodeDecodeString(r)
 		if err != nil {
 			return nil, err
 		}
-		val, err := bencodeDecodeValue(r)
+		val, err := bencodeDecodeValue(r, depth)
 		if err != nil {
 			return nil, err
 		}

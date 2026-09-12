@@ -1,9 +1,10 @@
 package torrent
 
 import (
+	"fmt"
 	"io"
 	"os"
-	"strings"
+	"path"
 )
 
 // GenerateFromFile 从文件路径生成通用的 torrent 文件（不含 CAS 扩展）
@@ -30,7 +31,7 @@ func GenerateFromReader(reader io.Reader, fileName string, fileSize int64, piece
 		pieceSize = DefaultPieceSize
 	}
 
-	hw := NewHashWriter(pieceSize, pieceSize)
+	hw := NewHashWriter(pieceSize, pieceSize, fileSize)
 
 	buf := make([]byte, 32*1024)
 	for {
@@ -64,7 +65,7 @@ func GenerateFromReaderWithCAS(reader io.Reader, fileName string, fileSize int64
 		pieceSize = DefaultPieceSize
 	}
 
-	hw := NewHashWriter(pieceSize, pieceSize)
+	hw := NewHashWriter(pieceSize, pieceSize, fileSize)
 
 	buf := make([]byte, 32*1024)
 	for {
@@ -85,12 +86,8 @@ func GenerateFromReaderWithCAS(reader io.Reader, fileName string, fileSize int64
 	sliceMD5s := hw.GetSliceMD5s()
 	pieceHashes := hw.GetPieceHashes()
 
-	// 计算 sliceMD5
-	sliceMD5 := fileMD5
-	if len(sliceMD5s) > 1 {
-		joined := strings.Join(sliceMD5s, "\n")
-		sliceMD5 = strings.ToUpper(GetMD5Str(joined))
-	}
+	// 计算 sliceMD5（统一走规范实现）
+	sliceMD5 := SliceMD5FromPieces(sliceMD5s, fileMD5)
 
 	t := NewTorrent(fileName, fileSize, fileMD5)
 	t.Info.PieceLength = pieceSize
@@ -100,7 +97,7 @@ func GenerateFromReaderWithCAS(reader io.Reader, fileName string, fileSize int64
 		SliceMD5:  sliceMD5,
 		SliceMD5s: sliceMD5s,
 		SliceSize: pieceSize,
-		Cloud:     "189",
+		Cloud:     Cloud189,
 	})
 
 	return t.Encode()
@@ -120,4 +117,28 @@ func GenerateFromFileWithCAS(filePath string) ([]byte, error) {
 	}
 
 	return GenerateFromReaderWithCAS(f, info.Name(), info.Size(), DefaultPieceSize)
+}
+
+// GenerateSeedFromReader computes the complete OSS hash matrix in one stream pass.
+func GenerateSeedFromReader(reader io.Reader, filePath string, expectedSize, pieceSize int64, createdBy string) (*Seed, error) {
+	if pieceSize <= 0 {
+		pieceSize = DefaultPieceSize
+	}
+	if err := validateRelativeSeedPath(filePath); err != nil {
+		return nil, err
+	}
+	hw := NewHashWriter(pieceSize, pieceSize, expectedSize)
+	if _, err := CopyAndHash(nil, reader, hw); err != nil {
+		return nil, err
+	}
+	hw.Finish()
+	if expectedSize >= 0 && hw.GetTotalWritten() != expectedSize {
+		return nil, fmt.Errorf("stream size mismatch: read %d bytes, expected %d", hw.GetTotalWritten(), expectedSize)
+	}
+	seed := NewSeed(path.Base(filePath), createdBy, pieceSize)
+	seed.Files = []SeedFile{hw.BuildSeedFile(filePath, "")}
+	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
+		return nil, err
+	}
+	return seed, nil
 }
