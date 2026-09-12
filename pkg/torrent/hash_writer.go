@@ -225,11 +225,34 @@ func (hw *HashWriter) GetSliceMD5s() []string {
 
 // GetSliceMD5 获取最终的 sliceMD5（用于秒传）
 func (hw *HashWriter) GetSliceMD5(fileMD5 string) string {
-	if len(hw.sliceMD5Hexs) <= 1 {
-		return fileMD5
+	return SliceMD5FromPieces(hw.sliceMD5Hexs, fileMD5)
+}
+
+// SliceMD5FromPieces is the single canonical implementation of the sliceMd5
+// rule shared by every CAS producer and consumer:
+//
+//   - no piece, or a single piece  -> the whole-file MD5
+//   - two or more pieces           -> MD5 of the piece MD5s joined by "\n"
+//
+// Keeping one implementation matters because this value is what the remote
+// provider compares against: a divergence between the hash-generation side and
+// the torrent/CAS encoding side silently turns rapid uploads into mismatches.
+// All comparisons and the returned value are upper-case.
+func SliceMD5FromPieces(sliceMD5s []string, fileMD5 string) string {
+	switch len(sliceMD5s) {
+	case 0, 1:
+		// A single piece covers the whole file, so the two hashes coincide.
+		if len(sliceMD5s) == 1 && sliceMD5s[0] != "" {
+			return strings.ToUpper(sliceMD5s[0])
+		}
+		return strings.ToUpper(fileMD5)
+	default:
+		upper := make([]string, len(sliceMD5s))
+		for i, piece := range sliceMD5s {
+			upper[i] = strings.ToUpper(piece)
+		}
+		return strings.ToUpper(GetMD5Str(strings.Join(upper, "\n")))
 	}
-	joined := strings.Join(hw.sliceMD5Hexs, "\n")
-	return strings.ToUpper(GetMD5Str(joined))
 }
 
 // GetPieceHashes 获取所有 piece 的 SHA-1 哈希拼接

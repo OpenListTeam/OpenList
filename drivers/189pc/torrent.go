@@ -27,12 +27,8 @@ import (
 // fileName: 文件名
 // fileSize: 文件大小
 func GenerateTorrent(fileName string, fileSize int64, fileMD5 string, sliceMD5s []string, sliceSize int64, pieceHashes []byte) ([]byte, error) {
-	// 计算 sliceMD5
-	sliceMD5 := fileMD5
-	if len(sliceMD5s) > 1 {
-		joined := strings.Join(sliceMD5s, "\n")
-		sliceMD5 = strings.ToUpper(torrent.GetMD5Str(joined))
-	}
+	// 计算 sliceMD5（统一走规范实现）
+	sliceMD5 := torrent.SliceMD5FromPieces(sliceMD5s, fileMD5)
 
 	t := torrent.NewTorrent(fileName, fileSize, fileMD5)
 	t.Info.PieceLength = sliceSize
@@ -175,12 +171,8 @@ func InjectCASIntoTorrent(torrentData []byte, fileMD5 string, sliceMD5s []string
 		return nil, fmt.Errorf("解析 torrent 失败: %w", err)
 	}
 
-	// 计算 sliceMD5
-	sliceMD5 := fileMD5
-	if len(sliceMD5s) > 1 {
-		joined := strings.Join(sliceMD5s, "\n")
-		sliceMD5 = strings.ToUpper(torrent.GetMD5Str(joined))
-	}
+	// 计算 sliceMD5（统一走规范实现）
+	sliceMD5 := torrent.SliceMD5FromPieces(sliceMD5s, fileMD5)
 
 	// 注入 CAS 信息
 	t.SetCASInfo(&torrent.CASInfo{

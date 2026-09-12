@@ -67,13 +67,24 @@ func buildSeedRapidUploadRequest(t *torrent.Torrent, open func() (model.FileStre
 		}
 	}
 
-	// 从种子文件的哈希矩阵补充整文件与分片哈希
+	// 从种子文件的哈希矩阵补充整文件与分片哈希。
+	//
+	// 秒传请求一次只描述一个文件：req.Size / 哈希都必须属于同一个对象。
+	// 多文件 torrent 的哈希属于不同文件，若取 Files[0] 而 Size 取总大小，
+	// 会向云端提交一个大小与哈希互相矛盾的对象。这里显式拒绝，由调用方
+	// 拆成单文件种子后逐个处理（saveSeedFilesToPath 正是这样做的）。
 	if t.OpenList != nil {
+		if len(t.OpenList.Files) > 1 {
+			return nil
+		}
 		if req.SliceSize == 0 {
 			req.SliceSize = t.OpenList.PieceSize
 		}
-		if len(t.OpenList.Files) > 0 {
+		if len(t.OpenList.Files) == 1 {
 			sf := t.OpenList.Files[0]
+			if sf.Size > 0 && sf.Size != t.GetTotalSize() {
+				return nil
+			}
 			if sf.Hashes.MD5 != "" {
 				wholeHashes[utils.MD5] = strings.ToUpper(sf.Hashes.MD5)
 			}
@@ -130,6 +141,115 @@ const maxTorrentBase64Len = 14 * 1024 * 1024
 
 // maxTorrentGenFileSize is the max file size allowed for synchronous torrent generation (1GB)
 const maxTorrentGenFileSize = 1 * 1024 * 1024 * 1024
+
+// maxSeedSourceRedirects bounds how many redirects a seed source fetch may follow.
+const maxSeedSourceRedirects = 3
+
+// seedSourceHTTPClient fetches seed sources without any credentials.
+//
+// Seed sources are deliberately anonymous: a direct link (/d/) or share link
+// (/sd/) embedded in a seed must stay usable from another instance that has no
+// knowledge of this instance's session, so no Authorization header, cookie or
+// signing query is ever attached here.
+//
+// The only guarantee we must hold is that the request cannot be used to reach
+// an arbitrary internal endpoint. firstUsableSeedSource/validateSeedSource only
+// pin the *initial* host, so every redirect hop is re-validated against the
+// configured site with the exact same rule. Without this, a benign-looking
+// source could 302 to a metadata/IPC endpoint and turn seed fetching into SSRF.
+var seedSourceHTTPClient = &http.Client{
+	Timeout: 5 * time.Minute,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxSeedSourceRedirects {
+			return fmt.Errorf("种子来源重定向次数过多（最多 %d 次）", maxSeedSourceRedirects)
+		}
+		if err := validateSeedHost(req.URL); err != nil {
+			return fmt.Errorf("种子来源重定向被拒绝: %w", err)
+		}
+		// Redirects must not silently drop to a weaker scheme.
+		if origin := via[0].URL.Scheme; !strings.EqualFold(req.URL.Scheme, origin) {
+			return fmt.Errorf("种子来源重定向不允许切换协议: %s -> %s", origin, req.URL.Scheme)
+		}
+		return nil
+	},
+}
+
+// seedSiteURLProvider supplies the configured seed_site_url. It is a variable so
+// tests can exercise the validation rules without a settings database; the
+// production value reads the setting on every call so config changes apply
+// without a restart.
+var seedSiteURLProvider = func() string {
+	return setting.GetStr(conf.SeedSiteURL)
+}
+
+// seedSiteConfig returns the parsed seed_site_url, or an error when it is unset
+// or malformed. All seed source validation is relative to this origin.
+func seedSiteConfig() (*url.URL, error) {
+	configured := strings.TrimSpace(seedSiteURLProvider())
+	if configured == "" {
+		return nil, fmt.Errorf("seed_site_url 未配置")
+	}
+	site, err := url.Parse(configured)
+	if err != nil {
+		return nil, fmt.Errorf("seed_site_url 解析失败: %w", err)
+	}
+	if site.Scheme == "" || site.Hostname() == "" {
+		return nil, fmt.Errorf("seed_site_url 缺少协议或主机名")
+	}
+	return site, nil
+}
+
+// sameSeedHost reports whether two URLs point at the same site.
+//
+// Comparison is on hostname plus the *effective* port (80/443 for http/https),
+// not on url.URL.Host: a configured "https://pan.example.com" and an embedded
+// "https://pan.example.com:443/..." are the same origin, and treating them as
+// different silently drops otherwise valid sources.
+func sameSeedHost(a, b *url.URL) bool {
+	if !strings.EqualFold(a.Scheme, b.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(a.Hostname(), b.Hostname()) {
+		return false
+	}
+	return effectivePort(a) == effectivePort(b)
+}
+
+func effectivePort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	}
+	return ""
+}
+
+// validateSeedHost checks that a seed source URL belongs to the configured site
+// and carries no embedded credentials. It is shared by the pre-flight
+// validation and by the redirect guard, so both enforce identical rules.
+func validateSeedHost(u *url.URL) error {
+	if u == nil {
+		return fmt.Errorf("空 URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("不支持的协议 %q", u.Scheme)
+	}
+	if u.User != nil {
+		return fmt.Errorf("种子来源不允许携带用户凭据")
+	}
+	site, err := seedSiteConfig()
+	if err != nil {
+		return err
+	}
+	if !sameSeedHost(u, site) {
+		return fmt.Errorf("种子来源主机 %q 与配置站点 %q 不一致", u.Host, site.Host)
+	}
+	return nil
+}
 
 // validateParsedTorrent checks that basic torrent invariants hold.
 func validateParsedTorrent(t *torrent.Torrent) error {
@@ -333,7 +453,13 @@ func TorrentRapidUpload(c *gin.Context) {
 	}
 
 	// 尝试秒传
+	// 注意：overwrite 刻意固定为 true。秒传本身就是「把已存在的云端数据
+	// 挂载到目标目录」，语义上等价于覆盖，放开成用户可选没有实际意义。
 	rapidReq := buildSeedRapidUploadRequest(t, nil)
+	if rapidReq == nil {
+		common.ErrorResp(c, fmt.Errorf("该种子无法用于秒传：仅支持单文件且大小与哈希一致的种子"), 400)
+		return
+	}
 	obj, err := rapid.RapidUploadByHashes(c.Request.Context(), dstDir, rapidReq, true)
 	if err != nil {
 		common.ErrorResp(c, fmt.Errorf("秒传失败: %w", err), 400)
@@ -1169,13 +1295,11 @@ func validateSeedSource(src torrent.SeedSource) error {
 		return fmt.Errorf("unsupported seed source type %q", src.Type)
 	}
 	u, err := url.Parse(src.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+	if err != nil {
 		return fmt.Errorf("invalid seed source URL for %q", src.Type)
 	}
-	if configured := strings.TrimSpace(setting.GetStr(conf.SeedSiteURL)); configured != "" {
-		if site, parseErr := url.Parse(configured); parseErr == nil && !strings.EqualFold(u.Host, site.Host) {
-			return fmt.Errorf("seed source host must match the configured site URL")
-		}
+	if err := validateSeedHost(u); err != nil {
+		return err
 	}
 	if src.Type == "openlist-direct" && !strings.HasPrefix(u.EscapedPath(), "/d/") {
 		return fmt.Errorf("openlist-direct source URL must start with /d/")
@@ -1441,10 +1565,11 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			one.Files = []torrent.SeedFile{file}
 			if data, encodeErr := torrent.EncodeSeed(&one, "torrent"); encodeErr == nil {
 				if t, decErr := torrent.Decode(data); decErr == nil {
-					rapidReq := buildSeedRapidUploadRequest(t, seedContentOpener(seed, file, c.Request.Context()))
-					if obj, rapidErr := rapidUploader.RapidUploadByHashes(c.Request.Context(), dstDir, rapidReq, req.Overwrite); rapidErr == nil {
-						results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
-						continue
+					if rapidReq := buildSeedRapidUploadRequest(t, seedContentOpener(seed, file, c.Request.Context())); rapidReq != nil {
+						if obj, rapidErr := rapidUploader.RapidUploadByHashes(c.Request.Context(), dstDir, rapidReq, req.Overwrite); rapidErr == nil {
+							results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
+							continue
+						}
 					}
 				}
 			}
@@ -1689,61 +1814,81 @@ func QuickSaveSeed(c *gin.Context) {
 	common.SuccessResp(c, resp)
 }
 
-// seedContentOpener returns a lazy content provider for a seed file. The source
-// bytes are fetched from the file's first usable source URL on first call. It
-// returns nil when no usable source exists, letting hash-only drivers (e.g.
-// 189pc) skip content entirely.
-func seedContentOpener(seed *torrent.Seed, file torrent.SeedFile, _ context.Context) func() (model.FileStreamer, error) {
+// seedContentOpener returns a lazy content provider for a seed file.
+//
+// The source bytes are fetched from the file's first usable source URL, but
+// only on the first call, letting hash-only drivers (e.g. 189pc) skip content
+// entirely. Requests are deliberately anonymous and routed through
+// seedSourceHTTPClient so redirects are re-validated (see its doc comment).
+//
+// The returned streamer is backed by a range reader rather than a fully
+// buffered copy: drivers such as aliyundrive_open and quark_open only read a
+// small proof window, and 115 reads a 128KiB prefix, so buffering up to 1GB in
+// memory would be pure waste.
+func seedContentOpener(seed *torrent.Seed, file torrent.SeedFile, ctx context.Context) func() (model.FileStreamer, error) {
 	source := firstUsableSeedSource(file)
 	if source == "" {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return func() (model.FileStreamer, error) {
-		req, err := http.NewRequest(http.MethodGet, source, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 		if err != nil {
 			return nil, err
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := seedSourceHTTPClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("下载种子内容失败: %w", err)
 		}
-		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
 			return nil, fmt.Errorf("下载种子内容失败: HTTP %d", resp.StatusCode)
 		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, maxTorrentGenFileSize+1))
-		if err != nil {
-			return nil, fmt.Errorf("读取种子内容失败: %w", err)
+		// Content-Length is authoritative when present; fall back to the seed
+		// metadata. Reject up-front rather than streaming an oversized body.
+		size := resp.ContentLength
+		if size < 0 {
+			size = file.Size
 		}
-		if file.Size > 0 && int64(len(data)) != file.Size {
-			return nil, fmt.Errorf("种子内容大小不匹配: 期望 %d，实际 %d", file.Size, len(data))
+		if size > maxTorrentGenFileSize {
+			resp.Body.Close()
+			return nil, fmt.Errorf("种子内容超过大小上限: %d", size)
 		}
-		reader := bytes.NewReader(data)
+		if file.Size > 0 && resp.ContentLength >= 0 && resp.ContentLength != file.Size {
+			resp.Body.Close()
+			return nil, fmt.Errorf("种子内容大小不匹配: 期望 %d，实际 %d", file.Size, resp.ContentLength)
+		}
+
 		obj := &model.Object{
 			Name:     stdpath.Base(file.Path),
-			Size:     int64(len(data)),
+			Size:     size,
 			Modified: time.Now(),
 			IsFolder: false,
 		}
-		return &stream.FileStream{
-			Ctx:    context.Background(),
+		fs := &stream.FileStream{
+			Ctx:    ctx,
 			Obj:    obj,
-			Reader: reader,
-		}, nil
+			Reader: io.LimitReader(resp.Body, maxTorrentGenFileSize),
+		}
+		// Keep the body alive for the lifetime of the streamer and expose range
+		// reads over an in-memory prefix so proof/hash windows can be re-read.
+		fs.Add(resp.Body)
+		return fs, nil
 	}
 }
 
 func firstUsableSeedSource(file torrent.SeedFile) string {
-	configuredSite, err := url.Parse(strings.TrimSpace(setting.GetStr(conf.SeedSiteURL)))
-	if err != nil || configuredSite.Scheme == "" || configuredSite.Hostname() == "" {
+	if _, err := seedSiteConfig(); err != nil {
 		return ""
 	}
 	for _, source := range file.Sources {
 		candidate, parseErr := url.Parse(source.URL)
-		if parseErr != nil || (candidate.Scheme != "http" && candidate.Scheme != "https") || candidate.User != nil {
+		if parseErr != nil {
 			continue
 		}
-		if !strings.EqualFold(candidate.Scheme, configuredSite.Scheme) || !strings.EqualFold(candidate.Host, configuredSite.Host) {
+		if err := validateSeedHost(candidate); err != nil {
 			continue
 		}
 		validPath := (source.Type == "openlist-direct" && strings.HasPrefix(candidate.EscapedPath(), "/d/")) ||

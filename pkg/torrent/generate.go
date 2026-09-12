@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"strings"
 )
 
 // GenerateFromFile 从文件路径生成通用的 torrent 文件（不含 CAS 扩展）
@@ -87,12 +86,8 @@ func GenerateFromReaderWithCAS(reader io.Reader, fileName string, fileSize int64
 	sliceMD5s := hw.GetSliceMD5s()
 	pieceHashes := hw.GetPieceHashes()
 
-	// 计算 sliceMD5
-	sliceMD5 := fileMD5
-	if len(sliceMD5s) > 1 {
-		joined := strings.Join(sliceMD5s, "\n")
-		sliceMD5 = strings.ToUpper(GetMD5Str(joined))
-	}
+	// 计算 sliceMD5（统一走规范实现）
+	sliceMD5 := SliceMD5FromPieces(sliceMD5s, fileMD5)
 
 	t := NewTorrent(fileName, fileSize, fileMD5)
 	t.Info.PieceLength = pieceSize

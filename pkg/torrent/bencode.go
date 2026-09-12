@@ -215,10 +215,14 @@ func bencodeDecodeString(r *bytes.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bencode: invalid string length: %v", err)
 	}
-	if length < 0 || length > 100*1024*1024 {
-		return nil, fmt.Errorf("bencode: string length out of bounds: %d", length)
+	// A single string can never exceed the whole input, which BencodeDecode
+	// already caps at DefaultMaxSeedSize. Deriving the bound from the same
+	// constant keeps the constraint self-consistent instead of maintaining a
+	// second, unreachable 100MB ceiling.
+	if length < 0 || length > DefaultMaxSeedSize {
+		return nil, fmt.Errorf("bencode: string length out of bounds: %d (limit %d)", length, DefaultMaxSeedSize)
 	}
-	// Safe to convert to int: bounds check above ensures length <= 100MB which fits in int32
+	// Bounded by DefaultMaxSeedSize, so the int conversion cannot truncate.
 	data := make([]byte, int(length))
 	_, err = io.ReadFull(r, data)
 	if err != nil {

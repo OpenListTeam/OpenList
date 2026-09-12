@@ -573,13 +573,7 @@ func BuildCASInfoFromMD5s(fileMD5 string, sliceMD5s []string, sliceSize int64) *
 func BuildCASInfoFromMD5sWithCloud(fileMD5 string, sliceMD5s []string, sliceSize int64, cloud string) *CASInfo {
 	fileMD5 = strings.ToUpper(fileMD5)
 	sliceMD5s = upperStrings(sliceMD5s)
-	sliceMD5 := fileMD5
-	if len(sliceMD5s) == 1 {
-		sliceMD5 = sliceMD5s[0]
-	} else if len(sliceMD5s) > 1 {
-		// All piece MD5 values are joined with newlines before hashing.
-		sliceMD5 = strings.ToUpper(GetMD5Str(strings.Join(sliceMD5s, "\n")))
-	}
+	sliceMD5 := SliceMD5FromPieces(sliceMD5s, fileMD5)
 	return &CASInfo{
 		FileMD5:   fileMD5,
 		SliceMD5:  sliceMD5,
