@@ -1,15 +1,14 @@
 package stream
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"sync"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -28,14 +27,16 @@ type FileStream struct {
 	ForceStreamUpload bool
 	Exist             model.Obj //the file existed in the destination, we can reuse some info since we wil overwrite it
 	utils.Closers
-	size      int64
-	oriReader io.Reader // the original reader, used for caching
-	hc        *hcache.HybridCache
-	peek      buffer.SizedReadAtSeeker
+	size                int64
+	sizeSet             bool
+	cachePolicyOverride cache.Policy
+	oriReader           io.Reader // the original reader, used for caching
+	hc                  *hcache.HybridCache
+	peek                buffer.SizedReadAtSeeker
 }
 
 func (f *FileStream) GetSize() int64 {
-	if f.size > 0 {
+	if f.sizeSet {
 		return f.size
 	}
 	return f.Obj.GetSize()
@@ -58,6 +59,25 @@ func (f *FileStream) GetExist() model.Obj {
 }
 func (f *FileStream) SetExist(obj model.Obj) {
 	f.Exist = obj
+}
+
+func (f *FileStream) GetCachePolicy() cache.Policy {
+	policy, err := cache.ResolvePolicy(f.cachePolicyOverride, conf.CachePolicy)
+	if err != nil {
+		panic(err)
+	}
+	return policy
+}
+
+func (f *FileStream) SetCachePolicy(policy cache.Policy) error {
+	if policy != cache.PolicyInherit && !policy.IsConcrete() {
+		return fmt.Errorf("invalid cache policy %q", policy)
+	}
+	if f.peek != nil {
+		return errors.New("cache policy cannot be changed after cache initialization")
+	}
+	f.cachePolicyOverride = policy
+	return nil
 }
 
 // CacheFullAndWriter save all data into tmpFile or memory.
@@ -109,36 +129,7 @@ func (f *FileStream) CacheFullAndWriter(up *model.UpdateProgress, writer io.Writ
 		reader = io.TeeReader(reader, writer)
 	}
 
-	// 如果文件大小未知，直接缓存到磁盘
-	if f.GetSize() < 0 {
-		// 检查是否有数据
-		buf := []byte{0}
-		n, err := io.ReadFull(reader, buf)
-		br := bytes.NewReader(buf[:n])
-		if err == io.ErrUnexpectedEOF || err == io.EOF {
-			f.size = br.Size()
-			f.Reader = br
-			return br, nil
-		} else if err != nil {
-			return nil, err
-		}
-		tmpF, err := utils.CreateTempFile(io.MultiReader(br, reader), 0)
-		if err != nil {
-			return nil, err
-		}
-		f.Add(utils.CloseFunc(func() error {
-			return errors.Join(tmpF.Close(), os.RemoveAll(tmpF.Name()))
-		}))
-		stat, err := tmpF.Stat()
-		if err != nil {
-			return nil, err
-		}
-		f.size = stat.Size()
-		f.Reader = tmpF
-		return tmpF, nil
-	}
-
-	if up != nil {
+	if up != nil && f.GetSize() >= 0 {
 		cacheProgress := model.UpdateProgressWithRange(*up, 0, 50)
 		*up = model.UpdateProgressWithRange(*up, 50, 100)
 		size := f.GetSize()
@@ -197,9 +188,16 @@ func (f *FileStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 // 确保指定大小的数据被缓存
 func (f *FileStream) ensureCache(size int64) (model.File, error) {
 	if f.peek == nil {
-		blockSize := min(size, f.GetSize(), int64(conf.MaxBlockLimit))
+		memoryCeiling := f.GetSize()
+		blockSize := int64(conf.MaxBlockLimit)
+		if memoryCeiling >= 0 {
+			blockSize = min(memoryCeiling, int64(conf.MaxBlockLimit))
+			if size > 0 {
+				blockSize = min(blockSize, size)
+			}
+		}
 		var err error
-		f.hc, err = hcache.NewHybridCache(uint64(blockSize), uint64(f.GetSize()))
+		f.hc, err = hcache.NewHybridCache(uint64(blockSize), memoryCeiling, f.GetCachePolicy())
 		if err != nil {
 			return nil, err
 		}
@@ -207,6 +205,16 @@ func (f *FileStream) ensureCache(size int64) (model.File, error) {
 		f.oriReader = f.Reader
 		f.Reader = io.MultiReader(f.peek, f.oriReader)
 		f.Add(f.hc)
+	}
+	if size < 0 {
+		_, err := utils.CopyWithBuffer(f.hc, f.oriReader)
+		if err != nil {
+			return nil, err
+		}
+		f.size = f.peek.Size()
+		f.sizeSet = true
+		f.Reader = f.peek
+		return f.peek, nil
 	}
 	size = size - f.peek.Size()
 	if size <= 0 {
@@ -264,6 +272,7 @@ func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error
 			fs.Add(rc)
 		}
 		fs.size = size
+		fs.sizeSet = true
 		fs.Add(link)
 		return &SeekableStream{FileStream: fs, rangeReader: rr}, nil
 	}

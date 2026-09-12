@@ -186,9 +186,16 @@ func NewStreamSectionReader(file model.FileStreamer, sectionSize int, up *model.
 	if file.GetFile() != nil {
 		return &cachedSectionReader{file.GetFile()}, nil
 	}
+	if sectionSize <= 0 {
+		return nil, fmt.Errorf("section size must be positive")
+	}
 
-	blockSize := min(uint64(sectionSize), uint64(file.GetSize()), conf.MaxBlockLimit)
-	hc, err := hcache.NewHybridCache(blockSize, uint64(file.GetSize()))
+	fileSize := file.GetSize()
+	blockSize := min(uint64(sectionSize), conf.MaxBlockLimit)
+	if fileSize >= 0 {
+		blockSize = min(blockSize, uint64(fileSize))
+	}
+	hc, err := hcache.NewHybridCache(blockSize, fileSize, file.GetCachePolicy())
 	if err != nil {
 		return nil, err
 	}

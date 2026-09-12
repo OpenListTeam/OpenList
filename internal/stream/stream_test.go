@@ -5,14 +5,108 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"testing"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
+
+func TestFileStreamCachePolicy(t *testing.T) {
+	oldConf := conf.Conf
+	oldPolicy := conf.CachePolicy
+	oldBlockLimit := conf.MaxBlockLimit
+	oldAutoMemoryLimit := conf.AutoMemoryLimit
+	t.Cleanup(func() {
+		conf.Conf = oldConf
+		conf.CachePolicy = oldPolicy
+		conf.MaxBlockLimit = oldBlockLimit
+		conf.AutoMemoryLimit = oldAutoMemoryLimit
+	})
+	conf.MaxBlockLimit = 4
+	conf.AutoMemoryLimit = 0
+
+	t.Run("inherit and override", func(t *testing.T) {
+		conf.CachePolicy = cache.PolicyDisk
+		f := &stream.FileStream{}
+		if got := f.GetCachePolicy(); got != cache.PolicyDisk {
+			t.Fatalf("GetCachePolicy() = %q, want disk", got)
+		}
+		if err := f.SetCachePolicy(cache.PolicyMemory); err != nil {
+			t.Fatalf("SetCachePolicy() error = %v", err)
+		}
+		if got := f.GetCachePolicy(); got != cache.PolicyMemory {
+			t.Fatalf("GetCachePolicy() = %q, want memory", got)
+		}
+		if err := f.SetCachePolicy(cache.PolicyInherit); err != nil {
+			t.Fatalf("SetCachePolicy(inherit) error = %v", err)
+		}
+		if got := f.GetCachePolicy(); got != cache.PolicyDisk {
+			t.Fatalf("GetCachePolicy() = %q after inherit, want disk", got)
+		}
+	})
+
+	for _, tt := range []struct {
+		policy   cache.Policy
+		wantFile bool
+	}{
+		{cache.PolicyAuto, true},
+		{cache.PolicyDisk, true},
+		{cache.PolicyMemory, false},
+	} {
+		t.Run(string(tt.policy)+" unknown size", func(t *testing.T) {
+			tempDir := t.TempDir()
+			conf.Conf = &conf.Config{TempDir: tempDir}
+			conf.CachePolicy = cache.PolicyAuto
+			input := []byte("unknown-size-stream")
+			f := &stream.FileStream{
+				Obj:    &model.Object{Size: -1},
+				Reader: io.NopCloser(bytes.NewReader(input)),
+			}
+			if err := f.SetCachePolicy(tt.policy); err != nil {
+				t.Fatalf("SetCachePolicy() error = %v", err)
+			}
+			cached, err := f.CacheFullAndWriter(nil, nil)
+			if err != nil {
+				t.Fatalf("CacheFullAndWriter() error = %v", err)
+			}
+			if f.GetSize() != int64(len(input)) {
+				t.Fatalf("GetSize() = %d, want %d", f.GetSize(), len(input))
+			}
+			got, err := io.ReadAll(cached)
+			if err != nil {
+				t.Fatalf("ReadAll() error = %v", err)
+			}
+			if !bytes.Equal(got, input) {
+				t.Fatalf("cached content = %q, want %q", got, input)
+			}
+			entries, err := os.ReadDir(tempDir)
+			if err != nil {
+				t.Fatalf("ReadDir() error = %v", err)
+			}
+			if gotFile := len(entries) > 0; gotFile != tt.wantFile {
+				t.Fatalf("temporary file present = %v, want %v", gotFile, tt.wantFile)
+			}
+			if err := f.SetCachePolicy(cache.PolicyDisk); err == nil {
+				t.Fatal("SetCachePolicy() expected an error after cache initialization")
+			}
+			if err := f.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			entries, err = os.ReadDir(tempDir)
+			if err != nil {
+				t.Fatalf("ReadDir() after close error = %v", err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("temporary files remain after close: %v", entries)
+			}
+		})
+	}
+}
 
 func TestRangeRead(t *testing.T) {
 	type args struct {
