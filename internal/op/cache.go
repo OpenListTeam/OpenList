@@ -17,6 +17,8 @@ type CacheManager struct {
 	userCache    *cache.KeyedCache[*model.User]           // Cache for user data
 	settingCache *cache.KeyedCache[any]                   // Cache for settings
 	detailCache  *cache.KeyedCache[*model.StorageDetails] // Cache for storage details
+	dirVersionMu sync.RWMutex
+	dirVersions  map[string]uint64
 }
 
 func NewCacheManager() *CacheManager {
@@ -26,6 +28,7 @@ func NewCacheManager() *CacheManager {
 		userCache:    cache.NewKeyedCache[*model.User](time.Hour),
 		settingCache: cache.NewKeyedCache[any](time.Hour),
 		detailCache:  cache.NewKeyedCache[*model.StorageDetails](time.Minute * 30),
+		dirVersions:  make(map[string]uint64),
 	}
 }
 
@@ -36,23 +39,44 @@ func Key(storage driver.Driver, path string) string {
 	return utils.GetFullPath(storage.GetStorage().MountPath, path)
 }
 
-// recursively delete directory and its children from dirCache
+// DeleteDirectoryTree removes a directory and all cached descendants.
 func (cm *CacheManager) DeleteDirectoryTree(storage driver.Driver, dirPath string) {
 	if storage.Config().NoCache {
 		return
 	}
+	cm.dirVersionMu.Lock()
+	defer cm.dirVersionMu.Unlock()
+	cm.dirVersions[directoryVersionKey(storage)]++
 	cm.deleteDirectoryTree(Key(storage, dirPath))
 }
+
 func (cm *CacheManager) deleteDirectoryTree(key string) {
-	if dirCache, exists := cm.dirCache.Pop(key); exists {
-		for _, obj := range dirCache.objs {
-			if obj.IsDir() {
-				cm.deleteDirectoryTree(stdpath.Join(key, obj.GetName()))
-			} else {
-				cm.linkCache.DeleteKey(stdpath.Join(key, obj.GetName()))
-			}
-		}
+	cm.dirCache.DeletePrefix(key)
+	cm.linkCache.DeleteKeyPrefix(key)
+}
+
+func (cm *CacheManager) directoryVersion(storage driver.Driver) uint64 {
+	cm.dirVersionMu.RLock()
+	defer cm.dirVersionMu.RUnlock()
+	return cm.dirVersions[directoryVersionKey(storage)]
+}
+
+func (cm *CacheManager) updateDirectoryCache(storage driver.Driver, key string, version uint64, value *directoryCache, ttl time.Duration) bool {
+	cm.dirVersionMu.RLock()
+	defer cm.dirVersionMu.RUnlock()
+	if cm.dirVersions[directoryVersionKey(storage)] != version {
+		return false
 	}
+	if value == nil {
+		cm.deleteDirectoryTree(key)
+	} else {
+		cm.dirCache.SetWithTTL(key, value, ttl)
+	}
+	return true
+}
+
+func directoryVersionKey(storage driver.Driver) string {
+	return utils.GetActualMountPath(storage.GetStorage().MountPath)
 }
 
 // remove directory from dirCache
@@ -60,6 +84,9 @@ func (cm *CacheManager) DeleteDirectory(storage driver.Driver, dirPath string) {
 	if storage.Config().NoCache {
 		return
 	}
+	cm.dirVersionMu.Lock()
+	cm.dirVersions[directoryVersionKey(storage)]++
+	cm.dirVersionMu.Unlock()
 	cm.dirCache.Delete(Key(storage, dirPath))
 }
 
@@ -77,7 +104,7 @@ func (cm *CacheManager) removeDirectoryObject(storage driver.Driver, dirPath str
 	}
 	if cache, exist := cm.dirCache.Get(key); exist {
 		if obj.IsDir() {
-			cm.deleteDirectoryTree(stdpath.Join(key, obj.GetName()))
+			cm.DeleteDirectoryTree(storage, stdpath.Join(dirPath, obj.GetName()))
 		}
 		cache.RemoveObject(obj.GetName())
 	}
@@ -146,11 +173,14 @@ func (cm *CacheManager) InvalidateStorageDetails(storage driver.Driver) {
 
 // clears all caches
 func (cm *CacheManager) ClearAll() {
+	cm.dirVersionMu.Lock()
+	defer cm.dirVersionMu.Unlock()
 	cm.dirCache.Clear()
 	cm.linkCache.Clear()
 	cm.userCache.Clear()
 	cm.settingCache.Clear()
 	cm.detailCache.Clear()
+	cm.dirVersions = make(map[string]uint64)
 }
 
 type directoryCache struct {
