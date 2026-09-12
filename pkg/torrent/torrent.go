@@ -846,12 +846,12 @@ func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 	if file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
 		sliceMD5s = upperStrings(file.Hashes.Pieces.MD5)
 	}
+	// Prefer an explicitly supplied legacy slice MD5; otherwise derive it with
+	// the canonical rule so the value written here cannot drift from the one
+	// the hash-generation side computes.
 	sliceMD5 := strings.ToUpper(file.CASSliceMD5)
 	if sliceMD5 == "" && len(sliceMD5s) > 0 && pieceSize == DefaultPieceSize {
-		sliceMD5 = sliceMD5s[0]
-		if len(sliceMD5s) > 1 {
-			sliceMD5 = strings.ToUpper(GetMD5Str(strings.Join(sliceMD5s, "\n")))
-		}
+		sliceMD5 = SliceMD5FromPieces(sliceMD5s, file.Hashes.MD5)
 	}
 	if sliceMD5 == "" {
 		if file.Size > DefaultPieceSize {
