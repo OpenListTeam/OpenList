@@ -2,47 +2,73 @@ package _115
 
 import (
 	"context"
-	"io"
-	"os"
-	"time"
+	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
-// SeedRapidUpload 使用种子的哈希信息进行秒传
-func (d *Pan115) SeedRapidUpload(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, hashes utils.HashInfo) (model.Obj, error) {
-	// 115 使用 SHA1 秒传
-	sha1Hash := hashes.GetHash(utils.SHA1)
-	if len(sha1Hash) < utils.SHA1.Width {
-		return nil, errs.EmptyHash
-	}
-
-	// 使用已有的 rapidUpload 私有方法
-	stream := &hashOnlyStream{
-		name:     fileName,
-		size:     fileSize,
-		hashInfo: hashes,
-	}
-
-	// 调用内部秒传方法
-	return d.rapidUpload(fileSize, fileName, dstDir.GetID(), "", "", stream)
+// RapidHashAlgos 返回 115 支持的秒传哈希算法（SHA1）
+func (d *Pan115) RapidHashAlgos() []utils.HashType {
+	return []utils.HashType{*utils.SHA1}
 }
 
-// hashOnlyStream 仅包含哈希信息的 FileStream
-type hashOnlyStream struct {
-	name     string
-	size     int64
-	hashInfo utils.HashInfo
+// RapidHashNeedsPieces 115 不需要分片哈希
+func (d *Pan115) RapidHashNeedsPieces() bool {
+	return false
 }
 
-func (s *hashOnlyStream) GetName() string                { return s.name }
-func (s *hashOnlyStream) GetSize() int64                 { return s.size }
-func (s *hashOnlyStream) GetHash() utils.HashInfo        { return s.hashInfo }
-func (s *hashOnlyStream) Read(p []byte) (n int, err error) { return 0, io.EOF }
-func (s *hashOnlyStream) Close() error                   { return nil }
-func (s *hashOnlyStream) GetMimetype() string            { return "" }
-func (s *hashOnlyStream) ModTime() time.Time             { return time.Now() }
-func (s *hashOnlyStream) CreateTime() time.Time          { return time.Now() }
-func (s *hashOnlyStream) GetFile() *os.File              { return nil }
+// RapidUploadByHashes 使用种子中的 SHA1 哈希尝试秒传。
+//
+// 115 的秒传协议除了整文件 SHA1，还需要文件头部 128KB 的 SHA1（pre_hash），
+// 因此当内容源可用时会打开它来计算前置哈希；内容不可用时无法秒传。
+func (d *Pan115) RapidUploadByHashes(ctx context.Context, dstDir model.Obj, req *driver.SeedRapidUploadRequest, overwrite bool) (model.Obj, error) {
+	fullHash := strings.ToUpper(req.Whole.GetHash(utils.SHA1))
+	if len(fullHash) != utils.SHA1.Width {
+		return nil, errs.ErrUnavailableHash
+	}
+	if req.Open == nil {
+		return nil, errs.ErrUnavailableHash
+	}
+
+	src, err := req.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+
+	const PreHashSize int64 = 128 * utils.KB
+	hashSize := PreHashSize
+	if req.Size < PreHashSize {
+		hashSize = req.Size
+	}
+	reader, err := src.RangeRead(http_range.Range{Start: 0, Length: hashSize})
+	if err != nil {
+		return nil, err
+	}
+	preHash, err := utils.HashReader(utils.SHA1, reader)
+	if err != nil {
+		return nil, err
+	}
+	preHash = strings.ToUpper(preHash)
+
+	fastInfo, err := d.rapidUpload(req.Size, req.Name, dstDir.GetID(), preHash, fullHash, src)
+	if err != nil {
+		return nil, err
+	}
+	matched, err := fastInfo.Ok()
+	if err != nil {
+		return nil, err
+	}
+	if !matched {
+		return nil, errs.ErrRapidUploadFailed
+	}
+	f, err := d.getNewFileByPickCode(fastInfo.PickCode)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}

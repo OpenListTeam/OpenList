@@ -95,7 +95,7 @@ func ComputeTorrentFromReader(reader io.Reader, fileName string, fileSize int64,
 		sliceSize = torrent.DefaultPieceSize
 	}
 
-	hw := torrent.NewHashWriter(sliceSize, sliceSize)
+	hw := torrent.NewHashWriter(sliceSize, sliceSize, fileSize)
 
 	buf := make([]byte, 32*1024)
 	for {

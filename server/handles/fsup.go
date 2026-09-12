@@ -111,7 +111,7 @@ func FsStream(c *gin.Context) {
 	var seedHasher *torrent.HashWriter
 	var uploadReader io.Reader = c.Request.Body
 	if generateSeed {
-		seedHasher = torrent.NewHashWriter(seedPieceSize(c), seedPieceSize(c))
+		seedHasher = torrent.NewHashWriter(seedPieceSize(c), seedPieceSize(c), 0)
 		uploadReader = io.TeeReader(c.Request.Body, seedHasher)
 	}
 	s := &stream.FileStream{
@@ -225,7 +225,7 @@ func FsForm(c *gin.Context) {
 	var seedHasher *torrent.HashWriter
 	var uploadReader io.Reader = f
 	if generateSeed {
-		seedHasher = torrent.NewHashWriter(seedPieceSize(c), seedPieceSize(c))
+		seedHasher = torrent.NewHashWriter(seedPieceSize(c), seedPieceSize(c), 0)
 		uploadReader = io.TeeReader(f, seedHasher)
 	}
 	s := &stream.FileStream{

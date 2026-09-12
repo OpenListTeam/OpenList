@@ -367,7 +367,7 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	if (hasShare || hasDirect) && strings.TrimSpace(setting.GetStr(conf.SeedSiteURL)) == "" {
 		return nil, nil, fmt.Errorf("seed_site_url must be configured before embedding download sources")
 	}
-	globalHasher := torrent.NewHashWriter(pieceSize, pieceSize)
+	globalHasher := torrent.NewHashWriter(pieceSize, pieceSize, 0)
 	fullPaths := make([]string, 0, len(params.Paths))
 	var total int64
 	for _, requestedPath := range params.Paths {
@@ -439,7 +439,7 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 		if err != nil {
 			return nil, nil, err
 		}
-		fileHasher := torrent.NewHashWriter(pieceSize, pieceSize)
+		fileHasher := torrent.NewHashWriter(pieceSize, pieceSize, 0)
 		n, copyErr := io.Copy(io.MultiWriter(globalHasher, fileHasher), rc)
 		_ = rc.Close()
 		if copyErr != nil {

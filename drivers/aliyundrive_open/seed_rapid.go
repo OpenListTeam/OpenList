@@ -2,72 +2,87 @@ package aliyundrive_open
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 )
 
-// SeedRapidUpload 使用种子的哈希信息进行秒传
-func (d *AliyundriveOpen) SeedRapidUpload(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, hashes utils.HashInfo) (model.Obj, error) {
-	// 阿里云盘使用 SHA1 秒传
-	sha1Hash := hashes.GetHash(utils.SHA1)
+// RapidHashAlgos 返回阿里云盘支持的秒传哈希算法（SHA1）
+func (d *AliyundriveOpen) RapidHashAlgos() []utils.HashType {
+	return []utils.HashType{*utils.SHA1}
+}
+
+// RapidHashNeedsPieces 阿里云盘不需要分片哈希
+func (d *AliyundriveOpen) RapidHashNeedsPieces() bool {
+	return false
+}
+
+// RapidUploadByHashes 使用种子中的 SHA1 哈希尝试秒传。
+//
+// 阿里云盘的秒传还需要 proof_code（按 proof range 读取的一段内容），
+// 因此当内容源不可用时无法完成秒传。
+func (d *AliyundriveOpen) RapidUploadByHashes(ctx context.Context, dstDir model.Obj, req *driver.SeedRapidUploadRequest, overwrite bool) (model.Obj, error) {
+	sha1Hash := req.Whole.GetHash(utils.SHA1)
 	if len(sha1Hash) < utils.SHA1.Width {
-		return nil, errs.EmptyHash
+		return nil, errs.ErrUnavailableHash
+	}
+	if req.Open == nil {
+		return nil, errs.ErrUnavailableHash
 	}
 
-	// 调用创建文件接口，尝试秒传
+	stream, err := req.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	proofCode, err := d.calProofCode(stream)
+	if err != nil {
+		return nil, err
+	}
+
 	var resp CreateResp
-	_, err := d.request(ctx, limiterOther, "/adrive/v1.0/openFile/create", http.MethodPost, func(req *resty.Request) {
-		req.SetBody(base.Json{
-			"drive_id":        d.DriveId,
-			"parent_file_id":  dstDir.GetID(),
-			"name":            fileName,
-			"type":            "file",
-			"check_name_mode": "auto_rename",
-			"size":            fileSize,
-			"content_hash":    sha1Hash,
+	_, err = d.request(ctx, limiterOther, "/adrive/v1.0/openFile/create", http.MethodPost, func(r *resty.Request) {
+		r.SetBody(base.Json{
+			"drive_id":          d.DriveId,
+			"parent_file_id":    dstDir.GetID(),
+			"name":              req.Name,
+			"type":              "file",
+			"check_name_mode":   "auto_rename",
+			"size":              req.Size,
+			"content_hash":      sha1Hash,
 			"content_hash_name": "sha1",
-			"proof_version":   "v1",
+			"proof_version":     "v1",
+			"proof_code":        proofCode,
 		}).SetResult(&resp)
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	// 如果没有返回 UploadId，说明秒传成功
-	if resp.UploadId == "" {
-		if resp.RapidUpload {
-			return fileToObj(resp.File), nil
-		}
-		// 文件已存在但不是秒传
-		return fileToObj(resp.File), nil
+	if !resp.RapidUpload {
+		return nil, errs.ErrHashMismatch
 	}
 
-	// 秒传失败，需要分片上传
-	return nil, errs.HashMismatch
-}
+	if resp.FileId != "" {
+		obj, err := d.completeUpload(ctx, resp.FileId, resp.UploadId)
+		if err != nil {
+			return nil, err
+		}
+		return obj, nil
+	}
 
-// hashOnlyStream 仅包含哈希信息的 FileStream
-type hashOnlyStream struct {
-	name     string
-	size     int64
-	hashInfo utils.HashInfo
+	return &model.ObjThumb{
+		Object: model.Object{
+			Name:     req.Name,
+			Size:     req.Size,
+			Modified: time.Now(),
+			IsFolder: false,
+		},
+	}, nil
 }
-
-func (s *hashOnlyStream) GetName() string                { return s.name }
-func (s *hashOnlyStream) GetSize() int64                 { return s.size }
-func (s *hashOnlyStream) GetHash() utils.HashInfo        { return s.hashInfo }
-func (s *hashOnlyStream) Read(p []byte) (n int, err error) { return 0, io.EOF }
-func (s *hashOnlyStream) Close() error                   { return nil }
-func (s *hashOnlyStream) GetMimetype() string            { return "" }
-func (s *hashOnlyStream) ModTime() time.Time             { return time.Now() }
-func (s *hashOnlyStream) CreateTime() time.Time          { return time.Now() }
-func (s *hashOnlyStream) GetFile() *os.File              { return nil }

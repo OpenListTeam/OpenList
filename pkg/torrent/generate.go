@@ -132,7 +132,7 @@ func GenerateSeedFromReader(reader io.Reader, filePath string, expectedSize, pie
 	if err := validateRelativeSeedPath(filePath); err != nil {
 		return nil, err
 	}
-	hw := NewHashWriter(pieceSize, pieceSize)
+	hw := NewHashWriter(pieceSize, pieceSize, expectedSize)
 	if _, err := CopyAndHash(nil, reader, hw); err != nil {
 		return nil, err
 	}

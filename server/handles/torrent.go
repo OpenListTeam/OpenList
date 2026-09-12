@@ -1224,7 +1224,7 @@ func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSi
 		return out, err
 	}
 	defer rc.Close()
-	hasher := torrent.NewHashWriter(pieceSize, pieceSize)
+	hasher := torrent.NewHashWriter(pieceSize, pieceSize, obj.GetSize())
 	n, copyErr := io.Copy(hasher, io.LimitReader(rc, obj.GetSize()+1))
 	if copyErr != nil {
 		return out, fmt.Errorf("read %s: %w", sourcePath, copyErr)

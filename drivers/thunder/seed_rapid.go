@@ -2,25 +2,32 @@ package thunder
 
 import (
 	"context"
-	"io"
 	"net/http"
-	"os"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/hash_extend"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	hash_extend "github.com/OpenListTeam/OpenList/v4/pkg/utils/hash"
 	"github.com/go-resty/resty/v2"
 )
 
-// SeedRapidUpload 使用种子的哈希信息进行秒传
-func (xc *XunLeiCommon) SeedRapidUpload(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, hashes utils.HashInfo) (model.Obj, error) {
-	// 迅雷使用 GCID 秒传
-	gcid := hashes.GetHash(hash_extend.GCID)
+// RapidHashAlgos 返回迅雷支持的秒传哈希算法（GCID）
+func (xc *XunLeiCommon) RapidHashAlgos() []utils.HashType {
+	return []utils.HashType{*hash_extend.GCID}
+}
+
+// RapidHashNeedsPieces 迅雷不需要分片哈希
+func (xc *XunLeiCommon) RapidHashNeedsPieces() bool {
+	return false
+}
+
+// RapidUploadByHashes 使用种子中的 GCID 哈希尝试秒传
+func (xc *XunLeiCommon) RapidUploadByHashes(ctx context.Context, dstDir model.Obj, req *driver.SeedRapidUploadRequest, overwrite bool) (model.Obj, error) {
+	gcid := req.Whole.GetHash(hash_extend.GCID)
 	if len(gcid) < hash_extend.GCID.Width {
-		return nil, errs.EmptyHash
+		return nil, errs.ErrUnavailableHash
 	}
 
 	var resp UploadTaskResponse
@@ -29,8 +36,8 @@ func (xc *XunLeiCommon) SeedRapidUpload(ctx context.Context, dstDir model.Obj, f
 		r.SetBody(&base.Json{
 			"kind":        FILE,
 			"parent_id":   dstDir.GetID(),
-			"name":        fileName,
-			"size":        fileSize,
+			"name":        req.Name,
+			"size":        req.Size,
 			"hash":        gcid,
 			"upload_type": UPLOAD_TYPE_RESUMABLE,
 			"space":       xc.Space,
@@ -42,28 +49,8 @@ func (xc *XunLeiCommon) SeedRapidUpload(ctx context.Context, dstDir model.Obj, f
 
 	// 秒传成功（UploadType != UPLOAD_TYPE_RESUMABLE）
 	if resp.UploadType != UPLOAD_TYPE_RESUMABLE {
-		// 解析返回的文件信息
-		file := fileToObj(resp.File)
-		return file, nil
+		return &resp.File, nil
 	}
 
-	// 秒传失败
-	return nil, errs.HashMismatch
+	return nil, errs.ErrHashMismatch
 }
-
-// hashOnlyStream 仅包含哈希信息的 FileStream
-type hashOnlyStream struct {
-	name     string
-	size     int64
-	hashInfo utils.HashInfo
-}
-
-func (s *hashOnlyStream) GetName() string                { return s.name }
-func (s *hashOnlyStream) GetSize() int64                 { return s.size }
-func (s *hashOnlyStream) GetHash() utils.HashInfo        { return s.hashInfo }
-func (s *hashOnlyStream) Read(p []byte) (n int, err error) { return 0, io.EOF }
-func (s *hashOnlyStream) Close() error                   { return nil }
-func (s *hashOnlyStream) GetMimetype() string            { return "" }
-func (s *hashOnlyStream) ModTime() time.Time             { return time.Now() }
-func (s *hashOnlyStream) CreateTime() time.Time          { return time.Now() }
-func (s *hashOnlyStream) GetFile() *os.File              { return nil }

@@ -2,49 +2,53 @@ package _123_open
 
 import (
 	"context"
-	"io"
-	"os"
 	"path"
 	"strconv"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
-// SeedRapidUpload 使用种子的哈希信息进行秒传
-func (d *Open123) SeedRapidUpload(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, hashes utils.HashInfo) (model.Obj, error) {
-	// 123云盘使用 SHA1 秒传
-	sha1Hash := hashes.GetHash(utils.SHA1)
+// RapidHashAlgos 返回 123 开放平台支持的秒传哈希算法（SHA1）
+func (d *Open123) RapidHashAlgos() []utils.HashType {
+	return []utils.HashType{*utils.SHA1}
+}
+
+// RapidHashNeedsPieces 123 开放平台不需要分片哈希
+func (d *Open123) RapidHashNeedsPieces() bool {
+	return false
+}
+
+// RapidUploadByHashes 使用种子中的 SHA1 哈希尝试秒传
+func (d *Open123) RapidUploadByHashes(ctx context.Context, dstDir model.Obj, req *driver.SeedRapidUploadRequest, overwrite bool) (model.Obj, error) {
+	sha1Hash := req.Whole.GetHash(utils.SHA1)
 	if len(sha1Hash) < utils.SHA1.Width {
-		return nil, errs.EmptyHash
+		return nil, errs.ErrUnavailableHash
 	}
 
-	// 获取父目录ID
 	parentID, err := strconv.ParseInt(dstDir.GetID(), 10, 64)
 	if err != nil {
 		return nil, err
 	}
 
-	// 调用已有的 sha1Reuse 方法
-	resp, err := d.sha1Reuse(parentID, fileName, sha1Hash, fileSize, 1)
+	resp, err := d.sha1Reuse(parentID, req.Name, sha1Hash, req.Size, 1)
 	if err != nil {
 		return nil, err
 	}
-
-	if !resp.Reuse {
-		return nil, errs.HashMismatch
+	if !resp.Data.Reuse {
+		return nil, errs.ErrHashMismatch
 	}
 
-	// 返回文件对象
 	return &model.ObjThumb{
 		Object: model.Object{
-			ID:       strconv.FormatInt(resp.FileID, 10),
-			Name:     fileName,
-			Size:     fileSize,
+			ID:       strconv.FormatInt(resp.Data.FileID, 10),
+			Name:     req.Name,
+			Size:     req.Size,
 			IsFolder: false,
-			Path:     path.Join(dstDir.GetPath(), fileName),
+			Path:     path.Join(dstDir.GetPath(), req.Name),
 			Modified: time.Now(),
 		},
 	}, nil

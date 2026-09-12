@@ -69,7 +69,7 @@ func NewHashWriter(sliceSize, pieceSize, fileSize int64) *HashWriter {
 		fileMD5:     md5.New(),
 		fileSHA1:    sha1.New(),
 		fileSHA256:  sha256.New(),
-		fileGCID:    hash_extend.GCID.New(fileSize),
+		fileGCID:    hash_extend.GCID.NewFunc(fileSize),
 		sliceMD5:    md5.New(),
 		pieceMD5:    md5.New(),
 		pieceSHA1:   sha1.New(),
