@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	stdpath "path"
@@ -13,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
@@ -40,6 +42,8 @@ var DefaultConcurrencyLimit *ConcurrencyLimit
 
 type Downloader struct {
 	PartSize int
+	// CachePolicy overrides the global cache policy. The zero value inherits it.
+	CachePolicy cache.Policy
 
 	// PartBodyMaxRetries is the number of retry attempts to make for failed part downloads.
 	PartBodyMaxRetries int
@@ -92,9 +96,20 @@ func (d Downloader) Download(ctx context.Context, p *HttpRequestParams) (readClo
 	if conf.MinFreeMemory > 0 && impl.cfg.PartSize > int(conf.MaxBlockLimit) {
 		impl.cfg.PartSize = int(conf.MaxBlockLimit)
 	}
+	if impl.cfg.Concurrency <= 0 {
+		return nil, fmt.Errorf("download concurrency must be positive")
+	}
+	if impl.cfg.PartSize <= 0 {
+		return nil, fmt.Errorf("download part size must be positive")
+	}
 	if impl.cfg.HttpClient == nil {
 		impl.cfg.HttpClient = DefaultHttpRequestFunc
 	}
+	policy, err := cache.ResolvePolicy(impl.cfg.CachePolicy, conf.CachePolicy)
+	if err != nil {
+		return nil, err
+	}
+	impl.cfg.CachePolicy = policy
 
 	return impl.download()
 }
@@ -197,8 +212,9 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.maxPos = d.params.Range.Start + d.params.Range.Length
 	d.concurrency = d.cfg.Concurrency
 
+	memoryCeiling := downloaderMemoryCeiling(d.params.Range.Length, d.cfg.Concurrency, d.cfg.PartSize)
 	var err error
-	d.hc, err = hcache.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.params.Range.Length))
+	d.hc, err = hcache.NewHybridCache(uint64(d.cfg.PartSize), memoryCeiling, d.cfg.CachePolicy)
 	if err == nil {
 		d.bufMap = make(map[int]*buffer.PipeBuffer, d.cfg.Concurrency)
 		err = d.sendChunkTask(true)
@@ -212,6 +228,13 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return &multiReadCloser{d: d, curBuf: d.popBuf(0), maxPos: maxPart}, nil
+}
+
+func downloaderMemoryCeiling(rangeLength int64, concurrency, partSize int) int64 {
+	if int64(concurrency) > math.MaxInt64/int64(partSize) {
+		return rangeLength
+	}
+	return min(rangeLength, int64(concurrency)*int64(partSize))
 }
 
 func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {

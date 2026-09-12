@@ -96,6 +96,8 @@ func InitConfig() {
 	if !conf.Conf.Force {
 		confFromEnv()
 	}
+	conf.CachePolicy = conf.Conf.CachePolicy
+	log.Infof("cache policy: %s", conf.CachePolicy)
 
 	if conf.Conf.MaxConcurrency > math.MaxInt32 {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: math.MaxInt32}

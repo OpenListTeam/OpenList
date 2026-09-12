@@ -45,8 +45,16 @@ func MemoryGrowCheck(growSize uint64) error {
 }
 
 func NewGuardedMemory(cap, max uint64) (m LinearMemory, err error) {
-	if err := MemoryGrowCheck(cap); err != nil {
-		return nil, err
+	return NewManagedMemory(cap, max, MemoryGrowCheck)
+}
+
+// NewManagedMemory creates memory with panic recovery and lifecycle cleanup.
+// A nil growCheck intentionally permits growth without an availability check.
+func NewManagedMemory(cap, max uint64, growCheck GrowCheck) (m LinearMemory, err error) {
+	if growCheck != nil {
+		if err := growCheck(cap); err != nil {
+			return nil, err
+		}
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -57,8 +65,10 @@ func NewGuardedMemory(cap, max uint64) (m LinearMemory, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if s, ok := m.(interface{ SetGrowCheck(GrowCheck) }); ok {
-		s.SetGrowCheck(MemoryGrowCheck)
+	if growCheck != nil {
+		if s, ok := m.(interface{ SetGrowCheck(GrowCheck) }); ok {
+			s.SetGrowCheck(growCheck)
+		}
 	}
 	gm := &guardedMemory{LinearMemory: m}
 	gm.cleanup = runtime.AddCleanup(gm, func(m LinearMemory) {

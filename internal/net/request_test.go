@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/sirupsen/logrus"
 )
@@ -26,6 +27,27 @@ func containsString(slice []string, val string) bool {
 	return false
 }
 
+func TestDownloaderMemoryCeiling(t *testing.T) {
+	tests := []struct {
+		name        string
+		rangeLength int64
+		concurrency int
+		partSize    int
+		want        int64
+	}{
+		{"working set", 100 << 20, 2, 8 << 20, 16 << 20},
+		{"range smaller than pool", 10, 4, 8, 10},
+		{"multiplication overflow", 100, int(^uint(0) >> 1), 2, 100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := downloaderMemoryCeiling(tt.rangeLength, tt.concurrency, tt.partSize); got != tt.want {
+				t.Fatalf("downloaderMemoryCeiling() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDownloadOrder(t *testing.T) {
 	buff := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	downloader, invocations, ranges := newDownloadRangeClient(buff)
@@ -33,6 +55,7 @@ func TestDownloadOrder(t *testing.T) {
 	d := NewDownloader(func(d *Downloader) {
 		d.Concurrency = con
 		d.PartSize = partSize
+		d.CachePolicy = cache.PolicyMemory
 		d.HttpClient = downloader.HttpRequest
 	})
 
@@ -122,6 +145,7 @@ func TestHighConcurrency(t *testing.T) {
 	d := NewDownloader(func(d *Downloader) {
 		d.Concurrency = con
 		d.PartSize = partSize
+		d.CachePolicy = cache.PolicyMemory
 		d.HttpClient = downloader.HttpRequest
 		d.ConcurrencyLimit = &ConcurrencyLimit{
 			Limit: concurrencyLimit,
