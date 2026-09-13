@@ -310,6 +310,10 @@ func SelectPolicy(requested cache.Policy, memoryCeiling int64) (cache.Policy, er
 
 // NewHybridCache creates a non-thread-safe cache using the requested policy.
 func NewHybridCache(blockSize uint64, memoryCeiling int64, requested cache.Policy) (hc *HybridCache, err error) {
+	return newHybridCache(blockSize, memoryCeiling, requested, mem.MemoryGrowCheck)
+}
+
+func newHybridCache(blockSize uint64, memoryCeiling int64, requested cache.Policy, check memoryCheck) (hc *HybridCache, err error) {
 	if memoryCeiling < 0 && blockSize == 0 {
 		return nil, fmt.Errorf("block size must be positive when memory ceiling is unknown")
 	}
@@ -320,7 +324,7 @@ func NewHybridCache(blockSize uint64, memoryCeiling int64, requested cache.Polic
 		}
 	}
 
-	selected, err := SelectPolicy(requested, memoryCeiling)
+	selected, err := selectPolicy(requested, memoryCeiling, check)
 	if err != nil {
 		return nil, err
 	}

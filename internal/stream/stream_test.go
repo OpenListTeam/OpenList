@@ -21,11 +21,13 @@ func TestFileStreamCachePolicy(t *testing.T) {
 	oldPolicy := conf.CachePolicy
 	oldBlockLimit := conf.MaxBlockLimit
 	oldAutoMemoryLimit := conf.AutoMemoryLimit
+	oldMinFreeMemory := conf.MinFreeMemory
 	t.Cleanup(func() {
 		conf.Conf = oldConf
 		conf.CachePolicy = oldPolicy
 		conf.MaxBlockLimit = oldBlockLimit
 		conf.AutoMemoryLimit = oldAutoMemoryLimit
+		conf.MinFreeMemory = oldMinFreeMemory
 	})
 	conf.MaxBlockLimit = 4
 	conf.AutoMemoryLimit = 0
@@ -93,6 +95,59 @@ func TestFileStreamCachePolicy(t *testing.T) {
 			}
 			if err := f.SetCachePolicy(cache.PolicyDisk); err == nil {
 				t.Fatal("SetCachePolicy() expected an error after cache initialization")
+			}
+			if err := f.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			entries, err = os.ReadDir(tempDir)
+			if err != nil {
+				t.Fatalf("ReadDir() after close error = %v", err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("temporary files remain after close: %v", entries)
+			}
+		})
+	}
+
+	for _, tt := range []struct {
+		name     string
+		policy   cache.Policy
+		wantFile bool
+	}{
+		{name: "memory keeps known stream in memory", policy: cache.PolicyMemory},
+		{name: "disk keeps known stream on disk", policy: cache.PolicyDisk, wantFile: true},
+		{name: "auto rejected keeps known stream on disk", policy: cache.PolicyAuto, wantFile: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			conf.Conf = &conf.Config{TempDir: tempDir}
+			conf.CachePolicy = cache.PolicyAuto
+			conf.MinFreeMemory = 0
+			input := []byte("known-size-stream")
+			f := &stream.FileStream{
+				Obj:    &model.Object{Size: int64(len(input))},
+				Reader: io.NopCloser(bytes.NewReader(input)),
+			}
+			if err := f.SetCachePolicy(tt.policy); err != nil {
+				t.Fatalf("SetCachePolicy() error = %v", err)
+			}
+			cached, err := f.CacheFullAndWriter(nil, nil)
+			if err != nil {
+				t.Fatalf("CacheFullAndWriter() error = %v", err)
+			}
+			got, err := io.ReadAll(cached)
+			if err != nil {
+				t.Fatalf("ReadAll() error = %v", err)
+			}
+			if !bytes.Equal(got, input) {
+				t.Fatalf("cached content = %q, want %q", got, input)
+			}
+			entries, err := os.ReadDir(tempDir)
+			if err != nil {
+				t.Fatalf("ReadDir() error = %v", err)
+			}
+			if gotFile := len(entries) > 0; gotFile != tt.wantFile {
+				t.Fatalf("temporary file present = %v, want %v", gotFile, tt.wantFile)
 			}
 			if err := f.Close(); err != nil {
 				t.Fatalf("Close() error = %v", err)

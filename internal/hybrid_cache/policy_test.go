@@ -70,6 +70,74 @@ func TestHybridCacheDiskPolicy(t *testing.T) {
 	}
 }
 
+func TestHybridCachePolicyBackingSelection(t *testing.T) {
+	tests := []struct {
+		name           string
+		requested      cache.Policy
+		ceiling        int64
+		checkErr       error
+		wantMemory     bool
+		wantCheckCalls int
+	}{
+		{name: "memory uses memory", requested: cache.PolicyMemory, ceiling: 8, wantMemory: true},
+		{name: "disk uses disk", requested: cache.PolicyDisk, ceiling: 8},
+		{name: "auto admitted uses memory", requested: cache.PolicyAuto, ceiling: 8, wantMemory: true, wantCheckCalls: 1},
+		{name: "auto rejected uses disk", requested: cache.PolicyAuto, ceiling: 8, checkErr: mem.ErrNotEnoughMemory, wantCheckCalls: 1},
+		{name: "auto unknown uses disk", requested: cache.PolicyAuto, ceiling: -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withCacheConfig(t, 8)
+			checkCalls := 0
+			hc, err := newHybridCache(4, tt.ceiling, tt.requested, func(uint64) error {
+				checkCalls++
+				return tt.checkErr
+			})
+			if err != nil {
+				t.Fatalf("newHybridCache() error = %v", err)
+			}
+			if checkCalls != tt.wantCheckCalls {
+				t.Fatalf("memory check calls = %d, want %d", checkCalls, tt.wantCheckCalls)
+			}
+
+			if hc.memoryBacking != tt.wantMemory {
+				t.Fatalf("memory backing = %v, want %v", hc.memoryBacking, tt.wantMemory)
+			}
+			if _, isBuffer := hc.backingStore.(*BufferStore); isBuffer != tt.wantMemory {
+				t.Fatalf("buffer backing = %v, want %v", isBuffer, tt.wantMemory)
+			}
+			if _, isFile := hc.backingStore.(*singleFileStore); isFile == tt.wantMemory {
+				t.Fatalf("file backing = %v, want %v", isFile, !tt.wantMemory)
+			}
+
+			input := []byte("12345678")
+			if tt.ceiling < 0 {
+				input = []byte("unknown")
+			}
+			if _, err := hc.Write(input); err != nil {
+				t.Fatalf("Write() error = %v", err)
+			}
+			if hc.memoryOffset != 0 {
+				t.Fatalf("linear memory offset = %d, want 0", hc.memoryOffset)
+			}
+			if hc.backingOffset != uint64(len(input)) {
+				t.Fatalf("backing offset = %d, want %d", hc.backingOffset, len(input))
+			}
+			got := make([]byte, len(input))
+			if _, err := hc.ReadAt(got, 0); err != nil {
+				t.Fatalf("ReadAt() error = %v", err)
+			}
+			if string(got) != string(input) {
+				t.Fatalf("cache = %q, want %q", got, input)
+			}
+			if err := hc.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestHybridCacheAutoRejectsWholeCeiling(t *testing.T) {
 	withCacheConfig(t, 1024)
 	hc, err := NewHybridCache(4, 8, cache.PolicyAuto)
