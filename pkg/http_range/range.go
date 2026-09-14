@@ -141,7 +141,11 @@ func ApplyRangeToHttpHeader(p Range, headerRef http.Header) http.Header {
 	if header == nil {
 		header = http.Header{}
 	}
-	if p.Start == 0 && p.Length < 0 {
+	if p.Length == 0 {
+		// a zero-length range cannot be expressed as a valid Range header;
+		// "bytes=N--1" gets the request rejected with 400 by strict servers
+		header.Del("Range")
+	} else if p.Start == 0 && p.Length < 0 {
 		header.Del("Range")
 	} else {
 		end := ""
