@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/dlclark/regexp2"
@@ -48,8 +47,6 @@ type FileStreamer interface {
 	IsForceStreamUpload() bool
 	GetExist() Obj
 	SetExist(Obj)
-	GetCachePolicy() cache.Policy
-	SetCachePolicy(cache.Policy) error
 	// for a non-seekable Stream, RangeRead supports peeking some data, and CacheFullAndWriter still works
 	RangeRead(http_range.Range) (io.Reader, error)
 	// for a non-seekable Stream, if Read is called, this function won't work.

@@ -231,10 +231,16 @@ func (d *downloader) download() (io.ReadCloser, error) {
 }
 
 func downloaderMemoryCeiling(rangeLength int64, concurrency, partSize int) int64 {
-	if int64(concurrency) > math.MaxInt64/int64(partSize) {
-		return rangeLength
+	if rangeLength <= 0 || concurrency <= 0 || partSize <= 0 {
+		return 0
 	}
-	return min(rangeLength, int64(concurrency)*int64(partSize))
+	partSize64 := int64(partSize)
+	parts := 1 + (rangeLength-1)/partSize64
+	activeBlocks := min(parts, int64(concurrency))
+	if activeBlocks > math.MaxInt64/partSize64 {
+		return math.MaxInt64
+	}
+	return activeBlocks * partSize64
 }
 
 func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
@@ -355,7 +361,7 @@ func (d *downloader) popBuf(id int) *buffer.PipeBuffer {
 	return br
 }
 
-func (d *downloader) finishBuf(nextId int, prev *buffer.PipeBuffer) (next *buffer.PipeBuffer) {
+func (d *downloader) finishBuf(nextId int, prev *buffer.PipeBuffer) (next *buffer.PipeBuffer, err error) {
 	d.readingID.Store(int64(nextId))
 
 	d.mu.Lock()
@@ -366,14 +372,17 @@ func (d *downloader) finishBuf(nextId int, prev *buffer.PipeBuffer) (next *buffe
 	d.mu.Unlock()
 
 	if shouldSendTask {
-		_ = d.sendChunkTask(false)
+		if err := d.sendChunkTask(false); err != nil {
+			d.cancel(err)
+			return nil, err
+		}
 	} else {
 		_ = prev.Close()
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.popBuf(nextId)
+	return d.popBuf(nextId), nil
 }
 
 // downloadPart is an individual goroutine worker reading from the ch channel
@@ -520,7 +529,9 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 			return 0, err
 		}
 	}
-	_ = d.sendChunkTask(true)
+	if err := d.sendChunkTask(true); err != nil && !errors.Is(err, ErrExceedMaxConcurrency) {
+		return 0, err
+	}
 	n, err := utils.CopyWithBuffer(ch.buf, resp.Body)
 
 	if err != nil {
@@ -655,8 +666,8 @@ func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
 		if mr.pos >= mr.maxPos {
 			return n, io.EOF
 		}
-		mr.curBuf = mr.d.finishBuf(mr.pos, mr.curBuf)
-		return n, nil
+		mr.curBuf, err = mr.d.finishBuf(mr.pos, mr.curBuf)
+		return n, err
 	}
 	return n, err
 }

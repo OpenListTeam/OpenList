@@ -16,7 +16,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
-func TestFileStreamCachePolicy(t *testing.T) {
+func withStreamCacheConfig(t *testing.T) {
+	t.Helper()
 	oldConf := conf.Conf
 	oldPolicy := conf.CachePolicy
 	oldBlockLimit := conf.MaxBlockLimit
@@ -29,26 +30,43 @@ func TestFileStreamCachePolicy(t *testing.T) {
 		conf.AutoMemoryLimit = oldAutoMemoryLimit
 		conf.MinFreeMemory = oldMinFreeMemory
 	})
+	conf.Conf = &conf.Config{TempDir: t.TempDir()}
+	conf.CachePolicy = cache.PolicyMemory
+	conf.MaxBlockLimit = 16 << 20
+	conf.AutoMemoryLimit = 4 << 20
+	conf.MinFreeMemory = 0
+}
+
+func TestFileStreamCachePolicy(t *testing.T) {
+	withStreamCacheConfig(t)
 	conf.MaxBlockLimit = 4
 	conf.AutoMemoryLimit = 0
 
 	t.Run("inherit and override", func(t *testing.T) {
+		withStreamCacheConfig(t)
 		conf.CachePolicy = cache.PolicyDisk
 		f := &stream.FileStream{}
-		if got := f.GetCachePolicy(); got != cache.PolicyDisk {
+		got, err := f.GetCachePolicy()
+		if err != nil || got != cache.PolicyDisk {
 			t.Fatalf("GetCachePolicy() = %q, want disk", got)
 		}
 		if err := f.SetCachePolicy(cache.PolicyMemory); err != nil {
 			t.Fatalf("SetCachePolicy() error = %v", err)
 		}
-		if got := f.GetCachePolicy(); got != cache.PolicyMemory {
+		got, err = f.GetCachePolicy()
+		if err != nil || got != cache.PolicyMemory {
 			t.Fatalf("GetCachePolicy() = %q, want memory", got)
 		}
 		if err := f.SetCachePolicy(cache.PolicyInherit); err != nil {
 			t.Fatalf("SetCachePolicy(inherit) error = %v", err)
 		}
-		if got := f.GetCachePolicy(); got != cache.PolicyDisk {
+		got, err = f.GetCachePolicy()
+		if err != nil || got != cache.PolicyDisk {
 			t.Fatalf("GetCachePolicy() = %q after inherit, want disk", got)
+		}
+		conf.CachePolicy = cache.Policy("invalid")
+		if _, err := f.GetCachePolicy(); err == nil {
+			t.Fatal("GetCachePolicy() expected an error for an invalid global policy")
 		}
 	})
 
@@ -61,6 +79,9 @@ func TestFileStreamCachePolicy(t *testing.T) {
 		{cache.PolicyMemory, false},
 	} {
 		t.Run(string(tt.policy)+" unknown size", func(t *testing.T) {
+			withStreamCacheConfig(t)
+			conf.MaxBlockLimit = 4
+			conf.AutoMemoryLimit = 0
 			tempDir := t.TempDir()
 			conf.Conf = &conf.Config{TempDir: tempDir}
 			conf.CachePolicy = cache.PolicyAuto
@@ -119,6 +140,9 @@ func TestFileStreamCachePolicy(t *testing.T) {
 		{name: "auto rejected keeps known stream on disk", policy: cache.PolicyAuto, wantFile: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			withStreamCacheConfig(t)
+			conf.MaxBlockLimit = 4
+			conf.AutoMemoryLimit = 0
 			tempDir := t.TempDir()
 			conf.Conf = &conf.Config{TempDir: tempDir}
 			conf.CachePolicy = cache.PolicyAuto
@@ -161,9 +185,37 @@ func TestFileStreamCachePolicy(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("inherited policy is frozen after cache initialization", func(t *testing.T) {
+		withStreamCacheConfig(t)
+		conf.MaxBlockLimit = 4
+		conf.AutoMemoryLimit = 0
+		conf.CachePolicy = cache.PolicyDisk
+		input := []byte("frozen-policy")
+		f := &stream.FileStream{
+			Obj:    &model.Object{Size: int64(len(input))},
+			Reader: io.NopCloser(bytes.NewReader(input)),
+		}
+		if _, err := f.CacheFullAndWriter(nil, nil); err != nil {
+			t.Fatalf("CacheFullAndWriter() error = %v", err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		conf.CachePolicy = cache.PolicyMemory
+		policy, err := f.GetCachePolicy()
+		if err != nil {
+			t.Fatalf("GetCachePolicy() error = %v", err)
+		}
+		if policy != cache.PolicyDisk {
+			t.Fatalf("GetCachePolicy() = %q, want frozen disk policy", policy)
+		}
+		if err := f.SetCachePolicy(cache.PolicyMemory); err == nil {
+			t.Fatal("SetCachePolicy() expected an error after cache initialization")
+		}
+	})
 }
 
 func TestRangeRead(t *testing.T) {
+	withStreamCacheConfig(t)
 	type args struct {
 		httpRange http_range.Range
 	}
@@ -174,12 +226,6 @@ func TestRangeRead(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
-	prevAutoMemoryLimit := conf.AutoMemoryLimit
-	prevMaxBlockLimit := conf.MaxBlockLimit
-	t.Cleanup(func() {
-		conf.AutoMemoryLimit = prevAutoMemoryLimit
-		conf.MaxBlockLimit = prevMaxBlockLimit
-	})
 	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 15
 	tests := []struct {
@@ -244,6 +290,7 @@ func TestRangeRead(t *testing.T) {
 }
 
 func TestPreHash(t *testing.T) {
+	withStreamCacheConfig(t)
 	buf := []byte("github.com/OpenListTeam/OpenList")
 	f := &stream.FileStream{
 		Obj: &model.Object{
@@ -251,12 +298,6 @@ func TestPreHash(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
-	prevAutoMemoryLimit := conf.AutoMemoryLimit
-	prevMaxBlockLimit := conf.MaxBlockLimit
-	t.Cleanup(func() {
-		conf.AutoMemoryLimit = prevAutoMemoryLimit
-		conf.MaxBlockLimit = prevMaxBlockLimit
-	})
 	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 15
 
@@ -276,6 +317,7 @@ func TestPreHash(t *testing.T) {
 }
 
 func TestStreamSectionReader(t *testing.T) {
+	withStreamCacheConfig(t)
 	buf := make([]byte, 8<<10)
 	for i := range len(buf) {
 		buf[i] = byte(i % 256)
@@ -286,18 +328,9 @@ func TestStreamSectionReader(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
-	prevAutoMemoryLimit := conf.AutoMemoryLimit
-	prevMaxBlockLimit := conf.MaxBlockLimit
-	prevConf := conf.Conf
-	t.Cleanup(func() {
-		conf.AutoMemoryLimit = prevAutoMemoryLimit
-		conf.MaxBlockLimit = prevMaxBlockLimit
-		conf.Conf = prevConf
-	})
 	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 2 << 10
 	partSize := 3 << 10
-	conf.Conf = &conf.Config{}
 	ss, err := stream.NewStreamSectionReader(f, partSize, nil)
 	if err != nil {
 		t.Errorf("NewStreamSectionReader() error = %v", err)
@@ -322,13 +355,6 @@ func TestStreamSectionReader(t *testing.T) {
 		}
 		if !bytes.Equal(buf[i:i+length], b1) {
 			t.Errorf("StreamSectionReader.Read() = %s, want %s", b1, buf[i:i+length])
-		}
-		if i == 0 {
-			prevMinFreeMemory := conf.MinFreeMemory
-			conf.MinFreeMemory = 0 // 强制使用文件缓存
-			t.Cleanup(func() {
-				conf.MinFreeMemory = prevMinFreeMemory
-			})
 		}
 	}
 }

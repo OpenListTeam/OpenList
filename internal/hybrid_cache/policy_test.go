@@ -153,6 +153,21 @@ func TestHybridCacheAutoRejectsWholeCeiling(t *testing.T) {
 	}
 }
 
+func TestHybridCacheZeroCeilingRejectsUnexpectedWrites(t *testing.T) {
+	withCacheConfig(t, 8)
+	hc, err := newHybridCache(4, 0, cache.PolicyAuto, func(uint64) error {
+		t.Fatal("zero ceiling must not check memory")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("newHybridCache() error = %v", err)
+	}
+	t.Cleanup(func() { _ = hc.Close() })
+	if _, err := hc.Write([]byte{1}); !errors.Is(err, mem.ErrNotEnoughMemory) {
+		t.Fatalf("Write() error = %v, want ErrNotEnoughMemory", err)
+	}
+}
+
 func TestHybridCacheStrictMemoryDoesNotSpill(t *testing.T) {
 	withCacheConfig(t, 0)
 	hc, err := NewHybridCache(4, 8, cache.PolicyMemory)

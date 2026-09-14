@@ -30,6 +30,8 @@ type FileStream struct {
 	size                int64
 	sizeSet             bool
 	cachePolicyOverride cache.Policy
+	cachePolicyResolved cache.Policy
+	cachePolicyLocked   bool
 	oriReader           io.Reader // the original reader, used for caching
 	hc                  *hcache.HybridCache
 	peek                buffer.SizedReadAtSeeker
@@ -61,19 +63,23 @@ func (f *FileStream) SetExist(obj model.Obj) {
 	f.Exist = obj
 }
 
-func (f *FileStream) GetCachePolicy() cache.Policy {
-	policy, err := cache.ResolvePolicy(f.cachePolicyOverride, conf.CachePolicy)
-	if err != nil {
-		panic(err)
+func (f *FileStream) GetCachePolicy() (cache.Policy, error) {
+	if f.cachePolicyLocked {
+		return f.cachePolicyResolved, nil
 	}
-	return policy
+	return cache.ResolvePolicy(f.cachePolicyOverride, conf.CachePolicy)
+}
+
+func (f *FileStream) freezeCachePolicy(policy cache.Policy) {
+	f.cachePolicyResolved = policy
+	f.cachePolicyLocked = true
 }
 
 func (f *FileStream) SetCachePolicy(policy cache.Policy) error {
 	if policy != cache.PolicyInherit && !policy.IsConcrete() {
 		return fmt.Errorf("invalid cache policy %q", policy)
 	}
-	if f.peek != nil {
+	if f.cachePolicyLocked {
 		return errors.New("cache policy cannot be changed after cache initialization")
 	}
 	f.cachePolicyOverride = policy
@@ -196,11 +202,15 @@ func (f *FileStream) ensureCache(size int64) (model.File, error) {
 				blockSize = min(blockSize, size)
 			}
 		}
-		var err error
-		f.hc, err = hcache.NewHybridCache(uint64(blockSize), memoryCeiling, f.GetCachePolicy())
+		policy, err := f.GetCachePolicy()
 		if err != nil {
 			return nil, err
 		}
+		f.hc, err = hcache.NewHybridCache(uint64(blockSize), memoryCeiling, policy)
+		if err != nil {
+			return nil, err
+		}
+		f.freezeCachePolicy(policy)
 		f.peek = buffer.NewDynamicReadAtSeeker(f.hc)
 		f.oriReader = f.Reader
 		f.Reader = io.MultiReader(f.peek, f.oriReader)

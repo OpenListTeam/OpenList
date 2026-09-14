@@ -16,6 +16,8 @@ const (
 	PolicyDisk    Policy = "disk"
 )
 
+// ParsePolicy parses a user-facing global policy, where an empty value means
+// auto. Text unmarshalling keeps an empty per-instance value as inherit.
 func ParsePolicy(value string) (Policy, error) {
 	policy := Policy(strings.ToLower(strings.TrimSpace(value)))
 	if policy == PolicyInherit {
@@ -53,6 +55,12 @@ func (p Policy) MarshalText() ([]byte, error) {
 }
 
 func (p *Policy) UnmarshalText(text []byte) error {
+	if strings.TrimSpace(string(text)) == "" {
+		// Preserve inherit for per-instance configs. Global configuration
+		// resolves an empty policy to auto during bootstrap.
+		*p = PolicyInherit
+		return nil
+	}
 	policy, err := ParsePolicy(string(text))
 	if err != nil {
 		return err

@@ -290,6 +290,8 @@ func selectPolicy(requested cache.Policy, memoryCeiling int64, check memoryCheck
 			return cache.PolicyDisk, nil
 		}
 		if memoryCeiling == 0 {
+			// Zero is a known empty workload, unlike a negative unknown ceiling.
+			// The hard ceiling still rejects any unexpected writes.
 			return cache.PolicyMemory, nil
 		}
 		if err := check(uint64(memoryCeiling)); err != nil {

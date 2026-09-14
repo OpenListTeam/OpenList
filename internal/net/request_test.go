@@ -6,14 +6,20 @@ package net
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
+	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
+	"github.com/OpenListTeam/OpenList/v4/internal/mem"
+	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/sirupsen/logrus"
 )
@@ -36,8 +42,13 @@ func TestDownloaderMemoryCeiling(t *testing.T) {
 		want        int64
 	}{
 		{"working set", 100 << 20, 2, 8 << 20, 16 << 20},
-		{"range smaller than pool", 10, 4, 8, 10},
+		{"partial final block", 6, 2, 4, 8},
+		{"range smaller than pool", 10, 4, 8, 16},
+		{"exact block", 8, 2, 4, 8},
 		{"multiplication overflow", 100, int(^uint(0) >> 1), 2, 100},
+		{"negative range", -1, 2, 4, 0},
+		{"invalid concurrency", 8, 0, 4, 0},
+		{"invalid part size", 8, 2, 0, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -45,6 +56,56 @@ func TestDownloaderMemoryCeiling(t *testing.T) {
 				t.Fatalf("downloaderMemoryCeiling() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+	if strconv.IntSize == 64 {
+		maxInt := int(^uint(0) >> 1)
+		if got := downloaderMemoryCeiling(math.MaxInt64, maxInt, 2); got != math.MaxInt64 {
+			t.Fatalf("downloaderMemoryCeiling() overflow result = %d, want MaxInt64", got)
+		}
+	}
+}
+
+func TestTryDownloadChunkReturnsPrefetchAllocationError(t *testing.T) {
+	hc, err := hcache.NewHybridCache(4, 4, cache.PolicyMemory)
+	if err != nil {
+		t.Fatalf("NewHybridCache() error = %v", err)
+	}
+	t.Cleanup(func() { _ = hc.Close() })
+	block, err := hc.NextBlock()
+	if err != nil {
+		t.Fatalf("NextBlock() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	d := &downloader{
+		ctx:    ctx,
+		cancel: cancel,
+		cfg: Downloader{
+			PartSize:    4,
+			Concurrency: 2,
+			HttpClient: func(context.Context, *HttpRequestParams) (*http.Response, error) {
+				return &http.Response{
+					Body:          io.NopCloser(bytes.NewReader([]byte("1234"))),
+					Header:        http.Header{"Content-Range": {"bytes 0-3/8"}},
+					ContentLength: 4,
+				}, nil
+			},
+		},
+		params: &HttpRequestParams{
+			Range: http_range.Range{Length: 8},
+			Size:  8,
+		},
+		chunkCh:     make(chan chunk, 2),
+		bufMap:      make(map[int]*buffer.PipeBuffer),
+		concurrency: 1,
+		pos:         4,
+		maxPos:      8,
+		nextChunk:   1,
+		hc:          hc,
+	}
+	current := &chunk{start: 0, size: 4, id: 0, buf: buffer.NewPipeBuffer(ctx, block)}
+	if _, err := d.tryDownloadChunk(d.getParamsFromChunk(current), current); !errors.Is(err, mem.ErrNotEnoughMemory) {
+		t.Fatalf("tryDownloadChunk() error = %v, want ErrNotEnoughMemory", err)
 	}
 }
 

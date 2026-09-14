@@ -79,4 +79,17 @@ func TestPolicyJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"cache_policy":"invalid"}`), &cfg); err == nil {
 		t.Fatal("json.Unmarshal() expected an error for an invalid policy")
 	}
+
+	cfg.Policy = PolicyInherit
+	b, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal(inherit) error = %v", err)
+	}
+	var roundTrip config
+	if err := json.Unmarshal(b, &roundTrip); err != nil {
+		t.Fatalf("json.Unmarshal(inherit) error = %v", err)
+	}
+	if roundTrip.Policy != PolicyInherit {
+		t.Fatalf("inherit round trip policy = %q, want inherit", roundTrip.Policy)
+	}
 }

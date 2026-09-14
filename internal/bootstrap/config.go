@@ -9,6 +9,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	internalmem "github.com/OpenListTeam/OpenList/v4/internal/mem"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
@@ -96,7 +97,12 @@ func InitConfig() {
 	if !conf.Conf.Force {
 		confFromEnv()
 	}
-	conf.CachePolicy = conf.Conf.CachePolicy
+	cachePolicy, policyErr := cache.ResolvePolicy(conf.Conf.CachePolicy, cache.PolicyAuto)
+	if policyErr != nil {
+		log.Fatalf("resolve cache policy error: %+v", policyErr)
+	}
+	conf.Conf.CachePolicy = cachePolicy
+	conf.CachePolicy = cachePolicy
 	log.Infof("cache policy: %s", conf.CachePolicy)
 
 	if conf.Conf.MaxConcurrency > math.MaxInt32 {
