@@ -198,8 +198,9 @@ func (d *Onedrive) upSmall(ctx context.Context, dstDir model.Obj, stream model.F
 		return fmt.Errorf("onedrive: Failed to upload new file(path=%v): %w", filepath, err)
 	}
 	// 2. verify stored size: a stalled body can still get a 2xx while fewer
-	// bytes (even 0) were actually stored, which would silently corrupt data
-	if item.Size != stream.GetSize() {
+	// bytes (even 0) were actually stored, which would silently corrupt data.
+	// Skip when the expected size is unknown (e.g. chunked WebDAV PUTs).
+	if stream.GetSize() >= 0 && item.Size != stream.GetSize() {
 		return fmt.Errorf("onedrive: uploaded file size mismatch (path=%v): stored %d bytes, expected %d", filepath, item.Size, stream.GetSize())
 	}
 
