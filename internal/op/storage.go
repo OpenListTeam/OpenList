@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -251,7 +251,7 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 		storagesMap.Delete(oldStorage.MountPath)
 		InvalidateStorageDetailsState(oldStorage.MountPath)
 	}
-	}
+	InvalidateStorageDetailsState(storage.MountPath)
 	err = storageDriver.Drop(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "failed drop storage")
@@ -351,7 +351,8 @@ func GetStorageVirtualFilesByPath(prefix string) []model.Obj {
 	return getStorageVirtualFilesByPath(prefix, nil, "")
 }
 
-func getSettingInt(key string, defaultValue int) int {
+// GetSettingInt retrieves an integer setting value by key, returning defaultValue if absent or invalid.
+func GetSettingInt(key string, defaultValue int) int {
 	if item, err := GetSettingItemByKey(key); err == nil && item != nil {
 		if val, err := strconv.Atoi(item.Value); err == nil {
 			return val
@@ -364,7 +365,7 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 	if hideDetails {
 		return getStorageVirtualFilesByPath(prefix, nil, filterByName)
 	}
-	timeoutSec := time.Duration(getSettingInt(conf.StorageDetailsTimeoutSeconds, 15)) * time.Second
+	timeoutSec := time.Duration(GetSettingInt(conf.StorageDetailsTimeoutSeconds, 15)) * time.Second
 	return getStorageVirtualFilesByPath(prefix, func(d driver.Driver, obj model.Obj) model.Obj {
 		if _, ok := obj.(*model.ObjStorageDetails); ok {
 			return obj
@@ -494,11 +495,14 @@ var (
 	detailsG      singleflight.Group[*model.StorageDetails]
 	detailsLock   sync.RWMutex
 	lastDoneTimes = make(map[string]int64)
+	cacheVersions = make(map[string]uint64)
 )
 
 func InvalidateStorageDetailsState(mountPath string) {
+	actual := utils.GetActualMountPath(mountPath)
 	detailsLock.Lock()
-	delete(lastDoneTimes, utils.GetActualMountPath(mountPath))
+	delete(lastDoneTimes, actual)
+	delete(cacheVersions, actual)
 	cleanExpiredLastDoneTimesLocked(time.Now().Unix())
 	detailsLock.Unlock()
 }
@@ -520,18 +524,30 @@ func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bo
 		return nil, errs.NotImplement
 	}
 	mountPath := utils.GetActualMountPath(storage.GetStorage().MountPath)
-	cooldownSec := getSettingInt(conf.StorageDetailsCooldownSeconds, 0)
+	cooldownSec := GetSettingInt(conf.StorageDetailsCooldownSeconds, 0)
 
 	detailsLock.RLock()
 	lastDone := lastDoneTimes[mountPath]
+	ver := cacheVersions[mountPath]
 	detailsLock.RUnlock()
 
 	now := time.Now().Unix()
 	isRefresh := utils.IsBool(refresh...)
 
+	var flightKey string
+	if isRefresh {
+		flightKey = mountPath + ":refresh"
+	} else {
+		flightKey = mountPath
+	}
+
 	// 强刷时：若超出冷却期（或默认 cooldown=0），先主动清空旧缓存，保证强一致性
 	if isRefresh && (cooldownSec <= 0 || now-lastDone >= int64(cooldownSec)) {
 		Cache.InvalidateStorageDetails(storage)
+		detailsLock.Lock()
+		cacheVersions[mountPath]++
+		ver = cacheVersions[mountPath]
+		detailsLock.Unlock()
 	} else {
 		// 普通读取 或 处于冷却期内：优先读取有效缓存
 		if ret, ok := Cache.GetStorageDetails(storage); ok {
@@ -539,7 +555,7 @@ func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bo
 		}
 	}
 
-	details, err, _ := detailsG.Do(mountPath, func() (ret *model.StorageDetails, err error) {
+	details, err, _ := detailsG.Do(flightKey, func() (ret *model.StorageDetails, err error) {
 		defer func() {
 			if r := recover(); r != nil {
 				err = fmt.Errorf("panic in driver GetDetails: %v", r)
@@ -550,12 +566,18 @@ func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bo
 		if err != nil {
 			return nil, err
 		}
-		Cache.SetStorageDetails(storage, ret)
+
 		nowDone := time.Now().Unix()
 		detailsLock.Lock()
-		lastDoneTimes[mountPath] = nowDone
-		if len(lastDoneTimes) > 256 {
-			cleanExpiredLastDoneTimesLocked(nowDone)
+		// 仅当探测期间未发生新的强刷失效时才写回缓存，杜绝慢速旧协程复活旧缓存
+		if cacheVersions[mountPath] == ver {
+			Cache.SetStorageDetails(storage, ret)
+			lastDoneTimes[mountPath] = nowDone
+			if len(lastDoneTimes) > 256 {
+				cleanExpiredLastDoneTimesLocked(nowDone)
+			}
+		} else {
+			log.Debugf("discarding stale storage details for %s: cache version %d was superseded by %d", mountPath, ver, cacheVersions[mountPath])
 		}
 		detailsLock.Unlock()
 		return ret, nil

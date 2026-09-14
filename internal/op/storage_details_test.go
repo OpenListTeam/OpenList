@@ -272,3 +272,47 @@ func TestInvalidateStorageDetailsState(t *testing.T) {
 		t.Fatalf("expected callCount 2 after InvalidateStorageDetailsState, got %d", count)
 	}
 }
+
+func TestGetStorageDetailsRefreshBarrier(t *testing.T) {
+	mock := &mockDriverWithDetails{
+		Storage: model.Storage{
+			MountPath:       "/test-mock-refresh-barrier",
+			Status:          op.WORK,
+			CacheExpiration: 30,
+		},
+		delay: 80 * time.Millisecond,
+	}
+
+	_ = op.SaveSettingItem(&model.SettingItem{
+		Key:   conf.StorageDetailsCooldownSeconds,
+		Value: "0",
+		Type:  conf.TypeNumber,
+		Group: model.STYLE,
+	})
+
+	ctx := context.Background()
+
+	// 1. 发起一个慢速的非强刷请求
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = op.GetStorageDetails(ctx, mock, false)
+	}()
+
+	// 等待 20ms，确保非强刷请求已进入 singleflight 执行
+	time.Sleep(20 * time.Millisecond)
+
+	// 2. 此时触发强刷请求，强刷不应复用慢速旧协程，而应通过代数屏障触发独立探测
+	d2, err := op.GetStorageDetails(ctx, mock, true)
+	if err != nil || d2.TotalSpace != 1000 {
+		t.Fatalf("forced refresh call failed: %v", err)
+	}
+
+	wg.Wait()
+
+	// 驱动调用次数应当为 2（一次普通请求，一次强刷请求，未被错误合并）
+	if count := atomic.LoadInt64(&mock.callCount); count != 2 {
+		t.Errorf("expected refresh barrier to cause 2 driver executions, got %d", count)
+	}
+}
