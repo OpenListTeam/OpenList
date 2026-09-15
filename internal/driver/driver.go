@@ -76,6 +76,12 @@ type Remove interface {
 	Remove(ctx context.Context, obj model.Obj) error
 }
 
+// Replace swaps src into dst while keeping dst continuously addressable.
+// Drivers that can provide this stronger overwrite primitive should implement it.
+type Replace interface {
+	Replace(ctx context.Context, srcObj, dstObj model.Obj, dstName string) error
+}
+
 type Put interface {
 	// Put a file (provided as a FileStreamer) into the driver
 	// Besides the most basic upload functionality, the following features also need to be implemented:

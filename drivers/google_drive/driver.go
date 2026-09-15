@@ -111,6 +111,24 @@ func (d *GoogleDrive) Remove(ctx context.Context, obj model.Obj) error {
 	return err
 }
 
+// Replace installs src at dst before deleting the previous destination object.
+// Google Drive permits duplicate names, so readers can continue resolving dst
+// throughout the handoff instead of observing a delete-then-move gap.
+func (d *GoogleDrive) Replace(ctx context.Context, srcObj, dstObj model.Obj, dstName string) error {
+	data := base.Json{"name": dstName}
+	url := "https://www.googleapis.com/drive/v3/files/" + srcObj.GetID()
+	_, err := d.request(url, http.MethodPatch, func(req *resty.Request) {
+		req.SetBody(data)
+	}, nil)
+	if err != nil {
+		return err
+	}
+
+	url = "https://www.googleapis.com/drive/v3/files/" + dstObj.GetID()
+	_, err = d.request(url, http.MethodDelete, nil, nil)
+	return err
+}
+
 func (d *GoogleDrive) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	obj := stream.GetExist()
 	var (
