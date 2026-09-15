@@ -95,10 +95,6 @@ func RunJob(id uint) error {
 
 // startJob 在获取运行锁后启动一次执行。
 func startJob(parent context.Context, job model.CronJob, scheduled bool) error {
-	spec, err := cron.ParseCronSpec(job.CronSpec)
-	if err != nil {
-		return fmt.Errorf("parse cron spec: %w", err)
-	}
 	handler, err := LookupHandler(job.Type)
 	if err != nil {
 		return err
@@ -115,9 +111,9 @@ func startJob(parent context.Context, job model.CronJob, scheduled bool) error {
 	// 定时触发后要写 next_run_at；手动触发不改变未来仍有效的计划时间。
 	// 但如果 next_run_at 已过期或为空，也应当重新计算，避免恢复后重复触发。
 	if scheduled || nextRunAt == nil || nextRunAt.Before(now) {
-		next := spec.NextAfter(now)
-		if next.IsZero() {
-			return fmt.Errorf("cannot calculate next run time for cron %q", job.CronSpec)
+		next, err := EarliestNext(job.CronSpecs, now)
+		if err != nil {
+			return fmt.Errorf("calculate next run time: %w", err)
 		}
 		nextRunAt = &next
 	}
@@ -192,8 +188,8 @@ func tickCronJobs(ctx context.Context) {
 		}
 
 		// cron 表达式在这里再解析一次，确保管理员更新后无需重启调度器。
-		if _, err := cron.ParseCronSpec(job.CronSpec); err != nil {
-			log.Errorf("cronjob [%d] has invalid cron spec %q: %+v", job.ID, job.CronSpec, err)
+		if _, err := ParseSpecs(job.CronSpecs); err != nil {
+			log.Errorf("cronjob [%d] has invalid cron specs %+v: %+v", job.ID, job.CronSpecs, err)
 			continue
 		}
 

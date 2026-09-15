@@ -424,11 +424,11 @@ func TestCronSchedulerTickRunsExpiredJob(t *testing.T) {
 	})
 
 	job := &model.CronJob{
-		Name:     "cron-test-fast-job",
-		Type:     "cron-test-fast",
-		CronSpec: "* * * * *",
-		Enabled:  true,
-		Args:     "{}",
+		Name:      "cron-test-fast-job",
+		Type:      "cron-test-fast",
+		CronSpecs: []string{"* * * * *"},
+		Enabled:   true,
+		Args:      "{}",
 		// NextRunAt 已过期，tickCronJobs 应当立即启动它。
 		NextRunAt: &nowMinusMinute,
 	}
@@ -495,7 +495,7 @@ func TestCronSchedulerRejectsRepeatedStart(t *testing.T) {
 	job := &model.CronJob{
 		Name:      "cron-test-blocking-job",
 		Type:      "cron-test-blocking",
-		CronSpec:  "* * * * *",
+		CronSpecs: []string{"* * * * *"},
 		Enabled:   true,
 		Args:      "{}",
 		NextRunAt: &nowMinusMinute,

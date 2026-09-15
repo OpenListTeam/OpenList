@@ -127,10 +127,10 @@ func TestCreateCronJobRequiresAdmin(t *testing.T) {
 		Role:     model.GENERAL,
 	}
 	payload := map[string]any{
-		"name":      "normal-user-sync",
-		"type":      "sync",
-		"cron_spec": "*/5 * * * *",
-		"enabled":   false,
+		"name":       "normal-user-sync",
+		"type":       "sync",
+		"cron_specs": []string{"*/5 * * * *"},
+		"enabled":    false,
 		"args": map[string]any{
 			"src": "/non-admin-sync-src",
 			"dst": "/non-admin-sync-dst",
@@ -170,10 +170,10 @@ func TestCreateSyncCronJobWithAdmin(t *testing.T) {
 		Role:     model.ADMIN,
 	}
 	payload := map[string]any{
-		"name":      "admin-sync-cronjob",
-		"type":      "sync",
-		"cron_spec": "*/10 * * * *",
-		"enabled":   false,
+		"name":       "admin-sync-cronjob",
+		"type":       "sync",
+		"cron_specs": []string{"*/10 * * * *"},
+		"enabled":    false,
 		"args": map[string]any{
 			"src": srcMount,
 			"dst": dstMount,
@@ -199,8 +199,8 @@ func TestCreateSyncCronJobWithAdmin(t *testing.T) {
 			if job.Type != "sync" {
 				t.Fatalf("unexpected job type: %s", job.Type)
 			}
-			if job.CronSpec != "*/10 * * * *" {
-				t.Fatalf("unexpected cron spec: %s", job.CronSpec)
+			if len(job.CronSpecs) != 1 || job.CronSpecs[0] != "*/10 * * * *" {
+				t.Fatalf("unexpected cron specs: %+v", job.CronSpecs)
 			}
 		}
 	}

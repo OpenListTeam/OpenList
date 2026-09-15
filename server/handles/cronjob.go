@@ -2,14 +2,12 @@ package handles
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/cronjob"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -21,8 +19,9 @@ type CronJobReq struct {
 	Name string `json:"name" binding:"required"`
 	// Type 是任务类型，例如 sync。
 	Type string `json:"type" binding:"required"`
-	// CronSpec 是标准 5 字段 cron 表达式。
-	CronSpec string `json:"cron_spec" binding:"required"`
+	// CronSpecs 是执行时间列表；每条都是标准 5 字段 cron 表达式，
+	// 任务在任一表达式命中时执行，支持一条任务配置多个执行时间。
+	CronSpecs []string `json:"cron_specs" binding:"required"`
 	// Enabled 表示是否启用计划任务。
 	Enabled bool `json:"enabled"`
 	// Args 是任务类型对应的 JSON 配置。
@@ -37,24 +36,39 @@ func (r *CronJobReq) toModel() (*model.CronJob, error) {
 		args = "{}"
 	}
 	return &model.CronJob{
-		Name:     r.Name,
-		Type:     r.Type,
-		CronSpec: r.CronSpec,
-		Enabled:  r.Enabled,
-		Args:     args,
+		Name:      r.Name,
+		Type:      r.Type,
+		CronSpecs: r.CronSpecs,
+		Enabled:   r.Enabled,
+		Args:      args,
 	}, nil
 }
 
 // validateCronJobReq 校验 cron 表达式、任务类型和任务参数。
 func validateCronJobReq(req *CronJobReq) error {
-	if _, err := cron.ParseCronSpec(req.CronSpec); err != nil {
-		return fmt.Errorf("invalid cron spec: %w", err)
+	if _, err := cronjob.ParseSpecs(req.CronSpecs); err != nil {
+		return err
 	}
 	handler, err := cronjob.LookupHandler(req.Type)
 	if err != nil {
 		return err
 	}
 	return handler.ValidateArgs(req.Args)
+}
+
+// setNextRunAt 按全部 cron 表达式计算最早的下一次触发时间；禁用任务不计算。
+func setNextRunAt(job *model.CronJob) error {
+	if !job.Enabled {
+		job.NextRunAt = nil
+		return nil
+	}
+	// 创建后从当前时间计算下一次触发时间；不立刻执行任务。
+	next, err := cronjob.EarliestNext(job.CronSpecs, time.Now())
+	if err != nil {
+		return err
+	}
+	job.NextRunAt = &next
+	return nil
 }
 
 // ListCronJobs 返回全部计划任务配置。
@@ -106,15 +120,10 @@ func CreateCronJob(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	// 创建后从当前时间计算下一次触发时间；不立刻执行任务。
-	spec, err := cron.ParseCronSpec(job.CronSpec)
-	if err != nil {
+	// 创建后从全部表达式计算最早的下一次触发时间；不立刻执行任务。
+	if err := setNextRunAt(job); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
-	}
-	if job.Enabled {
-		next := spec.NextAfter(time.Now())
-		job.NextRunAt = &next
 	}
 	if err := db.CreateCronJob(job); err != nil {
 		common.ErrorResp(c, err, 500, true)
@@ -156,16 +165,9 @@ func UpdateCronJob(c *gin.Context) {
 	}
 	// 保留数据库主键，并重置下一次执行时间；调度器会在 30 秒内看到新配置。
 	job.ID = old.ID
-	spec, err := cron.ParseCronSpec(job.CronSpec)
-	if err != nil {
+	if err := setNextRunAt(job); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
-	}
-	if job.Enabled {
-		next := spec.NextAfter(time.Now())
-		job.NextRunAt = &next
-	} else {
-		job.NextRunAt = nil
 	}
 	if err := db.UpdateCronJob(job); err != nil {
 		common.ErrorResp(c, err, 500, true)

@@ -12,8 +12,9 @@ type CronJob struct {
 	Name string `json:"name" gorm:"unique" binding:"required"`
 	// Type 是计划任务类型，例如 sync；调度器会根据该字段找到对应 Handler。
 	Type string `json:"type" binding:"required"`
-	// CronSpec 是标准 5 字段 cron 表达式：分 时 日 月 周。
-	CronSpec string `json:"cron_spec" binding:"required"`
+	// CronSpecs 是任务的执行时间列表；每条都是标准 5 字段 cron 表达式：
+	// 分 时 日 月 周。任务在任一表达式命中时执行，便于一条任务配置多个执行时间。
+	CronSpecs []string `json:"cron_specs" gorm:"type:text;serializer:json" binding:"required"`
 	// Args 是任务类型的 JSON 配置；这里使用 text 保存，避免每种任务类型都修改表结构。
 	Args string `json:"args" gorm:"type:text"`
 	// Enabled 为 false 时调度器会跳过执行。
