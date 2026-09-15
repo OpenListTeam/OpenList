@@ -15,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/socketactivation"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server"
 	"github.com/OpenListTeam/OpenList/v4/server/middlewares"
@@ -52,6 +53,7 @@ var (
 	unixSrv      *http.Server
 	unixRunning  bool
 	quicSrv      *http3.Server
+	quicConn     *net.UDPConn
 	quicRunning  bool
 	s3Srv        *http.Server
 	s3Running    bool
@@ -85,6 +87,23 @@ func IsRunning(t string) bool {
 }
 
 func Start() {
+	// Consume inherited descriptors before initialization can launch children.
+	sockets, err := socketactivation.Receive()
+	if err != nil {
+		utils.Log.Errorf("failed to receive activation sockets: %s", err)
+		return
+	}
+	httpsBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpsPort)
+	quicBase := httpsBase
+	quicEnabled := sockets.QUIC != nil || (conf.Conf.Scheme.EnableH3 && conf.Conf.Scheme.HttpsPort != -1)
+	quicPort := conf.Conf.Scheme.HttpsPort
+	if sockets.HTTPS != nil {
+		httpsBase = sockets.HTTPS.Addr().String()
+	}
+	if sockets.QUIC != nil {
+		quicBase = sockets.QUIC.LocalAddr().String()
+		quicPort = sockets.QUIC.LocalAddr().(*net.UDPAddr).Port
+	}
 	if conf.Conf.DelayedStart != 0 {
 		utils.Log.Infof("delayed start for %d seconds", conf.Conf.DelayedStart)
 		time.Sleep(time.Duration(conf.Conf.DelayedStart) * time.Second)
@@ -105,19 +124,30 @@ func Start() {
 	}
 	r.Use(gin.RecoveryWithWriter(log.StandardLogger().Out))
 
+	if quicEnabled {
+		r.Use(func(c *gin.Context) {
+			if c.Request.TLS != nil {
+				c.Header("Alt-Svc", fmt.Sprintf("h3=\":%d\"; ma=86400", quicPort))
+			}
+			c.Next()
+		})
+	}
 	server.Init(r)
 	var httpHandler http.Handler = r
 	if conf.Conf.Scheme.EnableH2c {
 		httpHandler = h2c.NewHandler(r, &http2.Server{})
 	}
-	if conf.Conf.Scheme.HttpPort != -1 {
+	if sockets.HTTP != nil || conf.Conf.Scheme.HttpPort != -1 {
 		httpBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpPort)
+		if sockets.HTTP != nil {
+			httpBase = sockets.HTTP.Addr().String()
+		}
 		fmt.Printf("start HTTP server @ %s\n", httpBase)
 		utils.Log.Infof("start HTTP server @ %s", httpBase)
 		httpSrv = &http.Server{Addr: httpBase, Handler: httpHandler}
 		go func() {
 			httpRunning = true
-			err := httpSrv.ListenAndServe()
+			err := serveHTTP(httpSrv, sockets.HTTP)
 			httpRunning = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				handleEndpointStartFailedHooks("http", err)
@@ -127,14 +157,13 @@ func Start() {
 			}
 		}()
 	}
-	if conf.Conf.Scheme.HttpsPort != -1 {
-		httpsBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpsPort)
+	if sockets.HTTPS != nil || conf.Conf.Scheme.HttpsPort != -1 {
 		fmt.Printf("start HTTPS server @ %s\n", httpsBase)
 		utils.Log.Infof("start HTTPS server @ %s", httpsBase)
 		httpsSrv = &http.Server{Addr: httpsBase, Handler: r}
 		go func() {
 			httpsRunning = true
-			err := httpsSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+			err := serveHTTPS(httpsSrv, sockets.HTTPS, conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
 			httpsRunning = false
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				handleEndpointStartFailedHooks("https", err)
@@ -143,29 +172,23 @@ func Start() {
 				handleEndpointShutdownHooks("https")
 			}
 		}()
-		if conf.Conf.Scheme.EnableH3 {
-			fmt.Printf("start HTTP3 (quic) server @ %s\n", httpsBase)
-			utils.Log.Infof("start HTTP3 (quic) server @ %s", httpsBase)
-			r.Use(func(c *gin.Context) {
-				if c.Request.TLS != nil {
-					port := conf.Conf.Scheme.HttpsPort
-					c.Header("Alt-Svc", fmt.Sprintf("h3=\":%d\"; ma=86400", port))
-				}
-				c.Next()
-			})
-			quicSrv = &http3.Server{Addr: httpsBase, Handler: r}
-			go func() {
-				quicRunning = true
-				err := quicSrv.ListenAndServeTLS(conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
-				quicRunning = false
-				if err != nil && !errors.Is(err, http.ErrServerClosed) {
-					handleEndpointStartFailedHooks("quic", err)
-					utils.Log.Errorf("failed to start http3 (quic): %s", err.Error())
-				} else {
-					handleEndpointShutdownHooks("quic")
-				}
-			}()
-		}
+	}
+	if quicEnabled {
+		fmt.Printf("start HTTP3 (quic) server @ %s\n", quicBase)
+		utils.Log.Infof("start HTTP3 (quic) server @ %s", quicBase)
+		quicSrv = &http3.Server{Addr: quicBase, Handler: r}
+		quicConn = sockets.QUIC
+		go func() {
+			quicRunning = true
+			err := serveQUIC(quicSrv, sockets.QUIC, conf.Conf.Scheme.CertFile, conf.Conf.Scheme.KeyFile)
+			quicRunning = false
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				handleEndpointStartFailedHooks("quic", err)
+				utils.Log.Errorf("failed to start http3 (quic): %s", err.Error())
+			} else {
+				handleEndpointShutdownHooks("quic")
+			}
+		}()
 	}
 	if conf.Conf.Scheme.UnixFile != "" {
 		fmt.Printf("start unix server @ %s\n", conf.Conf.Scheme.UnixFile)
@@ -273,11 +296,14 @@ func Start() {
 
 func Shutdown(timeout time.Duration) {
 	utils.Log.Println("Shutdown server...")
-	fs.ArchiveContentUploadTaskManager.RemoveAll()
+	// Activation validation can stop Start before task managers are initialized.
+	if fs.ArchiveContentUploadTaskManager.Manager != nil {
+		fs.ArchiveContentUploadTaskManager.RemoveAll()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var wg sync.WaitGroup
-	if httpSrv != nil && conf.Conf.Scheme.HttpPort != -1 {
+	if httpSrv != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -287,7 +313,7 @@ func Shutdown(timeout time.Duration) {
 			httpSrv = nil
 		}()
 	}
-	if httpsSrv != nil && conf.Conf.Scheme.HttpsPort != -1 {
+	if httpsSrv != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -296,16 +322,20 @@ func Shutdown(timeout time.Duration) {
 			}
 			httpsSrv = nil
 		}()
-		if quicSrv != nil && conf.Conf.Scheme.EnableH3 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if err := quicSrv.Shutdown(ctx); err != nil {
-					utils.Log.Error("HTTP3 (quic) server shutdown err: ", err)
-				}
-				quicSrv = nil
-			}()
-		}
+	}
+	if quicSrv != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := quicSrv.Shutdown(ctx); err != nil {
+				utils.Log.Error("HTTP3 (quic) server shutdown err: ", err)
+			}
+			if quicConn != nil {
+				_ = quicConn.Close()
+				quicConn = nil
+			}
+			quicSrv = nil
+		}()
 	}
 	if unixSrv != nil && conf.Conf.Scheme.UnixFile != "" {
 		wg.Add(1)
