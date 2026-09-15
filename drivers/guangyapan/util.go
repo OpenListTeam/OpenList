@@ -133,15 +133,39 @@ func (d *GuangYaPan) waitTaskDone(ctx context.Context, taskID string) error {
 
 // --- Upload helpers ---
 
-func (d *GuangYaPan) getUploadToken(ctx context.Context, parentID, name string, size int64) (*uploadTokenData, int, error) {
+// fileMD5 returns the MD5 of the file content, computing it from the stream when
+// the caller did not provide it (e.g. local uploads). The computed hash is used
+// to attempt instant upload (秒传) before falling back to the real OSS upload.
+// For force-stream uploads the whole file would have to be buffered just to hash
+// it, which defeats the purpose of streaming, so we skip 秒传 in that case.
+func (d *GuangYaPan) fileMD5(file model.FileStreamer, up driver.UpdateProgress) (string, error) {
+	if md5sum := file.GetHash().GetHash(utils.MD5); len(md5sum) == utils.MD5.Width {
+		return md5sum, nil
+	}
+	if file.IsForceStreamUpload() {
+		return "", nil
+	}
+	_, md5sum, err := streamPkg.CacheFullAndHash(file, &up, utils.MD5)
+	if err != nil {
+		return "", err
+	}
+	return md5sum, nil
+}
+
+func (d *GuangYaPan) getUploadToken(ctx context.Context, parentID, name string, size int64, md5sum string) (*uploadTokenData, int, error) {
 	var out uploadTokenResp
+	res := map[string]any{
+		"fileSize": size,
+	}
+	if md5sum != "" {
+		// 秒传：后端根据 md5 判断文件是否已存在，命中则返回 code 156 秒传完成。
+		res["md5"] = md5sum
+	}
 	err := d.postAPI(ctx, "/nd.bizuserres.s/v1/get_res_center_token", map[string]any{
 		"capacity": 2,
 		"name":     name,
 		"parentId": parentID,
-		"res": map[string]any{
-			"fileSize": size,
-		},
+		"res":      res,
 	}, &out)
 	if err != nil {
 		return nil, 0, err

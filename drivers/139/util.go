@@ -46,30 +46,9 @@ const (
 )
 
 var (
-	mailRootURL     = "https://mail.10086.cn/"
 	mailPasswordURL = "https://mail.10086.cn/Login/Login.ashx"
 	mailSMSURL      = "https://mail.10086.cn/s"
 )
-
-var mailLoginCookieExclusions = map[string]struct{}{
-	"hecaiyun_stay_time":          {},
-	"isShowAgreeIconNew":          {},
-	"hecaiyundata2021jssdkcross":  {},
-	"random":                      {},
-	"a_l2":                        {},
-	"hecaiyun_stay_url":           {},
-	"a_l":                         {},
-	"_139mail_login_type":         {},
-	"_139mail_login_shortAddr":    {},
-	"sajssdk_2015_cross_new_user": {},
-	"fromhtml5":                   {},
-	"html5SkinPath8011":           {},
-	"Os_SSo_Sid":                  {},
-	"sid":                         {},
-	"Login_UserNumber":            {},
-	"RMKEY":                       {},
-	"rtexpired":                   {},
-}
 
 type credentialState int
 
@@ -1195,28 +1174,6 @@ func mergeMailCookieHeader(existing string, responseCookies []*http.Cookie) stri
 	return cookiepkg.ToString(cookies)
 }
 
-func sanitizeMailLoginCookies(existing, newJSessionID string) string {
-	cookies := cookiepkg.Parse(existing)
-	filtered := cookies[:0]
-	for _, cookie := range cookies {
-		if _, excluded := mailLoginCookieExclusions[cookie.Name]; excluded {
-			continue
-		}
-		if cookie.Name == "JSESSIONID" {
-			if newJSessionID == "" {
-				continue
-			}
-			cookie.Value = newJSessionID
-			newJSessionID = ""
-		}
-		filtered = append(filtered, cookie)
-	}
-	if newJSessionID != "" {
-		filtered = append(filtered, &http.Cookie{Name: "JSESSIONID", Value: newJSessionID})
-	}
-	return cookiepkg.ToString(filtered)
-}
-
 func mailRiskCode(location string) string {
 	parsed, err := url.Parse(location)
 	if err != nil {
@@ -1271,7 +1228,7 @@ func new139RestyClient() *resty.Client {
 	if base.RestyClient != nil {
 		return base.RestyClient.Clone()
 	}
-	return resty.New()
+	return base.NewRestyClient()
 }
 
 func (d *Yun139) sendSMSVerificationCode(riskCode string) error {
@@ -1296,7 +1253,7 @@ func (d *Yun139) sendSMSVerificationCode(riskCode string) error {
 		mailXMLField("scene", strconv.Itoa(scene)),
 		"</object>",
 	}, "")
-	res, err := new139RestyClient().R().
+	res, err := new139RestyClient().SetRetryCount(0).R().
 		SetHeaders(mailXMLHeaders(d.MailCookies)).
 		SetBody(body).
 		Post(mailSMSURL + "?func=" + url.QueryEscape("login:sendSmsCodeByScene") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
@@ -1349,7 +1306,7 @@ func (d *Yun139) verifySMSCode(riskCode string) (string, error) {
 		pwdType,
 		"</object>",
 	}, "")
-	res, err := new139RestyClient().R().
+	res, err := new139RestyClient().SetRetryCount(0).R().
 		SetHeaders(mailXMLHeaders(d.MailCookies)).
 		SetBody(body).
 		Post(mailSMSURL + "?func=" + url.QueryEscape("/login/inlogin.action") + "&cguid=" + strconv.FormatInt(time.Now().UnixMilli(), 10))
@@ -1386,25 +1343,6 @@ func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("--- 执行步骤 1: 登录 API ---")
 	loginURL := mailPasswordURL
 
-	preLogin, err := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).R().Get(mailRootURL)
-	if preLogin == nil {
-		return "", fmt.Errorf("step1 pre-login request failed: %v", err)
-	}
-	if err != nil && (preLogin.StatusCode() < 300 || preLogin.StatusCode() >= 400) {
-		return "", fmt.Errorf("step1 pre-login request failed: %w", err)
-	}
-	jsessionid := ""
-	for _, cookie := range preLogin.Cookies() {
-		if cookie.Name == "JSESSIONID" {
-			jsessionid = cookie.Value
-			break
-		}
-	}
-	if jsessionid == "" {
-		return "", errors.New("step1 pre-login response did not set JSESSIONID")
-	}
-	loginCookies := sanitizeMailLoginCookies(d.MailCookies, jsessionid)
-
 	// 密码 SHA1 哈希
 	hashedPassword := sha1Hash(fmt.Sprintf("fetion.com.cn:%s", d.Password))
 
@@ -1428,7 +1366,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 		"sec-fetch-user":            "?1",
 		"upgrade-insecure-requests": "1",
 		"user-agent":                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0",
-		"Cookie":                    loginCookies,
+		"Cookie":                    d.MailCookies,
 	}
 
 	loginData := url.Values{}
@@ -1444,31 +1382,25 @@ func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("DEBUG: 登录请求 URL: %s", loginURL)
 	log.Debugf("DEBUG: 登录请求已准备")
 
-	// 设置客户端不跟随重定向
-	client := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy())
-	res, err := client.R().
+	res, err := new139RestyClient().
+		SetRetryCount(0).
+		SetRedirectPolicy(resty.RedirectPolicyFunc(func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		})).R().
 		SetHeaders(loginHeaders).
 		SetFormDataFromValues(loginData).
 		Post(loginURL)
-
 	if err != nil {
-		// 如果是重定向错误，则不作为失败处理，因为我们禁止了自动重定向
-		if res != nil && res.StatusCode() >= 300 && res.StatusCode() < 400 {
-			log.Debugf("DEBUG: 登录响应 Status Code: %d (Redirect)", res.StatusCode())
-		} else {
-			return "", fmt.Errorf("step1 login request failed: %w", err)
-		}
-	} else {
-		log.Debugf("DEBUG: 登录响应 Status Code: %d", res.StatusCode())
+		return "", fmt.Errorf("step1 login request failed: %w", err)
 	}
+	log.Debugf("DEBUG: 登录响应 Status Code: %d", res.StatusCode())
 	log.Debugf("DEBUG: 登录响应 Location present: %t", res.Header().Get("Location") != "")
 
-	var sid, extractedCguid string
+	d.MailCookies = mergeMailCookieHeader(d.MailCookies, res.Cookies())
 
-	// 从 Location 头部提取 sid 和 cguid
+	sid := ""
 	locationHeader := res.Header().Get("Location")
 	if locationHeader != "" {
-		d.MailCookies = mergeMailCookieHeader(loginCookies, res.Cookies())
 		if riskCode := mailRiskCode(locationHeader); riskCode != "" {
 			if _, ok := smsSceneForRisk(riskCode); !ok {
 				return "", fmt.Errorf("139 Mail risk control triggered: %s", riskCode)
@@ -1482,41 +1414,22 @@ func (d *Yun139) step1_password_login() (string, error) {
 			}
 			return d.verifySMSCode(riskCode)
 		}
-		sidMatch := regexp.MustCompile(`sid=([^&]+)`).FindStringSubmatch(locationHeader)
-		cguidMatch := regexp.MustCompile(`cguid=([^&]+)`).FindStringSubmatch(locationHeader)
-		if len(sidMatch) > 1 {
-			sid = sidMatch[1]
-			log.Debugf("DEBUG: 从 Location 提取到 sid.")
-		}
-		if len(cguidMatch) > 1 {
-			extractedCguid = cguidMatch[1]
-			log.Debugf("DEBUG: 从 Location 提取到 cguid.")
+		if redirectURL, parseErr := url.Parse(locationHeader); parseErr == nil {
+			sid = redirectURL.Query().Get("sid")
 		}
 	}
 
-	// 如果 Location 中没有，尝试从 Set-Cookie 中提取
-	if sid == "" || extractedCguid == "" {
-		setCookieHeaders := res.Header().Values("Set-Cookie")
-		for _, cookieStr := range setCookieHeaders {
-			ssoSidMatch := regexp.MustCompile(`Os_SSo_Sid=([^;]+)`).FindStringSubmatch(cookieStr)
-			cookieCguidMatch := regexp.MustCompile(`cguid=([^;]+)`).FindStringSubmatch(cookieStr)
-			if len(ssoSidMatch) > 1 && sid == "" {
-				sid = ssoSidMatch[1]
-				log.Debugf("DEBUG: 从 Set-Cookie 提取到 sid.")
-			}
-			if len(cookieCguidMatch) > 1 && extractedCguid == "" {
-				extractedCguid = cookieCguidMatch[1]
-				log.Debugf("DEBUG: 从 Set-Cookie 提取到 cguid.")
+	if sid == "" {
+		for _, cookie := range res.Cookies() {
+			if cookie.Name == "Os_SSo_Sid" || cookie.Name == "sid" {
+				sid = cookie.Value
+				break
 			}
 		}
 	}
-
-	if sid == "" || extractedCguid == "" {
-		return "", errors.New("failed to extract sid or cguid from login response")
+	if sid == "" {
+		return "", errors.New("failed to extract sid from login response")
 	}
-
-	d.MailCookies = mergeMailCookieHeader(loginCookies, res.Cookies())
-
 	return sid, nil
 }
 
@@ -1891,10 +1804,6 @@ func extractFastLoginCookies(mailCookies string) (sid string, rmkey string) {
 	return sid, rmkey
 }
 
-func isRedirectStatus(statusCode int) bool {
-	return statusCode >= 300 && statusCode <= 399
-}
-
 func hasCookiePair(raw string) bool {
 	for _, part := range strings.Split(raw, ";") {
 		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
@@ -1903,26 +1812,6 @@ func hasCookiePair(raw string) bool {
 		}
 	}
 	return false
-}
-
-func fetchMailJSessionID(endpoint string) (string, error) {
-	client := new139RestyClient().SetRedirectPolicy(resty.NoRedirectPolicy())
-	res, err := client.R().Get(endpoint)
-	if res == nil {
-		return "", fmt.Errorf("pre-login request returned no response: %v", err)
-	}
-	if err != nil && !isRedirectStatus(res.StatusCode()) {
-		return "", fmt.Errorf("pre-login request failed with status %d: %w", res.StatusCode(), err)
-	}
-	if res.StatusCode() >= http.StatusBadRequest {
-		return "", fmt.Errorf("pre-login request failed with status %d", res.StatusCode())
-	}
-	for _, cookie := range res.Cookies() {
-		if cookie.Name == "JSESSIONID" && cookie.Value != "" {
-			return cookie.Value, nil
-		}
-	}
-	return "", errors.New("pre-login response did not set JSESSIONID")
 }
 
 func (d *Yun139) tryFastLoginWithCookies() bool {
@@ -1965,7 +1854,7 @@ func (d *Yun139) validateAndInitCredentials() error {
 		return nil
 	case credentialStateFullLogin, credentialStateCookiesOnly:
 		log.Infof("139yun: Authorization missing, attempting login...")
-		if d.tryFastLoginWithCookies() {
+		if d.MailCookies != "" && d.tryFastLoginWithCookies() {
 			return nil
 		}
 
@@ -2002,16 +1891,15 @@ func (d *Yun139) credentialState() (credentialState, error) {
 
 	hasUsername := d.Username != ""
 	hasPassword := strings.TrimSpace(d.Password) != ""
-	hasCookies := d.MailCookies != ""
 
-	if hasUsername || hasPassword {
-		if !hasUsername || !hasPassword || !hasCookies {
-			return 0, fmt.Errorf("if username or password is provided, all three (mail_cookies, username, password) must be provided")
-		}
+	if hasUsername != hasPassword {
+		return 0, fmt.Errorf("username and password must be provided together")
+	}
+	if hasUsername {
 		return credentialStateFullLogin, nil
 	}
 
-	if hasCookies {
+	if d.MailCookies != "" {
 		return credentialStateCookiesOnly, nil
 	}
 
@@ -2019,8 +1907,8 @@ func (d *Yun139) credentialState() (credentialState, error) {
 }
 
 func (d *Yun139) loginWithPassword() (string, error) {
-	if d.Username == "" || d.Password == "" || d.MailCookies == "" {
-		return "", errors.New("username, password or mail_cookies is empty")
+	if d.Username == "" || d.Password == "" {
+		return "", errors.New("username or password is empty")
 	}
 
 	passId, err := d.step1_password_login()

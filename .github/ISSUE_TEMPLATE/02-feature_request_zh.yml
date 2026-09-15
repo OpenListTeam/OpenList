@@ -48,9 +48,17 @@ body:
       label: 附加信息
       description: |
         相关的任何其他上下文或截图，或者你觉得有帮助的信息
-  - type: textarea
+  - type: checkboxes
     id: aigenerated
     attributes:
-      label: AI生成内容（可选）
-      description: |
-        如果此请求是由AI辅助您提交的，请提供全部聊天记录，包括使用的模型信息。
+      label: AI生成内容
+      description: 必须且只能勾选一项，请勿删除或修改声明文字。
+      options:
+        - label: 我使用了AI工具生成此内容
+        - label: 我没有使用AI工具生成此内容
+  - type: input
+    id: ai-model
+    attributes:
+      label: AI模型是
+      description: 如果使用了AI工具，请填写模型名称；未使用则留空。
+      placeholder: xxx
