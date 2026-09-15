@@ -116,9 +116,11 @@ func ParseCronSpec(spec string) (CronSpec, error) {
 		return CronSpec{}, fmt.Errorf("invalid day-of-week field: %w", err)
 	}
 
-	// crontab 规范里 7 也可表示周日，这里统一转换为 0。
+	// crontab 规范里 7 也可表示周日，这里统一转换为 0；
+	// 同时移除 7，保证 DOW 的命中集合始终落在 0..6，便于判断是否通配。
 	if dayOfWeek.Contains(7) {
 		dayOfWeek.values[0] = struct{}{}
+		delete(dayOfWeek.values, 7)
 	}
 
 	return CronSpec{
@@ -233,8 +235,17 @@ func formatCronField(field IntRange) string {
 
 // matches 判断时间点是否命中整条 cron 规则。
 func (c CronSpec) matches(t time.Time) bool {
-	// crontab 的标准行为是：DOM 和 DOW 同时受限时，任一命中即可。
-	dayMatches := c.dayOfMonth.Contains(t.Day()) || c.dayOfWeek.Contains(int(t.Weekday()))
+	// crontab 的标准行为：DOM 和 DOW 同时受限时，任一命中即可；
+	// 其中一方为通配（*，即覆盖完整范围）时按 AND 处理，只有另一方生效。
+	domFull := len(c.dayOfMonth.values) == c.dayOfMonth.max-c.dayOfMonth.min+1
+	// DOW 解析后 7 已并入 0，完整范围是 0..6 共 7 个值。
+	dowFull := len(c.dayOfWeek.values) == 7
+	var dayMatches bool
+	if domFull || dowFull {
+		dayMatches = c.dayOfMonth.Contains(t.Day()) && c.dayOfWeek.Contains(int(t.Weekday()))
+	} else {
+		dayMatches = c.dayOfMonth.Contains(t.Day()) || c.dayOfWeek.Contains(int(t.Weekday()))
+	}
 	return c.minute.Contains(t.Minute()) &&
 		c.hour.Contains(t.Hour()) &&
 		c.month.Contains(int(t.Month())) &&
