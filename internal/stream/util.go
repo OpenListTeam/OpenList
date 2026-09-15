@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
@@ -182,15 +183,44 @@ type StreamSectionReader interface {
 	DiscardSection(off int64, length int64) error
 }
 
+type cachePolicyGetter interface {
+	GetCachePolicy() (cache.Policy, error)
+}
+
+type cachePolicyFreezer interface {
+	freezeCachePolicy(cache.Policy)
+}
+
+func getCachePolicy(file model.FileStreamer) (cache.Policy, error) {
+	if getter, ok := file.(cachePolicyGetter); ok {
+		return getter.GetCachePolicy()
+	}
+	return cache.ResolvePolicy(cache.PolicyInherit, conf.CachePolicy)
+}
+
 func NewStreamSectionReader(file model.FileStreamer, sectionSize int, up *model.UpdateProgress) (StreamSectionReader, error) {
 	if file.GetFile() != nil {
 		return &cachedSectionReader{file.GetFile()}, nil
 	}
+	if sectionSize <= 0 {
+		return nil, fmt.Errorf("section size must be positive")
+	}
 
-	blockSize := min(uint64(sectionSize), uint64(file.GetSize()), conf.MaxBlockLimit)
-	hc, err := hcache.NewHybridCache(blockSize, uint64(file.GetSize()))
+	fileSize := file.GetSize()
+	blockSize := min(uint64(sectionSize), conf.MaxBlockLimit)
+	if fileSize >= 0 {
+		blockSize = min(blockSize, uint64(fileSize))
+	}
+	policy, err := getCachePolicy(file)
 	if err != nil {
 		return nil, err
+	}
+	hc, err := hcache.NewHybridCache(blockSize, fileSize, policy)
+	if err != nil {
+		return nil, err
+	}
+	if freezer, ok := file.(cachePolicyFreezer); ok {
+		freezer.freezeCachePolicy(policy)
 	}
 	file.Add(hc)
 	return &hybridSectionReader{file: file, hc: hc}, nil
