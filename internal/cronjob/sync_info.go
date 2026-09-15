@@ -64,19 +64,19 @@ func syncHandlerInfo() HandlerInfo {
 			},
 			{
 				Name:     "exclude",
-				Type:     ArgFieldTypeLines,
+				Type:     ArgFieldTypeText,
 				LabelKey: "cronjobs.args.sync.exclude",
 				HelpKey:  "cronjobs.args.sync.exclude_help",
 			},
 			{
 				Name:     "exclude_regexp",
-				Type:     ArgFieldTypeLines,
+				Type:     ArgFieldTypeText,
 				LabelKey: "cronjobs.args.sync.exclude_regexp",
 				HelpKey:  "cronjobs.args.sync.exclude_regexp_help",
 			},
 			{
 				Name:     "exclude_regexp2",
-				Type:     ArgFieldTypeLines,
+				Type:     ArgFieldTypeText,
 				LabelKey: "cronjobs.args.sync.exclude_regexp2",
 				HelpKey:  "cronjobs.args.sync.exclude_regexp2_help",
 			},

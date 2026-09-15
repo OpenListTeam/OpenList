@@ -48,11 +48,7 @@ func newSyncFilters(args SyncArgs) (*syncFilters, error) {
 	}
 
 	// glob 支持逐行输入，前端可以用多行文本框编辑。
-	for _, pattern := range args.Exclude {
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
-			continue
-		}
+	for _, pattern := range splitLines(args.Exclude) {
 		// 用一个空字符串测试语法；doublestar.Match 只在语法错误时返回错误。
 		if _, err := doublestar.Match(pattern, ""); err != nil {
 			return nil, fmt.Errorf("invalid exclude glob %q: %w", pattern, err)
@@ -61,11 +57,7 @@ func newSyncFilters(args SyncArgs) (*syncFilters, error) {
 	}
 
 	// Go 标准库正则也支持逐行输入。
-	for _, pattern := range args.ExcludeRegexp {
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
-			continue
-		}
+	for _, pattern := range splitLines(args.ExcludeRegexp) {
 		compiled, err := regexp.Compile(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("invalid exclude_regexp %q: %w", pattern, err)
@@ -74,11 +66,7 @@ func newSyncFilters(args SyncArgs) (*syncFilters, error) {
 	}
 
 	// regexp2 支持 lookaround 等高级语法；项目已有该依赖，无需重复引入。
-	for _, pattern := range args.ExcludeRegexp2 {
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
-			continue
-		}
+	for _, pattern := range splitLines(args.ExcludeRegexp2) {
 		compiled, err := regexp2.Compile(pattern, regexp2.None)
 		if err != nil {
 			return nil, fmt.Errorf("invalid exclude_regexp2 %q: %w", pattern, err)
@@ -151,4 +139,15 @@ func baseName(path string) string {
 		return path[idx+1:]
 	}
 	return path
+}
+
+// splitLines 把多行字符串拆成非空行列表。
+func splitLines(value string) []string {
+	var lines []string
+	for _, line := range strings.Split(value, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	return lines
 }

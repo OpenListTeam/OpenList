@@ -27,12 +27,12 @@ type SyncArgs struct {
 	MaxAge string `json:"max_age"`
 	// MinAge 表示只同步“比该时间更老”的文件，例如 7d；空表示不限制。
 	MinAge string `json:"min_age"`
-	// Exclude 是 glob 过滤规则，匹配相对路径时命中的对象会被跳过。
-	Exclude []string `json:"exclude"`
-	// ExcludeRegexp 是 Go 标准库 regexp 规则，多行时每行一条。
-	ExcludeRegexp []string `json:"exclude_regexp"`
-	// ExcludeRegexp2 是 dlclark/regexp2 规则，用于兼容 .NET 风格正则。
-	ExcludeRegexp2 []string `json:"exclude_regexp2"`
+	// Exclude 是 glob 过滤规则，匹配相对路径时命中的对象会被跳过；每行一条。
+	Exclude string `json:"exclude"`
+	// ExcludeRegexp 是 Go 标准库 regexp 规则，每行一条。
+	ExcludeRegexp string `json:"exclude_regexp"`
+	// ExcludeRegexp2 是 dlclark/regexp2 规则，用于兼容 .NET 风格正则，每行一条。
+	ExcludeRegexp2 string `json:"exclude_regexp2"`
 	// Size 表示使用文件大小判断文件是否变化。
 	Size bool `json:"size"`
 	// MTime 表示使用修改时间判断文件是否变化；部分网盘时间不可靠，请谨慎启用。

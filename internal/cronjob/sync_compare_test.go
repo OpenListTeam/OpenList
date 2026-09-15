@@ -214,9 +214,9 @@ func TestIsPathInside(t *testing.T) {
 // 这些函数在每次同步递归时都会使用，能提前发现配置语法和边界判断问题。
 func TestSyncFiltersExcludedAndBoundaries(t *testing.T) {
 	filters, err := newSyncFilters(SyncArgs{
-		Exclude:        []string{"*.tmp", "cache/**"},
-		ExcludeRegexp:  []string{`(^|/)secret-.*\.bin$`},
-		ExcludeRegexp2: []string{`ignore-(?i)case`},
+		Exclude:        "*.tmp\ncache/**",
+		ExcludeRegexp:  `(^|/)secret-.*\.bin$`,
+		ExcludeRegexp2: `ignore-(?i)case`,
 		MaxSize:        100,
 		MinSize:        10,
 		MaxAge:         "2h",

@@ -308,7 +308,7 @@ func TestSyncExcludeEndToEnd(t *testing.T) {
 	runSyncAndWait(t, SyncArgs{
 		Src:     srcMount,
 		Dst:     dstMount,
-		Exclude: []string{"*.log"},
+		Exclude: "*.log",
 	})
 
 	assertTestFile(t, dstRoot, "keep.txt", "keep")
@@ -372,7 +372,7 @@ func TestSyncExcludeWithDeleteBeforeEndToEnd(t *testing.T) {
 	runSyncAndWait(t, SyncArgs{
 		Src:     srcMount,
 		Dst:     dstMount,
-		Exclude: []string{"*.log"},
+		Exclude: "*.log",
 	})
 
 	assertTestFile(t, dstRoot, "keep.txt", "current source")

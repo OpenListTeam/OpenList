@@ -29,10 +29,8 @@ type ArgFieldType string
 const (
 	// ArgFieldTypeString 渲染普通单行输入框。
 	ArgFieldTypeString ArgFieldType = "string"
-	// ArgFieldTypeText 渲染多行文本框；值仍以字符串保存。
+	// ArgFieldTypeText 渲染多行文本框；值以多行字符串保存（每行一条规则）。
 	ArgFieldTypeText ArgFieldType = "text"
-	// ArgFieldTypeLines 渲染多行文本框，但提交时转换为 []string。
-	ArgFieldTypeLines ArgFieldType = "lines"
 	// ArgFieldTypeNumber 渲染数字输入框；值以 number 保存。
 	ArgFieldTypeNumber ArgFieldType = "number"
 	// ArgFieldTypeBool 渲染开关；值以 boolean 保存。
