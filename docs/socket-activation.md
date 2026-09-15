@@ -17,9 +17,9 @@ Without a matching named socket, that endpoint follows the existing configuratio
 In particular, without a `quic` socket, HTTP/3 still requires `enable_h3` and a
 configured HTTPS port, and uses the configured address and port. Unknown names
 are ignored and their inherited descriptors are closed. Duplicate supported names
-or an incorrect socket type cause startup to stop with an error in the log; they
-do not silently fall back to binding another port. Unix socket, S3, FTP, and SFTP
-activation is not implemented.
+or an incorrect socket type cause the server command to report an error and exit
+with a non-zero status; they do not silently fall back to binding another port.
+Unix socket, S3, FTP, and SFTP activation is not implemented.
 
 Use a separate socket unit for each name. For example, with a service named
 `openlist.service`, create `openlist-http.socket`:

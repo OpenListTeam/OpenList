@@ -86,12 +86,11 @@ func IsRunning(t string) bool {
 	return running
 }
 
-func Start() {
+func Start() error {
 	// Consume inherited descriptors before initialization can launch children.
 	sockets, err := socketactivation.Receive()
 	if err != nil {
-		utils.Log.Errorf("failed to receive activation sockets: %s", err)
-		return
+		return fmt.Errorf("failed to receive activation sockets: %w", err)
 	}
 	httpsBase := fmt.Sprintf("%s:%d", conf.Conf.Scheme.Address, conf.Conf.Scheme.HttpsPort)
 	quicBase := httpsBase
@@ -292,6 +291,7 @@ func Start() {
 		}
 	}
 	running = true
+	return nil
 }
 
 func Shutdown(timeout time.Duration) {

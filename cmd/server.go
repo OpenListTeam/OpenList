@@ -16,10 +16,12 @@ var ServerCmd = &cobra.Command{
 	Short: "Start the server at the specified address",
 	Long: `Start the server at the specified address
 the address is defined in config file`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		bootstrap.Init()
 		defer bootstrap.Release()
-		bootstrap.Start()
+		if err := bootstrap.Start(); err != nil {
+			return err
+		}
 		// Wait for interrupt signal to gracefully shutdown the server with
 		// a timeout of 1 second.
 		quit := make(chan os.Signal, 1)
@@ -27,8 +29,10 @@ the address is defined in config file`,
 		// kill -2 is syscall.SIGINT
 		// kill -9 is syscall. SIGKILL but can"t be catch, so don't need add it
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		defer signal.Stop(quit)
 		<-quit
 		bootstrap.Shutdown(1 * time.Second)
+		return nil
 	},
 }
 
@@ -47,10 +51,10 @@ func init() {
 }
 
 // OutOpenListInit 暴露用于外部启动server的函数
-func OutOpenListInit() {
+func OutOpenListInit() error {
 	var (
 		cmd  *cobra.Command
 		args []string
 	)
-	ServerCmd.Run(cmd, args)
+	return ServerCmd.RunE(cmd, args)
 }
