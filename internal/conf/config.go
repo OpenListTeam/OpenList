@@ -26,16 +26,17 @@ type Meilisearch struct {
 }
 
 type Scheme struct {
-	Address      string `json:"address" env:"ADDR"`
-	HttpPort     int    `json:"http_port" env:"HTTP_PORT"`
-	HttpsPort    int    `json:"https_port" env:"HTTPS_PORT"`
-	ForceHttps   bool   `json:"force_https" env:"FORCE_HTTPS"`
-	CertFile     string `json:"cert_file" env:"CERT_FILE"`
-	KeyFile      string `json:"key_file" env:"KEY_FILE"`
-	UnixFile     string `json:"unix_file" env:"UNIX_FILE"`
-	UnixFilePerm string `json:"unix_file_perm" env:"UNIX_FILE_PERM"`
-	EnableH2c    bool   `json:"enable_h2c" env:"ENABLE_H2C"`
-	EnableH3     bool   `json:"enable_h3" env:"ENABLE_H3"`
+	Address         string `json:"address" env:"ADDR"`
+	HttpPort        int    `json:"http_port" env:"HTTP_PORT"`
+	HttpsPort       int    `json:"https_port" env:"HTTPS_PORT"`
+	ForceHttps      bool   `json:"force_https" env:"FORCE_HTTPS"`
+	CertFile        string `json:"cert_file" env:"CERT_FILE"`
+	KeyFile         string `json:"key_file" env:"KEY_FILE"`
+	UnixFile        string `json:"unix_file" env:"UNIX_FILE"`
+	UnixFileTrusted bool   `json:"unix_file_trusted" env:"UNIX_FILE_TRUSTED"`
+	UnixFilePerm    string `json:"unix_file_perm" env:"UNIX_FILE_PERM"`
+	EnableH2c       bool   `json:"enable_h2c" env:"ENABLE_H2C"`
+	EnableH3        bool   `json:"enable_h3" env:"ENABLE_H3"`
 }
 
 type LogConfig struct {
