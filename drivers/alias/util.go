@@ -247,7 +247,8 @@ func (d *Alias) getPutObjs(ctx context.Context, obj model.Obj) (BalancedObjs, er
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, errs.PermissionDenied
 	}
-	objs, err := d.getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.PutConflictPolicy))
+	// 自动补建目录只取决于 WriteConflictPolicy
+	objs, err := d.getAllObjs(ctx, obj, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.WriteConflictPolicy))
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +355,8 @@ func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
 	}
-	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.PutConflictPolicy))
+	// 自动补建目录只取决于 WriteConflictPolicy
+	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.WriteConflictPolicy))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -405,7 +407,8 @@ func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	if d.PutConflictPolicy == DisabledWP {
 		return nil, nil, errs.PermissionDenied
 	}
-	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.PutConflictPolicy))
+	// 自动补建目录只取决于 WriteConflictPolicy
+	dstObjs, err := d.getAllObjs(ctx, dstDir, getWriteAndPutFilterFunc(d.PutConflictPolicy), isAllWritePolicy(d.WriteConflictPolicy))
 	if err != nil {
 		return nil, nil, err
 	}
