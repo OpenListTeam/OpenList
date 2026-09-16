@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/itsHenry35/gofakes3"
+	"github.com/OpenListTeam/gofakes3"
 )
 
 func TestListPageBoundsRecursiveTraversal(t *testing.T) {
