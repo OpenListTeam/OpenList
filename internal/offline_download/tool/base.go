@@ -7,11 +7,12 @@ import (
 )
 
 type AddUrlArgs struct {
-	Url     string
-	UID     string
-	TempDir string
-	Signal  chan int
-	Ctx     context.Context
+	Url              string
+	UID              string
+	TempDir          string
+	StorageMountPath string
+	Signal           chan int
+	Ctx              context.Context
 }
 
 type Status struct {

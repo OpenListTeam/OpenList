@@ -15,6 +15,7 @@ type HalalCloudOpen struct {
 	sdkClient          *sdkClient.Client
 	sdkUserFileService *sdkUserFile.UserFileService
 	sdkUserService     *sdkUser.UserService
+	offlineTaskService offlineTaskService
 	uploadThread       int
 }
 

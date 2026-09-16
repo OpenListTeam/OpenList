@@ -8,6 +8,7 @@ import (
 	_123 "github.com/OpenListTeam/OpenList/v4/drivers/123"
 	_123_open "github.com/OpenListTeam/OpenList/v4/drivers/123_open"
 	"github.com/OpenListTeam/OpenList/v4/drivers/guangyapan"
+	halalcloudopen "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud_open"
 	"github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
@@ -69,6 +70,7 @@ func TestToolNameForStorage(t *testing.T) {
 		{name: "123Pan", storage: &_123.Pan123{}, want: "123Pan"},
 		{name: "123 Open", storage: &_123_open.Open123{}, want: "123 Open"},
 		{name: "GuangYaPan", storage: &guangyapan.GuangYaPan{}, want: "GuangYaPan"},
+		{name: "HalalCloudOpen", storage: &halalcloudopen.HalalCloudOpen{}, want: "HalalCloudOpen"},
 		{name: "PikPak", storage: &pikpak.PikPak{}, want: "PikPak"},
 		{name: "Thunder", storage: &thunder.Thunder{}, want: "Thunder"},
 		{name: "ThunderX", storage: &thunderx.ThunderX{}, want: "ThunderX"},
