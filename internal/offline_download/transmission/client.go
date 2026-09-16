@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -21,6 +22,8 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
+
+const transmissionCleanupTimeout = 15 * time.Second
 
 type Transmission struct {
 	client *transmissionrpc.Client
@@ -130,11 +133,17 @@ func (t *Transmission) Remove(task *tool.DownloadTask) error {
 	if err != nil {
 		return err
 	}
-	err = t.client.TorrentRemove(task.Ctx(), transmissionrpc.TorrentRemovePayload{
+	return t.removeWithTimeout(task.Ctx(), gid, transmissionCleanupTimeout)
+}
+
+func (t *Transmission) removeWithTimeout(ctx context.Context, gid int64, timeout time.Duration) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+
+	return t.client.TorrentRemove(cleanupCtx, transmissionrpc.TorrentRemovePayload{
 		IDs:             []int64{gid},
 		DeleteLocalData: false,
 	})
-	return err
 }
 
 func (t *Transmission) Status(task *tool.DownloadTask) (*tool.Status, error) {
