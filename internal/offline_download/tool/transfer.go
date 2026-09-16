@@ -53,11 +53,15 @@ func (t *TransferTask) Run() error {
 	defer func() { t.SetEndTime(time.Now()) }()
 	if t.SrcStorage == nil {
 		if t.DeletePolicy == UploadDownloadStream {
-			rr, err := stream.GetRangeReaderFromLink(t.GetTotalBytes(), &model.Link{URL: t.Url})
+			downloadSize := t.GetTotalBytes()
+			if downloadSize <= 0 {
+				downloadSize = -1
+			}
+			rr, err := stream.GetRangeReaderFromLink(downloadSize, &model.Link{URL: t.Url})
 			if err != nil {
 				return err
 			}
-			r, err := rr.RangeRead(t.Ctx(), http_range.Range{Length: t.GetTotalBytes()})
+			r, err := rr.RangeRead(t.Ctx(), http_range.Range{Length: downloadSize})
 			if err != nil {
 				return err
 			}
@@ -67,7 +71,7 @@ func (t *TransferTask) Run() error {
 				Ctx: t.Ctx(),
 				Obj: &model.Object{
 					Name:     name,
-					Size:     t.GetTotalBytes(),
+					Size:     downloadSize,
 					Modified: time.Now(),
 					IsFolder: false,
 				},
