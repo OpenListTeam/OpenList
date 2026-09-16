@@ -85,6 +85,30 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 		return err
 	}
 
+	// The OSS STS token returned by UploadGetToken expires in about 1 hour.
+	// A slow or large upload can outlive it, causing SecurityTokenExpired /
+	// InvalidAccessKeyId. Refresh the token ahead of expiry and rebuild the OSS
+	// client with the new credentials, reusing the same multipart session (imur)
+	// to keep uploading the remaining parts.
+	tokenObtained := time.Now()
+	refreshOSSToken := func() error {
+		newToken, err := d.client.UploadGetToken(ctx)
+		if err != nil {
+			return err
+		}
+		newClient, err := netutil.NewOSSClient(newToken.Endpoint, newToken.AccessKeyId, newToken.AccessKeySecret, oss.SecurityToken(newToken.SecurityToken))
+		if err != nil {
+			return err
+		}
+		newBucket, err := newClient.Bucket(initResp.Bucket)
+		if err != nil {
+			return err
+		}
+		bucket = newBucket
+		tokenObtained = time.Now()
+		return nil
+	}
+
 	fileSize := stream.GetSize()
 	chunkSize := calPartSize(fileSize)
 	ss, err := streamPkg.NewStreamSectionReader(stream, int(chunkSize), &up)
@@ -98,6 +122,13 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 	for i := int64(1); i <= partNum; i++ {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
+		}
+
+		// The token lives ~1 hour; refresh after 45 minutes to keep a safe margin.
+		if time.Since(tokenObtained) > 45*time.Minute {
+			if err := refreshOSSToken(); err != nil {
+				return err
+			}
 		}
 
 		partSize := chunkSize
