@@ -13,6 +13,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	internalNet "github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/html"
 )
@@ -260,9 +261,15 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 	if err != nil {
 		return nil, err
 	}
-	log.Debugln("rootFolder:", rootFolder)
-	// Extract the relative path up to and including "Documents"
+	// If the user configured a root_folder_path, use it as the initial root
+	// folder so the GraphQL query targets the correct subdirectory. The
+	// document library root is still derived from the share link itself, so it
+	// does not depend on the configured path.
 	relativePath := strings.Split(rootFolder, "Documents")[0] + "Documents"
+	if d.hasCustomRoot() {
+		rootFolder = utils.FixAndCleanPath(d.RootFolderPath)
+	}
+	log.Debugln("rootFolder:", rootFolder)
 
 	// URL encode the relative path
 	relativeUrl := url.QueryEscape(relativePath)
