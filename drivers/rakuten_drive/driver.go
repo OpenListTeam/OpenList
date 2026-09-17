@@ -334,42 +334,63 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 	}
 	s3Client := s3.New(sess)
 
-	createInput := &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(initResp.Bucket),
-		Key:    aws.String(objectKey),
-	}
-	if mt := file.GetMimetype(); mt != "" {
-		createInput.ContentType = aws.String(mt)
-	}
-	createResp, err := s3Client.CreateMultipartUploadWithContext(ctx, createInput)
-	if err != nil {
-		return nil, err
-	}
-	if createResp.UploadId == nil || *createResp.UploadId == "" {
-		return nil, fmt.Errorf("s3 upload id empty")
-	}
-	s3UploadID := *createResp.UploadId
+	if size == 0 {
+		// S3 multipart upload requires at least one part; upload empty
+		// objects with a single PUT instead
+		putInput := &s3.PutObjectInput{
+			Bucket: aws.String(initResp.Bucket),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader(nil),
+		}
+		if mt := file.GetMimetype(); mt != "" {
+			putInput.ContentType = aws.String(mt)
+		}
+		if _, err = s3Client.PutObjectWithContext(ctx, putInput); err != nil {
+			return nil, err
+		}
+	} else {
+		createInput := &s3.CreateMultipartUploadInput{
+			Bucket: aws.String(initResp.Bucket),
+			Key:    aws.String(objectKey),
+		}
+		if mt := file.GetMimetype(); mt != "" {
+			createInput.ContentType = aws.String(mt)
+		}
+		createResp, err := s3Client.CreateMultipartUploadWithContext(ctx, createInput)
+		if err != nil {
+			return nil, err
+		}
+		if createResp.UploadId == nil || *createResp.UploadId == "" {
+			return nil, fmt.Errorf("s3 upload id empty")
+		}
+		s3UploadID := *createResp.UploadId
 
-	partSize := d.UploadPartSize
-	if partSize < 5*1024*1024 {
-		partSize = 5 * 1024 * 1024
-	}
-	parts, err := d.uploadMultipart(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID, reader, size, partSize, up)
-	if err != nil {
-		abortMultipartUpload(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID)
-		return nil, err
-	}
-	_, err = s3Client.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:   aws.String(initResp.Bucket),
-		Key:      aws.String(objectKey),
-		UploadId: aws.String(s3UploadID),
-		MultipartUpload: &s3.CompletedMultipartUpload{
-			Parts: parts,
-		},
-	})
-	if err != nil {
-		abortMultipartUpload(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID)
-		return nil, err
+		partSize := d.UploadPartSize
+		if partSize < 5*1024*1024 {
+			partSize = 5 * 1024 * 1024
+		}
+		// scale the part size up when needed so the upload stays within
+		// the S3 10,000-part limit
+		if maxParts := int64(s3MaxUploadParts); (size+partSize-1)/partSize > maxParts {
+			partSize = (size + maxParts - 1) / maxParts
+		}
+		parts, err := d.uploadMultipart(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID, reader, size, partSize, up)
+		if err != nil {
+			abortMultipartUpload(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID)
+			return nil, err
+		}
+		_, err = s3Client.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+			Bucket:   aws.String(initResp.Bucket),
+			Key:      aws.String(objectKey),
+			UploadId: aws.String(s3UploadID),
+			MultipartUpload: &s3.CompletedMultipartUpload{
+				Parts: parts,
+			},
+		})
+		if err != nil {
+			abortMultipartUpload(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID)
+			return nil, err
+		}
 	}
 
 	// 4) check status

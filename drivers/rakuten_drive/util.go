@@ -26,6 +26,9 @@ func newHTTPClient() *resty.Client {
 const (
 	forestBase = "https://forest.sendy.jp/cloud/service/file"
 	authBase   = "https://api.rakuten-drive.com/api/v1"
+
+	// s3MaxUploadParts is the maximum number of parts allowed in one S3 multipart upload
+	s3MaxUploadParts = 10000
 )
 
 func (d *RakutenDrive) ensureAccessToken() error {
@@ -140,9 +143,13 @@ func (d *RakutenDrive) getSTSCredentials(ctx context.Context, remoteDir string) 
 		return nil, fmt.Errorf("filelink/token missing credentials")
 	}
 	expire := parseTimeAny(tokenResp.Expiration)
-	if expire.IsZero() || !time.Now().Before(expire.Add(-time.Minute)) {
-		// unknown or nearly-expired credential; use a conservative TTL
+	if expire.IsZero() {
+		// unknown expiration; use a conservative TTL
 		expire = time.Now().Add(30 * time.Minute)
+	} else if !time.Now().Before(expire.Add(-time.Minute)) {
+		// credentials are already within the safety margin; use them
+		// for this call but do not cache them past their real expiry
+		return &tokenResp, nil
 	}
 	d.stsCreds = &tokenResp
 	d.stsCredsDir = remoteDir
