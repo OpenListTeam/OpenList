@@ -51,6 +51,10 @@ func (d *RakutenDrive) Init(ctx context.Context) error {
 	if d.client == nil {
 		d.client = newHTTPClient()
 	}
+	// drop credentials cached for a previous configuration
+	d.stsMu.Lock()
+	d.stsCreds = nil
+	d.stsMu.Unlock()
 	return d.ensureAccessToken()
 }
 
@@ -80,15 +84,16 @@ func (d *RakutenDrive) List(ctx context.Context, dir model.Obj, args model.ListA
 		if err != nil {
 			return nil, err
 		}
-		items, err := d.parseList(res.Body(), remoteDir)
+		items, raw, err := d.parseList(res.Body(), remoteDir)
 		if err != nil {
 			return nil, err
 		}
-		if len(items) == 0 {
+		if raw == 0 {
 			break
 		}
 		files = append(files, items...)
-		if len(items) < pageSize {
+		// compare the raw page size: parseList may skip unparsable entries
+		if raw < pageSize {
 			break
 		}
 		from += pageSize
@@ -422,7 +427,10 @@ func (d *RakutenDrive) GetDetails(ctx context.Context) (*model.StorageDetails, e
 	}, nil
 }
 
-func (d *RakutenDrive) parseList(body []byte, remoteDir string) ([]model.Obj, error) {
+// parseList parses a page of the files API response. It returns the parsed
+// objects and the raw number of entries on the page, which can differ when
+// entries cannot be mapped to a path.
+func (d *RakutenDrive) parseList(body []byte, remoteDir string) ([]model.Obj, int, error) {
 	paths := [][]interface{}{
 		{"file"},
 		{"files"},
@@ -440,7 +448,7 @@ func (d *RakutenDrive) parseList(body []byte, remoteDir string) ([]model.Obj, er
 		}
 	}
 	if list.Size() == 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 	objs := make([]model.Obj, 0, list.Size())
 	for i := 0; i < list.Size(); i++ {
@@ -504,7 +512,7 @@ func (d *RakutenDrive) parseList(body []byte, remoteDir string) ([]model.Obj, er
 		}
 		objs = append(objs, fileObj)
 	}
-	return objs, nil
+	return objs, list.Size(), nil
 }
 
 func (d *RakutenDrive) getFile(obj model.Obj) (*File, bool) {

@@ -78,6 +78,34 @@ func (d *RakutenDrive) newForestRequest(ctx context.Context, method, url string,
 	if err := d.ensureAccessToken(); err != nil {
 		return nil, err
 	}
+	resp, err := d.doForestRequest(ctx, method, url, body, result)
+	if err != nil {
+		return resp, err
+	}
+	if resp.StatusCode() == http.StatusUnauthorized {
+		// the cached access token may have been revoked; force one refresh and retry
+		d.invalidateAccessToken()
+		if err := d.ensureAccessToken(); err != nil {
+			return resp, err
+		}
+		resp, err = d.doForestRequest(ctx, method, url, body, result)
+		if err != nil {
+			return resp, err
+		}
+	}
+	if resp.IsError() {
+		return resp, fmt.Errorf("request %s %s failed with status %d: %s", method, url, resp.StatusCode(), strings.TrimSpace(resp.String()))
+	}
+	return resp, nil
+}
+
+func (d *RakutenDrive) invalidateAccessToken() {
+	d.tokenMu.Lock()
+	defer d.tokenMu.Unlock()
+	d.accessToken = ""
+}
+
+func (d *RakutenDrive) doForestRequest(ctx context.Context, method, url string, body interface{}, result interface{}) (*resty.Response, error) {
 	req := d.client.R().
 		SetContext(ctx).
 		SetHeader("Authorization", "Bearer "+d.accessToken).
@@ -93,14 +121,7 @@ func (d *RakutenDrive) newForestRequest(ctx context.Context, method, url string,
 	if result != nil {
 		req.SetResult(result)
 	}
-	resp, err := req.Execute(method, url)
-	if err != nil {
-		return resp, err
-	}
-	if resp.IsError() {
-		return resp, fmt.Errorf("request %s %s failed with status %d: %s", method, url, resp.StatusCode(), strings.TrimSpace(resp.String()))
-	}
-	return resp, nil
+	return req.Execute(method, url)
 }
 
 func (d *RakutenDrive) getSTSCredentials(ctx context.Context, remoteDir string) (*filelinkTokenResp, error) {
