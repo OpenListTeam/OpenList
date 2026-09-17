@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	stdpath "path"
+	"path/filepath"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -26,6 +27,10 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 	updateLocal := func(driver *Strm, basePath string, objs []model.Obj) {
 		relParent := strings.TrimPrefix(basePath, utils.GetActualMountPath(driver.MountPath))
 		localParentPath := stdpath.Join(driver.SaveStrmLocalPath, relParent)
+		if err := createLocalDirectory(localParentPath); err != nil {
+			log.Warnf("failed to create local strm directory %s: %v", localParentPath, err)
+			return
+		}
 		for _, obj := range objs {
 			localPath := stdpath.Join(localParentPath, obj.GetName())
 			generateStrm(ctx, driver, obj, localPath)
@@ -92,55 +97,68 @@ func RemoveStrm(dstPath string, d *Strm) {
 }
 
 func generateStrm(ctx context.Context, driver *Strm, obj model.Obj, localPath string) {
-	if !obj.IsDir() {
-		if utils.Exists(localPath) && driver.SaveLocalMode == SaveLocalInsertMode {
-			return
+	if obj.IsDir() {
+		if err := createLocalDirectory(localPath); err != nil {
+			log.Warnf("failed to create local strm directory %s: %v", localPath, err)
 		}
-		link, err := driver.Link(ctx, obj, model.LinkArgs{})
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
-			return
-		}
-		defer link.Close()
-		size := link.ContentLength
-		if size <= 0 {
-			size = obj.GetSize()
-		}
-		rrf, err := stream.GetRangeReaderFromLink(size, link)
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to get range reader: %v", localPath, err)
-			return
-		}
-		rc, err := rrf.RangeRead(ctx, http_range.Range{Length: -1})
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to read range: %v", localPath, err)
-			return
-		}
-		defer rc.Close()
-		same, err := isSameContent(localPath, size, rc)
-		if err != nil {
-			log.Warnf("failed to compare content of obj %s: %v", localPath, err)
-			return
-		}
-		if same {
-			return
-		}
-		rc, err = rrf.RangeRead(ctx, http_range.Range{Length: -1})
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to reread range: %v", localPath, err)
-			return
-		}
-		defer rc.Close()
-		file, err := utils.CreateNestedFile(localPath)
-		if err != nil {
-			log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
-			return
-		}
-		defer file.Close()
-		if _, err := utils.CopyWithBuffer(file, rc); err != nil {
-			log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
-		}
+		return
 	}
+
+	if utils.Exists(localPath) && driver.SaveLocalMode == SaveLocalInsertMode {
+		return
+	}
+	link, err := driver.Link(ctx, obj, model.LinkArgs{})
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to link: %v", localPath, err)
+		return
+	}
+	defer link.Close()
+	size := link.ContentLength
+	if size <= 0 {
+		size = obj.GetSize()
+	}
+	rrf, err := stream.GetRangeReaderFromLink(size, link)
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to get range reader: %v", localPath, err)
+		return
+	}
+	rc, err := rrf.RangeRead(ctx, http_range.Range{Length: -1})
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to read range: %v", localPath, err)
+		return
+	}
+	defer rc.Close()
+	same, err := isSameContent(localPath, size, rc)
+	if err != nil {
+		log.Warnf("failed to compare content of obj %s: %v", localPath, err)
+		return
+	}
+	if same {
+		return
+	}
+	rc, err = rrf.RangeRead(ctx, http_range.Range{Length: -1})
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to reread range: %v", localPath, err)
+		return
+	}
+	defer rc.Close()
+	if err := createLocalDirectory(filepath.Dir(localPath)); err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to create parent directory: %v", localPath, err)
+		return
+	}
+	file, err := os.Create(localPath)
+	if err != nil {
+		log.Warnf("failed to generate strm of obj %s: failed to create local file: %v", localPath, err)
+		return
+	}
+	defer file.Close()
+	if _, err := utils.CopyWithBuffer(file, rc); err != nil {
+		log.Warnf("failed to generate strm of obj %s: copy failed: %v", localPath, err)
+	}
+}
+
+func createLocalDirectory(path string) error {
+	return os.MkdirAll(path, 0o777)
 }
 
 func isSameContent(localPath string, size int64, rc io.Reader) (bool, error) {

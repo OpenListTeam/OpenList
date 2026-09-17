@@ -45,16 +45,11 @@ func (d *Yun139) GetAddition() driver.Additional {
 
 func (d *Yun139) Init(ctx context.Context) error {
 	if d.ref == nil {
-		if len(d.Authorization) == 0 && !d.isShare() {
-			if d.Username != "" && d.Password != "" {
-				log.Infof("139yun: authorization is empty, trying to login with password.")
-				newAuth, err := d.loginWithPassword()
-				log.Debugf("newAuth: Ok: %s", newAuth)
-				if err != nil {
-					return fmt.Errorf("login with password failed: %w", err)
-				}
-			} else {
-				return fmt.Errorf("authorization is empty and username/password is not provided")
+		// Share links may be browsed without account credentials. All other
+		// storage types need an authorization or a supported login fallback.
+		if !d.isShare() {
+			if err := d.validateAndInitCredentials(); err != nil {
+				return err
 			}
 		}
 		if d.Authorization != "" {

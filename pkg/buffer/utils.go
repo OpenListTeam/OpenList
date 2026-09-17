@@ -79,7 +79,7 @@ func (r *DynamicReadAtSeeker) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.New("Seek: invalid whence")
 	}
 
-	if offset < 0 || offset > r.block.Size() {
+	if offset < 0 {
 		return 0, errors.New("Seek: invalid offset")
 	}
 	r.offset = offset

@@ -1,4 +1,4 @@
-package template
+package ilanzou
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"

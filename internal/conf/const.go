@@ -95,6 +95,9 @@ const (
 	// thunder_browser
 	ThunderBrowserTempDir = "thunder_browser_temp_dir"
 
+	// guangyapan
+	GuangYaPanTempDir = "guangyapan_temp_dir"
+
 	// single
 	Token         = "token"
 	IndexProgress = "index_progress"
@@ -161,6 +164,8 @@ const (
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
+	MultipartEnabled                      = "multipart_enabled"
+	MultipartChunkSize                    = "multipart_chunk_size"
 )
 
 const (

@@ -73,6 +73,9 @@ func (d *Strm) convert2strmObjs(ctx context.Context, reqPath string, objs []mode
 			if _, ok := d.downloadSuffix[ext]; ok {
 				size = obj.GetSize()
 			} else if _, ok := d.supportSuffix[ext]; ok {
+				if d.minSizeBytes > 0 && obj.GetSize() < d.minSizeBytes {
+					continue
+				}
 				id = "strm"
 				name = strings.TrimSuffix(name, sourceExt) + "strm"
 				size = int64(len(d.getLink(ctx, path)))

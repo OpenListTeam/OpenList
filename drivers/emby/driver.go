@@ -56,8 +56,8 @@ func (d *Emby) Init(ctx context.Context) error {
 		return nil
 	}
 
-	if strings.TrimSpace(d.Username) == "" || strings.TrimSpace(d.Password) == "" {
-		return fmt.Errorf("please provide api_key+user_id or username+password")
+	if strings.TrimSpace(d.Username) == "" {
+		return fmt.Errorf("please provide api_key+user_id or username(+password)")
 	}
 
 	if err := d.login(ctx); err != nil {
