@@ -169,8 +169,11 @@ func (d *RakutenDrive) remotePath2LocalPath(remote string) string {
 	remote = strings.TrimPrefix(remote, "/")
 	root := strings.Trim(d.GetRootPath(), "/")
 	if root != "" && strings.HasPrefix(remote, root) {
-		remote = strings.TrimPrefix(remote, root)
-		remote = strings.TrimPrefix(remote, "/")
+		// only strip on a path-segment boundary so sibling names that merely
+		// start with the root folder are not mangled
+		if rest := remote[len(root):]; rest == "" || strings.HasPrefix(rest, "/") {
+			remote = strings.TrimPrefix(rest, "/")
+		}
 	}
 	if remote == "" {
 		return "/"

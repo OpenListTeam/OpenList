@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 )
 
 func makeJWT(payload string, pad bool) string {
@@ -16,6 +18,27 @@ func makeJWT(payload string, pad bool) string {
 		body = base64.RawURLEncoding.EncodeToString([]byte(payload))
 	}
 	return header + "." + body + ".signature"
+}
+
+func TestRemotePath2LocalPath(t *testing.T) {
+	d := &RakutenDrive{Addition: Addition{RootPath: driver.RootPath{RootFolderPath: "docs"}}}
+	cases := []struct {
+		remote string
+		want   string
+	}{
+		{"", "/"},
+		{"docs", "/"},
+		{"docs/", "/"},
+		{"docs/a.txt", "/a.txt"},
+		{"docs/sub/a.txt", "/sub/a.txt"},
+		{"docs-archive", "/docs-archive"},
+		{"other/a.txt", "/other/a.txt"},
+	}
+	for _, c := range cases {
+		if got := d.remotePath2LocalPath(c.remote); got != c.want {
+			t.Errorf("remotePath2LocalPath(%q) = %q, want %q", c.remote, got, c.want)
+		}
+	}
 }
 
 func TestParseJWTExp(t *testing.T) {

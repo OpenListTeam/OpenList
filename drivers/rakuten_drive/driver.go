@@ -136,12 +136,14 @@ func (d *RakutenDrive) MakeDir(ctx context.Context, parentDir model.Obj, dirName
 		return nil, err
 	}
 	newPath := path.Join(parentDir.GetPath(), dirName)
-	return &model.Object{
-		ID:       d.localPath2RemotePath(newPath, true),
-		Path:     newPath,
-		Name:     dirName,
-		IsFolder: true,
-		Modified: time.Now(),
+	return &File{
+		Object: model.Object{
+			ID:       d.localPath2RemotePath(newPath, true),
+			Path:     newPath,
+			Name:     dirName,
+			IsFolder: true,
+			Modified: time.Now(),
+		},
 	}, nil
 }
 
@@ -231,13 +233,15 @@ func (d *RakutenDrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) (mode
 		}
 	}
 	newPath := path.Join(dstDir.GetPath(), srcObj.GetName())
-	return &model.Object{
-		ID:       d.localPath2RemotePath(newPath, srcObj.IsDir()),
-		Path:     newPath,
-		Name:     srcObj.GetName(),
-		Size:     srcObj.GetSize(),
-		IsFolder: srcObj.IsDir(),
-		Modified: time.Now(),
+	return &File{
+		Object: model.Object{
+			ID:       d.localPath2RemotePath(newPath, srcObj.IsDir()),
+			Path:     newPath,
+			Name:     srcObj.GetName(),
+			Size:     srcObj.GetSize(),
+			IsFolder: srcObj.IsDir(),
+			Modified: time.Now(),
+		},
 	}, nil
 }
 
@@ -347,11 +351,7 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 	}
 	parts, err := d.uploadMultipart(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID, reader, size, partSize, up)
 	if err != nil {
-		_, _ = s3Client.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
-			Bucket:   aws.String(initResp.Bucket),
-			Key:      aws.String(objectKey),
-			UploadId: aws.String(s3UploadID),
-		})
+		abortMultipartUpload(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID)
 		return nil, err
 	}
 	_, err = s3Client.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
@@ -363,6 +363,7 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 		},
 	})
 	if err != nil {
+		abortMultipartUpload(ctx, s3Client, initResp.Bucket, objectKey, s3UploadID)
 		return nil, err
 	}
 
@@ -383,12 +384,16 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 		return nil, err
 	}
 
-	return &model.Object{
-		ID:       initResp.File[0].Path,
-		Path:     path.Join(dstDir.GetPath(), file.GetName()),
-		Name:     file.GetName(),
-		Size:     size,
-		Modified: time.Now(),
+	return &File{
+		Object: model.Object{
+			ID:       initResp.File[0].Path,
+			Path:     path.Join(dstDir.GetPath(), file.GetName()),
+			Name:     file.GetName(),
+			Size:     size,
+			Modified: time.Now(),
+		},
+		VersionID:    initResp.File[0].VersionID,
+		LastModified: initResp.File[0].LastModified,
 	}, nil
 }
 
@@ -514,6 +519,19 @@ func (d *RakutenDrive) getFile(obj model.Obj) (*File, bool) {
 	return nil, false
 }
 
+// abortMultipartUpload aborts a stale multipart upload. It derives a bounded
+// context that ignores cancellation of the caller's context, since the upload
+// has often failed precisely because that context was canceled.
+func abortMultipartUpload(ctx context.Context, client *s3.S3, bucket, key, uploadID string) {
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	_, _ = client.AbortMultipartUploadWithContext(abortCtx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+	})
+}
+
 func (d *RakutenDrive) uploadMultipart(ctx context.Context, client *s3.S3, bucket, key, uploadID string, reader io.Reader, size, partSize int64, up driver.UpdateProgress) ([]*s3.CompletedPart, error) {
 	if size <= 0 {
 		return nil, fmt.Errorf("file size required for multipart upload")
@@ -530,11 +548,8 @@ func (d *RakutenDrive) uploadMultipart(ctx context.Context, client *s3.S3, bucke
 			readSize = size - total
 		}
 		n, err := io.ReadFull(reader, buf[:readSize])
-		if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-			return nil, err
-		}
-		if n <= 0 {
-			break
+		if err != nil {
+			return nil, fmt.Errorf("upload short read: got %d of %d bytes: %w", total+int64(n), size, err)
 		}
 		body := bytes.NewReader(buf[:n])
 		out, err := client.UploadPartWithContext(ctx, &s3.UploadPartInput{
