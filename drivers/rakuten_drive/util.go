@@ -109,9 +109,14 @@ func (d *RakutenDrive) invalidateAccessToken() {
 }
 
 func (d *RakutenDrive) doForestRequest(ctx context.Context, method, url string, body interface{}, result interface{}) (*resty.Response, error) {
+	// take a mutex-protected snapshot of the token; the 401 retry in
+	// newForestRequest handles a snapshot that turns out to be stale
+	d.tokenMu.Lock()
+	accessToken := d.accessToken
+	d.tokenMu.Unlock()
 	req := d.client.R().
 		SetContext(ctx).
-		SetHeader("Authorization", "Bearer "+d.accessToken).
+		SetHeader("Authorization", "Bearer "+accessToken).
 		// the file API only accepts requests that appear to come from the web app
 		SetHeader("Origin", "https://www.rakuten-drive.com").
 		SetHeader("Referer", "https://www.rakuten-drive.com/")

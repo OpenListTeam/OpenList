@@ -305,13 +305,14 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 		return nil, err
 	}
 
-	// 2) init upload
+	// 2) init upload; replace when overwriting an existing object, matching
+	// the overwrite semantics the op layer signals via the exist flag
 	initBody := base.Json{
 		"host_id":   d.HostID,
 		"path":      remoteDir,
 		"file":      []base.Json{{"path": file.GetName(), "size": size}},
 		"upload_id": "",
-		"replace":   false,
+		"replace":   file.GetExist() != nil,
 	}
 	var initResp uploadInitResp
 	_, err = d.newForestRequest(ctx, http.MethodPost, forestBase+"/v1/check/upload", initBody, &initResp)
@@ -369,6 +370,9 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 		if partSize < 5*1024*1024 {
 			partSize = 5 * 1024 * 1024
 		}
+		if partSize > 5*1024*1024*1024 {
+			partSize = 5 * 1024 * 1024 * 1024
+		}
 		// scale the part size up when needed so the upload stays within
 		// the S3 10,000-part limit
 		if maxParts := int64(s3MaxUploadParts); (size+partSize-1)/partSize > maxParts {
@@ -412,7 +416,10 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 
 	return &File{
 		Object: model.Object{
-			ID:       initResp.File[0].Path,
+			// normalize the server-returned path against remoteDir so the ID
+			// of uploads into nested directories keeps its parent path,
+			// consistently with parseList
+			ID:       normalizeFilePath(remoteDir, initResp.File[0].Path),
 			Path:     path.Join(dstDir.GetPath(), file.GetName()),
 			Name:     file.GetName(),
 			Size:     size,
