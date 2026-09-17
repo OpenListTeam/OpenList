@@ -41,6 +41,43 @@ func TestRemotePath2LocalPath(t *testing.T) {
 	}
 }
 
+func TestParseList(t *testing.T) {
+	d := &RakutenDrive{Addition: Addition{RootPath: driver.RootPath{RootFolderPath: ""}}}
+
+	// "data" holding an object with a nested "files" array must not be
+	// mistaken for the entry list itself
+	body := []byte(`{"data":{"files":[{"path":"a.txt","size":12},{"path":"b.txt","size":0,"is_folder":true}],"total":2}}`)
+	objs, raw, err := d.parseList(body, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if raw != 2 || len(objs) != 2 {
+		t.Fatalf("expected raw=2 objs=2, got raw=%d objs=%d", raw, len(objs))
+	}
+	if objs[0].GetName() != "a.txt" || objs[0].GetSize() != 12 || objs[0].IsDir() {
+		t.Errorf("unexpected object: %+v", objs[0])
+	}
+	if !objs[1].IsDir() {
+		t.Errorf("expected folder: %+v", objs[1])
+	}
+
+	// flat "file" array is still matched and joined with the list directory
+	body2 := []byte(`{"file":[{"path":"x.txt","size":1}]}`)
+	objs2, raw2, err := d.parseList(body2, "sub")
+	if err != nil || raw2 != 1 || len(objs2) != 1 {
+		t.Fatalf("flat parse failed: objs=%+v raw=%d err=%v", objs2, raw2, err)
+	}
+	if objs2[0].GetID() != "sub/x.txt" {
+		t.Errorf("expected ID sub/x.txt, got %q", objs2[0].GetID())
+	}
+
+	// a response without any list field yields an empty result
+	objs3, raw3, err := d.parseList([]byte(`{"error":"none"}`), "")
+	if err != nil || raw3 != 0 || len(objs3) != 0 {
+		t.Fatalf("empty parse failed: objs=%+v raw=%d err=%v", objs3, raw3, err)
+	}
+}
+
 func TestParseJWTExp(t *testing.T) {
 	exp := time.Now().Add(time.Hour).Unix()
 	cases := []struct {

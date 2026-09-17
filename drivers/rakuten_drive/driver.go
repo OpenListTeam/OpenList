@@ -52,6 +52,10 @@ func (d *RakutenDrive) Init(ctx context.Context) error {
 		d.client = newHTTPClient()
 	}
 	// drop credentials cached for a previous configuration
+	d.tokenMu.Lock()
+	d.accessToken = ""
+	d.accessTokenExpire = time.Time{}
+	d.tokenMu.Unlock()
 	d.stsMu.Lock()
 	d.stsCreds = nil
 	d.stsMu.Unlock()
@@ -370,8 +374,10 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 		if partSize < 5*1024*1024 {
 			partSize = 5 * 1024 * 1024
 		}
-		if partSize > 5*1024*1024*1024 {
-			partSize = 5 * 1024 * 1024 * 1024
+		// bound the configured part size so a misconfigured value cannot
+		// allocate an enormous in-memory buffer
+		if partSize > 1024*1024*1024 {
+			partSize = 1024 * 1024 * 1024
 		}
 		// scale the part size up when needed so the upload stays within
 		// the S3 10,000-part limit
@@ -459,23 +465,28 @@ func (d *RakutenDrive) GetDetails(ctx context.Context) (*model.StorageDetails, e
 // objects and the raw number of entries on the page, which can differ when
 // entries cannot be mapped to a path.
 func (d *RakutenDrive) parseList(body []byte, remoteDir string) ([]model.Obj, int, error) {
+	// nested data candidates must be tried before the bare "data" path:
+	// when data is an object, its size is non-zero too
 	paths := [][]interface{}{
 		{"file"},
 		{"files"},
 		{"items"},
-		{"data"},
 		{"data", "file"},
 		{"data", "files"},
 		{"data", "items"},
+		{"data"},
 	}
 	var list jsoniter.Any
 	for _, p := range paths {
-		list = utils.Json.Get(body, p...)
-		if list.Size() > 0 {
+		candidate := utils.Json.Get(body, p...)
+		// only accept arrays; an object or scalar field of the same name
+		// must not be mistaken for the list of entries
+		if candidate.ValueType() == jsoniter.ArrayValue && candidate.Size() > 0 {
+			list = candidate
 			break
 		}
 	}
-	if list.Size() == 0 {
+	if list == nil || list.Size() == 0 {
 		return nil, 0, nil
 	}
 	objs := make([]model.Obj, 0, list.Size())
