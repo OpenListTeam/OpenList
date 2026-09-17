@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -33,6 +32,11 @@ type RakutenDrive struct {
 	accessToken       string
 	accessTokenExpire time.Time
 	tokenMu           sync.Mutex
+
+	stsCreds       *filelinkTokenResp
+	stsCredsDir    string
+	stsCredsExpire time.Time
+	stsMu          sync.Mutex
 }
 
 func (d *RakutenDrive) Config() driver.Config {
@@ -45,10 +49,7 @@ func (d *RakutenDrive) GetAddition() driver.Additional {
 
 func (d *RakutenDrive) Init(ctx context.Context) error {
 	if d.client == nil {
-		d.client = base.NewRestyClient().SetHeaders(map[string]string{
-			"Accept":       "application/json, text/plain, */*",
-			"content-type": "application/json",
-		})
+		d.client = newHTTPClient()
 	}
 	return d.ensureAccessToken()
 }
@@ -79,7 +80,7 @@ func (d *RakutenDrive) List(ctx context.Context, dir model.Obj, args model.ListA
 		if err != nil {
 			return nil, err
 		}
-		items, err := d.parseList(res.Body(), remoteDir, dir.GetPath())
+		items, err := d.parseList(res.Body(), remoteDir)
 		if err != nil {
 			return nil, err
 		}
@@ -125,9 +126,6 @@ func (d *RakutenDrive) Link(ctx context.Context, file model.Obj, args model.Link
 
 func (d *RakutenDrive) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	remoteDir := d.localPath2RemotePath(parentDir.GetPath(), true)
-	if remoteDir == "/" {
-		remoteDir = ""
-	}
 	body := base.Json{
 		"host_id": d.HostID,
 		"name":    dirName,
@@ -228,21 +226,8 @@ func (d *RakutenDrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) (mode
 		return nil, err
 	}
 	if resp.Key != "" {
-		checkBody := base.Json{"key": resp.Key}
-		for i := 0; i < 30; i++ {
-			var checkResp uploadCheckResp
-			_, err = d.newForestRequest(ctx, http.MethodPost, forestBase+"/v3/files/check", checkBody, &checkResp)
-			if err != nil {
-				return nil, err
-			}
-			if strings.EqualFold(checkResp.State, "complete") {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(1 * time.Second):
-			}
+		if err := d.waitCheckComplete(ctx, resp.Key); err != nil {
+			return nil, err
 		}
 	}
 	newPath := path.Join(dstDir.GetPath(), srcObj.GetName())
@@ -281,30 +266,11 @@ func (d *RakutenDrive) Remove(ctx context.Context, obj model.Obj) error {
 	if resp.Key == "" {
 		return nil
 	}
-	checkBody := base.Json{"key": resp.Key}
-	for i := 0; i < 30; i++ {
-		var checkResp uploadCheckResp
-		_, err = d.newForestRequest(ctx, http.MethodPost, forestBase+"/v3/files/check", checkBody, &checkResp)
-		if err != nil {
-			return err
-		}
-		if strings.EqualFold(checkResp.State, "complete") {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(1 * time.Second):
-		}
-	}
-	return nil
+	return d.waitCheckComplete(ctx, resp.Key)
 }
 
 func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	remoteDir := d.localPath2RemotePath(dstDir.GetPath(), true)
-	if remoteDir == "/" {
-		remoteDir = ""
-	}
 	reader := io.Reader(file)
 	size := file.GetSize()
 	if size <= 0 {
@@ -324,15 +290,10 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 		reader = temp
 	}
 
-	// 1) get temporary credentials
-	var tokenResp filelinkTokenResp
-	tokenURL := forestBase + "/v1/filelink/token?host_id=" + url.QueryEscape(d.HostID) + "&path=" + url.QueryEscape(remoteDir)
-	_, err := d.newForestRequest(ctx, http.MethodGet, tokenURL, nil, &tokenResp)
+	// 1) get temporary credentials (cached per directory)
+	tokenResp, err := d.getSTSCredentials(ctx, remoteDir)
 	if err != nil {
 		return nil, err
-	}
-	if tokenResp.AccessKeyID == "" || tokenResp.SecretAccessKey == "" || tokenResp.SessionToken == "" {
-		return nil, fmt.Errorf("filelink/token missing credentials")
 	}
 
 	// 2) init upload
@@ -406,21 +367,8 @@ func (d *RakutenDrive) Put(ctx context.Context, dstDir model.Obj, file model.Fil
 	}
 
 	// 4) check status
-	checkBody := base.Json{"key": initResp.UploadID}
-	for i := 0; i < 30; i++ {
-		var checkResp uploadCheckResp
-		_, err = d.newForestRequest(ctx, http.MethodPost, forestBase+"/v3/files/check", checkBody, &checkResp)
-		if err != nil {
-			return nil, err
-		}
-		if strings.EqualFold(checkResp.State, "complete") {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(1 * time.Second):
-		}
+	if err := d.waitCheckComplete(ctx, initResp.UploadID); err != nil {
+		return nil, err
 	}
 
 	// 5) complete upload
@@ -469,7 +417,7 @@ func (d *RakutenDrive) GetDetails(ctx context.Context) (*model.StorageDetails, e
 	}, nil
 }
 
-func (d *RakutenDrive) parseList(body []byte, remoteDir, localDir string) ([]model.Obj, error) {
+func (d *RakutenDrive) parseList(body []byte, remoteDir string) ([]model.Obj, error) {
 	paths := [][]interface{}{
 		{"file"},
 		{"files"},
@@ -524,9 +472,6 @@ func (d *RakutenDrive) parseList(body []byte, remoteDir, localDir string) ([]mod
 		}
 		name := path.Base(strings.TrimSuffix(remotePath, "/"))
 		localPath := d.remotePath2LocalPath(remotePath)
-		if localDir != "" && !strings.HasSuffix(localDir, "/") && !strings.HasPrefix(localPath, "/") {
-			localPath = path.Join(localDir, name)
-		}
 		size := item.Get("size").ToInt64()
 		if size == 0 {
 			size = item.Get("Size").ToInt64()
@@ -626,6 +571,30 @@ func (d *RakutenDrive) normalizePrefix(remotePath string) string {
 		prefix += "/"
 	}
 	return prefix
+}
+
+// waitCheckComplete polls files/check until the async operation reaches
+// state "complete" or the retry budget is exhausted
+func (d *RakutenDrive) waitCheckComplete(ctx context.Context, key string) error {
+	body := base.Json{"key": key}
+	var lastState string
+	for i := 0; i < 30; i++ {
+		var checkResp uploadCheckResp
+		_, err := d.newForestRequest(ctx, http.MethodPost, forestBase+"/v3/files/check", body, &checkResp)
+		if err != nil {
+			return err
+		}
+		lastState = checkResp.State
+		if strings.EqualFold(lastState, "complete") {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+	}
+	return fmt.Errorf("operation %s did not complete in time (last state: %s)", key, lastState)
 }
 
 // detectIsFolder determines if an item represents a folder based on various attributes

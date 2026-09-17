@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -13,6 +15,13 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
 )
+
+func newHTTPClient() *resty.Client {
+	return base.NewRestyClient().SetHeaders(map[string]string{
+		"Accept":       "application/json, text/plain, */*",
+		"content-type": "application/json",
+	})
+}
 
 const (
 	forestBase = "https://forest.sendy.jp/cloud/service/file"
@@ -25,21 +34,28 @@ func (d *RakutenDrive) ensureAccessToken() error {
 	if d.accessToken != "" && !d.accessTokenExpire.IsZero() && time.Now().Before(d.accessTokenExpire.Add(-1*time.Minute)) {
 		return nil
 	}
-	return d.refreshToken()
+	return d.doRefreshAccessToken()
 }
 
-func (d *RakutenDrive) refreshToken() error {
+// doRefreshAccessToken exchanges the stored refresh token for a new id token
+func (d *RakutenDrive) doRefreshAccessToken() error {
 	if d.RefreshToken == "" {
 		return fmt.Errorf("refresh_token is required")
 	}
+	if d.client == nil {
+		d.client = newHTTPClient()
+	}
 	var resp refreshResp
-	_, err := base.RestyClient.R().
+	res, err := d.client.R().
 		SetHeader("content-type", "application/json").
 		SetBody(base.Json{"refresh_token": d.RefreshToken}).
 		SetResult(&resp).
 		Post(authBase + "/auth/refreshtoken")
 	if err != nil {
 		return err
+	}
+	if res.IsError() {
+		return fmt.Errorf("refresh token failed with status %d: %s", res.StatusCode(), strings.TrimSpace(res.String()))
 	}
 	if resp.IDToken == "" {
 		return fmt.Errorf("refresh token failed: idToken empty")
@@ -52,7 +68,8 @@ func (d *RakutenDrive) refreshToken() error {
 	if exp, err := parseJWTExp(resp.IDToken); err == nil {
 		d.accessTokenExpire = exp
 	} else {
-		d.accessTokenExpire = time.Time{}
+		// fall back to a conservative validity so we don't refresh on every request
+		d.accessTokenExpire = time.Now().Add(30 * time.Minute)
 	}
 	return nil
 }
@@ -64,6 +81,7 @@ func (d *RakutenDrive) newForestRequest(ctx context.Context, method, url string,
 	req := d.client.R().
 		SetContext(ctx).
 		SetHeader("Authorization", "Bearer "+d.accessToken).
+		// the file API only accepts requests that appear to come from the web app
 		SetHeader("Origin", "https://www.rakuten-drive.com").
 		SetHeader("Referer", "https://www.rakuten-drive.com/")
 	if d.UploadToken != "" {
@@ -75,7 +93,41 @@ func (d *RakutenDrive) newForestRequest(ctx context.Context, method, url string,
 	if result != nil {
 		req.SetResult(result)
 	}
-	return req.Execute(method, url)
+	resp, err := req.Execute(method, url)
+	if err != nil {
+		return resp, err
+	}
+	if resp.IsError() {
+		return resp, fmt.Errorf("request %s %s failed with status %d: %s", method, url, resp.StatusCode(), strings.TrimSpace(resp.String()))
+	}
+	return resp, nil
+}
+
+func (d *RakutenDrive) getSTSCredentials(ctx context.Context, remoteDir string) (*filelinkTokenResp, error) {
+	d.stsMu.Lock()
+	defer d.stsMu.Unlock()
+	if d.stsCreds != nil && d.stsCredsDir == remoteDir && time.Now().Before(d.stsCredsExpire) {
+		return d.stsCreds, nil
+	}
+	tokenURL := forestBase + "/v1/filelink/token?host_id=" + url.QueryEscape(d.HostID) + "&path=" + url.QueryEscape(remoteDir)
+	var tokenResp filelinkTokenResp
+	_, err := d.newForestRequest(ctx, http.MethodGet, tokenURL, nil, &tokenResp)
+	if err != nil {
+		return nil, err
+	}
+	if tokenResp.AccessKeyID == "" || tokenResp.SecretAccessKey == "" || tokenResp.SessionToken == "" {
+		return nil, fmt.Errorf("filelink/token missing credentials")
+	}
+	expire := parseTimeAny(tokenResp.Expiration)
+	if expire.IsZero() || !time.Now().Before(expire.Add(-time.Minute)) {
+		// unknown or nearly-expired credential; use a conservative TTL
+		expire = time.Now().Add(30 * time.Minute)
+	}
+	d.stsCreds = &tokenResp
+	d.stsCredsDir = remoteDir
+	// drop the cache one minute before the credential actually expires
+	d.stsCredsExpire = expire.Add(-time.Minute)
+	return d.stsCreds, nil
 }
 
 func parseJWTExp(token string) (time.Time, error) {
@@ -83,7 +135,7 @@ func parseJWTExp(token string) (time.Time, error) {
 	if len(parts) < 2 {
 		return time.Time{}, fmt.Errorf("invalid jwt")
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
 	if err != nil {
 		return time.Time{}, err
 	}
