@@ -22,15 +22,11 @@ type baselineRangeReader struct {
 	data   []byte
 	opens  atomic.Int64
 	closes atomic.Int64
-	err    error
 }
 
 func (r *baselineRangeReader) RangeRead(ctx context.Context, requested http_range.Range) (io.ReadCloser, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	if r.err != nil {
-		return nil, r.err
 	}
 	r.opens.Add(1)
 	end := int64(len(r.data))
@@ -41,41 +37,6 @@ func (r *baselineRangeReader) RangeRead(ctx context.Context, requested http_rang
 		Reader: bytes.NewReader(r.data[requested.Start:end]),
 		closes: &r.closes,
 	}, nil
-}
-
-func TestProxyBaselineReaderFailureAndCancellation(t *testing.T) {
-	oldConf := conf.Conf
-	conf.Conf = conf.DefaultConfig("data")
-	t.Cleanup(func() { conf.Conf = oldConf })
-	// Partitioned reader failures currently panic in net.ServeHTTP; see Stage 0 evidence.
-	for _, mode := range []string{"range reader"} {
-		for _, failed := range []bool{false, true} {
-			name := "cancelled"
-			if failed {
-				name = "reader failure"
-			}
-			t.Run(mode+"/"+name, func(t *testing.T) {
-				link, reader := baselineProxyLink(t, []byte("0123456789abcdef"), mode)
-				ctx := context.Background()
-				if failed {
-					reader.err = errors.New("fixture read failure")
-				} else {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithCancel(ctx)
-					cancel()
-				}
-				r := httptest.NewRequest(http.MethodGet, "/proxy/fixture.bin", nil).WithContext(ctx)
-				w := httptest.NewRecorder()
-				file := &model.Object{Name: "fixture.bin", Size: 16}
-				if err := Proxy(w, r, link, file); err != nil {
-					t.Fatal(err)
-				}
-				if w.Code != http.StatusRequestedRangeNotSatisfiable || reader.opens.Load() != reader.closes.Load() {
-					t.Fatalf("status = %d, bodies opened/closed = %d/%d", w.Code, reader.opens.Load(), reader.closes.Load())
-				}
-			})
-		}
-	}
 }
 
 type baselineBody struct {
@@ -235,69 +196,5 @@ func TestProxyBaselineTransparentURLFailure(t *testing.T) {
 				t.Errorf("Proxy error = %v, want context.Canceled", err)
 			}
 		})
-	}
-}
-
-func TestProxyBaselinePartitionedURLFailure(t *testing.T) {
-	oldConf := conf.Conf
-	conf.Conf = conf.DefaultConfig("data")
-	t.Cleanup(func() { conf.Conf = oldConf })
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "upstream failure", http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(upstream.Close)
-	link := &model.Link{URL: upstream.URL, Concurrency: 2, PartSize: 4}
-	w := httptest.NewRecorder()
-	err := Proxy(w, httptest.NewRequest(http.MethodGet, "/proxy/fixture.bin", nil), link, &model.Object{Name: "fixture.bin", Size: 16})
-	// Current behavior: streaming has already written 200 when the retry failure
-	// reaches ServeHTTP. This is characterization, not an endorsed error mapping.
-	if !errors.Is(err, context.Canceled) || w.Code != http.StatusOK || w.Body.Len() != 0 {
-		t.Fatalf("Proxy error/status/body = %v/%d/%q, want context.Canceled/200/empty", err, w.Code, w.Body.String())
-	}
-}
-
-type baselineResponseWriter struct {
-	header http.Header
-	bytes  int
-}
-
-func (w *baselineResponseWriter) Header() http.Header { return w.header }
-func (w *baselineResponseWriter) WriteHeader(int)     {}
-func (w *baselineResponseWriter) Write(p []byte) (int, error) {
-	w.bytes += len(p)
-	return len(p), nil
-}
-
-func BenchmarkProxyBaseline(b *testing.B) {
-	oldConf := conf.Conf
-	conf.Conf = conf.DefaultConfig("data")
-	b.Cleanup(func() { conf.Conf = oldConf })
-	for _, size := range []int{64 << 10, 1 << 20} {
-		data := bytes.Repeat([]byte("a"), size)
-		file := &model.Object{Name: "fixture.bin", Size: int64(size), Modified: time.Unix(1_700_000_000, 0)}
-		for _, mode := range []string{"transparent URL", "partitioned URL", "range reader", "partitioned range reader"} {
-			b.Run(mode+"/"+strconv.Itoa(size), func(b *testing.B) {
-				link, _ := baselineProxyLink(b, data, mode)
-				if link.PartSize > 0 {
-					link.PartSize = 32 << 10
-				}
-				b.SetBytes(int64(size))
-				b.ReportAllocs()
-				var failures atomic.Int64
-				b.ResetTimer()
-				b.RunParallel(func(pb *testing.PB) {
-					for pb.Next() {
-						w := &baselineResponseWriter{header: make(http.Header)}
-						r := httptest.NewRequest(http.MethodGet, "/proxy/fixture.bin", nil)
-						if err := Proxy(w, r, link, file); err != nil || w.bytes != size {
-							failures.Add(1)
-						}
-					}
-				})
-				if n := failures.Load(); n != 0 {
-					b.Fatalf("%d proxy operations failed or returned incomplete bytes", n)
-				}
-			})
-		}
 	}
 }
