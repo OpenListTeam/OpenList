@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 type Driver interface {
@@ -217,4 +218,55 @@ type DirectUploader interface {
 	// actualPath is the path relative to the storage root (after removing mount path prefix)
 	// return errs.NotImplement if the driver does not support the given direct upload tool
 	GetDirectUploadInfo(ctx context.Context, tool string, dstDir model.Obj, fileName string, fileSize int64) (any, error)
+}
+
+// SeedRapidUploadRequest carries everything a driver needs to attempt a
+// hash-driven rapid upload (秒传/CAS) without transferring the full content.
+//
+// It is populated from a parsed transfer seed, so that any cloud drive
+// supporting hash-based rapid upload can be used as a seed save target.
+type SeedRapidUploadRequest struct {
+	// Name is the target file name.
+	Name string
+	// Size is the total file size in bytes.
+	Size int64
+	// Whole holds whole-file hashes indexed by algorithm (e.g. utils.MD5,
+	// utils.SHA1). It must never be nil; individual entries may be empty.
+	Whole *utils.HashInfo
+	// SliceSize is the per-slice/piece size in bytes (0 when unknown).
+	SliceSize int64
+	// SliceMD5s is the ordered per-slice MD5 list (used by 189pc-style CAS).
+	SliceMD5s []string
+	// SliceSHA1s is the ordered per-slice SHA1 list (used by SHA1-piece drives).
+	SliceSHA1s []string
+	// Open lazily yields the file content as a model.FileStreamer. Drivers whose
+	// rapid-upload protocol needs partial or full content (e.g. a leading
+	// pre-hash or a proof-code) may call it; hash-only drivers may ignore it.
+	// Open may be nil when no content source is available, in which case
+	// drivers that strictly require content must fail gracefully.
+	Open func() (model.FileStreamer, error)
+}
+
+// SeedRapidUploader is an optional capability interface implemented by drivers
+// that can perform a "rapid upload" (秒传/CAS) driven by precomputed hashes
+// instead of a full content transfer.
+//
+// It generalizes the previous hard-coded 189pc-specific CAS path so that any
+// cloud drive supporting hash-based rapid upload (e.g. 189pc via MD5+slice MD5,
+// 115/aliyundrive_open via SHA1) can be used as a transfer-seed save target.
+type SeedRapidUploader interface {
+	// RapidUploadByHashes attempts a rapid upload of a file into dstDir.
+	//
+	// Implementations should return errs.NotImplement (or a descriptive error)
+	// when the required hash is missing, the file does not exist remotely, or
+	// the rapid upload cannot be confirmed.
+	RapidUploadByHashes(ctx context.Context, dstDir model.Obj, req *SeedRapidUploadRequest, overwrite bool) (model.Obj, error)
+
+	// RapidHashAlgos reports the whole-file hash algorithms accepted by
+	// RapidUploadByHashes (e.g. utils.MD5, utils.SHA1).
+	RapidHashAlgos() []utils.HashType
+
+	// RapidHashNeedsPieces reports whether RapidUploadByHashes relies on
+	// per-slice hashes (CAS slice MD5s / SHA1 pieces) for this driver.
+	RapidHashNeedsPieces() bool
 }

@@ -173,6 +173,14 @@ func getMainItems(config driver.Config) []driver.Item {
 		Default:  "false",
 		Required: true,
 	})
+	items = append(items, driver.Item{
+		Name:     "seed_policy",
+		Type:     conf.TypeSelect,
+		Options:  "inherit,on,off",
+		Default:  "inherit",
+		Required: true,
+		Help:     "Override automatic transfer-seed generation for this storage",
+	})
 	return items
 }
 func getAdditionalItems(t reflect.Type, defaultRoot string) []driver.Item {
