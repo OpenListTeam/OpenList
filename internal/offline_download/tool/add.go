@@ -37,11 +37,13 @@ const (
 	DeleteOnUploadFailed  DeletePolicy = "delete_on_upload_failed"
 	DeleteNever           DeletePolicy = "delete_never"
 	DeleteAlways          DeletePolicy = "delete_always"
+	DeleteAfterSeeding    DeletePolicy = "delete_after_seeding"
 	UploadDownloadStream  DeletePolicy = "upload_download_stream"
 )
 
 type AddURLArgs struct {
 	URL          string
+	TorrentData  []byte
 	DstDirPath   string
 	Tool         string
 	DeletePolicy DeletePolicy
@@ -70,7 +72,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 		}
 	}
 	// try putting url
-	if args.Tool == "SimpleHttp" && !isEd2kURL(args.URL) {
+	if len(args.TorrentData) == 0 && args.Tool == "SimpleHttp" && !isEd2kURL(args.URL) {
 		if isSimpleHttpSchemeUnsupported(args.URL) {
 			return nil, fmt.Errorf("SimpleHttp tool does not support this URL scheme, please use aria2 or other tools for magnet/ed2k links")
 		}
@@ -82,7 +84,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	}
 
 	// ed2k 链接自动路由：如果当前工具不支持 ed2k，自动尝试使用迅雷系工具
-	if isEd2kURL(args.URL) {
+	if len(args.TorrentData) == 0 && isEd2kURL(args.URL) {
 		if !isEd2kCapableTool(args.Tool) {
 			if storageTool := ed2kToolForStorage(storage); storageTool != "" {
 				// Prefer the matching native tool when the destination storage supports ed2k.
@@ -103,6 +105,9 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	tool, err := Tools.Get(args.Tool)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed get offline download tool")
+	}
+	if len(args.TorrentData) > 0 && !CapabilitiesOf(tool).TorrentData {
+		return nil, fmt.Errorf("%s does not support uploaded torrent files", args.Tool)
 	}
 	// check tool is ready
 	if !tool.IsReady() {
@@ -187,11 +192,27 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 			ApiUrl:  common.GetApiUrl(ctx),
 		},
 		Url:          args.URL,
+		TorrentData:  args.TorrentData,
 		DstDirPath:   args.DstDirPath,
 		TempDir:      tempDir,
 		DeletePolicy: deletePolicy,
 		Toolname:     args.Tool,
 		tool:         tool,
+	}
+	if deletePolicy == DeleteAfterSeeding && isSeedingToolName(args.Tool) {
+		if CleanupTaskManager == nil {
+			return nil, fmt.Errorf("offline cleanup manager is not initialized")
+		}
+		t.CleanupID = uid
+		t.SetID(uid)
+		if err := CleanupTaskManager.Register(CleanupJob{
+			ID:             uid,
+			DownloadTaskID: uid,
+			TempDir:        tempDir,
+			Toolname:       args.Tool,
+		}); err != nil {
+			return nil, errors.WithMessage(err, "failed to register offline cleanup")
+		}
 	}
 	DownloadTaskManager.Add(t)
 	return t, nil

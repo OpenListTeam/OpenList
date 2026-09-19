@@ -3,6 +3,8 @@ package _115_open
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 
@@ -54,42 +56,56 @@ func (d *Open115) singleUpload(ctx context.Context, tempF model.File, tokenResp 
 	return err
 }
 
-// type CallbackResult struct {
-// 	State   bool   `json:"state"`
-// 	Code    int    `json:"code"`
-// 	Message string `json:"message"`
-// 	Data    struct {
-// 		PickCode string `json:"pick_code"`
-// 		FileName string `json:"file_name"`
-// 		FileSize int64  `json:"file_size"`
-// 		FileID   string `json:"file_id"`
-// 		ThumbURL string `json:"thumb_url"`
-// 		Sha1     string `json:"sha1"`
-// 		Aid      int    `json:"aid"`
-// 		Cid      string `json:"cid"`
-// 	} `json:"data"`
-// }
+type callbackResult struct {
+	State   bool   `json:"state"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		PickCode string `json:"pick_code"`
+		FileName string `json:"file_name"`
+		FileSize int64  `json:"file_size"`
+		FileID   string `json:"file_id"`
+		ThumbURL string `json:"thumb_url"`
+		Sha1     string `json:"sha1"`
+		Aid      int    `json:"aid"`
+		Cid      string `json:"cid"`
+	} `json:"data"`
+}
 
-func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer, up driver.UpdateProgress, tokenResp *sdk.UploadGetTokenResp, initResp *sdk.UploadInitResp) error {
+func parseCallbackResult(body []byte) (*callbackResult, error) {
+	var result callbackResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse upload callback: %w", err)
+	}
+	if !result.State {
+		return nil, fmt.Errorf("upload callback failed: code=%d, message=%s", result.Code, result.Message)
+	}
+	if result.Data.FileID == "" {
+		return nil, fmt.Errorf("upload callback returned empty file id")
+	}
+	return &result, nil
+}
+
+func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer, up driver.UpdateProgress, tokenResp *sdk.UploadGetTokenResp, initResp *sdk.UploadInitResp) (*callbackResult, error) {
 	ossClient, err := netutil.NewOSSClient(tokenResp.Endpoint, tokenResp.AccessKeyId, tokenResp.AccessKeySecret, oss.SecurityToken(tokenResp.SecurityToken))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	bucket, err := ossClient.Bucket(initResp.Bucket)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	imur, err := bucket.InitiateMultipartUpload(initResp.Object, oss.Sequential())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	fileSize := stream.GetSize()
 	chunkSize := calPartSize(fileSize)
 	ss, err := streamPkg.NewStreamSectionReader(stream, int(chunkSize), &up)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	partNum := (stream.GetSize() + chunkSize - 1) / chunkSize
@@ -97,7 +113,7 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 	offset := int64(0)
 	for i := int64(1); i <= partNum; i++ {
 		if utils.IsCanceled(ctx) {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 
 		partSize := chunkSize
@@ -106,7 +122,7 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 		}
 		rd, err := ss.GetSectionReader(offset, partSize)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		err = retry.Do(func() error {
 			rd.Seek(0, io.SeekStart)
@@ -123,7 +139,7 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 			retry.Delay(time.Second))
 		ss.FreeSectionReader(rd)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if i == partNum {
@@ -134,17 +150,17 @@ func (d *Open115) multpartUpload(ctx context.Context, stream model.FileStreamer,
 		up(float64(offset) * 100 / float64(fileSize))
 	}
 
-	// callbackRespBytes := make([]byte, 1024)
+	var callbackRespBytes []byte
 	_, err = bucket.CompleteMultipartUpload(
 		imur,
 		parts,
 		oss.Callback(base64.StdEncoding.EncodeToString([]byte(initResp.Callback.Value.Callback))),
 		oss.CallbackVar(base64.StdEncoding.EncodeToString([]byte(initResp.Callback.Value.CallbackVar))),
-		// oss.CallbackResult(&callbackRespBytes),
+		oss.CallbackResult(&callbackRespBytes),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return parseCallbackResult(callbackRespBytes)
 }
