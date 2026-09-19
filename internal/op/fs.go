@@ -267,8 +267,8 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if err != nil {
 			return nil, err
 		}
-		if ol.policy.expiration != nil {
-			Cache.linkCache.SetTypeWithTTL(key, typeKey, ol, *ol.policy.expiration)
+		if ol.link.Expiration != nil {
+			Cache.linkCache.SetTypeWithTTL(key, typeKey, ol, *ol.link.Expiration)
 		} else {
 			Cache.linkCache.SetTypeWithExpirable(key, typeKey, ol, &link.SyncClosers)
 		}

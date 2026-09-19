@@ -67,6 +67,9 @@ func TestLinkLifecycleModes(t *testing.T) {
 		}
 
 		first := acquireTestLink(t, d)
+		if first.Expiration != nil {
+			t.Fatal("borrower inherited cache expiration")
+		}
 		first.URL = "https://borrower.test/file"
 		first.Header.Set("X-Link", "borrower")
 		_ = first.Close()

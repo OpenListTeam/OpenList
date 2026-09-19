@@ -390,9 +390,8 @@ func ArchiveGet(ctx context.Context, storage driver.Driver, path string, args mo
 }
 
 type objWithLink struct {
-	link   *model.Link
-	obj    model.Obj
-	policy linkCachePolicy
+	link *model.Link
+	obj  model.Obj
 }
 
 var (
@@ -416,8 +415,8 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
-		if ol.policy.expiration != nil {
-			extractCache.SetWithTTL(key, ol, *ol.policy.expiration)
+		if ol.link.Expiration != nil {
+			extractCache.SetWithTTL(key, ol, *ol.link.Expiration)
 		} else {
 			extractCache.SetWithExpirable(key, ol, &ol.link.SyncClosers)
 		}
