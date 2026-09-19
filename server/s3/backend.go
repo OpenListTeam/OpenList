@@ -451,11 +451,17 @@ func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket
 	fmeta, _ := op.GetNearestMeta(srcFp)
 	srcNode, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), srcFp, &fs.GetArgs{})
 	if err != nil {
+		if errs.IsObjectNotFound(err) {
+			return result, gofakes3.KeyNotFound(srcKey)
+		}
 		return result, err
 	}
 
 	c, err := b.GetObject(ctx, srcBucket, srcKey, nil)
 	if err != nil {
+		if errs.IsObjectNotFound(err) {
+			return result, gofakes3.KeyNotFound(srcKey)
+		}
 		return
 	}
 	defer func() {
