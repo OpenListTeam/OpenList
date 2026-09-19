@@ -8,18 +8,19 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
-func TestGetEtagSubsecondChanges(t *testing.T) {
-	file := &model.Object{Size: 4, Modified: time.Unix(1700000000, 100)}
-	before := GetEtag(file, file.Size)
-	if got := GetEtag(file, file.Size); got != before {
-		t.Fatalf("unchanged file ETag = %q, want %q", got, before)
+func TestGetEtagStableAcrossCacheRefresh(t *testing.T) {
+	uploaded := &model.Object{Size: 4, Modified: time.Unix(1700000000, 123456789)}
+	before := GetEtag(uploaded, uploaded.Size)
+	refreshed := &model.Object{Size: uploaded.Size, Modified: time.Unix(1700000000, 0)}
+	if got := GetEtag(refreshed, refreshed.Size); got != before {
+		t.Fatalf("refreshed file ETag = %q, want %q", got, before)
 	}
-	file.Modified = file.Modified.Add(time.Nanosecond)
-	if got := GetEtag(file, file.Size); got == before {
-		t.Errorf("same-size overwrite within one second retained ETag %q", got)
+	refreshed.Modified = refreshed.Modified.Add(time.Second)
+	if got := GetEtag(refreshed, refreshed.Size); got == before {
+		t.Errorf("changed modification second retained ETag %q", got)
 	}
-	file.Modified = file.Modified.Add(-time.Nanosecond)
-	if got := GetEtag(file, file.Size+1); got == before {
+	refreshed.Modified = uploaded.Modified
+	if got := GetEtag(refreshed, refreshed.Size+1); got == before {
 		t.Errorf("changed size retained ETag %q", got)
 	}
 }

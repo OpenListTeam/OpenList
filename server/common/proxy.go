@@ -97,8 +97,9 @@ func GetEtag(file model.Obj, size int64) string {
 	if len(hash) > 0 {
 		return fmt.Sprintf(`"%s"`, hash)
 	}
-	// Preserve sub-second changes when files of the same size are overwritten.
-	return fmt.Sprintf(`"%x-%x"`, file.ModTime().UnixNano(), size)
+	// Storage backends may not preserve sub-second timestamps across cache
+	// refreshes, so only use the reproducible second precision here.
+	return fmt.Sprintf(`"%x-%x"`, file.ModTime().Unix(), size)
 }
 
 func ProxyRange(ctx context.Context, link *model.Link, size int64) *model.Link {
