@@ -55,7 +55,7 @@ import (
 func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time.Time, size int64, RangeReadCloser model.RangeReadCloserIF) error {
 	defer RangeReadCloser.Close()
 	setLastModified(w, modTime)
-	done, rangeReq := checkPreconditions(w, r, modTime)
+	done, rangeReq := CheckPreconditions(w, r, modTime, true)
 	if done {
 		return nil
 	}

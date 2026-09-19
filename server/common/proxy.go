@@ -97,7 +97,8 @@ func GetEtag(file model.Obj, size int64) string {
 	if len(hash) > 0 {
 		return fmt.Sprintf(`"%s"`, hash)
 	}
-	// 参考nginx
+	// Storage backends may not preserve sub-second timestamps across cache
+	// refreshes, so only use the reproducible second precision here.
 	return fmt.Sprintf(`"%x-%x"`, file.ModTime().Unix(), size)
 }
 
