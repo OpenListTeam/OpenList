@@ -28,7 +28,10 @@ func admitLink(link *model.Link, obj model.Obj) (*objWithLink, error) {
 	}, nil
 }
 
-func (ol *objWithLink) acquire() bool {
-	return ol.policy.expiration != nil ||
-		ol.link.SyncClosers.AcquireReference() || !ol.policy.requireReference
+func (ol *objWithLink) acquire() *model.Link {
+	if ol.policy.expiration != nil ||
+		ol.link.SyncClosers.AcquireReference() || !ol.policy.requireReference {
+		return ol.link.Clone()
+	}
+	return nil
 }

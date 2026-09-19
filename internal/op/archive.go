@@ -406,8 +406,8 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
 	if ol, ok := extractCache.Get(key); ok {
-		if ol.acquire() {
-			return ol.link, ol.obj, nil
+		if link := ol.acquire(); link != nil {
+			return link, ol.obj, nil
 		}
 	}
 
@@ -429,8 +429,8 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		if err != nil {
 			return nil, nil, err
 		}
-		if ol.acquire() {
-			return ol.link, ol.obj, nil
+		if link := ol.acquire(); link != nil {
+			return link, ol.obj, nil
 		}
 	}
 }

@@ -245,8 +245,8 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 	key := Key(storage, path)
 	if ol, exists := Cache.linkCache.GetType(key, typeKey); exists {
-		if ol.acquire() {
-			return ol.link, ol.obj, nil
+		if link := ol.acquire(); link != nil {
+			return link, ol.obj, nil
 		}
 	}
 
@@ -279,8 +279,8 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if err != nil {
 			return nil, nil, err
 		}
-		if ol.acquire() {
-			return ol.link, ol.obj, nil
+		if link := ol.acquire(); link != nil {
+			return link, ol.obj, nil
 		}
 	}
 }

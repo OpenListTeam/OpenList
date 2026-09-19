@@ -314,7 +314,7 @@ func (d *Chunk) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		if err != nil {
 			return nil, err
 		}
-		return l.Clone(), nil
+		return l, nil
 	}
 	// 检查0号块不等于-1 以支持空文件
 	// 如果块数量大于1 最后一块不可能为0

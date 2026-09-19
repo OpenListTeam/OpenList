@@ -46,7 +46,7 @@ type Link struct {
 func (l *Link) Clone() *Link {
 	return &Link{
 		URL:              l.URL,
-		Header:           l.Header,
+		Header:           l.Header.Clone(),
 		RangeReader:      l.RangeReader,
 		Concurrency:      l.Concurrency,
 		PartSize:         l.PartSize,
