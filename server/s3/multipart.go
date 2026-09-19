@@ -234,7 +234,9 @@ func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object 
 
 	defer combined.Close()
 
-	err := b.putStream(ctx, bucket, object, state.meta, combined, total)
+	sum := md5.Sum(concat)
+	etag := fmt.Sprintf("%q", fmt.Sprintf("%s-%d", hex.EncodeToString(sum[:]), len(ordered)))
+	err := b.putStream(ctx, bucket, object, state.meta, combined, total, etag)
 	if err != nil {
 		// Leave the upload in place so the client may retry completion, per
 		// the gofakes3 MultipartBackend contract.
@@ -244,8 +246,6 @@ func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object 
 	// Success: drop bookkeeping and clean up part files.
 	b.removeUpload(uploadID)
 
-	sum := md5.Sum(concat)
-	etag := fmt.Sprintf("%q", fmt.Sprintf("%s-%d", hex.EncodeToString(sum[:]), len(ordered)))
 	log.Debugf("s3 multipart: completed upload %s -> %s/%s (%d bytes)", uploadID, bucket, object, total)
 	return "", etag, nil
 }
