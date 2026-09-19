@@ -58,7 +58,7 @@ func TestEd2kToolForStorage(t *testing.T) {
 	}
 }
 
-func TestToolNameForStorage(t *testing.T) {
+func TestNativeToolName(t *testing.T) {
 	tests := []struct {
 		name    string
 		storage driver.Driver
@@ -78,8 +78,8 @@ func TestToolNameForStorage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := toolNameForStorage(tt.storage); got != tt.want {
-				t.Fatalf("toolNameForStorage(%T) = %q, want %q", tt.storage, got, tt.want)
+			if got := NativeToolName(tt.storage); got != tt.want {
+				t.Fatalf("NativeToolName(%T) = %q, want %q", tt.storage, got, tt.want)
 			}
 		})
 	}
