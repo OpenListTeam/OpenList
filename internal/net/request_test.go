@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/mem"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
@@ -31,6 +32,18 @@ func containsString(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+func withDownloaderConfig(t *testing.T) {
+	t.Helper()
+	previousConf := conf.Conf
+	previousPolicy := conf.CachePolicy
+	conf.Conf = &conf.Config{TempDir: t.TempDir()}
+	conf.CachePolicy = cache.PolicyMemory
+	t.Cleanup(func() {
+		conf.Conf = previousConf
+		conf.CachePolicy = previousPolicy
+	})
 }
 
 func TestDownloaderMemoryCeiling(t *testing.T) {
@@ -66,6 +79,7 @@ func TestDownloaderMemoryCeiling(t *testing.T) {
 }
 
 func TestTryDownloadChunkReturnsPrefetchAllocationError(t *testing.T) {
+	withDownloaderConfig(t)
 	hc, err := hcache.NewHybridCache(4, 4, cache.PolicyMemory)
 	if err != nil {
 		t.Fatalf("NewHybridCache() error = %v", err)
@@ -110,6 +124,7 @@ func TestTryDownloadChunkReturnsPrefetchAllocationError(t *testing.T) {
 }
 
 func TestDownloadOrder(t *testing.T) {
+	withDownloaderConfig(t)
 	buff := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	downloader, invocations, ranges := newDownloadRangeClient(buff)
 	con, partSize := 3, 3
@@ -161,6 +176,7 @@ func TestDownloadOrder(t *testing.T) {
 }
 
 func TestDownloadInterrupt(t *testing.T) {
+	withDownloaderConfig(t)
 	buff := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	buff = append(buff, buff...)
 	downloader, _, _ := newDownloadRangeClient(buff)
@@ -196,6 +212,7 @@ func TestDownloadInterrupt(t *testing.T) {
 }
 
 func TestHighConcurrency(t *testing.T) {
+	withDownloaderConfig(t)
 	buff := make([]byte, 8<<10)
 	for i := range len(buff) {
 		buff[i] = byte(i % 256)
@@ -261,6 +278,7 @@ func init() {
 }
 
 func TestDownloadSingle(t *testing.T) {
+	withDownloaderConfig(t)
 	buff := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	downloader, invocations, ranges := newDownloadRangeClient(buff)
 	con, partSize := 1, 4

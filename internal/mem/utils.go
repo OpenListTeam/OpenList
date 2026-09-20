@@ -4,57 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"sync/atomic"
-
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 )
 
 var ErrNotEnoughMemory = errors.New("not enough memory")
 
-func MemoryGrowCheck(growSize uint64) error {
-	if conf.MinFreeMemory == 0 {
-		return ErrNotEnoughMemory
-	}
-	r, err, _ := singleflight.AnyGroup.Do("MemoryGrowCheck", func() (any, error) {
-		snapshot, err := GetMemorySnapshot()
-		if err != nil {
-			return nil, err
-		}
-		if snapshot.Available < conf.MinFreeMemory {
-			return nil, ErrNotEnoughMemory
-		}
-		var res atomic.Uint64
-		res.Store(snapshot.Available)
-		return &res, nil
-	})
-	if err != nil {
-		return err
-	}
-	res := r.(*atomic.Uint64)
-	for {
-		available := res.Load()
-		if available < growSize || available-growSize < conf.MinFreeMemory {
-			return ErrNotEnoughMemory
-		}
-		if res.CompareAndSwap(available, available-growSize) {
-			return nil
-		}
-	}
-}
-
-func NewGuardedMemory(cap, max uint64) (m LinearMemory, err error) {
-	return NewManagedMemory(cap, max, MemoryGrowCheck)
-}
-
 // NewManagedMemory creates memory with panic recovery and lifecycle cleanup.
-// A nil growCheck intentionally permits growth without an availability check.
-func NewManagedMemory(cap, max uint64, growCheck GrowCheck) (m LinearMemory, err error) {
-	if growCheck != nil {
-		if err := growCheck(cap); err != nil {
-			return nil, err
-		}
-	}
+func NewManagedMemory(cap, max uint64) (m LinearMemory, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: %v", ErrNotEnoughMemory, r)
@@ -63,11 +18,6 @@ func NewManagedMemory(cap, max uint64, growCheck GrowCheck) (m LinearMemory, err
 	m, err = NewMemory(cap, max)
 	if err != nil {
 		return nil, err
-	}
-	if growCheck != nil {
-		if s, ok := m.(interface{ SetGrowCheck(GrowCheck) }); ok {
-			s.SetGrowCheck(growCheck)
-		}
 	}
 	gm := &guardedMemory{LinearMemory: m}
 	gm.cleanup = runtime.AddCleanup(gm, func(m LinearMemory) {

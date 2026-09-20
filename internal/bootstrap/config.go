@@ -11,7 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	internalmem "github.com/OpenListTeam/OpenList/v4/internal/mem"
+	"github.com/OpenListTeam/OpenList/v4/internal/mem"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/caarlos0/env/v9"
@@ -111,16 +111,18 @@ func InitConfig() {
 		net.DefaultConcurrencyLimit = &net.ConcurrencyLimit{Limit: uint32(conf.Conf.MaxConcurrency)}
 	}
 
-	memStat, memErr := internalmem.GetMemorySnapshot()
+	memStat, memErr := mem.GetMemorySnapshot()
 	if memErr != nil {
 		log.Warnf("memory detection warning: %v", memErr)
 	}
+	memoryCacheEnabled := false
 	if memStat.Limit > 0 {
 		log.Infof("effective memory: limit=%dMB, used=%dMB, available=%dMB, source=%s", memStat.Limit>>20, memStat.Used>>20, memStat.Available>>20, memStat.Source)
 		if conf.Conf.MinFreeMemory < 0 {
 			conf.MinFreeMemory = 0
 			log.Info("disable memory cache")
 		} else {
+			memoryCacheEnabled = true
 			if conf.Conf.MinFreeMemory < 16 {
 				t := (memStat.Limit >> 20) / 10
 				conf.MinFreeMemory = max(16, min(t, 1024)) << 20
@@ -141,6 +143,9 @@ func InitConfig() {
 		conf.MinFreeMemory = 0
 		log.Warn("failed to get memory info, disable memory cache")
 	}
+	budgetCapacity := cacheMemoryBudgetCapacity(memStat.Available, conf.MinFreeMemory, memoryCacheEnabled)
+	mem.CacheMemoryBudget.SetCapacity(budgetCapacity)
+	log.Infof("cache memory budget: %dMB", budgetCapacity>>20)
 
 	if conf.Conf.AutoMemoryLimit > 0 {
 		conf.AutoMemoryLimit = uint64(conf.Conf.AutoMemoryLimit) << 20
@@ -178,6 +183,13 @@ func InitConfig() {
 
 	base.InitClient()
 	initURL()
+}
+
+func cacheMemoryBudgetCapacity(available, minFree uint64, enabled bool) uint64 {
+	if !enabled || available <= minFree {
+		return 0
+	}
+	return available - minFree
 }
 
 func confFromEnv() {

@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+// This parser intentionally builds on every platform so its proc/cgroup
+// fixtures can be tested outside Linux. Only snapshot_linux.go calls it in
+// production.
+
 const (
 	procSelfCgroup    = "/proc/self/cgroup"
 	procSelfMountInfo = "/proc/self/mountinfo"

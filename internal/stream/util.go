@@ -187,8 +187,8 @@ type cachePolicyGetter interface {
 	GetCachePolicy() (cache.Policy, error)
 }
 
-type cachePolicyFreezer interface {
-	freezeCachePolicy(cache.Policy)
+type cachePolicyLocker interface {
+	lockCachePolicy(cache.Policy)
 }
 
 func getCachePolicy(file model.FileStreamer) (cache.Policy, error) {
@@ -219,8 +219,8 @@ func NewStreamSectionReader(file model.FileStreamer, sectionSize int, up *model.
 	if err != nil {
 		return nil, err
 	}
-	if freezer, ok := file.(cachePolicyFreezer); ok {
-		freezer.freezeCachePolicy(policy)
+	if locker, ok := file.(cachePolicyLocker); ok {
+		locker.lockCachePolicy(policy)
 	}
 	file.Add(hc)
 	return &hybridSectionReader{file: file, hc: hc}, nil

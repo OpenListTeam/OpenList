@@ -10,6 +10,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/mem"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -22,19 +23,23 @@ func withStreamCacheConfig(t *testing.T) {
 	oldPolicy := conf.CachePolicy
 	oldBlockLimit := conf.MaxBlockLimit
 	oldAutoMemoryLimit := conf.AutoMemoryLimit
-	oldMinFreeMemory := conf.MinFreeMemory
+	oldBudgetCapacity := mem.CacheMemoryBudget.Capacity()
+	oldBudgetReserved := mem.CacheMemoryBudget.Reserved()
 	t.Cleanup(func() {
 		conf.Conf = oldConf
 		conf.CachePolicy = oldPolicy
 		conf.MaxBlockLimit = oldBlockLimit
 		conf.AutoMemoryLimit = oldAutoMemoryLimit
-		conf.MinFreeMemory = oldMinFreeMemory
+		if reserved := mem.CacheMemoryBudget.Reserved(); reserved != oldBudgetReserved {
+			t.Errorf("cache memory reserved after test = %d, want %d", reserved, oldBudgetReserved)
+		}
+		mem.CacheMemoryBudget.SetCapacity(oldBudgetCapacity)
 	})
 	conf.Conf = &conf.Config{TempDir: t.TempDir()}
 	conf.CachePolicy = cache.PolicyMemory
 	conf.MaxBlockLimit = 16 << 20
 	conf.AutoMemoryLimit = 4 << 20
-	conf.MinFreeMemory = 0
+	mem.CacheMemoryBudget.SetCapacity(0)
 }
 
 func TestFileStreamCachePolicy(t *testing.T) {
@@ -226,6 +231,7 @@ func TestRangeRead(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
+	t.Cleanup(func() { _ = f.Close() })
 	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 15
 	tests := []struct {
@@ -298,6 +304,7 @@ func TestPreHash(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
+	t.Cleanup(func() { _ = f.Close() })
 	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 15
 
@@ -328,6 +335,7 @@ func TestStreamSectionReader(t *testing.T) {
 		},
 		Reader: io.NopCloser(bytes.NewReader(buf)),
 	}
+	t.Cleanup(func() { _ = f.Close() })
 	conf.AutoMemoryLimit = 0
 	conf.MaxBlockLimit = 2 << 10
 	partSize := 3 << 10

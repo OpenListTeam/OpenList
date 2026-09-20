@@ -6,29 +6,33 @@ import (
 	"sync"
 )
 
+// BufferStore is a growable in-memory backing store split into stable blocks.
 type BufferStore struct {
-	mu     sync.RWMutex
-	blocks [][]byte
-	size   int64
+	// layoutMu protects blocks and size. ReadAt and WriteAt intentionally hold
+	// a shared lock so independent block ranges can be streamed concurrently;
+	// callers must synchronize overlapping byte ranges.
+	layoutMu sync.RWMutex
+	blocks   [][]byte
+	size     int64
 }
 
 func (m *BufferStore) Size() int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.layoutMu.RLock()
+	defer m.layoutMu.RUnlock()
 	return m.size
 }
 
-// 用于存储不复用的[]byte
+// Append adds a caller-owned block without copying it.
 func (m *BufferStore) Append(buf []byte) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.layoutMu.Lock()
+	defer m.layoutMu.Unlock()
 	m.size += int64(len(buf))
 	m.blocks = append(m.blocks, buf)
 }
 
 func (m *BufferStore) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.layoutMu.Lock()
+	defer m.layoutMu.Unlock()
 	if len(m.blocks) > 0 {
 		clear(m.blocks)
 		m.blocks = m.blocks[:0]
@@ -38,8 +42,8 @@ func (m *BufferStore) Close() error {
 }
 
 func (m *BufferStore) ReadAt(p []byte, off int64) (int, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.layoutMu.RLock()
+	defer m.layoutMu.RUnlock()
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -65,8 +69,8 @@ func (m *BufferStore) ReadAt(p []byte, off int64) (int, error) {
 }
 
 func (m *BufferStore) WriteAt(p []byte, off int64) (int, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.layoutMu.RLock()
+	defer m.layoutMu.RUnlock()
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -92,8 +96,8 @@ func (m *BufferStore) WriteAt(p []byte, off int64) (int, error) {
 }
 
 func (m *BufferStore) GrowTo(size int64) (err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.layoutMu.Lock()
+	defer m.layoutMu.Unlock()
 	if size <= m.size {
 		return nil
 	}

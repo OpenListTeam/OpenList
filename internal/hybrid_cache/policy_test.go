@@ -12,41 +12,30 @@ import (
 )
 
 func TestSelectPolicy(t *testing.T) {
-	errNoMemory := errors.New("no memory")
 	tests := []struct {
 		name      string
 		requested cache.Policy
 		ceiling   int64
-		checkErr  error
 		want      cache.Policy
-		checks    int
 	}{
-		{"explicit memory", cache.PolicyMemory, -1, errNoMemory, cache.PolicyMemory, 0},
-		{"explicit disk", cache.PolicyDisk, 1024, nil, cache.PolicyDisk, 0},
-		{"auto unknown", cache.PolicyAuto, -1, nil, cache.PolicyDisk, 0},
-		{"auto empty", cache.PolicyAuto, 0, nil, cache.PolicyMemory, 0},
-		{"auto admitted", cache.PolicyAuto, 1024, nil, cache.PolicyMemory, 1},
-		{"auto rejected", cache.PolicyAuto, 1024, errNoMemory, cache.PolicyDisk, 1},
+		{"explicit memory", cache.PolicyMemory, -1, cache.PolicyMemory},
+		{"explicit disk", cache.PolicyDisk, 1024, cache.PolicyDisk},
+		{"auto unknown", cache.PolicyAuto, -1, cache.PolicyDisk},
+		{"auto empty", cache.PolicyAuto, 0, cache.PolicyMemory},
+		{"auto known", cache.PolicyAuto, 1024, cache.PolicyMemory},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checks := 0
-			got, err := selectPolicy(tt.requested, tt.ceiling, func(size uint64) error {
-				checks++
-				if size != uint64(tt.ceiling) {
-					t.Fatalf("memory check size = %d, want %d", size, tt.ceiling)
-				}
-				return tt.checkErr
-			})
+			got, err := selectPolicy(tt.requested, tt.ceiling)
 			if err != nil {
 				t.Fatalf("selectPolicy() error = %v", err)
 			}
-			if got != tt.want || checks != tt.checks {
-				t.Fatalf("selectPolicy() = %q with %d checks, want %q with %d", got, checks, tt.want, tt.checks)
+			if got != tt.want {
+				t.Fatalf("selectPolicy() = %q, want %q", got, tt.want)
 			}
 		})
 	}
-	if _, err := selectPolicy(cache.PolicyInherit, 1, func(uint64) error { return nil }); err == nil {
+	if _, err := selectPolicy(cache.PolicyInherit, 1); err == nil {
 		t.Fatal("selectPolicy() expected an error for inherit")
 	}
 }
@@ -75,30 +64,22 @@ func TestHybridCachePolicyBackingSelection(t *testing.T) {
 		name           string
 		requested      cache.Policy
 		ceiling        int64
-		checkErr       error
+		budgetCapacity uint64
 		wantMemory     bool
-		wantCheckCalls int
 	}{
-		{name: "memory uses memory", requested: cache.PolicyMemory, ceiling: 8, wantMemory: true},
+		{name: "memory ignores budget", requested: cache.PolicyMemory, ceiling: 8, wantMemory: true},
 		{name: "disk uses disk", requested: cache.PolicyDisk, ceiling: 8},
-		{name: "auto admitted uses memory", requested: cache.PolicyAuto, ceiling: 8, wantMemory: true, wantCheckCalls: 1},
-		{name: "auto rejected uses disk", requested: cache.PolicyAuto, ceiling: 8, checkErr: mem.ErrNotEnoughMemory, wantCheckCalls: 1},
+		{name: "auto admitted uses memory", requested: cache.PolicyAuto, ceiling: 8, budgetCapacity: 8, wantMemory: true},
+		{name: "auto rejected uses disk", requested: cache.PolicyAuto, ceiling: 8, budgetCapacity: 7},
 		{name: "auto unknown uses disk", requested: cache.PolicyAuto, ceiling: -1},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withCacheConfig(t, 8)
-			checkCalls := 0
-			hc, err := newHybridCache(4, tt.ceiling, tt.requested, func(uint64) error {
-				checkCalls++
-				return tt.checkErr
-			})
+			hc, err := newHybridCache(4, tt.ceiling, tt.requested, mem.NewBudget(tt.budgetCapacity))
 			if err != nil {
 				t.Fatalf("newHybridCache() error = %v", err)
-			}
-			if checkCalls != tt.wantCheckCalls {
-				t.Fatalf("memory check calls = %d, want %d", checkCalls, tt.wantCheckCalls)
 			}
 
 			if hc.memoryBacking != tt.wantMemory {
@@ -140,7 +121,7 @@ func TestHybridCachePolicyBackingSelection(t *testing.T) {
 
 func TestHybridCacheAutoRejectsWholeCeiling(t *testing.T) {
 	withCacheConfig(t, 1024)
-	hc, err := NewHybridCache(4, 8, cache.PolicyAuto)
+	hc, err := newHybridCache(4, 8, cache.PolicyAuto, mem.NewBudget(7))
 	if err != nil {
 		t.Fatalf("NewHybridCache() error = %v", err)
 	}
@@ -155,10 +136,7 @@ func TestHybridCacheAutoRejectsWholeCeiling(t *testing.T) {
 
 func TestHybridCacheZeroCeilingRejectsUnexpectedWrites(t *testing.T) {
 	withCacheConfig(t, 8)
-	hc, err := newHybridCache(4, 0, cache.PolicyAuto, func(uint64) error {
-		t.Fatal("zero ceiling must not check memory")
-		return nil
-	})
+	hc, err := newHybridCache(4, 0, cache.PolicyAuto, mem.NewBudget(0))
 	if err != nil {
 		t.Fatalf("newHybridCache() error = %v", err)
 	}
@@ -208,13 +186,92 @@ func TestHybridCacheUnknownMemory(t *testing.T) {
 	}
 }
 
+func TestHybridCacheReservationsPreventOversubscription(t *testing.T) {
+	withCacheConfig(t, 8)
+	budget := mem.NewBudget(8)
+	first, err := newHybridCache(4, 8, cache.PolicyAuto, budget)
+	if err != nil {
+		t.Fatalf("first newHybridCache() error = %v", err)
+	}
+	if budget.Reserved() != 8 || !first.memoryBacking {
+		t.Fatalf("first cache = memory:%v reserved:%d", first.memoryBacking, budget.Reserved())
+	}
+
+	second, err := newHybridCache(4, 8, cache.PolicyAuto, budget)
+	if err != nil {
+		t.Fatalf("second newHybridCache() error = %v", err)
+	}
+	if second.memoryBacking || budget.Reserved() != 8 {
+		t.Fatalf("second cache = memory:%v reserved:%d", second.memoryBacking, budget.Reserved())
+	}
+	if err := second.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+	if budget.Reserved() != 0 {
+		t.Fatalf("reserved after close = %d", budget.Reserved())
+	}
+
+	third, err := newHybridCache(4, 8, cache.PolicyAuto, budget)
+	if err != nil {
+		t.Fatalf("third newHybridCache() error = %v", err)
+	}
+	if !third.memoryBacking {
+		t.Fatal("third cache did not reuse released memory budget")
+	}
+	if err := third.Close(); err != nil {
+		t.Fatalf("third Close() error = %v", err)
+	}
+}
+
+func TestHybridCacheStrictMemoryIgnoresBudget(t *testing.T) {
+	withCacheConfig(t, 8)
+	budget := mem.NewBudget(0)
+	hc, err := newHybridCache(4, 8, cache.PolicyMemory, budget)
+	if err != nil {
+		t.Fatalf("newHybridCache() error = %v", err)
+	}
+	if budget.Reserved() != 0 {
+		t.Fatalf("strict memory reserved budget = %d, want 0", budget.Reserved())
+	}
+	if err := hc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestHybridCacheUnknownMemoryIgnoresBudget(t *testing.T) {
+	withCacheConfig(t, 8)
+	budget := mem.NewBudget(0)
+	hc, err := newHybridCache(3, -1, cache.PolicyMemory, budget)
+	if err != nil {
+		t.Fatalf("newHybridCache() error = %v", err)
+	}
+	if _, err := hc.Write([]byte("1234567")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := hc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if budget.Reserved() != 0 {
+		t.Fatalf("reserved after close = %d", budget.Reserved())
+	}
+}
+
 func TestHybridCacheAutoSpillKeepsMemoryPrefix(t *testing.T) {
 	withCacheConfig(t, 0)
+	budget := mem.NewBudget(4)
+	reservation, ok := budget.Reserve(4)
+	if !ok {
+		t.Fatal("Reserve(4) failed")
+	}
 	hc := &HybridCache{
 		blockSize:            2,
 		memoryStore:          &limitedMemory{buf: make([]byte, 0, 2)},
 		spillOnMemoryFailure: true,
 		memoryCeiling:        2,
+		memoryReservation:    reservation,
 	}
 	t.Cleanup(func() { _ = hc.Close() })
 	if _, err := hc.Write([]byte("abcd")); err != nil {
@@ -222,6 +279,9 @@ func TestHybridCacheAutoSpillKeepsMemoryPrefix(t *testing.T) {
 	}
 	if hc.memoryOffset != 2 || hc.backingOffset != 2 {
 		t.Fatalf("offsets = memory:%d disk:%d, want 2 and 2", hc.memoryOffset, hc.backingOffset)
+	}
+	if budget.Reserved() != 2 {
+		t.Fatalf("reserved after spill = %d, want 2", budget.Reserved())
 	}
 	got := make([]byte, 4)
 	if _, err := hc.ReadAt(got, 0); err != nil {
@@ -253,14 +313,18 @@ func withCacheConfig(t *testing.T, autoMemoryLimit uint64) {
 	t.Helper()
 	oldConf := conf.Conf
 	oldLimit := conf.AutoMemoryLimit
-	oldMinFreeMemory := conf.MinFreeMemory
+	oldBudgetCapacity := mem.CacheMemoryBudget.Capacity()
+	oldBudgetReserved := mem.CacheMemoryBudget.Reserved()
 	conf.Conf = &conf.Config{TempDir: t.TempDir()}
 	conf.AutoMemoryLimit = autoMemoryLimit
-	conf.MinFreeMemory = 0
+	mem.CacheMemoryBudget.SetCapacity(1 << 40)
 	t.Cleanup(func() {
 		conf.Conf = oldConf
 		conf.AutoMemoryLimit = oldLimit
-		conf.MinFreeMemory = oldMinFreeMemory
+		if reserved := mem.CacheMemoryBudget.Reserved(); reserved != oldBudgetReserved {
+			t.Errorf("cache memory reserved after test = %d, want %d", reserved, oldBudgetReserved)
+		}
+		mem.CacheMemoryBudget.SetCapacity(oldBudgetCapacity)
 	})
 }
 

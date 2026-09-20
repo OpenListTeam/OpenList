@@ -27,14 +27,13 @@ type FileStream struct {
 	ForceStreamUpload bool
 	Exist             model.Obj //the file existed in the destination, we can reuse some info since we wil overwrite it
 	utils.Closers
-	size                int64
-	sizeSet             bool
-	cachePolicyOverride cache.Policy
-	cachePolicyResolved cache.Policy
-	cachePolicyLocked   bool
-	oriReader           io.Reader // the original reader, used for caching
-	hc                  *hcache.HybridCache
-	peek                buffer.SizedReadAtSeeker
+	size              int64
+	sizeSet           bool
+	cachePolicy       cache.Policy
+	cachePolicyLocked bool
+	oriReader         io.Reader // the original reader, used for caching
+	hc                *hcache.HybridCache
+	peek              buffer.SizedReadAtSeeker
 }
 
 func (f *FileStream) GetSize() int64 {
@@ -63,18 +62,22 @@ func (f *FileStream) SetExist(obj model.Obj) {
 	f.Exist = obj
 }
 
+// GetCachePolicy returns the stream override, or the global policy when the
+// stream inherits it.
 func (f *FileStream) GetCachePolicy() (cache.Policy, error) {
 	if f.cachePolicyLocked {
-		return f.cachePolicyResolved, nil
+		return f.cachePolicy, nil
 	}
-	return cache.ResolvePolicy(f.cachePolicyOverride, conf.CachePolicy)
+	return cache.ResolvePolicy(f.cachePolicy, conf.CachePolicy)
 }
 
-func (f *FileStream) freezeCachePolicy(policy cache.Policy) {
-	f.cachePolicyResolved = policy
+func (f *FileStream) lockCachePolicy(policy cache.Policy) {
+	f.cachePolicy = policy
 	f.cachePolicyLocked = true
 }
 
+// SetCachePolicy overrides the global policy before this stream initializes a
+// cache. PolicyInherit clears the override.
 func (f *FileStream) SetCachePolicy(policy cache.Policy) error {
 	if policy != cache.PolicyInherit && !policy.IsConcrete() {
 		return fmt.Errorf("invalid cache policy %q", policy)
@@ -82,7 +85,7 @@ func (f *FileStream) SetCachePolicy(policy cache.Policy) error {
 	if f.cachePolicyLocked {
 		return errors.New("cache policy cannot be changed after cache initialization")
 	}
-	f.cachePolicyOverride = policy
+	f.cachePolicy = policy
 	return nil
 }
 
@@ -210,7 +213,7 @@ func (f *FileStream) ensureCache(size int64) (model.File, error) {
 		if err != nil {
 			return nil, err
 		}
-		f.freezeCachePolicy(policy)
+		f.lockCachePolicy(policy)
 		f.peek = buffer.NewDynamicReadAtSeeker(f.hc)
 		f.oriReader = f.Reader
 		f.Reader = io.MultiReader(f.peek, f.oriReader)

@@ -23,6 +23,8 @@ type MemorySnapshot struct {
 
 type memoryFileReader func(string) ([]byte, error)
 
+// GetMemorySnapshot returns a zero-value snapshot with any error so callers
+// can fail closed instead of using incomplete memory information.
 func GetMemorySnapshot() (MemorySnapshot, error) {
 	virtualMemory, hostErr := gopsutilmem.VirtualMemory()
 	var host *MemorySnapshot
@@ -46,10 +48,11 @@ type cgroupMemory struct {
 
 func combineMemorySnapshots(host *MemorySnapshot, cgroup cgroupMemory) MemorySnapshot {
 	if host == nil {
+		available := min(cgroup.available, cgroup.limit)
 		return MemorySnapshot{
 			Limit:     cgroup.limit,
-			Used:      cgroup.limit - min(cgroup.available, cgroup.limit),
-			Available: min(cgroup.available, cgroup.limit),
+			Used:      saturatingSub(cgroup.limit, available),
+			Available: available,
 			Source:    cgroup.source,
 		}
 	}
@@ -60,7 +63,7 @@ func combineMemorySnapshots(host *MemorySnapshot, cgroup cgroupMemory) MemorySna
 	available := min(host.Available, cgroup.available, limit)
 	return MemorySnapshot{
 		Limit:     limit,
-		Used:      limit - available,
+		Used:      saturatingSub(limit, available),
 		Available: available,
 		Source:    cgroup.source,
 	}

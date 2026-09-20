@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"runtime"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
@@ -13,7 +14,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
-// 线程不安全，单线程使用，或者外部加锁保护
+// HybridCache stores an in-memory prefix and may spill subsequent data to
+// disk. It is not safe for concurrent use without external synchronization.
 type HybridCache struct {
 	blockSize            uint64
 	memoryStore          mem.LinearMemory
@@ -24,22 +26,17 @@ type HybridCache struct {
 	spillOnMemoryFailure bool
 	memoryBacking        bool
 	memoryCeiling        int64
+	memoryReservation    *mem.Reservation
 }
 
-// HybridCache本身是一个大的Block，支持分块成多个小的Block
-
-// 分配一个新的Block，支持读写，大小为size
+// AllocBlock appends a readable and writable block of size bytes.
 func (hc *HybridCache) AllocBlock(size uint64) (buffer.Block, error) {
 retry:
 	if hc.backingStore != nil {
-		if hc.memoryBacking && hc.exceedsMemoryCeiling(hc.backingOffset, size) {
-			return nil, mem.ErrNotEnoughMemory
-		}
-		if err := hc.backingStore.GrowTo(int64(hc.backingOffset + size)); err != nil {
+		base, err := hc.growBackingStore(size)
+		if err != nil {
 			return nil, err
 		}
-		base := hc.backingOffset
-		hc.backingOffset += size
 		fs := buffer.NewBlockAdapter(
 			io.NewOffsetWriter(hc.backingStore, int64(base)),
 			io.NewSectionReader(hc.backingStore, int64(base), int64(size)),
@@ -64,20 +61,17 @@ retry:
 	if err2 := hc.initFileCache(); err2 != nil {
 		return nil, errors.Join(err, err2)
 	}
+	hc.shrinkReservationToMemory()
 	goto retry
 }
 
 func (hc *HybridCache) allocWriteAtSeeker(size uint64) (buffer.WriteAtSeeker, error) {
 retry:
 	if hc.backingStore != nil {
-		if hc.memoryBacking && hc.exceedsMemoryCeiling(hc.backingOffset, size) {
-			return nil, mem.ErrNotEnoughMemory
-		}
-		if err := hc.backingStore.GrowTo(int64(hc.backingOffset + size)); err != nil {
+		base, err := hc.growBackingStore(size)
+		if err != nil {
 			return nil, err
 		}
-		base := hc.backingOffset
-		hc.backingOffset += size
 		return io.NewOffsetWriter(hc.backingStore, int64(base)), nil
 	}
 	var all []byte
@@ -98,7 +92,30 @@ retry:
 	if err2 := hc.initFileCache(); err2 != nil {
 		return nil, errors.Join(err, err2)
 	}
+	hc.shrinkReservationToMemory()
 	goto retry
+}
+
+func (hc *HybridCache) growBackingStore(size uint64) (uint64, error) {
+	if hc.memoryBacking && hc.exceedsMemoryCeiling(hc.backingOffset, size) {
+		return 0, mem.ErrNotEnoughMemory
+	}
+	if hc.backingOffset > math.MaxInt64 || size > math.MaxInt64-hc.backingOffset {
+		return 0, mem.ErrNotEnoughMemory
+	}
+	base := hc.backingOffset
+	target := base + size
+	if err := hc.backingStore.GrowTo(int64(target)); err != nil {
+		return 0, err
+	}
+	hc.backingOffset = target
+	return base, nil
+}
+
+func (hc *HybridCache) shrinkReservationToMemory() {
+	if hc.memoryReservation != nil {
+		hc.memoryReservation.Resize(hc.memoryOffset)
+	}
 }
 
 func (hc *HybridCache) NextBlock() (buffer.Block, error) {
@@ -160,6 +177,10 @@ func (hc *HybridCache) Close() error {
 		err = errors.Join(err, hc.backingStore.Close())
 		hc.backingStore = nil
 		hc.backingOffset = 0
+	}
+	if hc.memoryReservation != nil {
+		hc.memoryReservation.Release()
+		hc.memoryReservation = nil
 	}
 	return err
 }
@@ -276,12 +297,7 @@ func (hc *HybridCache) CopyFromN(src io.Reader, n int64) (written int64, err err
 	return written, nil
 }
 
-type memoryCheck func(uint64) error
-
-func selectPolicy(requested cache.Policy, memoryCeiling int64, check memoryCheck) (cache.Policy, error) {
-	if !requested.IsConcrete() {
-		return cache.PolicyInherit, fmt.Errorf("invalid cache policy %q", requested)
-	}
+func selectPolicy(requested cache.Policy, memoryCeiling int64) (cache.Policy, error) {
 	switch requested {
 	case cache.PolicyMemory, cache.PolicyDisk:
 		return requested, nil
@@ -289,33 +305,18 @@ func selectPolicy(requested cache.Policy, memoryCeiling int64, check memoryCheck
 		if memoryCeiling < 0 {
 			return cache.PolicyDisk, nil
 		}
-		if memoryCeiling == 0 {
-			// Zero is a known empty workload, unlike a negative unknown ceiling.
-			// The hard ceiling still rejects any unexpected writes.
-			return cache.PolicyMemory, nil
-		}
-		if err := check(uint64(memoryCeiling)); err != nil {
-			return cache.PolicyDisk, nil
-		}
 		return cache.PolicyMemory, nil
 	default:
-		panic("unreachable")
+		return cache.PolicyInherit, fmt.Errorf("invalid cache policy %q", requested)
 	}
-}
-
-// SelectPolicy resolves auto to a concrete memory or disk policy for a cache
-// whose maximum simultaneous memory footprint is memoryCeiling. A negative
-// ceiling means that the upper bound is unknown.
-func SelectPolicy(requested cache.Policy, memoryCeiling int64) (cache.Policy, error) {
-	return selectPolicy(requested, memoryCeiling, mem.MemoryGrowCheck)
 }
 
 // NewHybridCache creates a non-thread-safe cache using the requested policy.
 func NewHybridCache(blockSize uint64, memoryCeiling int64, requested cache.Policy) (hc *HybridCache, err error) {
-	return newHybridCache(blockSize, memoryCeiling, requested, mem.MemoryGrowCheck)
+	return newHybridCache(blockSize, memoryCeiling, requested, mem.CacheMemoryBudget)
 }
 
-func newHybridCache(blockSize uint64, memoryCeiling int64, requested cache.Policy, check memoryCheck) (hc *HybridCache, err error) {
+func newHybridCache(blockSize uint64, memoryCeiling int64, requested cache.Policy, budget *mem.Budget) (hc *HybridCache, err error) {
 	if memoryCeiling < 0 && blockSize == 0 {
 		return nil, fmt.Errorf("block size must be positive when memory ceiling is unknown")
 	}
@@ -326,11 +327,21 @@ func newHybridCache(blockSize uint64, memoryCeiling int64, requested cache.Polic
 		}
 	}
 
-	selected, err := selectPolicy(requested, memoryCeiling, check)
+	selected, err := selectPolicy(requested, memoryCeiling)
 	if err != nil {
 		return nil, err
 	}
 	hc = &HybridCache{blockSize: blockSize, memoryCeiling: memoryCeiling}
+	if requested == cache.PolicyAuto && selected == cache.PolicyMemory && memoryCeiling > 0 {
+		if budget == nil {
+			return nil, errors.New("cache memory budget is unavailable")
+		}
+		var ok bool
+		hc.memoryReservation, ok = budget.Reserve(uint64(memoryCeiling))
+		if !ok {
+			selected = cache.PolicyDisk
+		}
+	}
 	if selected == cache.PolicyDisk {
 		if err := hc.initFileCache(); err != nil {
 			return nil, err
@@ -344,20 +355,19 @@ func newHybridCache(blockSize uint64, memoryCeiling int64, requested cache.Polic
 		return hc, nil
 	}
 
-	if requested == cache.PolicyMemory {
-		hc.memoryStore, err = mem.NewManagedMemory(blockSize, uint64(memoryCeiling), nil)
-		if err != nil {
-			return nil, err
-		}
-		return hc, nil
-	}
-
-	hc.memoryStore, err = mem.NewGuardedMemory(blockSize, uint64(memoryCeiling))
+	hc.memoryStore, err = mem.NewManagedMemory(blockSize, uint64(memoryCeiling))
 	if err == nil {
-		hc.spillOnMemoryFailure = true
+		hc.spillOnMemoryFailure = requested == cache.PolicyAuto
 		return hc, nil
 	}
 
+	if hc.memoryReservation != nil {
+		hc.memoryReservation.Release()
+		hc.memoryReservation = nil
+	}
+	if requested == cache.PolicyMemory {
+		return nil, err
+	}
 	if fileErr := hc.initFileCache(); fileErr != nil {
 		return nil, errors.Join(err, fileErr)
 	}
