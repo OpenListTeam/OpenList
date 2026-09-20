@@ -2,6 +2,7 @@ package _189pc
 
 import (
 	"path"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,5 +28,18 @@ func TestFamilyTransferTempNamePreservesExtension(t *testing.T) {
 				t.Fatalf("temporary name extension = %q, want %q", ext, tt.want)
 			}
 		})
+	}
+}
+
+func TestUploadProgressKeysIncludeExtension(t *testing.T) {
+	jpgKeys := uploadProgressKeys("session", "same-md5", "photo.jpg")
+	txtKeys := uploadProgressKeys("session", "same-md5", "photo.txt")
+	retryKeys := uploadProgressKeys("session", "same-md5", "different-name.jpg")
+
+	if slices.Equal(jpgKeys, txtKeys) {
+		t.Fatal("files with different extensions must not share upload progress")
+	}
+	if !slices.Equal(jpgKeys, retryKeys) {
+		t.Fatal("files with the same session, MD5, and extension should share upload progress")
 	}
 }
