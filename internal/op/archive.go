@@ -394,6 +394,22 @@ type objWithLink struct {
 	obj  model.Obj
 }
 
+var errConflictingLinkLifecycle = stderrors.New("invalid link lifecycle: expiration cannot be combined with owned closers or RequireReference")
+
+func admitLink(link *model.Link, obj model.Obj) (*objWithLink, error) {
+	if link.Expiration != nil && (link.RequireReference || link.SyncClosers.Length() > 0) {
+		return nil, stderrors.Join(errConflictingLinkLifecycle, link.Close())
+	}
+	return &objWithLink{link: link, obj: obj}, nil
+}
+
+func (ol *objWithLink) acquire() *model.Link {
+	if ol.link.Expiration != nil || ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+		return ol.link.Clone()
+	}
+	return nil
+}
+
 var (
 	extractCache = cache.NewKeyedCache[*objWithLink](5 * time.Minute)
 	extractG     = singleflight.Group[*objWithLink]{}
