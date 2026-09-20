@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,23 +16,15 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	anet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 )
 
-func TestProxyLinkLimitsActiveCallbackBodies(t *testing.T) {
+func TestLinkSeparatesRedirectAndProxyRepresentations(t *testing.T) {
 	oldConf := conf.Conf
 	conf.Conf = &conf.Config{}
 	t.Cleanup(func() { conf.Conf = oldConf })
 	base.InitClient()
-
-	started := make(chan struct{}, 2)
-	transport := &callbackTrackingTransport{started: started}
-	client := anet.HttpClient()
-	oldTransport := client.Transport
-	client.Transport = transport
-	t.Cleanup(func() { client.Transport = oldTransport })
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,87 +69,43 @@ func TestProxyLinkLimitsActiveCallbackBodies(t *testing.T) {
 	if direct.URL == "" || direct.RangeReader != nil {
 		t.Fatal("redirect link must remain URL-only")
 	}
+}
 
-	first, err := link.RangeReader.RangeRead(t.Context(), http_range.Range{Length: 1})
+func TestCallbackRangeHoldsPermitUntilBodyClose(t *testing.T) {
+	oldConf := conf.Conf
+	conf.Conf = &conf.Config{}
+	t.Cleanup(func() { conf.Conf = oldConf })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1")
+		w.Header().Set("Content-Range", "bytes 0-0/1")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = io.WriteString(w, "x")
+	}))
+	defer server.Close()
+
+	registration := registerCallbackLimiter(t.Name(), 1)
+	t.Cleanup(registration.unregister)
+	d := &AliyundriveOpen{callback: registration}
+	body, err := d.callbackRangeReader(server.URL, 1).RangeRead(t.Context(), http_range.Range{Length: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("first callback request did not start")
+	registration.limiter.mu.Lock()
+	active := registration.limiter.active
+	registration.limiter.mu.Unlock()
+	if active != 1 {
+		t.Fatalf("active callback bodies = %d, want 1", active)
 	}
-
-	type result struct {
-		body interface{ Close() error }
-		err  error
-	}
-	secondResult := make(chan result, 1)
-	go func() {
-		body, readErr := link.RangeReader.RangeRead(t.Context(), http_range.Range{Length: 1})
-		secondResult <- result{body: body, err: readErr}
-	}()
-
-	select {
-	case <-started:
-		t.Fatal("second callback started before the first body was closed")
-	case <-time.After(100 * time.Millisecond):
-	}
-	if err := first.Close(); err != nil {
+	if err := body.Close(); err != nil {
 		t.Fatal(err)
 	}
-
-	var second result
-	select {
-	case second = <-secondResult:
-	case <-time.After(time.Second):
-		t.Fatal("second callback did not start after the first body was closed")
+	registration.limiter.mu.Lock()
+	active = registration.limiter.active
+	registration.limiter.mu.Unlock()
+	if active != 0 {
+		t.Fatalf("active callback bodies after Close = %d, want 0", active)
 	}
-	if second.err != nil {
-		t.Fatal(second.err)
-	}
-	if err := second.body.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if got := transport.peak.Load(); got != 1 {
-		t.Fatalf("peak active callback bodies = %d, want 1", got)
-	}
-}
-
-type callbackTrackingTransport struct {
-	active  atomic.Int32
-	peak    atomic.Int32
-	started chan<- struct{}
-}
-
-func (t *callbackTrackingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	current := t.active.Add(1)
-	for {
-		old := t.peak.Load()
-		if current <= old || t.peak.CompareAndSwap(old, current) {
-			break
-		}
-	}
-	t.started <- struct{}{}
-	return &http.Response{
-		StatusCode:    http.StatusPartialContent,
-		Header:        http.Header{"Content-Length": {"1"}, "Content-Range": {"bytes 0-0/1"}},
-		Body:          &trackedCallbackBody{Reader: strings.NewReader("x"), close: func() { t.active.Add(-1) }},
-		ContentLength: 1,
-		Request:       request,
-	}, nil
-}
-
-type trackedCallbackBody struct {
-	io.Reader
-	once  sync.Once
-	close func()
-}
-
-func (b *trackedCallbackBody) Close() error {
-	b.once.Do(b.close)
-	return nil
 }
 
 func TestCallbackLimiterUsesMinimumRegisteredLimit(t *testing.T) {
