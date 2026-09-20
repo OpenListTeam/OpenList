@@ -30,7 +30,7 @@ type Link struct {
 	Header      http.Header   `json:"header"` // needed header (for url)
 	RangeReader RangeReaderIF `json:"-"`      // recommended way if can't use URL
 
-	Expiration *time.Duration // local cache expiration; not transferred by Clone
+	Expiration *time.Duration // local cache expiration
 
 	//for accelerating request, use multi-thread downloading
 	Concurrency   int   `json:"concurrency"`
@@ -42,12 +42,18 @@ type Link struct {
 	RequireReference bool `json:"-"`
 }
 
-// Clone transfers ownership of l without inheriting its cache expiration.
+// Clone transfers ownership of l while isolating its mutable transport and cache metadata.
 func (l *Link) Clone() *Link {
+	var expiration *time.Duration
+	if l.Expiration != nil {
+		value := *l.Expiration
+		expiration = &value
+	}
 	return &Link{
 		URL:              l.URL,
 		Header:           l.Header.Clone(),
 		RangeReader:      l.RangeReader,
+		Expiration:       expiration,
 		Concurrency:      l.Concurrency,
 		PartSize:         l.PartSize,
 		ContentLength:    l.ContentLength,

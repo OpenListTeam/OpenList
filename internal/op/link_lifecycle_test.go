@@ -67,9 +67,10 @@ func TestLinkLifecycleModes(t *testing.T) {
 		}
 
 		first := acquireTestLink(t, d)
-		if first.Expiration != nil {
-			t.Fatal("borrower inherited cache expiration")
+		if first.Expiration == nil || *first.Expiration != ttl {
+			t.Fatalf("borrower expiration = %v, want %v", first.Expiration, ttl)
 		}
+		*first.Expiration = time.Second
 		first.URL = "https://borrower.test/file"
 		first.Header.Set("X-Link", "borrower")
 		_ = first.Close()
@@ -79,6 +80,9 @@ func TestLinkLifecycleModes(t *testing.T) {
 		}
 		if d.calls.Load() != 1 {
 			t.Fatalf("driver calls = %d, want 1", d.calls.Load())
+		}
+		if second.Expiration == nil || *second.Expiration != ttl {
+			t.Fatalf("cached expiration was mutated: %v", second.Expiration)
 		}
 		_ = second.Close()
 	})
