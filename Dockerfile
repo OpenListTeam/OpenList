@@ -14,9 +14,6 @@ FROM openlistteam/openlist-base-image:${BASE_IMAGE_TAG}
 LABEL MAINTAINER="OpenList"
 ARG INSTALL_FFMPEG=false
 ARG INSTALL_ARIA2=false
-ARG USER=openlist
-ARG UID=1001
-ARG GID=1001
 
 WORKDIR /opt/openlist/
 
