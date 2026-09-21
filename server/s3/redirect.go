@@ -38,7 +38,7 @@ func redirectHandler(next http.Handler, authPairs map[string]string) http.Handle
 }
 
 func directObjectURL(r *http.Request, authPairs map[string]string) (string, bool) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet || hasPreconditions(r) {
 		return "", false
 	}
 	if hasNonObjectQuery(r) || !s3RequestAuthorized(r, authPairs) {
@@ -75,7 +75,7 @@ func directObjectURL(r *http.Request, authPairs map[string]string) (string, bool
 }
 
 func directUploadURL(r *http.Request, authPairs map[string]string) (string, bool) {
-	if r.Method != http.MethodPut || r.ContentLength < 0 {
+	if r.Method != http.MethodPut || r.ContentLength < 0 || hasPreconditions(r) {
 		return "", false
 	}
 	if hasNonObjectQuery(r) || !s3RequestAuthorized(r, authPairs) {
