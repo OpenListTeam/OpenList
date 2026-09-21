@@ -366,7 +366,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			HashInfoStr:  obj.GetHash().String(),
 			HashInfo:     obj.GetHash().Export(),
 			Sign:         common.Sign(obj, parentPath, isEncrypt(meta, reqPath)),
-			Type:         utils.GetFileType(obj.GetName()),
+			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
 			Thumb:        thumb,
 			MountDetails: mountDetails,
 		},
