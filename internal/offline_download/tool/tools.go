@@ -45,7 +45,7 @@ func (t ToolsManager) NamesForPath(path string) []string {
 		return names
 	}
 
-	name := toolNameForStorage(storage)
+	name := NativeToolName(storage)
 	if name == "" {
 		return names
 	}
