@@ -481,6 +481,7 @@ func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bo
 	details, err, _ := detailsG.Do(storage.GetStorage().MountPath, func() (*model.StorageDetails, error) {
 		ret, err := wd.GetDetails(ctx)
 		if err != nil {
+			Cache.InvalidateStorageDetails(storage)
 			return nil, err
 		}
 		Cache.SetStorageDetails(storage, ret)
