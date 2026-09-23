@@ -139,30 +139,37 @@ func copyNamedInStorage(ctx context.Context, storage driver.Driver, srcPath, dst
 		return errors.WithMessage(err, "failed create copy staging directory")
 	}
 	stageCreated := true
+	removeStage := func() error {
+		return op.Remove(stageCtx, storage, stageDirPath)
+	}
 	defer func() {
-		if stageCreated {
-			if err := op.Remove(stageCtx, storage, stageDirPath); err != nil {
-				log.Warnf("failed remove copy staging directory %s: %v", stageDirPath, err)
-			}
+		if !stageCreated {
+			return
+		}
+		if err := removeStage(); err != nil {
+			log.WithError(err).Warnf("copy staging directory remains and requires cleanup: %s", stageDirPath)
 		}
 	}()
 
 	if err := op.Copy(stageCtx, storage, srcPath, stageDirPath); err != nil {
-		return err
+		return errors.WithMessage(err, "failed copy object into staging directory")
 	}
 	srcName := stdpath.Base(srcPath)
 	stageObjPath := namedCopyStageObjectPath(stageDirPath, srcPath, "")
 	if srcName != dstName {
 		if err := op.Rename(stageCtx, storage, stageObjPath, dstName); err != nil {
-			return err
+			return errors.WithMessage(err, "failed rename object in staging directory")
 		}
 		stageObjPath = namedCopyStageObjectPath(stageDirPath, srcPath, dstName)
 	}
+	// Staging operations suppress hooks so intermediate paths stay invisible.
+	// The final move intentionally uses the caller context to publish the target
+	// and trigger the normal cache/update hooks exactly once.
 	if err := op.Move(ctx, storage, stageObjPath, dstDirPath); err != nil {
-		return err
+		return errors.WithMessage(err, "failed move copied object from staging directory")
 	}
-	if err := op.Remove(stageCtx, storage, stageDirPath); err != nil {
-		return errors.WithMessage(err, "failed remove copy staging directory")
+	if err := removeStage(); err != nil {
+		return errors.WithMessagef(err, "failed remove copy staging directory %s; cleanup will be retried", stageDirPath)
 	}
 	stageCreated = false
 	return nil
