@@ -63,7 +63,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Content-Length", "0")
-	req.Header.Set("Cookie", d.Cookie)
+	req.Header.Set("Cookie", d.cookie())
 	req.Header.Set("DNT", "1")
 	req.Header.Set("Origin", d.hostBase)
 	req.Header.Set("Priority", "u=1, i")
@@ -91,7 +91,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer gzipReader.Close()
-		body, _ = io.ReadAll(gzipReader)
+		body, err = io.ReadAll(gzipReader)
 	} else {
 		body, err = io.ReadAll(resp.Body)
 	}
@@ -138,7 +138,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 
 	d.setSessionToken(tokenResp.Response.SessionToken, cookie)
 
-	return d.sessionToken(), nil
+	return tokenResp.Response.SessionToken, nil
 }
 
 // renewToken refreshes the current session token when expired
@@ -287,7 +287,7 @@ func (d *Mediafire) fileToObj(f File) *model.ObjThumb {
 
 func (d *Mediafire) setCommonHeaders(req *resty.Request) {
 	req.SetHeaders(map[string]string{
-		"Cookie":     d.Cookie,
+		"Cookie":     d.cookie(),
 		"User-Agent": d.userAgent,
 		"Origin":     d.appBase,
 		"Referer":    d.appBase + "/",
@@ -609,8 +609,11 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 }*/
 
 func (d *Mediafire) getActionToken(ctx context.Context) (string, error) {
-	if d.actionToken != "" {
-		return d.actionToken, nil
+	d.mu.RLock()
+	cached := d.actionToken
+	d.mu.RUnlock()
+	if cached != "" {
+		return cached, nil
 	}
 
 	data := map[string]string{
@@ -629,6 +632,10 @@ func (d *Mediafire) getActionToken(ctx context.Context) (string, error) {
 	if resp.Response.Result != "Success" {
 		return "", fmt.Errorf("MediaFire action token failed: %s", resp.Response.Result)
 	}
+
+	d.mu.Lock()
+	d.actionToken = resp.Response.ActionToken
+	d.mu.Unlock()
 
 	return resp.Response.ActionToken, nil
 }

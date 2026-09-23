@@ -30,6 +30,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
 
@@ -63,8 +64,17 @@ func (d *Mediafire) sessionToken() string {
 	return d.SessionToken
 }
 
+// cookie returns the current login cookie for request building.
+func (d *Mediafire) cookie() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.Cookie
+}
+
 // setSessionToken stores a refreshed token (and login cookie when provided)
-// and persists them, safe to call from the renewal cron goroutine.
+// and persists them, safe to call from the renewal cron goroutine. Note that
+// framework-driven re-Init (admin storage update) rewrites the addition
+// outside this lock; the framework serializes those via Drop.
 func (d *Mediafire) setSessionToken(token, cookie string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -85,15 +95,8 @@ func (d *Mediafire) GetAddition() driver.Additional {
 
 // Init initializes the MediaFire driver with session token and cookie validation
 func (d *Mediafire) Init(ctx context.Context) error {
-	if d.Cookie == "" {
+	if d.cookie() == "" {
 		return fmt.Errorf("Init :: [MediaFire] {critical} missing Cookie")
-	}
-
-	// If SessionToken is empty, try to get it from cookie
-	if d.sessionToken() == "" {
-		if _, err := d.getSessionToken(ctx); err != nil {
-			return fmt.Errorf("Init :: [MediaFire] {critical} failed to get session token from cookie: %w", err)
-		}
 	}
 
 	// Setup rate limiter if rate limit is configured
@@ -101,11 +104,13 @@ func (d *Mediafire) Init(ctx context.Context) error {
 		d.limiter = rate.NewLimiter(rate.Limit(d.LimitRate), 1)
 	}
 
-	// Validate and refresh session token if needed
+	// Obtain a session token: mint from the login cookie first, fall back to
+	// renewing the stored token. A transient failure here must not skip the
+	// scheduling below — the renewal cron self-heals on its next tick.
 	if _, err := d.getSessionToken(ctx); err != nil {
-		// Minting from the cookie failed; try renewing the stored token.
 		if renewErr := d.renewToken(ctx); renewErr != nil {
-			return fmt.Errorf("Init :: [MediaFire] failed to obtain a session token: %w", renewErr)
+			log.Warnf("mediafire[%s]: could not obtain a session token (mint: %v, renew: %v); will retry on the renewal cron",
+				d.MountPath, err, renewErr)
 		}
 	}
 
@@ -118,7 +123,9 @@ func (d *Mediafire) Init(ctx context.Context) error {
 		// Renew while the token is still valid; if it already expired,
 		// mint a fresh one from the login cookie.
 		if err := d.renewToken(context.Background()); err != nil {
-			_, _ = d.getSessionToken(context.Background())
+			if _, mintErr := d.getSessionToken(context.Background()); mintErr != nil {
+				log.Warnf("mediafire[%s]: session token renewal failed: %v", d.MountPath, mintErr)
+			}
 		}
 	})
 
@@ -127,12 +134,16 @@ func (d *Mediafire) Init(ctx context.Context) error {
 
 // Drop cleans up driver resources
 func (d *Mediafire) Drop(ctx context.Context) error {
-	// Clear cached resources
-	d.actionToken = ""
+	// Stop the cron first so no in-flight renewal can repopulate the
+	// action token after it is cleared, then clear under the lock so a
+	// concurrent upload worker cannot read a stale value.
 	if d.cron != nil {
 		d.cron.Stop()
 		d.cron = nil
 	}
+	d.mu.Lock()
+	d.actionToken = ""
+	d.mu.Unlock()
 	return nil
 }
 
