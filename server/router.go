@@ -102,6 +102,8 @@ func Init(e *gin.Engine) {
 	public.Any("/settings", handles.PublicSettings)
 	public.Any("/offline_download_tools", handles.OfflineDownloadTools)
 	public.Any("/archive_extensions", handles.ArchiveExtensions)
+	public.Any("/init_status", handles.InitStatus)
+	public.POST("/init/setup", handles.InitSetup)
 
 	_fs(auth.Group("/fs"))
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
@@ -233,7 +235,7 @@ func _fs(g *gin.RouterGroup) {
 	g.POST("/torrent/rapid_upload", handles.TorrentRapidUpload)
 	g.POST("/torrent/generate", handles.GenerateTorrentForPath)
 	// Direct upload (client-side upload to storage)
-	g.POST("/get_direct_upload_info", middlewares.FsUp, handles.FsGetDirectUploadInfo)
+	g.POST("/get_direct_upload_info", handles.FsGetDirectUploadInfo)
 }
 
 func _task(g *gin.RouterGroup) {

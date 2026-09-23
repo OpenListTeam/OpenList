@@ -394,7 +394,13 @@ func (d *GuangYaPan) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 
 	parentID := dstDir.GetID()
 
-	token, code, err := d.getUploadToken(ctx, parentID, name, file.GetSize())
+	// 优先秒传：先计算文件 MD5，后端命中相同文件时直接秒传完成，无需真实上传。
+	md5sum, err := d.fileMD5(file, up)
+	if err != nil {
+		return nil, err
+	}
+
+	token, code, err := d.getUploadToken(ctx, parentID, name, file.GetSize(), md5sum)
 	if err != nil {
 		return nil, err
 	}

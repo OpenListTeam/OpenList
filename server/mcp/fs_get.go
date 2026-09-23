@@ -85,7 +85,7 @@ func (s *Server) callFSGet(c *gin.Context, raw json.RawMessage) (any, *rpcError)
 			Created:      obj.CreateTime(),
 			Sign:         common.Sign(obj, parentPath, isEncrypt(meta, reqPath)),
 			Thumb:        thumb,
-			Type:         utils.GetFileType(obj.GetName()),
+			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
 			HashInfoStr:  obj.GetHash().String(),
 			HashInfo:     obj.GetHash().Export(),
 			MountDetails: mountDetails,

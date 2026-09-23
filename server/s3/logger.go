@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/itsHenry35/gofakes3"
+	"github.com/OpenListTeam/gofakes3"
 )
 
 // logger output formatted message

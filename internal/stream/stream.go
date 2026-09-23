@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -358,8 +359,70 @@ func (r *ReaderUpdatingProgress) Close() error {
 type RangeReadReadAtSeeker struct {
 	ss        *SeekableStream
 	masterOff int64
-	readerMap sync.Map
+	readers   orderedReaders
 	headCache *headCache
+}
+
+type orderedReaders struct {
+	mu   sync.Mutex
+	m    map[int64]io.Reader
+	keys []int64
+}
+
+func (o *orderedReaders) store(off int64, r io.Reader) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, ok := o.m[off]; ok {
+		o.m[off] = r
+		return
+	}
+	if o.m == nil {
+		o.m = make(map[int64]io.Reader)
+	}
+	i := sort.Search(len(o.keys), func(i int) bool { return o.keys[i] >= off })
+	o.keys = append(o.keys, 0)
+	copy(o.keys[i+1:], o.keys[i:])
+	o.keys[i] = off
+	o.m[off] = r
+}
+
+func (o *orderedReaders) takeExact(off int64) (io.Reader, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	r, ok := o.m[off]
+	if ok {
+		delete(o.m, off)
+		o.removeKey(off)
+	}
+	return r, ok
+}
+
+func (o *orderedReaders) takeBest(off int64) (io.Reader, int64, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if r, ok := o.m[off]; ok {
+		delete(o.m, off)
+		o.removeKey(off)
+		return r, off, true
+	}
+	i := sort.Search(len(o.keys), func(i int) bool { return o.keys[i] >= off })
+	if i == 0 {
+		return nil, 0, false
+	}
+	k := o.keys[i-1]
+	if off-k > 4*utils.MB {
+		return nil, 0, false
+	}
+	r := o.m[k]
+	delete(o.m, k)
+	o.removeKey(k)
+	return r, k, true
+}
+
+func (o *orderedReaders) removeKey(k int64) {
+	i := sort.Search(len(o.keys), func(i int) bool { return o.keys[i] >= k })
+	copy(o.keys[i:], o.keys[i+1:])
+	o.keys = o.keys[:len(o.keys)-1]
 }
 
 type headCache struct {
@@ -396,7 +459,7 @@ func (r *headCache) Close() error {
 
 func (r *RangeReadReadAtSeeker) InitHeadCache() {
 	if r.masterOff == 0 {
-		value, _ := r.readerMap.LoadAndDelete(int64(0))
+		value, _ := r.readers.takeExact(0)
 		r.headCache = &headCache{reader: value.(io.Reader)}
 		r.ss.Closers.Add(r.headCache)
 	}
@@ -422,9 +485,9 @@ func NewReadAtSeeker(ss *SeekableStream, offset int64, forceRange ...bool) (mode
 		if err != nil {
 			return nil, err
 		}
-		r.readerMap.Store(int64(offset), reader)
+		r.readers.store(offset, reader)
 	} else {
-		r.readerMap.Store(int64(offset), ss)
+		r.readers.store(0, ss)
 	}
 	return r, nil
 }
@@ -442,41 +505,15 @@ func NewMultiReaderAt(ss []*SeekableStream) (readerutil.SizeReaderAt, error) {
 }
 
 func (r *RangeReadReadAtSeeker) getReaderAtOffset(off int64) (io.Reader, error) {
-	for {
-		var cur int64 = -1
-		r.readerMap.Range(func(key, value any) bool {
-			k := key.(int64)
-			if off == k {
-				cur = k
-				return false
-			}
-			if off > k && off-k <= 4*utils.MB && k > cur {
-				cur = k
-			}
-			return true
-		})
-		if cur < 0 {
-			break
-		}
-		v, ok := r.readerMap.LoadAndDelete(int64(cur))
-		if !ok {
-			continue
-		}
-		rr := v.(io.Reader)
-		if off == int64(cur) {
-			// logrus.Debugf("getReaderAtOffset match_%d", off)
+	if rr, cur, ok := r.readers.takeBest(off); ok {
+		if cur == off {
 			return rr, nil
 		}
 		n, _ := utils.CopyWithBufferN(io.Discard, rr, off-cur)
-		cur += n
-		if cur == off {
-			// logrus.Debugf("getReaderAtOffset old_%d", off)
+		if cur+n == off {
 			return rr, nil
 		}
-		break
 	}
-
-	// logrus.Debugf("getReaderAtOffset new_%d", off)
 	reader, err := r.ss.RangeRead(http_range.Range{Start: off, Length: -1})
 	if err != nil {
 		return nil, err
@@ -501,7 +538,7 @@ func (r *RangeReadReadAtSeeker) ReadAt(p []byte, off int64) (n int, err error) {
 		off += int64(n)
 		switch err {
 		case nil:
-			r.readerMap.Store(int64(off), rr)
+			r.readers.store(off, rr)
 		case io.ErrUnexpectedEOF:
 			err = io.EOF
 		}
