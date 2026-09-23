@@ -20,11 +20,13 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -37,6 +39,10 @@ type Mediafire struct {
 
 	cron *cron.Cron
 
+	// mu guards SessionToken and Cookie: request goroutines read the token
+	// while the renewal cron may refresh it in the background.
+	mu sync.RWMutex
+
 	actionToken string
 	limiter     *rate.Limiter
 
@@ -48,6 +54,25 @@ type Mediafire struct {
 	secChUa         string
 	secChUaPlatform string
 	userAgent       string
+}
+
+// sessionToken returns the current session token for request building.
+func (d *Mediafire) sessionToken() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.SessionToken
+}
+
+// setSessionToken stores a refreshed token (and login cookie when provided)
+// and persists them, safe to call from the renewal cron goroutine.
+func (d *Mediafire) setSessionToken(token, cookie string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if cookie != "" {
+		d.Cookie = cookie
+	}
+	d.SessionToken = token
+	op.MustSaveDriverStorage(d)
 }
 
 func (d *Mediafire) Config() driver.Config {
@@ -65,7 +90,7 @@ func (d *Mediafire) Init(ctx context.Context) error {
 	}
 
 	// If SessionToken is empty, try to get it from cookie
-	if d.SessionToken == "" {
+	if d.sessionToken() == "" {
 		if _, err := d.getSessionToken(ctx); err != nil {
 			return fmt.Errorf("Init :: [MediaFire] {critical} failed to get session token from cookie: %w", err)
 		}
@@ -156,7 +181,7 @@ func (d *Mediafire) Link(ctx context.Context, file model.Obj, args model.LinkArg
 // MakeDir creates a new folder in the specified parent directory
 func (d *Mediafire) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	data := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 		"parent_key":      parentDir.GetID(),
 		"foldername":      dirName,
@@ -193,7 +218,7 @@ func (d *Mediafire) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 		endpoint = "/folder/move.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"folder_key_src":  srcObj.GetID(),
 			"folder_key_dst":  dstDir.GetID(),
@@ -202,7 +227,7 @@ func (d *Mediafire) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 		endpoint = "/file/move.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"quick_key":       srcObj.GetID(),
 			"folder_key":      dstDir.GetID(),
@@ -231,7 +256,7 @@ func (d *Mediafire) Rename(ctx context.Context, srcObj model.Obj, newName string
 
 		endpoint = "/folder/update.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"folder_key":      srcObj.GetID(),
 			"foldername":      newName,
@@ -240,7 +265,7 @@ func (d *Mediafire) Rename(ctx context.Context, srcObj model.Obj, newName string
 
 		endpoint = "/file/update.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"quick_key":       srcObj.GetID(),
 			"filename":        newName,
@@ -276,7 +301,7 @@ func (d *Mediafire) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 		endpoint = "/folder/copy.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"folder_key_src":  srcObj.GetID(),
 			"folder_key_dst":  dstDir.GetID(),
@@ -285,7 +310,7 @@ func (d *Mediafire) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 		endpoint = "/file/copy.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"quick_key":       srcObj.GetID(),
 			"folder_key":      dstDir.GetID(),
@@ -332,7 +357,7 @@ func (d *Mediafire) Remove(ctx context.Context, obj model.Obj) error {
 
 		endpoint = "/folder/delete.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"folder_key":      obj.GetID(),
 		}
@@ -340,7 +365,7 @@ func (d *Mediafire) Remove(ctx context.Context, obj model.Obj) error {
 
 		endpoint = "/file/delete.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"quick_key":       obj.GetID(),
 		}
@@ -414,7 +439,7 @@ func (d *Mediafire) Put(ctx context.Context, dstDir model.Obj, file model.FileSt
 
 func (d *Mediafire) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	data := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 	}
 	var resp MediafireUserInfoResponse

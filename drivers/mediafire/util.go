@@ -29,7 +29,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -110,6 +109,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 		} `json:"response"`
 	}
 
+	var cookie string
 	if resp.StatusCode == 200 {
 		if err := json.Unmarshal(body, &tokenResp); err != nil {
 			return "", err
@@ -125,34 +125,26 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 		}
 
 		if len(cookieMap) > 0 {
-
 			var cookies []string
 			for name, value := range cookieMap {
 				cookies = append(cookies, fmt.Sprintf("%s=%s", name, value))
 			}
-			d.Cookie = strings.Join(cookies, "; ")
-			op.MustSaveDriverStorage(d)
-
-			// fmt.Printf("getSessionToken :: Captured cookies: %s\n", d.Cookie)
+			cookie = strings.Join(cookies, "; ")
 		}
 
 	} else {
 		return "", fmt.Errorf("getSessionToken :: failed to get session token, status code: %d", resp.StatusCode)
 	}
 
-	d.SessionToken = tokenResp.Response.SessionToken
+	d.setSessionToken(tokenResp.Response.SessionToken, cookie)
 
-	// fmt.Printf("Init :: Obtain Session Token %v", d.SessionToken)
-
-	op.MustSaveDriverStorage(d)
-
-	return d.SessionToken, nil
+	return d.sessionToken(), nil
 }
 
 // renewToken refreshes the current session token when expired
 func (d *Mediafire) renewToken(ctx context.Context) error {
 	query := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 	}
 
@@ -169,11 +161,7 @@ func (d *Mediafire) renewToken(ctx context.Context) error {
 		return fmt.Errorf("MediaFire token renewal failed: %s", resp.Response.Result)
 	}
 
-	d.SessionToken = resp.Response.SessionToken
-
-	// fmt.Printf("Init :: Renew Session Token: %s", resp.Response.Result)
-
-	op.MustSaveDriverStorage(d)
+	d.setSessionToken(resp.Response.SessionToken, "")
 
 	return nil
 }
@@ -247,7 +235,7 @@ func (d *Mediafire) getFolderContent(ctx context.Context, folderKey string, chun
 
 func (d *Mediafire) getFolderContentByType(ctx context.Context, folderKey, contentType string, chunkNumber int) (*MediafireResponse, error) {
 	data := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 		"folder_key":      folderKey,
 		"content_type":    contentType,
@@ -364,7 +352,7 @@ func (d *Mediafire) postForm(ctx context.Context, endpoint string, data map[stri
 
 func (d *Mediafire) getDirectDownloadLink(ctx context.Context, fileID string) (string, error) {
 	data := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"quick_key":       fileID,
 		"link_type":       "direct_download",
 		"response_format": "json",
@@ -629,7 +617,7 @@ func (d *Mediafire) getActionToken(ctx context.Context) (string, error) {
 		"type":            "upload",
 		"lifespan":        "1440",
 		"response_format": "json",
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 	}
 
 	var resp MediafireActionTokenResponse
@@ -710,7 +698,7 @@ func (d *Mediafire) getExistingFileInfo(ctx context.Context, fileHash, filename,
 
 func (d *Mediafire) getFileByHash(ctx context.Context, hash string) (*model.ObjThumb, error) {
 	query := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 		"hash":            hash,
 	}
