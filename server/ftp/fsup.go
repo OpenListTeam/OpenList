@@ -94,10 +94,11 @@ func (f *FileUploadProxy) Close() error {
 		return err
 	}
 	arr := make([]byte, 512)
-	if _, err := f.buffer.Read(arr); err != nil {
+	n, err := f.buffer.Read(arr)
+	if err != nil && err != io.EOF {
 		return err
 	}
-	contentType := http.DetectContentType(arr)
+	contentType := http.DetectContentType(arr[:n])
 	if _, err := f.buffer.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
