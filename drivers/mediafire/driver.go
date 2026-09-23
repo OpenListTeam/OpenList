@@ -78,18 +78,24 @@ func (d *Mediafire) Init(ctx context.Context) error {
 
 	// Validate and refresh session token if needed
 	if _, err := d.getSessionToken(ctx); err != nil {
-		d.renewToken(ctx)
-
-		// Avoids 10 mins token expiry (6- 9)
-		num := rand.Intn(4) + 6
-
-		d.cron = cron.NewCron(time.Minute * time.Duration(num))
-		d.cron.Do(func() {
-			// Crazy, but working way to refresh session token
-			d.renewToken(ctx)
-		})
-
+		// Minting from the cookie failed; try renewing the stored token.
+		if renewErr := d.renewToken(ctx); renewErr != nil {
+			return fmt.Errorf("Init :: [MediaFire] failed to obtain a session token: %w", renewErr)
+		}
 	}
+
+	// MediaFire session tokens expire in ~10 minutes, so they must be
+	// renewed periodically no matter how the first token was obtained.
+	num := rand.Intn(4) + 6
+
+	d.cron = cron.NewCron(time.Minute * time.Duration(num))
+	d.cron.Do(func() {
+		// Renew while the token is still valid; if it already expired,
+		// mint a fresh one from the login cookie.
+		if err := d.renewToken(context.Background()); err != nil {
+			_, _ = d.getSessionToken(context.Background())
+		}
+	})
 
 	return nil
 }
