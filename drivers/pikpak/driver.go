@@ -130,32 +130,64 @@ func (d *PikPak) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 func (d *PikPak) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp File
 	var url string
-	queryParams := map[string]string{
-		"_magic":         "2021",
-		"usage":          "FETCH",
-		"thumbnail_size": "SIZE_LARGE",
-	}
-	if !d.DisableMediaLink {
-		queryParams["usage"] = "CACHE"
-	}
-	_, err := d.request(fmt.Sprintf("https://api-drive.mypikpak.net/drive/v1/files/%s", file.GetID()),
-		http.MethodGet, func(req *resty.Request) {
-			req.SetContext(ctx).
-				SetQueryParams(queryParams)
-		}, &resp)
-	if err != nil {
-		return nil, err
-	}
-	url = resp.WebContentLink
-
-	if !d.DisableMediaLink && len(resp.Medias) > 0 && resp.Medias[0].Link.Url != "" {
-		log.Debugln("use media link")
-		url = resp.Medias[0].Link.Url
+	if d.DisableMediaLink {
+		queryParams := map[string]string{
+			"_magic":         "2021",
+			"usage":          "FETCH",
+			"thumbnail_size": "SIZE_LARGE",
+		}
+		_, err := d.request(fmt.Sprintf("https://api-drive.mypikpak.net/drive/v1/files/%s", file.GetID()),
+			http.MethodGet, func(req *resty.Request) {
+				req.SetContext(ctx).
+					SetQueryParams(queryParams)
+			}, &resp)
+		if err != nil {
+			return nil, err
+		}
+		url = resp.WebContentLink
+	} else {
+		_, err := d.request(fmt.Sprintf("https://api-drive.mypikpak.com/drive/v1/files/%s", file.GetID()),
+			http.MethodGet, func(req *resty.Request) {
+				req.SetContext(ctx).
+					SetHeader("Accept", "*/*").
+					SetHeader("Content-Type", "application/json").
+					SetHeader("Referer", "https://mypikpak.com/").
+					SetHeader("Origin", "https://mypikpak.com")
+			}, &resp)
+		if err != nil {
+			return nil, err
+		}
+		url = resp.WebContentLink
+		if mediaLink := pickMediaLink(resp.Medias); mediaLink != "" {
+			log.Debugln("use media link")
+			url = mediaLink
+		}
 	}
 
 	return &model.Link{
 		URL: url,
 	}, nil
+}
+
+func pickMediaLink(medias []Media) string {
+	// Prefer the original media to keep full quality, then fall back to the
+	// server-selected default stream, and finally any available media URL.
+	for _, media := range medias {
+		if media.IsOrigin && media.Link.Url != "" {
+			return media.Link.Url
+		}
+	}
+	for _, media := range medias {
+		if media.IsDefault && media.Link.Url != "" {
+			return media.Link.Url
+		}
+	}
+	for _, media := range medias {
+		if media.Link.Url != "" {
+			return media.Link.Url
+		}
+	}
+	return ""
 }
 
 func (d *PikPak) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
