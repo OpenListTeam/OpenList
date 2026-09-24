@@ -254,7 +254,6 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 		Ctx: t.Ctx(),
 	}, link)
 	if err != nil {
-		_ = link.Close()
 		return errors.WithMessagef(err, "failed get [%s] stream", t.SrcActualPath)
 	}
 	t.SetTotalBytes(ss.GetSize())
