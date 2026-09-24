@@ -1329,6 +1329,102 @@ func (y *Cloud189PC) OldUploadCommit(ctx context.Context, fileCommitUrl string, 
 	return resp.toFile(), nil
 }
 
+// rapidUploadByCAS 使用 MD5 + 分片 MD5（CAS）执行天翼云盘秒传。
+//
+// 流程与 Web 端一致：
+//  1. initMultiUpload（仅传 lazyCheck=1）
+//  2. checkTransSecond（用 fileMd5 + sliceMd5 检查云端是否已存在文件数据）
+//  3. commitMultiUploadFile（提交并返回文件对象）
+func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, fileMD5 string, sliceMD5s []string, sliceSize int64, overwrite bool) (model.Obj, error) {
+	isFamily := y.isFamily()
+
+	// 统一 MD5 为大写（天翼云盘要求大写）
+	fileMD5Upper := strings.ToUpper(fileMD5)
+
+	// 优先使用传入的分片大小，否则按文件大小推导
+	if sliceSize <= 0 {
+		sliceSize = partSize(fileSize)
+	}
+
+	// 计算 sliceMd5（与上传时一致的算法）
+	sliceMd5Hex := fileMD5Upper
+	if len(sliceMD5s) > 1 {
+		upperSliceMD5s := make([]string, len(sliceMD5s))
+		for i, s := range sliceMD5s {
+			upperSliceMD5s[i] = strings.ToUpper(s)
+		}
+		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(upperSliceMD5s, "\n")))
+	} else if len(sliceMD5s) == 1 {
+		sliceMd5Hex = strings.ToUpper(sliceMD5s[0])
+	}
+
+	fullUrl := "https://upload.cloud.189.cn"
+	if isFamily {
+		fullUrl += "/family"
+	} else {
+		fullUrl += "/person"
+	}
+
+	// Step 1: initMultiUpload（不传 fileMd5/sliceMd5，只传 lazyCheck）
+	initParams := Params{
+		"parentFolderId": dstDir.GetID(),
+		"fileName":       url.QueryEscape(fileName),
+		"fileSize":       fmt.Sprint(fileSize),
+		"sliceSize":      fmt.Sprint(sliceSize),
+		"lazyCheck":      "1",
+	}
+	if isFamily {
+		initParams.Set("familyId", y.FamilyID)
+	}
+
+	var uploadInfo InitMultiUploadResp
+	if _, err := y.request(fullUrl+"/initMultiUpload", "GET", func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, initParams, &uploadInfo, isFamily); err != nil {
+		return nil, fmt.Errorf("initMultiUpload 失败: %w", err)
+	}
+	uploadFileId := uploadInfo.Data.UploadFileID
+
+	// Step 2: checkTransSecond（用 fileMd5 + sliceMd5 + uploadFileId 检查秒传）
+	checkParams := Params{
+		"fileMd5":      fileMD5Upper,
+		"sliceMd5":     sliceMd5Hex,
+		"uploadFileId": uploadFileId,
+	}
+
+	var checkResp struct {
+		Data struct {
+			FileDataExists int `json:"fileDataExists"`
+		} `json:"data"`
+	}
+	if _, err := y.request(fullUrl+"/checkTransSecond", "GET", func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, checkParams, &checkResp, isFamily); err != nil {
+		return nil, fmt.Errorf("秒传检查失败: %w", err)
+	}
+	if checkResp.Data.FileDataExists != 1 {
+		return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", fileMD5Upper, sliceMd5Hex, fileSize)
+	}
+
+	// Step 3: commitMultiUploadFile（传 fileMd5 + sliceMd5）
+	commitParams := Params{
+		"uploadFileId": uploadFileId,
+		"fileMd5":      fileMD5Upper,
+		"sliceMd5":     sliceMd5Hex,
+		"lazyCheck":    "1",
+		"opertype":     IF(overwrite, "3", "1"),
+	}
+
+	var resp CommitMultiUploadFileResp
+	if _, err := y.request(fullUrl+"/commitMultiUploadFile", "GET", func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, commitParams, &resp, isFamily); err != nil {
+		return nil, fmt.Errorf("提交上传失败: %w", err)
+	}
+
+	return resp.toFile(), nil
+}
+
 func (y *Cloud189PC) isFamily() bool {
 	return y.Type == "family"
 }
