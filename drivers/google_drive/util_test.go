@@ -34,12 +34,13 @@ func TestResolveDownloadStrategy_Export(t *testing.T) {
 	cases := []struct {
 		src      string
 		wantMIME string
+		wantExt  string
 	}{
-		{mimeTypeGoogleDoc, mimeTypeDocx},
-		{mimeTypeGoogleSheet, mimeTypeXlsx},
-		{mimeTypeGoogleSlides, mimeTypePptx},
-		{mimeTypeGoogleDrawing, mimeTypePDF},
-		{mimeTypeGoogleScript, mimeTypeScriptJSON},
+		{mimeTypeGoogleDoc, mimeTypeDocx, ".docx"},
+		{mimeTypeGoogleSheet, mimeTypeXlsx, ".xlsx"},
+		{mimeTypeGoogleSlides, mimeTypePptx, ".pptx"},
+		{mimeTypeGoogleDrawing, mimeTypePDF, ".pdf"},
+		{mimeTypeGoogleScript, mimeTypeScriptJSON, ".json"},
 	}
 	for _, c := range cases {
 		t.Run(c.src, func(t *testing.T) {
@@ -52,6 +53,9 @@ func TestResolveDownloadStrategy_Export(t *testing.T) {
 			}
 			if s.ExportMIME != c.wantMIME {
 				t.Errorf("ExportMIME: got %q, want %q", s.ExportMIME, c.wantMIME)
+			}
+			if s.Extension != c.wantExt {
+				t.Errorf("Extension: got %q, want %q", s.Extension, c.wantExt)
 			}
 		})
 	}
@@ -66,6 +70,7 @@ func TestResolveDownloadStrategy_Unsupported(t *testing.T) {
 		mimeTypeGoogleMap,
 		mimeTypeGoogleVid,
 		mimeTypeGoogleJam,
+		mimeTypeGoogleDriveSDK,
 	}
 	for _, mime := range cases {
 		t.Run(mime, func(t *testing.T) {
@@ -98,6 +103,28 @@ func TestResolveDownloadStrategy_MediaFallback(t *testing.T) {
 			}
 			if s.Kind != kindMedia {
 				t.Errorf("expected kindMedia fallback for %q, got %v", mime, s.Kind)
+			}
+		})
+	}
+}
+
+func TestExportedFileName(t *testing.T) {
+	cases := []struct {
+		name string
+		ext  string
+		want string
+	}{
+		{"未命名簡報", ".pptx", "未命名簡報.pptx"},
+		{"report", ".docx", "report.docx"},
+		{"already.PPTX", ".pptx", "already.PPTX"},
+		{"drawing.pdf", ".pdf", "drawing.pdf"},
+		{"script", ".json", "script.json"},
+	}
+	for _, c := range cases {
+		t.Run(c.name+c.ext, func(t *testing.T) {
+			got := exportedFileName(c.name, c.ext)
+			if got != c.want {
+				t.Errorf("exportedFileName(%q, %q) = %q, want %q", c.name, c.ext, got, c.want)
 			}
 		})
 	}

@@ -23,6 +23,8 @@ const (
 	mimeTypeGoogleMap      = "application/vnd.google-apps.map"
 	mimeTypeGoogleVid      = "application/vnd.google-apps.vid"
 	mimeTypeGoogleJam      = "application/vnd.google-apps.jam"
+	// Third-party shortcut created by a Drive app; the app must handle the download.
+	mimeTypeGoogleDriveSDK = "application/vnd.google-apps.drive-sdk"
 )
 
 // Export target MIME types.
@@ -34,14 +36,21 @@ const (
 	mimeTypeScriptJSON = "application/vnd.google-apps.script+json"
 )
 
-// googleWorkspaceExports maps exportable Google Workspace source MIME types to the
-// corresponding files.export target MIME type.
-var googleWorkspaceExports = map[string]string{
-	mimeTypeGoogleDoc:     mimeTypeDocx,
-	mimeTypeGoogleSheet:   mimeTypeXlsx,
-	mimeTypeGoogleSlides:  mimeTypePptx,
-	mimeTypeGoogleDrawing: mimeTypePDF,
-	mimeTypeGoogleScript:  mimeTypeScriptJSON,
+// exportFormat pairs a files.export target MIME type with the file extension
+// that should be appended to the downloaded filename.
+type exportFormat struct {
+	MIME      string
+	Extension string
+}
+
+// googleWorkspaceExports maps exportable Google Workspace source MIME types to their
+// files.export target format.
+var googleWorkspaceExports = map[string]exportFormat{
+	mimeTypeGoogleDoc:     {MIME: mimeTypeDocx, Extension: ".docx"},
+	mimeTypeGoogleSheet:   {MIME: mimeTypeXlsx, Extension: ".xlsx"},
+	mimeTypeGoogleSlides:  {MIME: mimeTypePptx, Extension: ".pptx"},
+	mimeTypeGoogleDrawing: {MIME: mimeTypePDF, Extension: ".pdf"},
+	mimeTypeGoogleScript:  {MIME: mimeTypeScriptJSON, Extension: ".json"},
 }
 
 // googleWorkspaceUnsupported lists Google Workspace MIME types not handled by this driver,
@@ -57,8 +66,9 @@ var googleWorkspaceUnsupported = map[string]string{
 	mimeTypeGoogleMap: "no supported download/export strategy is implemented for Google My Maps",
 	// Google Vids and Jamboard require the files.download long-running-operation flow.
 	// See https://developers.google.com/drive/api/reference/rest/v3/files/download
-	mimeTypeGoogleVid: "requires the files.download long-running-operation flow which is not implemented",
-	mimeTypeGoogleJam: "requires the files.download long-running-operation flow which is not implemented",
+	mimeTypeGoogleVid:      "requires the files.download long-running-operation flow which is not implemented",
+	mimeTypeGoogleJam:      "requires the files.download long-running-operation flow which is not implemented",
+	mimeTypeGoogleDriveSDK: "third-party shortcut (drive-sdk) cannot be downloaded directly",
 }
 
 // FileMeta holds the fields we need from a files.get metadata response inside Link().

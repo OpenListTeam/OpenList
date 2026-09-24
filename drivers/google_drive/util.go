@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -50,13 +51,16 @@ const (
 type downloadStrategy struct {
 	Kind       downloadKind
 	ExportMIME string
+	// Extension is the file extension (e.g. ".pptx") to append to the downloaded filename
+	// for kindExport strategies. Empty for kindMedia.
+	Extension string
 }
 
 // resolveDownloadStrategy returns the correct download strategy for the given Drive source
 // MIME type. It returns an error for Google Workspace types that cannot be downloaded.
 func resolveDownloadStrategy(sourceMIME string) (downloadStrategy, error) {
-	if exportMIME, ok := googleWorkspaceExports[sourceMIME]; ok {
-		return downloadStrategy{Kind: kindExport, ExportMIME: exportMIME}, nil
+	if ef, ok := googleWorkspaceExports[sourceMIME]; ok {
+		return downloadStrategy{Kind: kindExport, ExportMIME: ef.MIME, Extension: ef.Extension}, nil
 	}
 	if reason, ok := googleWorkspaceUnsupported[sourceMIME]; ok {
 		return downloadStrategy{}, fmt.Errorf("unsupported Google Workspace file type %q: %s", sourceMIME, reason)
@@ -93,6 +97,15 @@ func buildDownloadURL(fileID string, strategy downloadStrategy) string {
 		q.Set("supportsAllDrives", "true")
 		return base + "?" + q.Encode()
 	}
+}
+
+// exportedFileName returns name with ext appended, unless name already ends with
+// ext (case-insensitive), which avoids doubling extensions like "file.pptx.pptx".
+func exportedFileName(name, ext string) string {
+	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(ext)) {
+		return name
+	}
+	return name + ext
 }
 
 type googleDriveServiceAccount struct {

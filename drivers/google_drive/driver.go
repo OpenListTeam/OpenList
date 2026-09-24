@@ -78,6 +78,9 @@ func (d *GoogleDrive) Link(ctx context.Context, file model.Obj, args model.LinkA
 			"Authorization": []string{"Bearer " + d.AccessToken},
 		},
 	}
+	if strategy.Kind == kindExport {
+		link.FileName = exportedFileName(file.GetName(), strategy.Extension)
+	}
 	return &link, nil
 }
 
