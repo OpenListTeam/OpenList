@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -106,7 +107,7 @@ func FsArchiveMeta(c *gin.Context, req *ArchiveMetaReq, user *model.User) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
+	if !authz.CanAccess(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
@@ -189,7 +190,7 @@ func FsArchiveList(c *gin.Context, req *ArchiveListReq, user *model.User) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
+	if !authz.CanAccess(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
@@ -265,7 +266,7 @@ func FsArchiveDecompress(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, dstMeta, dstDir) {
+	if !authz.CanWrite(user, dstMeta, dstDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -308,7 +309,7 @@ func ArchiveDown(c *gin.Context) {
 	innerPath := utils.FixAndCleanPath(c.Query("inner"))
 	password := c.Query("pass")
 	filename := stdpath.Base(innerPath)
-	storage, err := fs.GetStorage(archiveRawPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(archiveRawPath)
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return
@@ -342,7 +343,7 @@ func ArchiveProxy(c *gin.Context) {
 	innerPath := utils.FixAndCleanPath(c.Query("inner"))
 	password := c.Query("pass")
 	filename := stdpath.Base(innerPath)
-	storage, err := fs.GetStorage(archiveRawPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(archiveRawPath)
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return

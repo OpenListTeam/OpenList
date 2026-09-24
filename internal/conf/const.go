@@ -184,7 +184,6 @@ type ContextKey int8
 const (
 	_ ContextKey = iota
 
-	NoTaskKey
 	ApiUrlKey
 	UserKey
 	MetaKey
@@ -195,5 +194,4 @@ const (
 	UserAgentKey
 	PathKey
 	SharingIDKey
-	SkipHookKey
 )

@@ -16,15 +16,37 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/search/searcher"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
-	"github.com/OpenListTeam/OpenList/v4/pkg/mq"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	mapset "github.com/deckarep/golang-set/v2"
 	log "github.com/sirupsen/logrus"
 )
 
 var (
 	Quit = atomic.Pointer[chan struct{}]{}
 )
+
+type indexBatch struct {
+	sync.Mutex
+	objs []ObjWithParent
+}
+
+func (batch *indexBatch) add(obj ObjWithParent) {
+	batch.Lock()
+	batch.objs = append(batch.objs, obj)
+	batch.Unlock()
+}
+
+func (batch *indexBatch) take() []ObjWithParent {
+	batch.Lock()
+	objs := batch.objs
+	batch.objs = nil
+	batch.Unlock()
+	return objs
+}
+
+func (batch *indexBatch) len() int {
+	batch.Lock()
+	defer batch.Unlock()
+	return len(batch.objs)
+}
 
 func Running() bool {
 	return Quit.Load() != nil
@@ -44,7 +66,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 		return errs.BuildIndexIsRunning
 	}
 	var (
-		indexMQ = mq.NewInMemoryMQ[ObjWithParent]()
+		indexMQ = &indexBatch{}
 		running = atomic.Bool{} // current goroutine running
 		wg      = &sync.WaitGroup{}
 	)
@@ -64,20 +86,17 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			select {
 			case <-ticker.C:
 				tickCount += 1
-				if indexMQ.Len() < 1000 && tickCount != 5 {
+				if indexMQ.len() < 1000 && tickCount != 5 {
 					continue
 				} else if tickCount >= 5 {
 					tickCount = 0
 				}
 				log.Infof("index obj count: %d", objCount)
-				indexMQ.ConsumeAll(func(messages []mq.Message[ObjWithParent]) {
+				func(messages []ObjWithParent) {
 					if len(messages) != 0 {
-						log.Debugf("current index: %s", messages[len(messages)-1].Content.Parent)
+						log.Debugf("current index: %s", messages[len(messages)-1].Parent)
 					}
-					if err = BatchIndex(ctx, utils.MustSliceConvert(messages,
-						func(src mq.Message[ObjWithParent]) ObjWithParent {
-							return src.Content
-						})); err != nil {
+					if err = BatchIndex(ctx, messages); err != nil {
 						log.Errorf("build index in batch error: %+v", err)
 					} else {
 						objCount = objCount + uint64(len(messages))
@@ -89,18 +108,15 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 							LastDoneTime: nil,
 						})
 					}
-				})
+				}(indexMQ.take())
 
 			case <-quit:
 				log.Debugf("build index for %+v received quit", indexPaths)
 				eMsg := ""
 				now := time.Now()
 				originErr := err
-				indexMQ.ConsumeAll(func(messages []mq.Message[ObjWithParent]) {
-					if err = BatchIndex(ctx, utils.MustSliceConvert(messages,
-						func(src mq.Message[ObjWithParent]) ObjWithParent {
-							return src.Content
-						})); err != nil {
+				func(messages []ObjWithParent) {
+					if err = BatchIndex(ctx, messages); err != nil {
 						log.Errorf("build index in batch error: %+v", err)
 					} else {
 						objCount = objCount + uint64(len(messages))
@@ -119,7 +135,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 							Error:        eMsg,
 						})
 					}
-				})
+				}(indexMQ.take())
 				log.Debugf("build index for %+v quit success", indexPaths)
 				return
 			}
@@ -166,12 +182,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			if indexPath == "/" {
 				return nil
 			}
-			indexMQ.Publish(mq.Message[ObjWithParent]{
-				Content: ObjWithParent{
-					Obj:    info,
-					Parent: path.Dir(indexPath),
-				},
-			})
+			indexMQ.add(ObjWithParent{Obj: info, Parent: path.Dir(indexPath)})
 			return nil
 		}
 		fi, err = fs.Get(ctx, indexPath, &fs.GetArgs{})
@@ -199,7 +210,11 @@ func Config(ctx context.Context) searcher.Config {
 	return instance.Config()
 }
 
-func Update(ctx context.Context, parent string, objs []model.Obj) {
+type snapshotUpdater interface {
+	UpdateSnapshot(context.Context, string, []model.Obj) error
+}
+
+func UpdateSnapshot(ctx context.Context, parent string, objs []model.Obj) {
 	if instance == nil || !instance.Config().AutoUpdate || !setting.GetBool(conf.AutoUpdateIndex) || Running() {
 		return
 	}
@@ -216,38 +231,23 @@ func Update(ctx context.Context, parent string, objs []model.Obj) {
 		return
 	}
 
-	// Use task queue for Meilisearch to avoid race conditions with async indexing
-	if msInstance, ok := instance.(interface {
-		EnqueueUpdate(parent string, objs []model.Obj)
-	}); ok {
-		// Enqueue task for async processing (diff calculation happens at consumption time)
-		msInstance.EnqueueUpdate(parent, objs)
+	if updater, ok := instance.(snapshotUpdater); ok {
+		if err := updater.UpdateSnapshot(ctx, parent, objs); err != nil {
+			log.Errorf("update search index error for %s: %+v", parent, err)
+		}
 		return
 	}
-
-	unlock := lockUpdate(parent)
-	defer unlock()
 
 	nodes, err := instance.Get(ctx, parent)
 	if err != nil {
 		log.Errorf("update search index error while get nodes: %+v", err)
 		return
 	}
-	now := mapset.NewSet[string]()
-	for i := range objs {
-		now.Add(objs[i].GetName())
-	}
-	old := mapset.NewSet[string]()
-	for i := range nodes {
-		old.Add(nodes[i].Name)
-	}
-	// delete data that no longer exists
-	toDelete := old.Difference(now)
-	toAdd := now.Difference(old)
-	for i := range nodes {
-		if toDelete.Contains(nodes[i].Name) && !op.HasStorage(path.Join(parent, nodes[i].Name)) {
-			log.Debugf("delete index: %s", path.Join(parent, nodes[i].Name))
-			err = instance.Del(ctx, path.Join(parent, nodes[i].Name))
+	removed, added := searcher.SnapshotDiff(objs, nodes)
+	for _, node := range removed {
+		if !op.HasStorage(path.Join(parent, node.Name)) {
+			log.Debugf("delete index: %s", path.Join(parent, node.Name))
+			err = instance.Del(ctx, path.Join(parent, node.Name))
 			if err != nil {
 				log.Errorf("update search index error while del old node: %+v", err)
 				return
@@ -255,15 +255,10 @@ func Update(ctx context.Context, parent string, objs []model.Obj) {
 		}
 	}
 	// collect files and folders to add in batch
-	var toAddObjs []ObjWithParent
-	for i := range objs {
-		if toAdd.Contains(objs[i].GetName()) {
-			log.Debugf("add index: %s", path.Join(parent, objs[i].GetName()))
-			toAddObjs = append(toAddObjs, ObjWithParent{
-				Parent: parent,
-				Obj:    objs[i],
-			})
-		}
+	toAddObjs := make([]ObjWithParent, 0, len(added))
+	for _, obj := range added {
+		log.Debugf("add index: %s", path.Join(parent, obj.GetName()))
+		toAddObjs = append(toAddObjs, ObjWithParent{Parent: parent, Obj: obj})
 	}
 	// batch index all files and folders at once
 	if len(toAddObjs) > 0 {
@@ -273,8 +268,4 @@ func Update(ctx context.Context, parent string, objs []model.Obj) {
 			return
 		}
 	}
-}
-
-func init() {
-	op.RegisterObjsUpdateHook(Update)
 }

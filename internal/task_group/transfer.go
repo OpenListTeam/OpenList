@@ -5,69 +5,29 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/internal/setting"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/time/rate"
 )
 
-type SrcPathToRemove string
-
-// ActualPath
-type DstPathToHook string
-
-func HookAndRemove(ctx context.Context, dstPath string, payloads ...any) {
+func finalizeTransferGroup(ctx context.Context, dstPath string, group *transferGroup) {
 	dstStorage, dstActualPath, err := op.GetStorageAndActualPath(dstPath)
 	if err != nil {
 		log.Error(errors.WithMessage(err, "failed get dst storage"))
 		return
 	}
-	dstNeedHandleHook := setting.GetBool(conf.HandleHookAfterWriting)
-	dstHandleHookLimit := setting.GetFloat(conf.HandleHookRateLimit, .0)
-	var listLimiter *rate.Limiter
-	if dstNeedHandleHook && dstHandleHookLimit > .0 {
-		listLimiter = rate.NewLimiter(rate.Limit(dstHandleHookLimit), 1)
-	}
-	hookedPaths := make(map[string]struct{})
-	handleHook := func(actualPath string) {
-		if _, ok := hookedPaths[actualPath]; ok {
-			return
+	op.ScheduleSnapshotReconciliation(dstStorage, dstActualPath, false)
+	for path := range group.removeSource {
+		srcStorage, srcActualPath, err := op.GetStorageAndActualPath(path)
+		if err != nil {
+			log.Error(errors.WithMessage(err, "failed get src storage"))
+			continue
 		}
-		if listLimiter != nil {
-			_ = listLimiter.Wait(ctx)
-		}
-		files, e := op.List(ctx, dstStorage, actualPath, model.ListArgs{SkipHook: true})
-		if e != nil {
-			log.Errorf("failed handle objs update hook: %v", e)
-		} else {
-			op.HandleObjsUpdateHook(ctx, utils.GetFullPath(dstStorage.GetStorage().MountPath, actualPath), files)
-			hookedPaths[actualPath] = struct{}{}
-		}
-	}
-	if dstNeedHandleHook {
-		handleHook(dstActualPath)
-	}
-	for _, payload := range payloads {
-		switch p := payload.(type) {
-		case DstPathToHook:
-			if dstNeedHandleHook {
-				handleHook(string(p))
-			}
-		case SrcPathToRemove:
-			srcStorage, srcActualPath, err := op.GetStorageAndActualPath(string(p))
-			if err != nil {
-				log.Error(errors.WithMessage(err, "failed get src storage"))
-				continue
-			}
-			err = verifyAndRemove(ctx, srcStorage, dstStorage, srcActualPath, dstActualPath)
-			if err != nil {
-				log.Error(err)
-			}
+		err = verifyAndRemove(ctx, srcStorage, dstStorage, srcActualPath, dstActualPath)
+		if err != nil {
+			log.Error(err)
 		}
 	}
 }
@@ -117,4 +77,4 @@ func verifyAndRemove(ctx context.Context, srcStorage, dstStorage driver.Driver, 
 	return nil
 }
 
-var TransferCoordinator *TaskGroupCoordinator = NewTaskGroupCoordinator("HookAndRemove", HookAndRemove)
+var TransferCoordinator = &TransferGroupCoordinator{groups: map[string]*transferGroup{}}

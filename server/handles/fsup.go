@@ -154,7 +154,7 @@ func FsForm(c *gin.Context) {
 			return
 		}
 	}
-	storage, err := fs.GetStorage(path, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(path)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return

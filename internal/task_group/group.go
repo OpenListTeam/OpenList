@@ -3,80 +3,54 @@ package task_group
 import (
 	"context"
 	"sync"
-
-	"github.com/sirupsen/logrus"
 )
 
-type OnCompletionFunc func(ctx context.Context, groupID string, payloads ...any)
-type TaskGroupCoordinator struct {
-	name string
-	mu   sync.Mutex
-
-	groupPayloads map[string][]any
-	groupStates   map[string]groupState
-	onCompletion  OnCompletionFunc
+type transferGroup struct {
+	pending      int
+	hasSuccess   bool
+	removeSource map[string]struct{}
 }
 
-type groupState struct {
-	pending    int
-	hasSuccess bool
+type TransferGroupCoordinator struct {
+	mu     sync.Mutex
+	groups map[string]*transferGroup
 }
 
-func NewTaskGroupCoordinator(name string, f OnCompletionFunc) *TaskGroupCoordinator {
-	return &TaskGroupCoordinator{
-		name:          name,
-		groupPayloads: map[string][]any{},
-		groupStates:   map[string]groupState{},
-		onCompletion:  f,
+func (coordinator *TransferGroupCoordinator) AddTask(groupID string) {
+	coordinator.mu.Lock()
+	group := coordinator.groups[groupID]
+	if group == nil {
+		group = &transferGroup{removeSource: make(map[string]struct{})}
+		coordinator.groups[groupID] = group
 	}
+	group.pending++
+	coordinator.mu.Unlock()
 }
 
-// payload可为nil
-func (tgc *TaskGroupCoordinator) AddTask(groupID string, payload any) {
-	tgc.mu.Lock()
-	defer tgc.mu.Unlock()
-	state := tgc.groupStates[groupID]
-	state.pending++
-	tgc.groupStates[groupID] = state
-	logrus.Debugf("AddTask:%s ,count=%+v", groupID, state)
-	if payload == nil {
+func (coordinator *TransferGroupCoordinator) RemoveSource(groupID, path string) {
+	coordinator.mu.Lock()
+	if group := coordinator.groups[groupID]; group != nil {
+		group.removeSource[path] = struct{}{}
+	}
+	coordinator.mu.Unlock()
+}
+
+func (coordinator *TransferGroupCoordinator) Done(ctx context.Context, groupID string, success bool) {
+	coordinator.mu.Lock()
+	group := coordinator.groups[groupID]
+	if group == nil || group.pending == 0 {
+		coordinator.mu.Unlock()
 		return
 	}
-	tgc.groupPayloads[groupID] = append(tgc.groupPayloads[groupID], payload)
-}
-
-func (tgc *TaskGroupCoordinator) AppendPayload(groupID string, payload any) {
-	if payload == nil {
+	group.hasSuccess = group.hasSuccess || success
+	group.pending--
+	if group.pending != 0 {
+		coordinator.mu.Unlock()
 		return
 	}
-	tgc.mu.Lock()
-	defer tgc.mu.Unlock()
-	tgc.groupPayloads[groupID] = append(tgc.groupPayloads[groupID], payload)
-}
-
-func (tgc *TaskGroupCoordinator) Done(ctx context.Context, groupID string, success bool) {
-	tgc.mu.Lock()
-	defer tgc.mu.Unlock()
-	state, ok := tgc.groupStates[groupID]
-	if !ok || state.pending == 0 {
-		return
+	delete(coordinator.groups, groupID)
+	coordinator.mu.Unlock()
+	if group.hasSuccess {
+		finalizeTransferGroup(ctx, groupID, group)
 	}
-	if success {
-		state.hasSuccess = true
-	}
-	logrus.Debugf("Done:%s ,state=%+v", groupID, state)
-	if state.pending == 1 {
-		payloads := tgc.groupPayloads[groupID]
-		delete(tgc.groupStates, groupID)
-		delete(tgc.groupPayloads, groupID)
-		if tgc.onCompletion != nil && state.hasSuccess {
-			logrus.Debugf("OnCompletion:%s", groupID)
-			tgc.mu.Unlock()
-			tgc.onCompletion(ctx, groupID, payloads...)
-			tgc.mu.Lock()
-		}
-		return
-	}
-	state.pending--
-	tgc.groupStates[groupID] = state
 }

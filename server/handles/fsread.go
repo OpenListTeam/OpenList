@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -89,11 +90,11 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
+	if !authz.CanAccess(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
-	canWriteContentAtPath := common.CanWrite(user, meta, reqPath) && (user.CanWriteContent() || common.CanWriteContentBypassUserPerms(meta, reqPath))
+	canWriteContentAtPath := authz.CanWrite(user, meta, reqPath) && (user.CanWriteContent() || authz.CanWriteContentBypassUserPerms(meta, reqPath))
 	if req.Refresh && !canWriteContentAtPath {
 		common.ErrorStrResp(c, "Refresh without permission", 403)
 		return
@@ -110,7 +111,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	provider := "unknown"
 	var directUploadTools []string
 	if canWriteContentAtPath {
-		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+		if storage, err := fs.GetStorage(reqPath); err == nil {
 			directUploadTools = op.GetDirectUploadTools(storage)
 		}
 	}
@@ -119,8 +120,8 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		Total:              int64(total),
 		Readme:             getReadme(meta, reqPath),
 		Header:             getHeader(meta, reqPath),
-		Write:              common.CanWrite(user, meta, reqPath),
-		WriteContentBypass: common.CanWriteContentBypassUserPerms(meta, reqPath),
+		Write:              authz.CanWrite(user, meta, reqPath),
+		WriteContentBypass: authz.CanWriteContentBypassUserPerms(meta, reqPath),
 		Provider:           provider,
 		DirectUploadTools:  directUploadTools,
 	})
@@ -153,7 +154,7 @@ func FsDirs(c *gin.Context) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
+	if !authz.CanAccess(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
@@ -185,14 +186,14 @@ func filterDirs(objs []model.Obj) []DirResp {
 }
 
 func getReadme(meta *model.Meta, path string) string {
-	if meta != nil && common.MetaCoversPath(meta.Path, path, meta.RSub) {
+	if meta != nil && authz.MetaCoversPath(meta.Path, path, meta.RSub) {
 		return meta.Readme
 	}
 	return ""
 }
 
 func getHeader(meta *model.Meta, path string) string {
-	if meta != nil && common.MetaCoversPath(meta.Path, path, meta.HeaderSub) {
+	if meta != nil && authz.MetaCoversPath(meta.Path, path, meta.HeaderSub) {
 		return meta.Header
 	}
 	return ""
@@ -205,7 +206,7 @@ func isEncrypt(meta *model.Meta, path string) bool {
 	if meta == nil || meta.Password == "" {
 		return false
 	}
-	if !common.MetaCoversPath(meta.Path, path, meta.PSub) {
+	if !authz.MetaCoversPath(meta.Path, path, meta.PSub) {
 		return false
 	}
 	return true
@@ -292,7 +293,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
+	if !authz.CanAccess(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
@@ -305,7 +306,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	}
 	var rawURL string
 
-	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(reqPath)
 	provider, ok := model.GetProvider(obj)
 	if !ok && err == nil {
 		provider = storage.Config().Name
@@ -418,7 +419,7 @@ func FsOther(c *gin.Context) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, req.Path, req.Password) {
+	if !authz.CanAccess(user, meta, req.Path, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}

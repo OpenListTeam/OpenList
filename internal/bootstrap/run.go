@@ -36,10 +36,12 @@ func Init() {
 	data.InitData()
 	InitStreamLimit()
 	InitIndex()
+	InitSnapshotProjection()
 	InitUpgradePatch()
 }
 
 func Release() {
+	ReleaseSnapshotProjection()
 	db.Close()
 }
 

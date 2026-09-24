@@ -17,6 +17,8 @@ type CacheManager struct {
 	userCache    *cache.KeyedCache[*model.User]           // Cache for user data
 	settingCache *cache.KeyedCache[any]                   // Cache for settings
 	detailCache  *cache.KeyedCache[*model.StorageDetails] // Cache for storage details
+	loadMu       sync.Mutex
+	loads        map[string]*directoryLoadState
 }
 
 func NewCacheManager() *CacheManager {
@@ -26,7 +28,82 @@ func NewCacheManager() *CacheManager {
 		userCache:    cache.NewKeyedCache[*model.User](time.Hour),
 		settingCache: cache.NewKeyedCache[any](time.Hour),
 		detailCache:  cache.NewKeyedCache[*model.StorageDetails](time.Minute * 30),
+		loads:        make(map[string]*directoryLoadState),
 	}
+}
+
+type directoryLoadState struct {
+	revision   uint64
+	active     int
+	refreshing int
+}
+
+type directoryLoadToken struct {
+	cache    *CacheManager
+	key      string
+	revision uint64
+	refresh  bool
+	commit   bool
+}
+
+func (cm *CacheManager) beginDirectoryLoad(key string, refresh bool) directoryLoadToken {
+	cm.loadMu.Lock()
+	defer cm.loadMu.Unlock()
+	state := cm.loads[key]
+	if state == nil {
+		state = &directoryLoadState{}
+		cm.loads[key] = state
+	}
+	if refresh {
+		state.revision++
+		state.refreshing++
+	}
+	state.active++
+	return directoryLoadToken{
+		cache:    cm,
+		key:      key,
+		revision: state.revision,
+		refresh:  refresh,
+		commit:   refresh || state.refreshing == 0,
+	}
+}
+
+func (token directoryLoadToken) commitIfCurrent(commit func()) bool {
+	token.cache.loadMu.Lock()
+	defer token.cache.loadMu.Unlock()
+	state := token.cache.loads[token.key]
+	if !token.commit || state == nil || state.revision != token.revision {
+		return false
+	}
+	commit()
+	return true
+}
+
+func (token directoryLoadToken) done() {
+	token.cache.loadMu.Lock()
+	defer token.cache.loadMu.Unlock()
+	state := token.cache.loads[token.key]
+	if state == nil {
+		return
+	}
+	state.active--
+	if token.refresh {
+		state.refreshing--
+	}
+	if state.active == 0 {
+		delete(token.cache.loads, token.key)
+	}
+}
+
+func (cm *CacheManager) mutateDirectories(keys []string, mutate func()) {
+	cm.loadMu.Lock()
+	defer cm.loadMu.Unlock()
+	for _, key := range keys {
+		if state := cm.loads[key]; state != nil {
+			state.revision++
+		}
+	}
+	mutate()
 }
 
 // global instance
@@ -167,10 +244,12 @@ const (
 )
 
 func newDirectoryCache(objs []model.Obj) *directoryCache {
+	owned := make([]model.Obj, len(objs))
+	copy(owned, objs)
 	sorted := make([]model.Obj, len(objs))
 	copy(sorted, objs)
 	return &directoryCache{
-		objs:   objs,
+		objs:   owned,
 		sorted: sorted,
 	}
 }

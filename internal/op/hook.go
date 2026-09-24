@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -15,21 +16,32 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Obj
-type ObjsUpdateHook = func(ctx context.Context, parent string, objs []model.Obj)
+type SnapshotProjector func(context.Context, string, []model.Obj)
 
 var (
-	objsUpdateHooks = make([]ObjsUpdateHook, 0)
+	snapshotProjectorMu sync.RWMutex
+	snapshotProjector   SnapshotProjector
 )
 
-func RegisterObjsUpdateHook(hook ObjsUpdateHook) {
-	objsUpdateHooks = append(objsUpdateHooks, hook)
+func SetSnapshotProjector(projector SnapshotProjector) {
+	snapshotProjectorMu.Lock()
+	snapshotProjector = projector
+	snapshotProjectorMu.Unlock()
 }
 
-func HandleObjsUpdateHook(ctx context.Context, parent string, objs []model.Obj) {
-	for _, hook := range objsUpdateHooks {
-		hook(ctx, parent, objs)
+func ProjectSnapshot(ctx context.Context, parent string, objs []model.Obj) {
+	snapshotProjectorMu.RLock()
+	projector := snapshotProjector
+	snapshotProjectorMu.RUnlock()
+	if projector != nil {
+		projector(ctx, parent, append([]model.Obj(nil), objs...))
 	}
+}
+
+func hasSnapshotProjector() bool {
+	snapshotProjectorMu.RLock()
+	defer snapshotProjectorMu.RUnlock()
+	return snapshotProjector != nil
 }
 
 // Setting
