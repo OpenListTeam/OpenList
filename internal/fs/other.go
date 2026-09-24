@@ -53,6 +53,7 @@ type TaskData struct {
 	Status        string        `json:"-"` //don't save status to save space
 	SrcActualPath string        `json:"src_path"`
 	DstActualPath string        `json:"dst_path"`
+	DstName       string        `json:"dst_name,omitempty"`
 	SrcStorage    driver.Driver `json:"-"`
 	DstStorage    driver.Driver `json:"-"`
 	SrcStorageMp  string        `json:"src_storage_mp"`
