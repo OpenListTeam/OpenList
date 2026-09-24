@@ -68,9 +68,11 @@ func (s *Server) callFSGet(c *gin.Context, raw json.RawMessage) (any, *rpcError)
 
 	parentPath := stdpath.Dir(reqPath)
 	var related []model.Obj
-	sameLevelFiles, err := fs.List(ctx, parentPath, &fs.ListArgs{})
-	if err == nil {
-		related = filterRelatedObjs(sameLevelFiles, obj)
+	if !obj.IsDir() && utils.GetFileType(obj.GetName()) == conf.VIDEO {
+		sameLevelFiles, err := fs.List(ctx, parentPath, &fs.ListArgs{})
+		if err == nil {
+			related = filterRelatedObjs(sameLevelFiles, obj)
+		}
 	}
 
 	parentMeta, _ := op.GetNearestMeta(parentPath)
@@ -85,7 +87,7 @@ func (s *Server) callFSGet(c *gin.Context, raw json.RawMessage) (any, *rpcError)
 			Created:      obj.CreateTime(),
 			Sign:         common.Sign(obj, parentPath, isEncrypt(meta, reqPath)),
 			Thumb:        thumb,
-			Type:         utils.GetFileType(obj.GetName()),
+			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
 			HashInfoStr:  obj.GetHash().String(),
 			HashInfo:     obj.GetHash().Export(),
 			MountDetails: mountDetails,

@@ -5,6 +5,7 @@ package s3
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -19,6 +20,13 @@ import (
 type Bucket struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+}
+
+func mapBackendError(err error) error {
+	if stderrors.Is(err, errs.TemporaryCapacity) {
+		return gofakes3.ErrSlowDown
+	}
+	return err
 }
 
 const emptyObjectName = "ThisIsAnEmptyFolderInTheS3Bucket"
