@@ -2,6 +2,7 @@ package google_drive
 
 import (
 	"context"
+	"errors"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -170,7 +171,7 @@ func (d *GoogleDrive) refreshToken() error {
 		}
 		log.Debug(res.String())
 		if e.Error != "" {
-			return fmt.Errorf(e.Error)
+			return errors.New(e.Error)
 		}
 		d.AccessToken = resp.AccessToken
 		return nil
@@ -192,7 +193,7 @@ func (d *GoogleDrive) refreshToken() error {
 	}
 	log.Debug(res.String())
 	if e.Error != "" {
-		return fmt.Errorf(e.Error)
+		return errors.New(e.Error)
 	}
 	d.AccessToken = resp.AccessToken
 	return nil
