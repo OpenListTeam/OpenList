@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"slices"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -45,7 +46,7 @@ func FsRecursiveMove(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, srcMeta, srcDir) {
+	if !authz.CanWrite(user, srcMeta, srcDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -61,7 +62,7 @@ func FsRecursiveMove(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, dstMeta, dstDir) {
+	if !authz.CanWrite(user, dstMeta, dstDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -179,7 +180,7 @@ func FsBatchRename(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, meta, reqPath) {
+	if !authz.CanWrite(user, meta, reqPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -237,7 +238,7 @@ func FsRegexRename(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, meta, reqPath) {
+	if !authz.CanWrite(user, meta, reqPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}

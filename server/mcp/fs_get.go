@@ -7,6 +7,7 @@ import (
 	stdpath "path"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -49,7 +50,7 @@ func (s *Server) callFSGet(c *gin.Context, raw json.RawMessage) (any, *rpcError)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return nil, &rpcError{Code: -32603, Message: err.Error()}
 	}
-	if !common.CanAccess(user, meta, reqPath, args.Password) {
+	if !authz.CanAccess(user, meta, reqPath, args.Password) {
 		return nil, &rpcError{Code: -32003, Message: "password is incorrect or you have no permission"}
 	}
 
