@@ -120,36 +120,6 @@ func (d *DoubaoShare) Link(ctx context.Context, file model.Obj, args model.LinkA
 	return nil, errors.New("can't convert obj to URL")
 }
 
-func (d *DoubaoShare) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	// TODO create folder, optional
-	return nil, errs.NotImplement
-}
-
-func (d *DoubaoShare) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// TODO move obj, optional
-	return nil, errs.NotImplement
-}
-
-func (d *DoubaoShare) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	// TODO rename obj, optional
-	return nil, errs.NotImplement
-}
-
-func (d *DoubaoShare) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// TODO copy obj, optional
-	return nil, errs.NotImplement
-}
-
-func (d *DoubaoShare) Remove(ctx context.Context, obj model.Obj) error {
-	// TODO remove obj, optional
-	return errs.NotImplement
-}
-
-func (d *DoubaoShare) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	// TODO upload file, optional
-	return nil, errs.NotImplement
-}
-
 func (d *DoubaoShare) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
 	// TODO get archive file meta-info, return errs.NotImplement to use an internal archive tool, optional
 	return nil, errs.NotImplement
@@ -162,13 +132,6 @@ func (d *DoubaoShare) ListArchive(ctx context.Context, obj model.Obj, args model
 
 func (d *DoubaoShare) Extract(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) (*model.Link, error) {
 	// TODO return link of file args.InnerPath in the archive obj, return errs.NotImplement to use an internal archive tool, optional
-	return nil, errs.NotImplement
-}
-
-func (d *DoubaoShare) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) ([]model.Obj, error) {
-	// TODO extract args.InnerPath path in the archive srcObj to the dstDir location, optional
-	// a folder with the same name as the archive file needs to be created to store the extracted results if args.PutIntoNewDir
-	// return errs.NotImplement to use an internal archive tool
 	return nil, errs.NotImplement
 }
 
