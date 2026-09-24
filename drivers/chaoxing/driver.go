@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
@@ -182,11 +181,6 @@ func (d *ChaoXing) Rename(ctx context.Context, srcObj model.Obj, newName string)
 		return errors.New(msg)
 	}
 	return nil
-}
-
-func (d *ChaoXing) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	// TODO copy obj, optional
-	return errs.NotImplement
 }
 
 func (d *ChaoXing) Remove(ctx context.Context, obj model.Obj) error {

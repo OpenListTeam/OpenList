@@ -285,10 +285,6 @@ func (d *WeiYun) Rename(ctx context.Context, srcObj model.Obj, newName string) (
 	return nil, errs.NotSupport
 }
 
-func (d *WeiYun) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	return errs.NotImplement
-}
-
 func (d *WeiYun) Remove(ctx context.Context, obj model.Obj) error {
 	switch obj := obj.(type) {
 	case *File:
