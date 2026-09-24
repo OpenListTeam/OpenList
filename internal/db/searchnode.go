@@ -35,7 +35,7 @@ func DeleteSearchNodesByParent(path string) error {
 	if err != nil {
 		return err
 	}
-	dir, name := stdpath.Split(path)
+	dir, name := stdpath.Dir(path), stdpath.Base(path)
 	return db.Where(fmt.Sprintf("%s = ? AND %s = ?",
 		columnName("parent"), columnName("name")),
 		dir, name).Delete(&model.SearchNode{}).Error
