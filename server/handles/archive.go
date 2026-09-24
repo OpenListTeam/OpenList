@@ -309,7 +309,7 @@ func ArchiveDown(c *gin.Context) {
 	innerPath := utils.FixAndCleanPath(c.Query("inner"))
 	password := c.Query("pass")
 	filename := stdpath.Base(innerPath)
-	storage, err := fs.GetStorage(archiveRawPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(archiveRawPath)
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return
@@ -343,7 +343,7 @@ func ArchiveProxy(c *gin.Context) {
 	innerPath := utils.FixAndCleanPath(c.Query("inner"))
 	password := c.Query("pass")
 	filename := stdpath.Base(innerPath)
-	storage, err := fs.GetStorage(archiveRawPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(archiveRawPath)
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return

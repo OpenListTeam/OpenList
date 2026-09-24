@@ -529,7 +529,7 @@ func (d *Chunk) getPartName(part int) string {
 }
 
 func (d *Chunk) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	remoteStorage, err := fs.GetStorage(d.RemotePath, &fs.GetStoragesArgs{})
+	remoteStorage, err := fs.GetStorage(d.RemotePath)
 	if err != nil {
 		return nil, errs.NotImplement
 	}

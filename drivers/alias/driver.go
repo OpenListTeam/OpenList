@@ -138,7 +138,7 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 		obj = &ret
 		if d.ProviderPassThrough && !obj.IsDir() {
-			if storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{}); err == nil {
+			if storage, err := fs.GetStorage(rawPath); err == nil {
 				obj = &model.ObjectProvider{
 					Object: ret,
 					Provider: model.Provider{
@@ -536,7 +536,7 @@ func (d *Alias) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	backends := d.pathMap[d.rootOrder[0]]
 	var storage driver.Driver
 	for _, backend := range backends {
-		s, err := fs.GetStorage(backend, &fs.GetStoragesArgs{})
+		s, err := fs.GetStorage(backend)
 		if err != nil {
 			return nil, errs.NotImplement
 		}

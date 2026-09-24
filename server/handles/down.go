@@ -20,7 +20,7 @@ import (
 func Down(c *gin.Context) {
 	rawPath := c.Request.Context().Value(conf.PathKey).(string)
 	filename := stdpath.Base(rawPath)
-	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(rawPath)
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return
@@ -46,7 +46,7 @@ func Down(c *gin.Context) {
 func Proxy(c *gin.Context) {
 	rawPath := c.Request.Context().Value(conf.PathKey).(string)
 	filename := stdpath.Base(rawPath)
-	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(rawPath)
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return

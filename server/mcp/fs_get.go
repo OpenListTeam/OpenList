@@ -117,7 +117,7 @@ func parseFSGetArgs(raw json.RawMessage) (*fsGetArgs, *rpcError) {
 }
 
 func buildFSGetRawURL(ctx context.Context, c *gin.Context, reqPath string, obj model.Obj, meta *model.Meta) (string, string, error) {
-	storage, storageErr := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	storage, storageErr := fs.GetStorage(reqPath)
 	provider, ok := model.GetProvider(obj)
 	if !ok && storageErr == nil {
 		provider = storage.Config().Name
