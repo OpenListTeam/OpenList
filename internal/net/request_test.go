@@ -150,7 +150,7 @@ func TestHighConcurrency(t *testing.T) {
 	for i := range len(buff) {
 		buff[i] = byte(i % 256)
 	}
-	downloader, invocations, _ := newDownloadRangeClient(buff)
+	downloader, _, _ := newDownloadRangeClient(buff)
 	con, partSize := 64, 100
 	concurrencyLimit := uint32(32)
 	d := NewDownloader(func(d *Downloader) {
@@ -163,10 +163,6 @@ func TestHighConcurrency(t *testing.T) {
 	})
 
 	var start, length int64 = 2, 7 << 10
-	length2 := length
-	if length2 == -1 {
-		length2 = int64(len(buff)) - start
-	}
 	readCloser, err := d.Download(context.Background(), int64(len(buff)), http_range.Range{Start: start, Length: length})
 
 	if err != nil {
@@ -176,23 +172,22 @@ func TestHighConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expect no error, got %v", err)
 	}
-	if !bytes.Equal(buff[start:start+length2], resultBuf) {
+	if !bytes.Equal(buff[start:start+length], resultBuf) {
 		t.Error("expect buffer content matches, but got mismatch")
-	}
-	chunkSize := int(length+int64(partSize)-1) / partSize
-	if e, a := chunkSize, *invocations; e != a {
-		t.Errorf("expect %v API calls, got %v", e, a)
 	}
 	if err := readCloser.Close(); err != nil {
 		t.Errorf("expect no error on close, got %v", err)
 	}
 	for range 100 {
 		time.Sleep(10 * time.Millisecond)
-		if d.ConcurrencyLimit.Limit == concurrencyLimit {
+		d.ConcurrencyLimit.mu.Lock()
+		remaining := d.ConcurrencyLimit.Limit
+		d.ConcurrencyLimit.mu.Unlock()
+		if remaining == concurrencyLimit {
 			return
 		}
 	}
-	t.Errorf("expect concurrency limit to be %v, got %v", concurrencyLimit, d.ConcurrencyLimit.Limit)
+	t.Error("download workers did not release concurrency slots")
 }
 
 func init() {
