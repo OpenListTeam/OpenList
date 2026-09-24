@@ -38,7 +38,7 @@ func moveResource(ctx context.Context, src, dstDir, srcDir, srcName, dstName str
 	if srcDir == dstDir {
 		return fs.Rename(ctx, src, dstName)
 	}
-	if _, err := fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir); err != nil {
+	if err := fs.MoveDirectly(ctx, src, dstDir); err != nil {
 		return err
 	}
 	if srcName != dstName {
@@ -59,11 +59,6 @@ type fileBackup struct {
 	renamed      bool
 }
 
-func stagingContext(ctx context.Context) context.Context {
-	ctx = context.WithValue(ctx, conf.NoTaskKey, struct{}{})
-	return context.WithValue(ctx, conf.SkipHookKey, struct{}{})
-}
-
 func removeIfExists(ctx context.Context, name string) error {
 	if _, err := fs.Get(ctx, name, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
@@ -75,7 +70,7 @@ func removeIfExists(ctx context.Context, name string) error {
 }
 
 func cleanupAfterFailure(ctx context.Context, name string, cause error) error {
-	if err := removeIfExists(stagingContext(context.WithoutCancel(ctx)), name); err != nil {
+	if err := removeIfExists(context.WithoutCancel(ctx), name); err != nil {
 		log.WithError(err).Errorf("failed to clean up WebDAV staging path %s", name)
 		return fmt.Errorf("%w; failed to clean up %s: %w", cause, name, err)
 	}
@@ -86,7 +81,7 @@ func newFileBackup(ctx context.Context, originalPath string, keepOriginal bool) 
 	backupPath := path.Join(path.Dir(originalPath), ".openlist-backup-"+uuid.NewString())
 	backup := &fileBackup{originalPath: originalPath, backupPath: backupPath}
 	if !keepOriginal {
-		err := fs.Rename(stagingContext(ctx), originalPath, path.Base(backupPath))
+		err := fs.Rename(ctx, originalPath, path.Base(backupPath))
 		if err == nil {
 			backup.renamed = true
 			return backup, nil
@@ -95,7 +90,7 @@ func newFileBackup(ctx context.Context, originalPath string, keepOriginal bool) 
 			return nil, errors.WithMessage(err, "failed to rename object into rollback backup")
 		}
 	}
-	if _, err := fs.CopyTo(stagingContext(ctx), originalPath, path.Dir(originalPath), path.Base(backupPath)); err != nil {
+	if err := fs.CopyToDirectly(ctx, originalPath, path.Dir(originalPath), path.Base(backupPath)); err != nil {
 		return nil, cleanupAfterFailure(ctx, backupPath, errors.WithMessage(err, "failed to copy object into rollback backup"))
 	}
 	return backup, nil
@@ -115,10 +110,10 @@ func (b *fileBackup) restore(ctx context.Context) error {
 		}
 		return nil
 	}
-	if _, err := fs.CopyTo(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), b.backupPath, path.Dir(b.originalPath), path.Base(b.originalPath)); err != nil {
+	if err := fs.CopyToDirectly(ctx, b.backupPath, path.Dir(b.originalPath), path.Base(b.originalPath)); err != nil {
 		return errors.WithMessagef(err, "failed to restore %s from %s", b.originalPath, b.backupPath)
 	}
-	if err := fs.Remove(stagingContext(ctx), b.backupPath); err != nil {
+	if err := fs.Remove(ctx, b.backupPath); err != nil {
 		if !errs.IsObjectNotFound(err) {
 			log.Warnf("failed to remove restored WebDAV backup %s: %v", b.backupPath, err)
 		}
@@ -130,7 +125,7 @@ func (b *fileBackup) discard(ctx context.Context) {
 	if b == nil {
 		return
 	}
-	if err := removeIfExists(stagingContext(context.WithoutCancel(ctx)), b.backupPath); err != nil {
+	if err := removeIfExists(context.WithoutCancel(ctx), b.backupPath); err != nil {
 		log.Warnf("failed to remove WebDAV backup %s: %v", b.backupPath, err)
 	}
 }
@@ -141,11 +136,10 @@ func installStagedObject(ctx context.Context, stagePath, dstDir, dstName string)
 	} else if !errs.IsNotImplementError(err) && !errs.IsNotSupportError(err) {
 		return err
 	}
-	copyCtx := context.WithValue(ctx, conf.NoTaskKey, struct{}{})
-	if _, err := fs.CopyTo(copyCtx, stagePath, dstDir, dstName); err != nil {
+	if err := fs.CopyToDirectly(ctx, stagePath, dstDir, dstName); err != nil {
 		return err
 	}
-	if err := fs.Remove(stagingContext(context.WithoutCancel(ctx)), stagePath); err != nil {
+	if err := fs.Remove(context.WithoutCancel(ctx), stagePath); err != nil {
 		log.Warnf("failed to remove installed WebDAV staging object %s: %v", stagePath, err)
 	}
 	return nil
@@ -155,9 +149,9 @@ func copyWithRollback(ctx context.Context, src, dstDir, dstName string, dstExist
 	stagePath := path.Join(dstDir, ".openlist-copy-"+uuid.NewString())
 	var err error
 	if shallow {
-		err = fs.MakeDir(stagingContext(ctx), stagePath)
+		err = fs.MakeDir(ctx, stagePath)
 	} else {
-		_, err = fs.CopyTo(stagingContext(ctx), src, dstDir, path.Base(stagePath))
+		err = fs.CopyToDirectly(ctx, src, dstDir, path.Base(stagePath))
 	}
 	if err != nil {
 		return nil, cleanupAfterFailure(ctx, stagePath, err)
@@ -199,13 +193,13 @@ func copyMutation(ctx context.Context, dstPath, stagePath string, dstBackup *fil
 			if err := dstBackup.restore(ctx); err != nil {
 				rollbackErrs = append(rollbackErrs, err)
 			}
-			if err := removeIfExists(stagingContext(context.WithoutCancel(ctx)), stagePath); err != nil {
+			if err := removeIfExists(context.WithoutCancel(ctx), stagePath); err != nil {
 				rollbackErrs = append(rollbackErrs, err)
 			}
 			return stderrors.Join(rollbackErrs...)
 		},
 		finalize: func() {
-			if err := removeIfExists(stagingContext(context.WithoutCancel(ctx)), stagePath); err != nil {
+			if err := removeIfExists(context.WithoutCancel(ctx), stagePath); err != nil {
 				log.Warnf("failed to remove WebDAV COPY staging object %s: %v", stagePath, err)
 			}
 			dstBackup.discard(ctx)
@@ -274,29 +268,31 @@ func moveMutation(ctx context.Context, dst, dstDir, srcName, dstName string, src
 	}
 }
 
-func runDeadPropsFileMutation(ctx context.Context, update func(*gorm.DB) error, apply func() (*fileMutation, error)) error {
-	var mutation *fileMutation
-	err := withDeadPropsTransaction(ctx, func(tx *gorm.DB) error {
-		if err := update(tx); err != nil {
+func runDeadPropsFileMutation(ctx context.Context, update func(*gorm.DB) error, apply func(context.Context) (*fileMutation, error)) error {
+	return op.RunNamespaceMutation(ctx, func(ctx context.Context) error {
+		var mutation *fileMutation
+		err := withDeadPropsTransaction(ctx, func(tx *gorm.DB) error {
+			if err := update(tx); err != nil {
+				return err
+			}
+			var err error
+			mutation, err = apply(ctx)
+			return err
+		})
+		if err != nil {
+			if mutation != nil && mutation.rollback != nil {
+				if rollbackErr := mutation.rollback(); rollbackErr != nil {
+					log.WithError(rollbackErr).Errorf("failed to compensate WebDAV file operation; backups may remain at %s", strings.Join(mutation.backupPaths, ", "))
+					return fmt.Errorf("%w; filesystem compensation failed: %w", err, rollbackErr)
+				}
+			}
 			return err
 		}
-		var err error
-		mutation, err = apply()
-		return err
-	})
-	if err != nil {
-		if mutation != nil && mutation.rollback != nil {
-			if rollbackErr := mutation.rollback(); rollbackErr != nil {
-				log.WithError(rollbackErr).Errorf("failed to compensate WebDAV file operation; backups may remain at %s", strings.Join(mutation.backupPaths, ", "))
-				return fmt.Errorf("%w; filesystem compensation failed: %w", err, rollbackErr)
-			}
+		if mutation != nil && mutation.finalize != nil {
+			mutation.finalize()
 		}
-		return err
-	}
-	if mutation != nil && mutation.finalize != nil {
-		mutation.finalize()
-	}
-	return nil
+		return nil
+	})
 }
 
 // moveFiles moves files and/or directories from src to dst.
@@ -351,7 +347,7 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	}
 	err = runDeadPropsFileMutation(ctx,
 		func(tx *gorm.DB) error { return moveDeadProps(tx, src, dst) },
-		func() (*fileMutation, error) {
+		func(ctx context.Context) (*fileMutation, error) {
 			return moveWithRollback(ctx, src, dst, dstDir, srcDir, srcName, dstName, dstExisted && overwrite)
 		},
 	)
@@ -418,7 +414,7 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool, depth int) 
 
 	err = runDeadPropsFileMutation(ctx,
 		func(tx *gorm.DB) error { return copyDeadProps(tx, src, dst) },
-		func() (*fileMutation, error) {
+		func(ctx context.Context) (*fileMutation, error) {
 			return copyWithRollback(ctx, src, dstDir, dstName, dstExisted && overwrite, shallow)
 		},
 	)

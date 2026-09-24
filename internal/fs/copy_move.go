@@ -14,7 +14,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/tache"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -40,6 +39,13 @@ const (
 	copy taskType = iota
 	move
 	merge
+)
+
+type transferMode uint8
+
+const (
+	scheduledTransfer transferMode = iota
+	synchronousTransfer
 )
 
 type FileTransferTask struct {
@@ -70,7 +76,7 @@ func (t *FileTransferTask) Run() error {
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
 	return t.RunWithNextTaskCallback(func(nextTask *FileTransferTask) error {
-		task_group.TransferCoordinator.AddTask(t.groupID, nil)
+		task_group.TransferCoordinator.AddTask(t.groupID)
 		if t.TaskType == copy || t.TaskType == merge {
 			CopyTaskManager.Add(nextTask)
 		} else {
@@ -94,11 +100,10 @@ func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
 		(len(t.groupID) == 0 || // 重启恢复
 			(t.GetErr() == nil && t.GetState() != tache.StatePending)) { // 手动重试
 		t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
-		var payload any
+		task_group.TransferCoordinator.AddTask(t.groupID)
 		if t.TaskType == move {
-			payload = task_group.SrcPathToRemove(stdpath.Join(t.SrcStorageMp, t.SrcActualPath))
+			task_group.TransferCoordinator.RemoveSource(t.groupID, stdpath.Join(t.SrcStorageMp, t.SrcActualPath))
 		}
-		task_group.TransferCoordinator.AddTask(t.groupID, payload)
 	}
 }
 
@@ -132,49 +137,50 @@ func namedCopyStageObjectPath(stageDirPath, srcPath, dstName string) string {
 }
 
 func copyNamedInStorage(ctx context.Context, storage driver.Driver, srcPath, dstDirPath, dstName string) error {
-	stageDirPath := stdpath.Join(dstDirPath, ".openlist-copy-"+uuid.NewString())
-	stageCtx := context.WithValue(ctx, conf.SkipHookKey, struct{}{})
-	if err := op.MakeDir(stageCtx, storage, stageDirPath); err != nil {
-		return errors.WithMessage(err, "failed create copy staging directory")
-	}
-	stageCreated := true
-	removeStage := func() error {
-		return op.Remove(stageCtx, storage, stageDirPath)
-	}
-	defer func() {
-		if !stageCreated {
-			return
+	return op.RunNamespaceMutation(ctx, func(ctx context.Context) error {
+		stageDirPath := stdpath.Join(dstDirPath, ".openlist-copy-"+uuid.NewString())
+		if err := op.MakeDir(ctx, storage, stageDirPath); err != nil {
+			return errors.WithMessage(err, "failed create copy staging directory")
+		}
+		stageCreated := true
+		removeStage := func() error {
+			return op.Remove(ctx, storage, stageDirPath)
+		}
+		defer func() {
+			if !stageCreated {
+				return
+			}
+			if err := removeStage(); err != nil {
+				log.WithError(err).Warnf("copy staging directory remains and requires cleanup: %s", stageDirPath)
+			}
+		}()
+
+		if err := op.Copy(ctx, storage, srcPath, stageDirPath); err != nil {
+			return errors.WithMessage(err, "failed copy object into staging directory")
+		}
+		srcName := stdpath.Base(srcPath)
+		stageObjPath := namedCopyStageObjectPath(stageDirPath, srcPath, "")
+		if srcName != dstName {
+			if err := op.Rename(ctx, storage, stageObjPath, dstName); err != nil {
+				return errors.WithMessage(err, "failed rename object in staging directory")
+			}
+			stageObjPath = namedCopyStageObjectPath(stageDirPath, srcPath, dstName)
+		}
+		// The enclosing mutation frame publishes after installation and cleanup.
+		// The final move updates the same cache and reconciliation authority.
+
+		if err := op.Move(ctx, storage, stageObjPath, dstDirPath); err != nil {
+			return errors.WithMessage(err, "failed move copied object from staging directory")
 		}
 		if err := removeStage(); err != nil {
-			log.WithError(err).Warnf("copy staging directory remains and requires cleanup: %s", stageDirPath)
+			return errors.WithMessagef(err, "failed remove copy staging directory %s; cleanup will be retried", stageDirPath)
 		}
-	}()
-
-	if err := op.Copy(stageCtx, storage, srcPath, stageDirPath); err != nil {
-		return errors.WithMessage(err, "failed copy object into staging directory")
-	}
-	srcName := stdpath.Base(srcPath)
-	stageObjPath := namedCopyStageObjectPath(stageDirPath, srcPath, "")
-	if srcName != dstName {
-		if err := op.Rename(stageCtx, storage, stageObjPath, dstName); err != nil {
-			return errors.WithMessage(err, "failed rename object in staging directory")
-		}
-		stageObjPath = namedCopyStageObjectPath(stageDirPath, srcPath, dstName)
-	}
-	// Staging operations suppress hooks so intermediate paths stay invisible.
-	// The final move intentionally uses the caller context to publish the target
-	// and trigger the normal cache/update hooks exactly once.
-	if err := op.Move(ctx, storage, stageObjPath, dstDirPath); err != nil {
-		return errors.WithMessage(err, "failed move copied object from staging directory")
-	}
-	if err := removeStage(); err != nil {
-		return errors.WithMessagef(err, "failed remove copy staging directory %s; cleanup will be retried", stageDirPath)
-	}
-	stageCreated = false
-	return nil
+		stageCreated = false
+		return nil
+	})
 }
 
-func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, dstName string, skipHook ...bool) (task.TaskExtensionInfo, error) {
+func transfer(ctx context.Context, taskType taskType, mode transferMode, srcObjPath, dstDirPath, dstName string) (task.TaskExtensionInfo, error) {
 	srcStorage, srcObjActualPath, err := op.GetStorageAndActualPath(srcObjPath)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed get src storage")
@@ -185,9 +191,6 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, ds
 	}
 
 	if srcStorage.GetStorage() == dstStorage.GetStorage() {
-		if utils.IsBool(skipHook...) {
-			ctx = context.WithValue(ctx, conf.SkipHookKey, struct{}{})
-		}
 		if taskType == copy || taskType == merge {
 			if dstName != "" {
 				if supportsNamedNativeCopy(srcStorage) {
@@ -226,8 +229,8 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, ds
 	}
 
 	t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
-	task_group.TransferCoordinator.AddTask(t.groupID, nil)
-	if ctx.Value(conf.NoTaskKey) != nil {
+	task_group.TransferCoordinator.AddTask(t.groupID)
+	if mode == synchronousTransfer {
 		var callback func(nextTask *FileTransferTask) error
 		hasSuccess := false
 		callback = func(nextTask *FileTransferTask) error {
@@ -244,7 +247,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, ds
 			hasSuccess = true
 		}
 		if taskType == move {
-			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
+			task_group.TransferCoordinator.RemoveSource(t.groupID, srcObjPath)
 		}
 		task_group.TransferCoordinator.Done(context.WithoutCancel(ctx), t.groupID, hasSuccess)
 		return nil, err
@@ -255,7 +258,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath, ds
 	if taskType == copy || taskType == merge {
 		CopyTaskManager.Add(t)
 	} else {
-		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
+		task_group.TransferCoordinator.RemoveSource(t.groupID, srcObjPath)
 		MoveTaskManager.Add(t)
 	}
 	return t, nil
@@ -354,7 +357,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 	}
 	t.SetTotalBytes(ss.GetSize())
 	t.Status = "uploading"
-	return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
+	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
 }
 
 var (

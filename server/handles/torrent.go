@@ -1675,7 +1675,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 			continue
 		}
 		srcObjPath := stdpath.Join(transitFullPath, name)
-		_, copyErr := fs.Copy(context.WithValue(c.Request.Context(), conf.NoTaskKey, struct{}{}), srcObjPath, finalDst)
+		copyErr := fs.CopyDirectly(c.Request.Context(), srcObjPath, finalDst)
 		if copyErr != nil {
 			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": copyErr.Error()})
 			continue

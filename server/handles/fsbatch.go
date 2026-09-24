@@ -135,9 +135,9 @@ func FsRecursiveMove(c *gin.Context) {
 	}
 
 	var count = 0
-	for i, fileName := range movingFileNames {
+	for _, fileName := range movingFileNames {
 		// move
-		_, err := fs.Move(c.Request.Context(), fileName, dstDir, len(movingFileNames) > i+1)
+		_, err := fs.Move(c.Request.Context(), fileName, dstDir)
 		if err != nil {
 			common.ErrorResp(c, err, 500)
 			return

@@ -208,7 +208,7 @@ func (t *DownloadTask) Transfer() error {
 		}
 		tsk.SetTotalBytes(t.GetTotalBytes())
 		tsk.groupID = path.Join(tsk.DstStorageMp, tsk.DstActualPath)
-		task_group.TransferCoordinator.AddTask(tsk.groupID, nil)
+		task_group.TransferCoordinator.AddTask(tsk.groupID)
 		TransferTaskManager.Add(tsk)
 		return nil
 	}
