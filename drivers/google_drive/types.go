@@ -22,6 +22,7 @@ const (
 	mimeTypeGoogleSite     = "application/vnd.google-apps.site"
 	mimeTypeGoogleMap      = "application/vnd.google-apps.map"
 	mimeTypeGoogleVid      = "application/vnd.google-apps.vid"
+	mimeTypeGoogleJam      = "application/vnd.google-apps.jam"
 )
 
 // Export target MIME types.
@@ -54,9 +55,10 @@ var googleWorkspaceUnsupported = map[string]string{
 	mimeTypeGoogleSite: "not supported by this driver's synchronous export path; files.download LRO is not implemented",
 	// Google My Maps has no documented synchronous download/export path.
 	mimeTypeGoogleMap: "no supported download/export strategy is implemented for Google My Maps",
-	// Google Vids require the files.download long-running-operation flow.
+	// Google Vids and Jamboard require the files.download long-running-operation flow.
 	// See https://developers.google.com/drive/api/reference/rest/v3/files/download
 	mimeTypeGoogleVid: "requires the files.download long-running-operation flow which is not implemented",
+	mimeTypeGoogleJam: "requires the files.download long-running-operation flow which is not implemented",
 }
 
 // FileMeta holds the fields we need from a files.get metadata response inside Link().

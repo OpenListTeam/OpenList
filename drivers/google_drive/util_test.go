@@ -65,6 +65,7 @@ func TestResolveDownloadStrategy_Unsupported(t *testing.T) {
 		mimeTypeGoogleSite,
 		mimeTypeGoogleMap,
 		mimeTypeGoogleVid,
+		mimeTypeGoogleJam,
 	}
 	for _, mime := range cases {
 		t.Run(mime, func(t *testing.T) {
