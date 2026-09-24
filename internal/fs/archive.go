@@ -21,7 +21,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -415,7 +414,7 @@ func archiveDecompress(ctx context.Context, srcObjPath, dstDirPath string, args 
 		return nil, err
 	} else {
 		tsk.Creator, _ = ctx.Value(conf.UserKey).(*model.User)
-		tsk.ApiUrl = common.GetApiUrl(ctx)
+		tsk.ApiUrl = conf.GetApiUrl(ctx)
 		ArchiveDownloadTaskManager.Add(tsk)
 		return tsk, nil
 	}

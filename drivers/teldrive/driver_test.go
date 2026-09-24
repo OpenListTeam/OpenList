@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/go-resty/resty/v2"
 )
@@ -34,5 +36,46 @@ func TestListEmptyDir(t *testing.T) {
 	}
 	if len(objs) != 0 {
 		t.Fatalf("expected no entries for an empty dir, got %d", len(objs))
+	}
+}
+
+func TestListRootUsesConfiguredRootPath(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Query().Get("path"))
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"id":"child","name":"child","type":"folder"}],"meta":{"count":1,"totalPages":1,"currentPage":1}}`))
+	}))
+	defer srv.Close()
+
+	oldClient := base.RestyClient
+	base.RestyClient = resty.New()
+	defer func() { base.RestyClient = oldClient }()
+
+	d := &Teldrive{
+		Addition: Addition{
+			RootPath: driver.RootPath{RootFolderPath: "/configured-root"},
+		},
+	}
+	d.Address = srv.URL
+
+	objs, err := d.List(context.Background(), &model.Object{}, model.ListArgs{})
+	if err != nil {
+		t.Fatalf("List returned error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) != 1 || paths[0] != "/configured-root" {
+		t.Fatalf("expected request path %q, got %q", "/configured-root", paths)
+	}
+	if len(objs) != 1 || objs[0].GetPath() != "/configured-root/child" {
+		t.Fatalf("expected child path %q, got %#v", "/configured-root/child", objs)
 	}
 }
