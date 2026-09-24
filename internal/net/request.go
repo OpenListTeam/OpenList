@@ -206,7 +206,7 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	if err != nil {
 		d.cancel(err)
 		d.cfg.ConcurrencyLimit.Release()
-		_ = d.interrupt()
+		_ = d.interrupt(false)
 		return nil, err
 	}
 
@@ -293,10 +293,10 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 }
 
 // when the final reader Close, we interrupt
-func (d *downloader) interrupt() error {
+func (d *downloader) interrupt(complete bool) error {
 	err := context.Cause(d.ctx)
 	if err == nil {
-		if d.written.Load() != d.params.Range.Length {
+		if !complete && d.written.Load() != d.params.Range.Length {
 			err = fmt.Errorf("interrupted")
 		}
 	} else if errors.Is(err, context.Canceled) {
@@ -309,7 +309,6 @@ func (d *downloader) interrupt() error {
 		for _, buf := range d.bufMap {
 			_ = buf.Close()
 		}
-		d.bufMap = nil
 	}
 	if d.hc != nil {
 		_ = d.hc.Close()
@@ -317,7 +316,6 @@ func (d *downloader) interrupt() error {
 	}
 	if d.maxPos != 0 {
 		d.maxPos = 0
-		close(d.chunkCh)
 		if d.concurrency > 0 {
 			d.concurrency = -d.concurrency
 		}
@@ -619,6 +617,7 @@ type multiReadCloser struct {
 	maxPos int
 	curBuf *buffer.PipeBuffer
 	d      *downloader
+	read   atomic.Int64
 }
 
 func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
@@ -626,6 +625,7 @@ func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
 		return 0, io.EOF
 	}
 	n, err = mr.curBuf.Read(p)
+	mr.read.Add(int64(n))
 	// log.Debugf("read_%d read current buffer, n=%d ,err=%+v", mr.rPos, n, err)
 	if err == io.EOF {
 		log.Debugf("read_%d finished current buffer", mr.pos)
@@ -641,5 +641,5 @@ func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
 }
 
 func (mr *multiReadCloser) Close() error {
-	return mr.d.interrupt()
+	return mr.d.interrupt(mr.read.Load() == mr.d.params.Range.Length)
 }

@@ -1,9 +1,12 @@
 package net
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,4 +88,70 @@ func TestDownloadSinglePartFailureReleasesLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDownloadCancellationDoesNotRaceTaskQueueClose(t *testing.T) {
+	data := []byte("abcdefgh")
+	overloadStarted := make(chan struct{})
+	releaseOverload := make(chan struct{})
+	var overloadOnce sync.Once
+	limit := &ConcurrencyLimit{Limit: 2}
+	d := NewDownloader(func(d *Downloader) {
+		d.Concurrency = 2
+		d.PartSize = 4
+		d.ConcurrencyLimit = limit
+		d.HttpClient = func(_ context.Context, params *HttpRequestParams) (*http.Response, error) {
+			if params.Range.Start > 0 {
+				overloadOnce.Do(func() { close(overloadStarted) })
+				<-releaseOverload
+				return nil, HttpStatusCodeError(http.StatusServiceUnavailable)
+			}
+			end := params.Range.Start + params.Range.Length
+			return &http.Response{
+				StatusCode:    http.StatusPartialContent,
+				Body:          io.NopCloser(bytes.NewReader(data[params.Range.Start:end])),
+				ContentLength: params.Range.Length,
+				Header: http.Header{
+					"Content-Range": {params.Range.ContentRange(int64(len(data)))},
+				},
+			}, nil
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	reader, err := d.Download(ctx, &HttpRequestParams{
+		Size: int64(len(data)), Range: http_range.Range{Length: -1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = io.ReadAll(reader)
+		close(readDone)
+	}()
+	select {
+	case <-overloadStarted:
+	case <-time.After(time.Second):
+		t.Fatal("later range was not requested")
+	}
+	cancel()
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close cancelled reader: %v", err)
+	}
+	close(releaseOverload)
+	select {
+	case <-readDone:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled reader remained blocked")
+	}
+	for range 100 {
+		limit.mu.Lock()
+		remaining := limit.Limit
+		limit.mu.Unlock()
+		if remaining == 2 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("download workers did not release concurrency slots")
 }

@@ -76,6 +76,59 @@ func TestDownloadOrder(t *testing.T) {
 	}
 }
 
+func TestDownloadCloseAfterCompleteReadDoesNotWaitForWorkerReceipt(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	d := NewDownloader(func(d *Downloader) {
+		d.Concurrency = 2
+		d.PartSize = 4
+		d.HttpClient = func(ctx context.Context, params *HttpRequestParams) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusPartialContent,
+				Body:          &delayedEOFBody{ctx: ctx, data: make([]byte, params.Range.Length)},
+				ContentLength: params.Range.Length,
+				Header: http.Header{
+					"Content-Range": {params.Range.ContentRange(params.Size)},
+				},
+			}, nil
+		}
+	})
+	reader, err := d.Download(ctx, &HttpRequestParams{
+		Range: http_range.Range{Length: 8},
+		Size:  8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 8 {
+		t.Fatalf("read %d bytes, want 8", len(data))
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close after complete read: %v", err)
+	}
+}
+
+type delayedEOFBody struct {
+	ctx  context.Context
+	data []byte
+	sent bool
+}
+
+func (r *delayedEOFBody) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(p, r.data), nil
+	}
+	<-r.ctx.Done()
+	return 0, r.ctx.Err()
+}
+
+func (*delayedEOFBody) Close() error { return nil }
+
 func TestDownloadInterrupt(t *testing.T) {
 	buff := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	buff = append(buff, buff...)
