@@ -17,7 +17,7 @@ D@' 3z K!7 - The King Of Cracking
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
+
 	"github.com/henrybear327/Proton-API-Bridge/common"
 )
 
@@ -39,18 +39,16 @@ var config = driver.Config{
 	NoLinkURL:   true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &ProtonDrive{
-			Addition: Addition{
-				UseReusableLogin: true,
-			},
-			apiBase:    "https://drive.proton.me/api",
-			appVersion: "windows-drive@1.11.3+rclone+proton",
-			protonJson: "application/vnd.protonmail.v1+json",
-			sdkVersion: "js@0.3.0",
-			userAgent:  "ProtonDrive/v1.70.0 (Windows NT 10.0.22000; Win64; x64)",
-			webDriveAV: "web-drive@5.2.0+0f69f7a8",
-		}
-	})
+func New() driver.Driver {
+	return &ProtonDrive{
+		Addition: Addition{
+			UseReusableLogin: true,
+		},
+		apiBase:    "https://drive.proton.me/api",
+		appVersion: "windows-drive@1.11.3+rclone+proton",
+		protonJson: "application/vnd.protonmail.v1+json",
+		sdkVersion: "js@0.3.0",
+		userAgent:  "ProtonDrive/v1.70.0 (Windows NT 10.0.22000; Win64; x64)",
+		webDriveAV: "web-drive@5.2.0+0f69f7a8",
+	}
 }

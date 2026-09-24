@@ -2,7 +2,6 @@ package _189
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -19,8 +18,6 @@ var config = driver.Config{
 	Alert:       `info|You can try to use 189PC driver if this driver does not work.`,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Cloud189{}
-	})
+func New() driver.Driver {
+	return &Cloud189{}
 }

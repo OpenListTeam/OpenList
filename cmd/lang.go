@@ -10,7 +10,6 @@ import (
 	"os"
 	"strings"
 
-	_ "github.com/OpenListTeam/OpenList/v4/drivers"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/data"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"

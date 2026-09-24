@@ -2,7 +2,6 @@ package ilanzou
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -25,43 +24,41 @@ type Conf struct {
 	site       string
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &ILanZou{
-			config: driver.Config{
-				Name:              "ILanZou",
-				DefaultRoot:       "0",
-				LocalSort:         true,
-				NoOverwriteUpload: true,
-			},
-			conf: Conf{
-				base:       "https://apis.ilanzou.com",
-				secret:     []byte("lanZouY-disk-app"),
-				bucket:     "wpanstore-lanzou",
-				unproved:   "unproved",
-				proved:     "proved",
-				devVersion: "125",
-				site:       "https://www.ilanzou.com",
-			},
-		}
-	})
-	op.RegisterDriver(func() driver.Driver {
-		return &ILanZou{
-			config: driver.Config{
-				Name:              "FeijiPan",
-				DefaultRoot:       "0",
-				LocalSort:         true,
-				NoOverwriteUpload: true,
-			},
-			conf: Conf{
-				base:       "https://api.feijipan.com",
-				secret:     []byte("dingHao-disk-app"),
-				bucket:     "wpanstore",
-				unproved:   "ws",
-				proved:     "app",
-				devVersion: "125",
-				site:       "https://www.feijipan.com",
-			},
-		}
-	})
+func New() driver.Driver {
+	return &ILanZou{
+		config: driver.Config{
+			Name:              "ILanZou",
+			DefaultRoot:       "0",
+			LocalSort:         true,
+			NoOverwriteUpload: true,
+		},
+		conf: Conf{
+			base:       "https://apis.ilanzou.com",
+			secret:     []byte("lanZouY-disk-app"),
+			bucket:     "wpanstore-lanzou",
+			unproved:   "unproved",
+			proved:     "proved",
+			devVersion: "125",
+			site:       "https://www.ilanzou.com",
+		},
+	}
+}
+func New2() driver.Driver {
+	return &ILanZou{
+		config: driver.Config{
+			Name:              "FeijiPan",
+			DefaultRoot:       "0",
+			LocalSort:         true,
+			NoOverwriteUpload: true,
+		},
+		conf: Conf{
+			base:       "https://api.feijipan.com",
+			secret:     []byte("dingHao-disk-app"),
+			bucket:     "wpanstore",
+			unproved:   "ws",
+			proved:     "app",
+			devVersion: "125",
+			site:       "https://www.feijipan.com",
+		},
+	}
 }

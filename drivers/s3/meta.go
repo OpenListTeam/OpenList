@@ -2,7 +2,6 @@ package s3
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -26,25 +25,23 @@ type Addition struct {
 	UserAgent                string `json:"user_agent" required:"false" default:"" help:"Custom User-Agent for S3 requests."`
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &S3{
-			config: driver.Config{
-				Name:        "S3",
-				DefaultRoot: "/",
-				LocalSort:   true,
-				CheckStatus: true,
-			},
-		}
-	})
-	op.RegisterDriver(func() driver.Driver {
-		return &S3{
-			config: driver.Config{
-				Name:        "Doge",
-				DefaultRoot: "/",
-				LocalSort:   true,
-				CheckStatus: true,
-			},
-		}
-	})
+func New() driver.Driver {
+	return &S3{
+		config: driver.Config{
+			Name:        "S3",
+			DefaultRoot: "/",
+			LocalSort:   true,
+			CheckStatus: true,
+		},
+	}
+}
+func New2() driver.Driver {
+	return &S3{
+		config: driver.Config{
+			Name:        "Doge",
+			DefaultRoot: "/",
+			LocalSort:   true,
+			CheckStatus: true,
+		},
+	}
 }

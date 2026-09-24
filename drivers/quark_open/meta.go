@@ -2,7 +2,6 @@ package quark_open
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -23,19 +22,17 @@ type Conf struct {
 	userId string
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &QuarkOpen{
-			config: driver.Config{
-				Name:              "QuarkOpen",
-				OnlyProxy:         true,
-				DefaultRoot:       "0",
-				NoOverwriteUpload: true,
-			},
-			conf: Conf{
-				ua:  "go-resty/3.0.0-beta.1 (https://resty.dev)",
-				api: "https://open-api-drive.quark.cn",
-			},
-		}
-	})
+func New() driver.Driver {
+	return &QuarkOpen{
+		config: driver.Config{
+			Name:              "QuarkOpen",
+			OnlyProxy:         true,
+			DefaultRoot:       "0",
+			NoOverwriteUpload: true,
+		},
+		conf: Conf{
+			ua:  "go-resty/3.0.0-beta.1 (https://resty.dev)",
+			api: "https://open-api-drive.quark.cn",
+		},
+	}
 }

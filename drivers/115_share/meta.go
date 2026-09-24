@@ -2,7 +2,6 @@ package _115_share
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -22,8 +21,6 @@ var config = driver.Config{
 	NoUpload:    true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Pan115Share{}
-	})
+func New() driver.Driver {
+	return &Pan115Share{}
 }
