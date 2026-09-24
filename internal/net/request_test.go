@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -33,7 +32,7 @@ func TestDownloadOrder(t *testing.T) {
 	d := NewDownloader(func(d *Downloader) {
 		d.Concurrency = con
 		d.PartSize = partSize
-		d.HttpClient = downloader.HttpRequest
+		d.OpenPart = downloader.OpenPart
 	})
 
 	var start, length int64 = 2, 10
@@ -41,11 +40,7 @@ func TestDownloadOrder(t *testing.T) {
 	if length2 == -1 {
 		length2 = int64(len(buff)) - start
 	}
-	req := &HttpRequestParams{
-		Range: http_range.Range{Start: start, Length: length},
-		Size:  int64(len(buff)),
-	}
-	readCloser, err := d.Download(context.Background(), req)
+	readCloser, err := d.Download(context.Background(), int64(len(buff)), http_range.Range{Start: start, Length: length})
 
 	if err != nil {
 		t.Fatalf("expect no error, got %v", err)
@@ -82,21 +77,11 @@ func TestDownloadCloseAfterCompleteReadDoesNotWaitForWorkerReceipt(t *testing.T)
 	d := NewDownloader(func(d *Downloader) {
 		d.Concurrency = 2
 		d.PartSize = 4
-		d.HttpClient = func(ctx context.Context, params *HttpRequestParams) (*http.Response, error) {
-			return &http.Response{
-				StatusCode:    http.StatusPartialContent,
-				Body:          &delayedEOFBody{ctx: ctx, data: make([]byte, params.Range.Length)},
-				ContentLength: params.Range.Length,
-				Header: http.Header{
-					"Content-Range": {params.Range.ContentRange(params.Size)},
-				},
-			}, nil
+		d.OpenPart = func(ctx context.Context, request PartRequest) (io.ReadCloser, error) {
+			return &delayedEOFBody{ctx: ctx, data: make([]byte, request.Range.Length)}, nil
 		}
 	})
-	reader, err := d.Download(ctx, &HttpRequestParams{
-		Range: http_range.Range{Length: 8},
-		Size:  8,
-	})
+	reader, err := d.Download(ctx, 8, http_range.Range{Length: 8})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,19 +122,15 @@ func TestDownloadInterrupt(t *testing.T) {
 	d := NewDownloader(func(d *Downloader) {
 		d.Concurrency = con
 		d.PartSize = partSize
-		d.HttpClient = downloader.HttpRequest
+		d.OpenPart = downloader.OpenPart
 		d.ConcurrencyLimit = &ConcurrencyLimit{
 			Limit: 5,
 		}
 	})
 
 	var start, length int64 = 0, int64(len(buff))
-	req := &HttpRequestParams{
-		Range: http_range.Range{Start: start, Length: length},
-		Size:  int64(len(buff)),
-	}
 	ctx, cancel := context.WithCancel(context.Background())
-	readCloser, err := d.Download(ctx, req)
+	readCloser, err := d.Download(ctx, int64(len(buff)), http_range.Range{Start: start, Length: length})
 
 	if err != nil {
 		t.Fatalf("expect no error, got %v", err)
@@ -175,7 +156,7 @@ func TestHighConcurrency(t *testing.T) {
 	d := NewDownloader(func(d *Downloader) {
 		d.Concurrency = con
 		d.PartSize = partSize
-		d.HttpClient = downloader.HttpRequest
+		d.OpenPart = downloader.OpenPart
 		d.ConcurrencyLimit = &ConcurrencyLimit{
 			Limit: concurrencyLimit,
 		}
@@ -186,11 +167,7 @@ func TestHighConcurrency(t *testing.T) {
 	if length2 == -1 {
 		length2 = int64(len(buff)) - start
 	}
-	req := &HttpRequestParams{
-		Range: http_range.Range{Start: start, Length: length},
-		Size:  int64(len(buff)),
-	}
-	readCloser, err := d.Download(context.Background(), req)
+	readCloser, err := d.Download(context.Background(), int64(len(buff)), http_range.Range{Start: start, Length: length})
 
 	if err != nil {
 		t.Fatalf("expect no error, got %v", err)
@@ -235,16 +212,11 @@ func TestDownloadSingle(t *testing.T) {
 	d := NewDownloader(func(d *Downloader) {
 		d.Concurrency = con
 		d.PartSize = partSize
-		d.HttpClient = downloader.HttpRequest
+		d.OpenPart = downloader.OpenPart
 	})
 
 	var start, length int64 = 2, 10
-	req := &HttpRequestParams{
-		Range: http_range.Range{Start: start, Length: length},
-		Size:  int64(len(buff)),
-	}
-
-	readCloser, err := d.Download(context.Background(), req)
+	readCloser, err := d.Download(context.Background(), int64(len(buff)), http_range.Range{Start: start, Length: length})
 
 	if err != nil {
 		t.Fatalf("expect no error, got %v", err)
@@ -275,7 +247,7 @@ func TestDownloadSingle(t *testing.T) {
 }
 
 type downloadCaptureClient struct {
-	mockedHttpRequest    func(params *HttpRequestParams) (*http.Response, error)
+	openPart             func(request PartRequest) (io.ReadCloser, error)
 	GetObjectInvocations int
 
 	RetrievedRanges []string
@@ -283,36 +255,28 @@ type downloadCaptureClient struct {
 	lock sync.Mutex
 }
 
-func (c *downloadCaptureClient) HttpRequest(ctx context.Context, params *HttpRequestParams) (*http.Response, error) {
+func (c *downloadCaptureClient) OpenPart(_ context.Context, request PartRequest) (io.ReadCloser, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	c.GetObjectInvocations++
 
-	if params.Range.Length != 0 {
-		c.RetrievedRanges = append(c.RetrievedRanges, fmt.Sprintf("%d-%d", params.Range.Start, params.Range.Length))
+	if request.Range.Length != 0 {
+		c.RetrievedRanges = append(c.RetrievedRanges, fmt.Sprintf("%d-%d", request.Range.Start, request.Range.Length))
 	}
 
-	return c.mockedHttpRequest(params)
+	return c.openPart(request)
 }
 
 func newDownloadRangeClient(data []byte) (*downloadCaptureClient, *int, *[]string) {
 	capture := &downloadCaptureClient{}
 
-	capture.mockedHttpRequest = func(params *HttpRequestParams) (*http.Response, error) {
-		start, fin := params.Range.Start, params.Range.Start+params.Range.Length
-		if params.Range.Length == -1 || fin >= int64(len(data)) {
+	capture.openPart = func(request PartRequest) (io.ReadCloser, error) {
+		start, fin := request.Range.Start, request.Range.Start+request.Range.Length
+		if request.Range.Length == -1 || fin >= int64(len(data)) {
 			fin = int64(len(data))
 		}
-		bodyBytes := data[start:fin]
-
-		header := &http.Header{}
-		header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, fin-1, len(data)))
-		return &http.Response{
-			Body:          io.NopCloser(bytes.NewReader(bodyBytes)),
-			Header:        *header,
-			ContentLength: int64(len(bodyBytes)),
-		}, nil
+		return io.NopCloser(bytes.NewReader(data[start:fin])), nil
 	}
 
 	return capture, &capture.GetObjectInvocations, &capture.RetrievedRanges

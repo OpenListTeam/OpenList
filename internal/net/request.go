@@ -16,12 +16,10 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	hcache "github.com/OpenListTeam/OpenList/v4/internal/hybrid_cache"
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/buffer"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
-	"github.com/aws/aws-sdk-go/aws/awsutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -50,12 +48,16 @@ type Downloader struct {
 	// Concurrency of 1 will download the parts sequentially.
 	Concurrency int
 
-	//RequestParam        HttpRequestParams
-	HttpClient HttpRequestFunc
+	OpenPart OpenPartFunc
 
 	*ConcurrencyLimit
 }
-type HttpRequestFunc func(ctx context.Context, params *HttpRequestParams) (*http.Response, error)
+type PartRequest struct {
+	Range http_range.Range
+	First bool
+}
+
+type OpenPartFunc func(ctx context.Context, request PartRequest) (io.ReadCloser, error)
 
 func NewDownloader(options ...func(*Downloader)) *Downloader {
 	d := &Downloader{ //允许不设置的选项
@@ -68,18 +70,13 @@ func NewDownloader(options ...func(*Downloader)) *Downloader {
 	return d
 }
 
-// Download The Downloader makes multi-thread http requests to remote URL, each chunk(except last one) has PartSize,
-// cache some data, then return Reader with assembled data
-// Supports range, do not support unknown FileSize, and will fail if FileSize is incorrect
-// memory usage is at about Concurrency*PartSize, use this wisely
-func (d Downloader) Download(ctx context.Context, p *HttpRequestParams) (readCloser io.ReadCloser, err error) {
-
-	var finalP HttpRequestParams
-	awsutil.Copy(&finalP, p)
-	if finalP.Range.Length < 0 || finalP.Range.Start+finalP.Range.Length > finalP.Size {
-		finalP.Range.Length = finalP.Size - finalP.Range.Start
+// Download opens range parts concurrently and returns them in order.
+// It requires a known size and uses about Concurrency*PartSize bytes of memory.
+func (d Downloader) Download(ctx context.Context, size int64, requested http_range.Range) (readCloser io.ReadCloser, err error) {
+	if requested.Length < 0 || requested.Start+requested.Length > size {
+		requested.Length = size - requested.Start
 	}
-	impl := downloader{params: &finalP, cfg: d, ctx: ctx}
+	impl := downloader{requested: requested, cfg: d, ctx: ctx}
 
 	// Ensures we don't need nil checks later on
 	// 必需的选项
@@ -92,8 +89,8 @@ func (d Downloader) Download(ctx context.Context, p *HttpRequestParams) (readClo
 	if conf.MinFreeMemory > 0 && impl.cfg.PartSize > int(conf.MaxBlockLimit) {
 		impl.cfg.PartSize = int(conf.MaxBlockLimit)
 	}
-	if impl.cfg.HttpClient == nil {
-		impl.cfg.HttpClient = DefaultHttpRequestFunc
+	if impl.cfg.OpenPart == nil {
+		return nil, errors.New("missing part opener")
 	}
 
 	return impl.download()
@@ -105,8 +102,8 @@ type downloader struct {
 	cancel context.CancelCauseFunc
 	cfg    Downloader
 
-	params  *HttpRequestParams //http request params
-	chunkCh chan chunk         //chunk chanel
+	requested http_range.Range
+	chunkCh   chan chunk //chunk chanel
 
 	//wg sync.WaitGroup
 	mu sync.Mutex
@@ -160,8 +157,8 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	}
 
 	maxPart := 1
-	if d.params.Range.Length > int64(d.cfg.PartSize) {
-		maxPart = int((d.params.Range.Length + int64(d.cfg.PartSize) - 1) / int64(d.cfg.PartSize))
+	if d.requested.Length > int64(d.cfg.PartSize) {
+		maxPart = int((d.requested.Length + int64(d.cfg.PartSize) - 1) / int64(d.cfg.PartSize))
 	}
 	if maxPart < d.cfg.Concurrency {
 		d.cfg.Concurrency = maxPart
@@ -169,13 +166,13 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	log.Debugf("cfgConcurrency:%d", d.cfg.Concurrency)
 
 	if maxPart == 1 {
-		resp, err := d.cfg.HttpClient(d.ctx, d.params)
+		body, err := d.cfg.OpenPart(d.ctx, PartRequest{Range: d.requested, First: true})
 		if err != nil {
 			d.cfg.ConcurrencyLimit.Release()
 			return nil, err
 		}
-		closeFunc := resp.Body.Close
-		resp.Body = utils.NewReadCloser(resp.Body, func() error {
+		closeFunc := body.Close
+		body = utils.NewReadCloser(body, func() error {
 			d.mu.Lock()
 			defer d.mu.Unlock()
 			var err error
@@ -186,19 +183,19 @@ func (d *downloader) download() (io.ReadCloser, error) {
 			}
 			return err
 		})
-		return resp.Body, nil
+		return body, nil
 	}
 	d.ctx, d.cancel = context.WithCancelCause(d.ctx)
 
 	// workers
 	d.chunkCh = make(chan chunk, d.cfg.Concurrency)
 
-	d.pos = d.params.Range.Start
-	d.maxPos = d.params.Range.Start + d.params.Range.Length
+	d.pos = d.requested.Start
+	d.maxPos = d.requested.Start + d.requested.Length
 	d.concurrency = d.cfg.Concurrency
 
 	var err error
-	d.hc, err = hcache.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.params.Range.Length))
+	d.hc, err = hcache.NewHybridCache(uint64(d.cfg.PartSize), uint64(d.requested.Length))
 	if err == nil {
 		d.bufMap = make(map[int]*buffer.PipeBuffer, d.cfg.Concurrency)
 		err = d.sendChunkTask(true)
@@ -252,14 +249,14 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 	switch d.nextChunk {
 	case 0:
 		// 最小分片在前面有助视频播放？
-		firstSize := d.params.Range.Length % finalSize
+		firstSize := d.requested.Length % finalSize
 		if firstSize > 0 {
 			minSize := finalSize / 2
 			// 最小分片太小就调整到一半
 			finalSize = max(firstSize, minSize)
 		}
 	case 1:
-		firstSize := d.params.Range.Length % finalSize
+		firstSize := d.requested.Length % finalSize
 		minSize := finalSize / 2
 		if firstSize > 0 && firstSize < minSize {
 			finalSize += firstSize - minSize
@@ -296,7 +293,7 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 func (d *downloader) interrupt(complete bool) error {
 	err := context.Cause(d.ctx)
 	if err == nil {
-		if !complete && d.written.Load() != d.params.Range.Length {
+		if !complete && d.written.Load() != d.requested.Length {
 			err = fmt.Errorf("interrupted")
 		}
 	} else if errors.Is(err, context.Canceled) {
@@ -375,11 +372,14 @@ func (d *downloader) downloadPart() {
 // downloadChunk downloads the chunk
 func (d *downloader) downloadChunk(ch *chunk) bool {
 	log.Debugf("start chunk_%d, %+v", ch.id, ch)
-	params := d.getParamsFromChunk(ch)
+	request := PartRequest{
+		Range: http_range.Range{Start: ch.start, Length: ch.size},
+		First: ch.id == 0,
+	}
 	var err error
 	for retry := 0; retry <= d.cfg.PartBodyMaxRetries; retry++ {
 		var n int64
-		n, err = d.tryDownloadChunk(params, ch)
+		n, err = d.tryDownloadChunk(request, ch)
 		if err == nil {
 			d.incrWritten(n)
 			log.Debugf("chunk_%d downloaded", ch.id)
@@ -399,11 +399,11 @@ func (d *downloader) downloadChunk(ch *chunk) bool {
 				d.incrWritten(n)
 				ch.start += n
 				ch.size -= n
-				params.Range.Start = ch.start
-				params.Range.Length = ch.size
+				request.Range.Start = ch.start
+				request.Range.Length = ch.size
 			}
-			log.Warnf("err chunk_%d, object part download error %s, retrying attempt %d. %v",
-				ch.id, params.URL, retry, err)
+			log.Warnf("err chunk_%d, retrying attempt %d. %v",
+				ch.id, retry, err)
 		} else if err == errInfiniteRetry {
 			retry--
 		} else if err == errCancelConcurrency {
@@ -432,29 +432,18 @@ func (d *downloader) delay(ti time.Duration) bool {
 var errCancelConcurrency = errors.New("")
 var errInfiniteRetry = errors.New("")
 
-func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int64, error) {
-	resp, err := d.cfg.HttpClient(d.ctx, params)
+func (d *downloader) tryDownloadChunk(request PartRequest, ch *chunk) (int64, error) {
+	body, err := d.cfg.OpenPart(d.ctx, request)
 	if err != nil {
-		statusCode, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError)
+		_, ok := err.(*errNeedRetry)
 		if !ok {
 			return 0, err
 		}
-		if statusCode == http.StatusRequestedRangeNotSatisfiable {
-			return 0, err
-		}
 		if ch.id == 0 { //第1个任务 有限的重试，超过重试就会结束请求
-			switch statusCode {
-			default:
-				return 0, err
-			case http.StatusTooManyRequests:
-			case http.StatusBadGateway:
-			case http.StatusServiceUnavailable:
-			case http.StatusGatewayTimeout:
-			}
 			if !d.delay(time.Millisecond * time.Duration(rand.Uint32N(300)+200)) {
 				return 0, errCancelConcurrency
 			}
-			return 0, &errNeedRetry{err}
+			return 0, err
 		}
 
 		// 来到这 说明第1个分片下载 连接成功了
@@ -489,16 +478,9 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 		return 0, errInfiniteRetry
 	}
 
-	defer resp.Body.Close()
-	//only check file size on the first task
-	if ch.id == 0 {
-		err = d.checkTotalBytes(resp)
-		if err != nil {
-			return 0, err
-		}
-	}
+	defer body.Close()
 	_ = d.sendChunkTask(true)
-	n, err := utils.CopyWithBuffer(ch.buf, resp.Body)
+	n, err := utils.CopyWithBuffer(ch.buf, body)
 
 	if err != nil {
 		return n, &errNeedRetry{err}
@@ -510,16 +492,7 @@ func (d *downloader) tryDownloadChunk(params *HttpRequestParams, ch *chunk) (int
 
 	return n, nil
 }
-func (d *downloader) getParamsFromChunk(ch *chunk) *HttpRequestParams {
-	var params HttpRequestParams
-	awsutil.Copy(&params, d.params)
-
-	// Get the getBuf byte range of data
-	params.Range = http_range.Range{Start: ch.start, Length: ch.size}
-	return &params
-}
-
-func (d *downloader) checkTotalBytes(resp *http.Response) error {
+func checkTotalBytes(resp *http.Response, expected int64) error {
 	var err error
 	totalBytes := int64(-1)
 	contentRange := resp.Header.Get("Content-Range")
@@ -548,8 +521,8 @@ func (d *downloader) checkTotalBytes(resp *http.Response) error {
 		}
 
 	}
-	if totalBytes != d.params.Size && err == nil {
-		err = fmt.Errorf("expect file size=%d unmatch remote report size=%d, need refresh cache", d.params.Size, totalBytes)
+	if totalBytes != expected && err == nil {
+		err = fmt.Errorf("expect file size=%d unmatch remote report size=%d, need refresh cache", expected, totalBytes)
 	}
 	return err
 
@@ -572,38 +545,35 @@ type chunk struct {
 	newConcurrency bool
 }
 
-func DefaultHttpRequestFunc(ctx context.Context, params *HttpRequestParams) (*http.Response, error) {
-	header := http_range.ApplyRangeToHttpHeader(params.Range, params.HeaderRef)
-	return RequestHttp(ctx, "GET", header, params.URL)
+func OpenHTTPPart(ctx context.Context, url string, header http.Header, size int64, request PartRequest) (io.ReadCloser, error) {
+	header = http_range.ApplyRangeToHttpHeader(request.Range, header.Clone())
+	resp, err := RequestHttp(ctx, http.MethodGet, header, url)
+	if err != nil {
+		status, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError)
+		if ok && status != http.StatusRequestedRangeNotSatisfiable &&
+			(!request.First || isRetryableInitialStatus(status)) {
+			return nil, &errNeedRetry{err}
+		}
+		return nil, err
+	}
+	if request.First {
+		if err := checkTotalBytes(resp, size); err != nil {
+			return nil, errors.Join(err, resp.Body.Close())
+		}
+	}
+	return resp.Body, nil
 }
 
-func GetRangeReaderHttpRequestFunc(rangeReader model.RangeReaderIF) HttpRequestFunc {
-	return func(ctx context.Context, params *HttpRequestParams) (*http.Response, error) {
-		rc, err := rangeReader.RangeRead(ctx, params.Range)
-		if err != nil {
-			return nil, err
-		}
-
-		return &http.Response{
-			StatusCode: http.StatusPartialContent,
-			Status:     http.StatusText(http.StatusPartialContent),
-			Body:       rc,
-			Header: http.Header{
-				"Content-Range": {params.Range.ContentRange(params.Size)},
-			},
-			ContentLength: params.Range.Length,
-		}, nil
+func isRetryableInitialStatus(status HttpStatusCodeError) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
 	}
 }
 
-type HttpRequestParams struct {
-	URL string
-	//only want data within this range
-	Range     http_range.Range
-	HeaderRef http.Header
-	//total file size
-	Size int64
-}
 type errNeedRetry struct {
 	error
 }
@@ -641,5 +611,5 @@ func (mr *multiReadCloser) Read(p []byte) (n int, err error) {
 }
 
 func (mr *multiReadCloser) Close() error {
-	return mr.d.interrupt(mr.read.Load() == mr.d.params.Range.Length)
+	return mr.d.interrupt(mr.read.Load() == mr.d.requested.Length)
 }
