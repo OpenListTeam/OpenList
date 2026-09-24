@@ -33,32 +33,29 @@ const (
 	mimeTypeScriptJSON = "application/vnd.google-apps.script+json"
 )
 
-// exportFormat holds the export target MIME type and the resulting file extension.
-type exportFormat struct {
-	MIME string
-	Ext  string
+// googleWorkspaceExports maps exportable Google Workspace source MIME types to the
+// corresponding files.export target MIME type.
+var googleWorkspaceExports = map[string]string{
+	mimeTypeGoogleDoc:     mimeTypeDocx,
+	mimeTypeGoogleSheet:   mimeTypeXlsx,
+	mimeTypeGoogleSlides:  mimeTypePptx,
+	mimeTypeGoogleDrawing: mimeTypePDF,
+	mimeTypeGoogleScript:  mimeTypeScriptJSON,
 }
 
-// googleWorkspaceExports maps exportable Google Workspace source MIME types to their export targets.
-var googleWorkspaceExports = map[string]exportFormat{
-	mimeTypeGoogleDoc:     {MIME: mimeTypeDocx, Ext: ".docx"},
-	mimeTypeGoogleSheet:   {MIME: mimeTypeXlsx, Ext: ".xlsx"},
-	mimeTypeGoogleSlides:  {MIME: mimeTypePptx, Ext: ".pptx"},
-	mimeTypeGoogleDrawing: {MIME: mimeTypePDF, Ext: ".pdf"},
-	mimeTypeGoogleScript:  {MIME: mimeTypeScriptJSON, Ext: ".json"},
-}
-
-// googleWorkspaceUnsupported lists Google Workspace MIME types that cannot be downloaded
-// via files.get or files.export, with a human-readable reason.
+// googleWorkspaceUnsupported lists Google Workspace MIME types not handled by this driver,
+// with a concise reason describing the implementation limitation.
 var googleWorkspaceUnsupported = map[string]string{
 	mimeTypeGoogleFolder:   "folders cannot be downloaded",
 	mimeTypeGoogleShortcut: "shortcuts must be resolved before downloading",
-	mimeTypeGoogleForm:     "Google Forms are not downloadable via the Drive API",
-	mimeTypeGoogleSite:     "Google Sites are not downloadable via the Drive API",
-	mimeTypeGoogleMap:      "Google Maps are not downloadable via the Drive API",
-	// Google Vids require the files.download long-running-operation flow which is not
-	// yet supported. See https://developers.google.com/drive/api/reference/rest/v3/files/download
-	mimeTypeGoogleVid: "Google Vids require the Drive files.download long-running-operation flow which is not yet implemented",
+	// Form, Site, Map and Vid may be reachable via files.download LRO but this driver
+	// only implements synchronous files.get / files.export.
+	mimeTypeGoogleForm: "not supported by this driver's synchronous export path; files.download LRO is not implemented",
+	mimeTypeGoogleSite: "not supported by this driver's synchronous export path; files.download LRO is not implemented",
+	mimeTypeGoogleMap:  "not supported by this driver's synchronous export path; files.download LRO is not implemented",
+	// Google Vids require the files.download long-running-operation flow.
+	// See https://developers.google.com/drive/api/reference/rest/v3/files/download
+	mimeTypeGoogleVid: "requires the files.download long-running-operation flow which is not implemented",
 }
 
 // FileMeta holds the fields we need from a files.get metadata response inside Link().

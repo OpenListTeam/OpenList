@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -49,24 +51,52 @@ const (
 type downloadStrategy struct {
 	Kind       downloadKind
 	ExportMIME string
-	Ext        string
 }
 
 // resolveDownloadStrategy returns the correct download strategy for the given Drive source
 // MIME type. It returns an error for Google Workspace types that cannot be downloaded.
 func resolveDownloadStrategy(sourceMIME string) (downloadStrategy, error) {
-	if ef, ok := googleWorkspaceExports[sourceMIME]; ok {
-		return downloadStrategy{Kind: kindExport, ExportMIME: ef.MIME, Ext: ef.Ext}, nil
+	if exportMIME, ok := googleWorkspaceExports[sourceMIME]; ok {
+		return downloadStrategy{Kind: kindExport, ExportMIME: exportMIME}, nil
 	}
 	if reason, ok := googleWorkspaceUnsupported[sourceMIME]; ok {
 		return downloadStrategy{}, fmt.Errorf("unsupported Google Workspace file type %q: %s", sourceMIME, reason)
 	}
-	// Any remaining application/vnd.google-apps.* type is not in our allow-list.
-	if len(sourceMIME) > 28 && sourceMIME[:28] == "application/vnd.google-apps." {
+	// Any remaining application/vnd.google-apps.* type not in our allow-list.
+	if strings.HasPrefix(sourceMIME, "application/vnd.google-apps.") {
 		return downloadStrategy{}, fmt.Errorf("unsupported Google Workspace file type: %q", sourceMIME)
 	}
 	// All other MIME types (binary/uploaded files) use the media download endpoint.
 	return downloadStrategy{Kind: kindMedia}, nil
+}
+
+// buildDownloadURL constructs the correct Drive download URL for the given file ID and strategy.
+//
+// Binary files use files.get with alt=media:
+//
+//	GET /drive/v3/files/{id}?alt=media&acknowledgeAbuse=true&...
+//
+// Workspace-native files use files.export with only mimeType:
+//
+//	GET /drive/v3/files/{id}/export?mimeType=<encoded-mime>
+//
+// Note: files.export responses are capped by Google Drive at 10 MB. Larger or unsupported
+// Workspace downloads may require the files.download long-running-operation (LRO) flow.
+func buildDownloadURL(fileID string, strategy downloadStrategy) string {
+	base := "https://www.googleapis.com/drive/v3/files/" + fileID
+	switch strategy.Kind {
+	case kindExport:
+		q := url.Values{}
+		q.Set("mimeType", strategy.ExportMIME)
+		return base + "/export?" + q.Encode()
+	default: // kindMedia
+		q := url.Values{}
+		q.Set("alt", "media")
+		q.Set("acknowledgeAbuse", "true")
+		q.Set("includeItemsFromAllDrives", "true")
+		q.Set("supportsAllDrives", "true")
+		return base + "?" + q.Encode()
+	}
 }
 
 type googleDriveServiceAccount struct {
@@ -204,7 +234,7 @@ func (d *GoogleDrive) refreshToken() error {
 		}
 		log.Debug(res.String())
 		if e.Error != "" {
-			return fmt.Errorf("%s", e.Error)
+			return fmt.Errorf(e.Error)
 		}
 		d.AccessToken = resp.AccessToken
 		return nil
@@ -226,7 +256,7 @@ func (d *GoogleDrive) refreshToken() error {
 	}
 	log.Debug(res.String())
 	if e.Error != "" {
-		return fmt.Errorf("%s", e.Error)
+		return fmt.Errorf(e.Error)
 	}
 	d.AccessToken = resp.AccessToken
 	return nil

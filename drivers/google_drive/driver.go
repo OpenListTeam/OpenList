@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -73,25 +72,8 @@ func (d *GoogleDrive) Link(ctx context.Context, file model.Obj, args model.LinkA
 		return nil, err
 	}
 
-	var downloadURL string
-	switch strategy.Kind {
-	case kindMedia:
-		q := url.Values{}
-		q.Set("alt", "media")
-		q.Set("acknowledgeAbuse", "true")
-		q.Set("includeItemsFromAllDrives", "true")
-		q.Set("supportsAllDrives", "true")
-		downloadURL = metaURL + "?" + q.Encode()
-	case kindExport:
-		q := url.Values{}
-		q.Set("mimeType", strategy.ExportMIME)
-		q.Set("includeItemsFromAllDrives", "true")
-		q.Set("supportsAllDrives", "true")
-		downloadURL = metaURL + "/export?" + q.Encode()
-	}
-
 	link := model.Link{
-		URL: downloadURL,
+		URL: buildDownloadURL(fileID, strategy),
 		Header: http.Header{
 			"Authorization": []string{"Bearer " + d.AccessToken},
 		},

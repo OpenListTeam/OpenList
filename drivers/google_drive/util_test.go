@@ -2,7 +2,6 @@ package google_drive
 
 import (
 	"net/url"
-	"strings"
 	"testing"
 )
 
@@ -35,13 +34,12 @@ func TestResolveDownloadStrategy_Export(t *testing.T) {
 	cases := []struct {
 		src      string
 		wantMIME string
-		wantExt  string
 	}{
-		{mimeTypeGoogleDoc, mimeTypeDocx, ".docx"},
-		{mimeTypeGoogleSheet, mimeTypeXlsx, ".xlsx"},
-		{mimeTypeGoogleSlides, mimeTypePptx, ".pptx"},
-		{mimeTypeGoogleDrawing, mimeTypePDF, ".pdf"},
-		{mimeTypeGoogleScript, mimeTypeScriptJSON, ".json"},
+		{mimeTypeGoogleDoc, mimeTypeDocx},
+		{mimeTypeGoogleSheet, mimeTypeXlsx},
+		{mimeTypeGoogleSlides, mimeTypePptx},
+		{mimeTypeGoogleDrawing, mimeTypePDF},
+		{mimeTypeGoogleScript, mimeTypeScriptJSON},
 	}
 	for _, c := range cases {
 		t.Run(c.src, func(t *testing.T) {
@@ -54,9 +52,6 @@ func TestResolveDownloadStrategy_Export(t *testing.T) {
 			}
 			if s.ExportMIME != c.wantMIME {
 				t.Errorf("ExportMIME: got %q, want %q", s.ExportMIME, c.wantMIME)
-			}
-			if s.Ext != c.wantExt {
-				t.Errorf("Ext: got %q, want %q", s.Ext, c.wantExt)
 			}
 		})
 	}
@@ -82,31 +77,75 @@ func TestResolveDownloadStrategy_Unsupported(t *testing.T) {
 	}
 }
 
-// TestExportURLEncoding verifies that MIME types with special characters are
-// properly percent-encoded in the export URL query string.
-func TestExportURLEncoding(t *testing.T) {
-	cases := []struct {
-		mime string
-		want string
-	}{
-		{
-			mimeTypeDocx,
-			// / and + must be encoded
-			url.QueryEscape(mimeTypeDocx),
-		},
-		{
-			mimeTypeScriptJSON,
-			url.QueryEscape(mimeTypeScriptJSON),
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.mime, func(t *testing.T) {
-			q := url.Values{}
-			q.Set("mimeType", c.mime)
-			encoded := q.Encode()
-			if !strings.Contains(encoded, c.want) {
-				t.Errorf("encoded %q does not contain %q", encoded, c.want)
+func TestBuildDownloadURL(t *testing.T) {
+	const fileID = "abc123fileID"
+
+	t.Run("binary/media", func(t *testing.T) {
+		rawURL := buildDownloadURL(fileID, downloadStrategy{Kind: kindMedia})
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			t.Fatalf("url.Parse: %v", err)
+		}
+		if u.Scheme != "https" {
+			t.Errorf("scheme: got %q, want https", u.Scheme)
+		}
+		if u.Host != "www.googleapis.com" {
+			t.Errorf("host: got %q, want www.googleapis.com", u.Host)
+		}
+		wantPath := "/drive/v3/files/" + fileID
+		if u.Path != wantPath {
+			t.Errorf("path: got %q, want %q", u.Path, wantPath)
+		}
+		q := u.Query()
+		if q.Get("alt") != "media" {
+			t.Errorf("alt: got %q, want media", q.Get("alt"))
+		}
+		if q.Get("acknowledgeAbuse") != "true" {
+			t.Errorf("acknowledgeAbuse: got %q, want true", q.Get("acknowledgeAbuse"))
+		}
+		if q.Get("includeItemsFromAllDrives") != "true" {
+			t.Errorf("includeItemsFromAllDrives: got %q, want true", q.Get("includeItemsFromAllDrives"))
+		}
+		if q.Get("supportsAllDrives") != "true" {
+			t.Errorf("supportsAllDrives: got %q, want true", q.Get("supportsAllDrives"))
+		}
+	})
+
+	t.Run("Google Doc export", func(t *testing.T) {
+		rawURL := buildDownloadURL(fileID, downloadStrategy{Kind: kindExport, ExportMIME: mimeTypeDocx})
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			t.Fatalf("url.Parse: %v", err)
+		}
+		if u.Scheme != "https" {
+			t.Errorf("scheme: got %q, want https", u.Scheme)
+		}
+		wantPath := "/drive/v3/files/" + fileID + "/export"
+		if u.Path != wantPath {
+			t.Errorf("path: got %q, want %q", u.Path, wantPath)
+		}
+		q := u.Query()
+		if q.Get("mimeType") != mimeTypeDocx {
+			t.Errorf("mimeType: got %q, want %q", q.Get("mimeType"), mimeTypeDocx)
+		}
+		// Export URL must not carry media-download or shared-drive parameters.
+		for _, forbidden := range []string{"includeItemsFromAllDrives", "supportsAllDrives", "acknowledgeAbuse", "alt"} {
+			if q.Has(forbidden) {
+				t.Errorf("export URL must not contain parameter %q", forbidden)
 			}
-		})
-	}
+		}
+	})
+
+	t.Run("Apps Script export MIME encoding", func(t *testing.T) {
+		// mimeTypeScriptJSON contains '+' which must survive round-trip encoding.
+		rawURL := buildDownloadURL(fileID, downloadStrategy{Kind: kindExport, ExportMIME: mimeTypeScriptJSON})
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			t.Fatalf("url.Parse: %v", err)
+		}
+		q := u.Query()
+		if q.Get("mimeType") != mimeTypeScriptJSON {
+			t.Errorf("mimeType: got %q, want %q", q.Get("mimeType"), mimeTypeScriptJSON)
+		}
+	})
 }
