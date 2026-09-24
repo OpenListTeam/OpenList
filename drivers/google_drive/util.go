@@ -11,7 +11,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -62,11 +61,9 @@ func resolveDownloadStrategy(sourceMIME string) (downloadStrategy, error) {
 	if reason, ok := googleWorkspaceUnsupported[sourceMIME]; ok {
 		return downloadStrategy{}, fmt.Errorf("unsupported Google Workspace file type %q: %s", sourceMIME, reason)
 	}
-	// Any remaining application/vnd.google-apps.* type not in our allow-list.
-	if strings.HasPrefix(sourceMIME, "application/vnd.google-apps.") {
-		return downloadStrategy{}, fmt.Errorf("unsupported Google Workspace file type: %q", sourceMIME)
-	}
-	// All other MIME types (binary/uploaded files) use the media download endpoint.
+	// All other MIME types — including unrecognised application/vnd.google-apps.* variants
+	// and all binary/uploaded files — fall through to the media download endpoint to preserve
+	// compatibility with Drive MIME types not covered by the maps above.
 	return downloadStrategy{Kind: kindMedia}, nil
 }
 
@@ -93,7 +90,6 @@ func buildDownloadURL(fileID string, strategy downloadStrategy) string {
 		q := url.Values{}
 		q.Set("alt", "media")
 		q.Set("acknowledgeAbuse", "true")
-		q.Set("includeItemsFromAllDrives", "true")
 		q.Set("supportsAllDrives", "true")
 		return base + "?" + q.Encode()
 	}

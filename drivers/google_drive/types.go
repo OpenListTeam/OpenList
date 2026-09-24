@@ -48,11 +48,12 @@ var googleWorkspaceExports = map[string]string{
 var googleWorkspaceUnsupported = map[string]string{
 	mimeTypeGoogleFolder:   "folders cannot be downloaded",
 	mimeTypeGoogleShortcut: "shortcuts must be resolved before downloading",
-	// Form, Site, Map and Vid may be reachable via files.download LRO but this driver
-	// only implements synchronous files.get / files.export.
+	// Forms and Sites are documented as downloadable via the files.download LRO flow,
+	// which this driver does not implement.
 	mimeTypeGoogleForm: "not supported by this driver's synchronous export path; files.download LRO is not implemented",
 	mimeTypeGoogleSite: "not supported by this driver's synchronous export path; files.download LRO is not implemented",
-	mimeTypeGoogleMap:  "not supported by this driver's synchronous export path; files.download LRO is not implemented",
+	// Google My Maps has no documented synchronous download/export path.
+	mimeTypeGoogleMap: "no supported download/export strategy is implemented for Google My Maps",
 	// Google Vids require the files.download long-running-operation flow.
 	// See https://developers.google.com/drive/api/reference/rest/v3/files/download
 	mimeTypeGoogleVid: "requires the files.download long-running-operation flow which is not implemented",

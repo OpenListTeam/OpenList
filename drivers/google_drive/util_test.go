@@ -65,13 +65,38 @@ func TestResolveDownloadStrategy_Unsupported(t *testing.T) {
 		mimeTypeGoogleSite,
 		mimeTypeGoogleMap,
 		mimeTypeGoogleVid,
-		"application/vnd.google-apps.unknown-future-type",
 	}
 	for _, mime := range cases {
 		t.Run(mime, func(t *testing.T) {
 			_, err := resolveDownloadStrategy(mime)
 			if err == nil {
 				t.Errorf("expected error for unsupported type %q, got nil", mime)
+			}
+		})
+	}
+}
+
+// TestResolveDownloadStrategy_MediaFallback verifies that unrecognised
+// application/vnd.google-apps.* MIME types fall through to the media download
+// path rather than being rejected. This preserves compatibility with Drive MIME
+// types that are not Workspace-native documents.
+func TestResolveDownloadStrategy_MediaFallback(t *testing.T) {
+	cases := []string{
+		// Documented Drive-specific types that are not Workspace editors.
+		"application/vnd.google-apps.video",
+		"application/vnd.google-apps.audio",
+		"application/vnd.google-apps.photo",
+		// Unknown type: should not be blocked by a blanket prefix rejection.
+		"application/vnd.google-apps.unknown-future-type",
+	}
+	for _, mime := range cases {
+		t.Run(mime, func(t *testing.T) {
+			s, err := resolveDownloadStrategy(mime)
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", mime, err)
+			}
+			if s.Kind != kindMedia {
+				t.Errorf("expected kindMedia fallback for %q, got %v", mime, s.Kind)
 			}
 		})
 	}
@@ -103,11 +128,12 @@ func TestBuildDownloadURL(t *testing.T) {
 		if q.Get("acknowledgeAbuse") != "true" {
 			t.Errorf("acknowledgeAbuse: got %q, want true", q.Get("acknowledgeAbuse"))
 		}
-		if q.Get("includeItemsFromAllDrives") != "true" {
-			t.Errorf("includeItemsFromAllDrives: got %q, want true", q.Get("includeItemsFromAllDrives"))
-		}
 		if q.Get("supportsAllDrives") != "true" {
 			t.Errorf("supportsAllDrives: got %q, want true", q.Get("supportsAllDrives"))
+		}
+		// includeItemsFromAllDrives is a files.list parameter, not files.get.
+		if q.Has("includeItemsFromAllDrives") {
+			t.Errorf("media URL must not contain includeItemsFromAllDrives")
 		}
 	})
 
