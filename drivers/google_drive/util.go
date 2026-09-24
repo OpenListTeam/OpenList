@@ -2,9 +2,9 @@ package google_drive
 
 import (
 	"context"
-	"errors"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
