@@ -231,19 +231,30 @@ type SeekableStream struct {
 	*FileStream
 	// should have one of belows to support rangeRead
 	rangeReader model.RangeReaderIF
+	link        *model.Link
 }
 
-// NewSeekableStream create a SeekableStream from FileStream and Link
-// if FileStream.Reader is not nil, use it directly
-// else create RangeReader from Link
-func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error) {
+func (ss *SeekableStream) Close() error {
+	err := ss.FileStream.Close()
+	if ss.link != nil {
+		err = errors.Join(err, ss.link.Close())
+	}
+	return err
+}
+
+// NewSeekableStream adopts link and releases it if construction fails.
+func NewSeekableStream(fs *FileStream, link *model.Link) (_ *SeekableStream, err error) {
+	defer func() {
+		if err != nil && link != nil {
+			err = errors.Join(err, link.Close())
+		}
+	}()
 	if len(fs.Mimetype) == 0 {
 		fs.Mimetype = utils.GetMimeType(fs.Obj.GetName())
 	}
 
 	if fs.Reader != nil {
-		fs.Add(link)
-		return &SeekableStream{FileStream: fs}, nil
+		return &SeekableStream{FileStream: fs, link: link}, nil
 	}
 
 	if link != nil {
@@ -258,6 +269,9 @@ func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error
 		if _, ok := rr.(*model.FileRangeReader); ok {
 			var rc io.ReadCloser
 			rc, err = rr.RangeRead(fs.Ctx, http_range.Range{Length: -1})
+			if err != nil && rc != nil {
+				err = errors.Join(err, rc.Close())
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -265,8 +279,7 @@ func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error
 			fs.Add(rc)
 		}
 		fs.size = size
-		fs.Add(link)
-		return &SeekableStream{FileStream: fs, rangeReader: rr}, nil
+		return &SeekableStream{FileStream: fs, rangeReader: rr, link: link}, nil
 	}
 	return nil, fmt.Errorf("illegal seekableStream")
 }
@@ -276,6 +289,9 @@ func NewSeekableStream(fs *FileStream, link *model.Link) (*SeekableStream, error
 func (ss *SeekableStream) RangeRead(httpRange http_range.Range) (io.Reader, error) {
 	if ss.GetFile() == nil && ss.rangeReader != nil {
 		rc, err := ss.rangeReader.RangeRead(ss.Ctx, httpRange)
+		if err != nil && rc != nil {
+			err = errors.Join(err, rc.Close())
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -299,6 +315,9 @@ func (ss *SeekableStream) generateReader() error {
 			return fmt.Errorf("illegal seekableStream")
 		}
 		rc, err := ss.rangeReader.RangeRead(ss.Ctx, http_range.Range{Length: -1})
+		if err != nil && rc != nil {
+			err = errors.Join(err, rc.Close())
+		}
 		if err != nil {
 			return err
 		}

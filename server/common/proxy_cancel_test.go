@@ -40,7 +40,7 @@ func TestProxyCancelledPartitionedReaderDoesNotPanic(t *testing.T) {
 			ctx, cancel := context.WithCancel(r.Context())
 			cancel()
 			w := httptest.NewRecorder()
-			_ = Proxy(w, r.WithContext(ctx), link, file)
+			_ = Proxy(w, r.WithContext(ctx), link, file, false)
 			if bytes.Contains(w.Body.Bytes(), []byte("0123456789abcdef")) {
 				t.Errorf("cancelled response contained file contents: %q", w.Body.String())
 			}
