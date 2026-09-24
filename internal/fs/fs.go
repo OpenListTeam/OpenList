@@ -164,10 +164,7 @@ func ArchiveInternalExtract(ctx context.Context, path string, args model.Archive
 	return l, obj, err
 }
 
-type GetStoragesArgs struct {
-}
-
-func GetStorage(path string, args *GetStoragesArgs) (driver.Driver, error) {
+func GetStorage(path string) (driver.Driver, error) {
 	storageDriver, _, err := op.GetStorageAndActualPath(path)
 	if err != nil {
 		return nil, err

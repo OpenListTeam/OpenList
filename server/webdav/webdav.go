@@ -253,7 +253,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		return http.StatusMethodNotAllowed, nil
 	}
 	// Let ServeContent determine the Content-Type header.
-	storage, _ := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	storage, _ := fs.GetStorage(reqPath)
 	if storage.GetStorage().Webdav302() {
 		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{IP: utils.ClientIP(r), Header: r.Header, Redirect: true})
 		if err != nil {

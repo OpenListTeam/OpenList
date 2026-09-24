@@ -262,7 +262,7 @@ func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, stri
 	detailsChan := make(chan detailWithIndex, len(reqPath))
 	workerCount := 0
 	for i, p := range reqPath {
-		s, err := fs.GetStorage(p.GetPath(), &fs.GetStoragesArgs{})
+		s, err := fs.GetStorage(p.GetPath())
 		if err != nil {
 			continue
 		}
@@ -347,7 +347,7 @@ func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	dstStorageMap := make(map[string][]model.Obj)
 	allocatingDst := make(map[model.Obj]struct{})
 	for _, o := range dstObjs {
-		storage, e := fs.GetStorage(o.GetPath(), &fs.GetStoragesArgs{})
+		storage, e := fs.GetStorage(o.GetPath())
 		if e != nil {
 			return nil, nil, errors.WithMessagef(e, "cannot copy to virtual path [%s]", o.GetPath())
 		}
@@ -361,7 +361,7 @@ func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	}
 	srcObjs := make(BalancedObjs, 0, len(dstObjs))
 	for _, src := range tmpSrcObjs {
-		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
+		storage, e := fs.GetStorage(src.GetPath())
 		if e != nil {
 			continue
 		}
@@ -405,7 +405,7 @@ func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	dstStorageMap := make(map[string][]model.Obj)
 	allocatingDst := make(map[model.Obj]struct{})
 	for _, o := range dstObjs {
-		storage, e := fs.GetStorage(o.GetPath(), &fs.GetStoragesArgs{})
+		storage, e := fs.GetStorage(o.GetPath())
 		if e != nil {
 			return nil, nil, errors.WithMessagef(e, "cannot move to virtual path [%s]", o.GetPath())
 		}
@@ -416,7 +416,7 @@ func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	srcObjs := make(BalancedObjs, 0, len(tmpSrcObjs))
 	restSrcObjs := make(BalancedObjs, 0, len(tmpSrcObjs)-len(dstObjs))
 	for _, src := range tmpSrcObjs {
-		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
+		storage, e := fs.GetStorage(src.GetPath())
 		if e != nil {
 			continue
 		}
@@ -499,7 +499,7 @@ func getAllSort(dirs []model.Obj) model.Sort {
 		if dir == nil {
 			continue
 		}
-		storage, err := fs.GetStorage(dir.GetPath(), &fs.GetStoragesArgs{})
+		storage, err := fs.GetStorage(dir.GetPath())
 		if err != nil {
 			continue
 		}

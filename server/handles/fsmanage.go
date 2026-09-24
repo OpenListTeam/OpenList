@@ -508,7 +508,7 @@ func Link(c *gin.Context) {
 	//rawPath := stdpath.Join(user.BasePath, req.Path)
 	// why need not join base_path? because it's always the full path
 	rawPath := req.Path
-	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(rawPath)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return

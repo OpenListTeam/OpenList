@@ -86,7 +86,7 @@ func (s *Server) callFSLink(c *gin.Context, raw json.RawMessage) (any, *rpcError
 		return nil, &rpcError{Code: -32003, Message: "path is a directory"}
 	}
 
-	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(reqPath)
 	if err != nil {
 		return nil, &rpcError{Code: -32603, Message: err.Error()}
 	}

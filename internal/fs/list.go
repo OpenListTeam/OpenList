@@ -31,11 +31,11 @@ func list(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error)
 			WithStorageDetails: args.WithStorageDetails,
 		})
 		if err != nil {
-			if !args.NoLog {
-				log.Errorf("fs/list: %+v", err)
-			}
 			if len(virtualFiles) == 0 {
 				return nil, errors.WithMessage(err, "failed get objs")
+			}
+			if !args.NoLog {
+				log.Errorf("fs/list: %+v", err)
 			}
 		}
 	}
