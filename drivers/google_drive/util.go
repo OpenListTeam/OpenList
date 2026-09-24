@@ -31,9 +31,43 @@ import (
 const (
 	// File list query fields
 	FilesListFields = "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken"
-	// Single file query fields
+	// Single file query fields (used when fetching shortcut target metadata)
 	FileInfoFields = "id,name,mimeType,size,md5Checksum,sha1Checksum,sha256Checksum"
+	// Fields fetched during Link() to decide the download strategy
+	FileLinkFields = "mimeType,capabilities/canDownload"
 )
+
+// downloadKind distinguishes the two Drive download strategies.
+type downloadKind int
+
+const (
+	kindMedia  downloadKind = iota // files.get?alt=media
+	kindExport                     // files.export?mimeType=...
+)
+
+// downloadStrategy describes which endpoint and parameters to use for a given file.
+type downloadStrategy struct {
+	Kind       downloadKind
+	ExportMIME string
+	Ext        string
+}
+
+// resolveDownloadStrategy returns the correct download strategy for the given Drive source
+// MIME type. It returns an error for Google Workspace types that cannot be downloaded.
+func resolveDownloadStrategy(sourceMIME string) (downloadStrategy, error) {
+	if ef, ok := googleWorkspaceExports[sourceMIME]; ok {
+		return downloadStrategy{Kind: kindExport, ExportMIME: ef.MIME, Ext: ef.Ext}, nil
+	}
+	if reason, ok := googleWorkspaceUnsupported[sourceMIME]; ok {
+		return downloadStrategy{}, fmt.Errorf("unsupported Google Workspace file type %q: %s", sourceMIME, reason)
+	}
+	// Any remaining application/vnd.google-apps.* type is not in our allow-list.
+	if len(sourceMIME) > 28 && sourceMIME[:28] == "application/vnd.google-apps." {
+		return downloadStrategy{}, fmt.Errorf("unsupported Google Workspace file type: %q", sourceMIME)
+	}
+	// All other MIME types (binary/uploaded files) use the media download endpoint.
+	return downloadStrategy{Kind: kindMedia}, nil
+}
 
 type googleDriveServiceAccount struct {
 	// Type                    string `json:"type"`
@@ -170,7 +204,7 @@ func (d *GoogleDrive) refreshToken() error {
 		}
 		log.Debug(res.String())
 		if e.Error != "" {
-			return fmt.Errorf(e.Error)
+			return fmt.Errorf("%s", e.Error)
 		}
 		d.AccessToken = resp.AccessToken
 		return nil
@@ -192,7 +226,7 @@ func (d *GoogleDrive) refreshToken() error {
 	}
 	log.Debug(res.String())
 	if e.Error != "" {
-		return fmt.Errorf(e.Error)
+		return fmt.Errorf("%s", e.Error)
 	}
 	d.AccessToken = resp.AccessToken
 	return nil

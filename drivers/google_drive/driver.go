@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -52,13 +53,45 @@ func (d *GoogleDrive) List(ctx context.Context, dir model.Obj, args model.ListAr
 }
 
 func (d *GoogleDrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	url := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?includeItemsFromAllDrives=true&supportsAllDrives=true", file.GetID())
-	_, err := d.request(url, http.MethodGet, nil, nil)
+	fileID := file.GetID()
+	metaURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s", fileID)
+
+	var meta FileMeta
+	_, err := d.request(metaURL, http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParam("fields", FileLinkFields)
+	}, &meta)
 	if err != nil {
 		return nil, err
 	}
+
+	if !meta.Capabilities.CanDownload {
+		return nil, fmt.Errorf("file %q cannot be downloaded: download capability is not granted", fileID)
+	}
+
+	strategy, err := resolveDownloadStrategy(meta.MimeType)
+	if err != nil {
+		return nil, err
+	}
+
+	var downloadURL string
+	switch strategy.Kind {
+	case kindMedia:
+		q := url.Values{}
+		q.Set("alt", "media")
+		q.Set("acknowledgeAbuse", "true")
+		q.Set("includeItemsFromAllDrives", "true")
+		q.Set("supportsAllDrives", "true")
+		downloadURL = metaURL + "?" + q.Encode()
+	case kindExport:
+		q := url.Values{}
+		q.Set("mimeType", strategy.ExportMIME)
+		q.Set("includeItemsFromAllDrives", "true")
+		q.Set("supportsAllDrives", "true")
+		downloadURL = metaURL + "/export?" + q.Encode()
+	}
+
 	link := model.Link{
-		URL: url + "&alt=media&acknowledgeAbuse=true",
+		URL: downloadURL,
 		Header: http.Header{
 			"Authorization": []string{"Bearer " + d.AccessToken},
 		},
