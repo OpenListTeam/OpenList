@@ -5,6 +5,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
@@ -29,6 +30,21 @@ func rename(ctx context.Context, srcPath, dstName string, skipHook ...bool) erro
 		ctx = context.WithValue(ctx, conf.SkipHookKey, struct{}{})
 	}
 	return op.Rename(ctx, storage, srcActualPath, dstName)
+}
+
+func replace(ctx context.Context, srcPath, dstPath string) error {
+	srcStorage, srcActualPath, err := op.GetStorageAndActualPath(srcPath)
+	if err != nil {
+		return errors.WithMessage(err, "failed get src storage")
+	}
+	dstStorage, dstActualPath, err := op.GetStorageAndActualPath(dstPath)
+	if err != nil {
+		return errors.WithMessage(err, "failed get dst storage")
+	}
+	if srcStorage.GetStorage().ID != dstStorage.GetStorage().ID {
+		return errors.WithStack(errs.NotSupport)
+	}
+	return op.Replace(ctx, srcStorage, srcActualPath, dstActualPath)
 }
 
 func remove(ctx context.Context, path string) error {
