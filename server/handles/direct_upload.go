@@ -4,6 +4,7 @@ import (
 	"net/url"
 	stdpath "path"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -56,11 +57,11 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, path) {
+	if !user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(parentMeta, path) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	if !common.CanWrite(user, parentMeta, path) {
+	if !authz.CanWrite(user, parentMeta, path) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}

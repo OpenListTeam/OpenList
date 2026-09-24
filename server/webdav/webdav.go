@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -236,7 +237,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !common.CanAccess(user, meta, reqPath, password) {
+	if !authz.CanAccess(user, meta, reqPath, password) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
 	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
@@ -326,7 +327,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
 	if err := fs.Remove(ctx, reqPath); err != nil {
@@ -388,10 +389,10 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+	if !user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
 	fsStream := &stream.FileStream{
@@ -463,10 +464,10 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+	if !user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
 	if err := fs.MakeDir(ctx, reqPath); err != nil {
@@ -619,7 +620,7 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			return http.StatusInternalServerError, err
 		}
-		if !common.CanWrite(user, meta, reqPath) {
+		if !authz.CanWrite(user, meta, reqPath) {
 			return http.StatusForbidden, errs.PermissionDenied
 		}
 		ld = LockDetails{
@@ -692,7 +693,7 @@ func (h *Handler) handleUnlock(w http.ResponseWriter, r *http.Request) (status i
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !common.CanWrite(user, meta, reqPath) {
+	if !authz.CanWrite(user, meta, reqPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
 
@@ -728,7 +729,7 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !common.CanAccess(user, meta, reqPath, password) {
+	if !authz.CanAccess(user, meta, reqPath, password) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
 	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
@@ -814,7 +815,7 @@ func (h *Handler) handleProppatch(w http.ResponseWriter, r *http.Request) (statu
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !common.CanWrite(user, meta, reqPath) {
+	if !authz.CanWrite(user, meta, reqPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
 	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {

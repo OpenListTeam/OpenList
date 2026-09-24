@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	_189pc "github.com/OpenListTeam/OpenList/v4/drivers/189pc"
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -172,7 +173,7 @@ func TorrentRapidUpload(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, meta, reqPath) {
+	if !authz.CanWrite(user, meta, reqPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -346,7 +347,7 @@ func GenerateTorrentForPath(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanRead(user, meta, reqPath) {
+	if !authz.CanRead(user, meta, reqPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}

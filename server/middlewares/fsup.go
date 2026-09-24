@@ -4,6 +4,7 @@ import (
 	"net/url"
 	stdpath "path"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -34,12 +35,12 @@ func FsUp(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+	if !user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		c.Abort()
 		return
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		c.Abort()
 		return
