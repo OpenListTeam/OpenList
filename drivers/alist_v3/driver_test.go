@@ -191,3 +191,54 @@ func TestRoleDialectDecoding(t *testing.T) {
 		t.Fatal("OpenList unexpectedly accepted an array role")
 	}
 }
+
+func TestFamilyLinkPreservesForwardedContext(t *testing.T) {
+	type linkDriver interface {
+		Link(context.Context, model.Obj, model.LinkArgs) (*model.Link, error)
+		ResolveLinkCacheMode(string) driver.LinkCacheMode
+	}
+	for _, tt := range []struct {
+		name string
+		new  func(string) linkDriver
+	}{
+		{"alist-v3", func(address string) linkDriver {
+			return &AListV3{Addition: Addition{
+				Address: address, MetaPassword: "secret", PassIPToUpsteam: true, PassUAToUpsteam: true,
+			}}
+		}},
+		{"openlist", func(address string) linkDriver {
+			return &openlistdriver.OpenList{Addition: openlistdriver.Addition{
+				Address: address, MetaPassword: "secret", PassIPToUpsteam: true, PassUAToUpsteam: true,
+			}}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/fs/get" || r.Method != http.MethodPost {
+					t.Errorf("request = %s %s", r.Method, r.URL.Path)
+				}
+				if r.Header.Get("User-Agent") != "client" || r.Header.Get("X-Forwarded-For") != "192.0.2.1" || r.Header.Get("X-Real-Ip") != "192.0.2.1" {
+					t.Errorf("forwarded headers = %v", r.Header)
+				}
+				var body FsGetReq
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Path != "/movie" || body.Password != "secret" {
+					t.Errorf("link request = %+v, err = %v", body, err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"raw_url":"https://example.invalid/movie"}}`))
+			}))
+			t.Cleanup(srv.Close)
+			useTestClient(t)
+			d := tt.new(srv.URL)
+			link, err := d.Link(context.Background(), &model.Object{Path: "/movie"}, model.LinkArgs{
+				IP: "192.0.2.1", Header: http.Header{"User-Agent": []string{"client"}},
+			})
+			if err != nil || link == nil || link.URL != "https://example.invalid/movie" {
+				t.Fatalf("Link = %+v, err = %v", link, err)
+			}
+			if got, want := d.ResolveLinkCacheMode("/movie"), driver.LinkCacheIP|driver.LinkCacheUA; got != want {
+				t.Fatalf("cache mode = %v, want %v", got, want)
+			}
+		})
+	}
+}
