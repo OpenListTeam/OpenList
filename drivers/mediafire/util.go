@@ -44,6 +44,28 @@ func checkAPIResult(result string) error {
 	return nil
 }
 
+// mergeCookies overlays fresh response cookies onto the stored cookie
+// header, preserving cookies the endpoint did not re-issue.
+func mergeCookies(currentHeader string, fresh []*http.Cookie) string {
+	jar := make(map[string]string)
+	for _, part := range strings.Split(currentHeader, "; ") {
+		if part == "" {
+			continue
+		}
+		if i := strings.Index(part, "="); i > 0 {
+			jar[part[:i]] = part[i+1:]
+		}
+	}
+	for _, c := range fresh {
+		jar[c.Name] = c.Value
+	}
+	pairs := make([]string, 0, len(jar))
+	for name, value := range jar {
+		pairs = append(pairs, name+"="+value)
+	}
+	return strings.Join(pairs, "; ")
+}
+
 // getSessionToken retrieves and validates session token from MediaFire
 func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	if d.limiter != nil {
@@ -119,18 +141,11 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("empty session token received")
 		}
 
-		cookieMap := make(map[string]string)
-		for _, cookie := range resp.Cookies() {
-			cookieMap[cookie.Name] = cookie.Value
-		}
-
-		if len(cookieMap) > 0 {
-			var cookies []string
-			for name, value := range cookieMap {
-				cookies = append(cookies, fmt.Sprintf("%s=%s", name, value))
-			}
-			cookie = strings.Join(cookies, "; ")
-		}
+		// The mint endpoint only re-issues Cloudflare cookies (__cf_bm);
+		// the auth cookies (ukey, skey, session, user, ...) come from the
+		// login page and are never re-sent. Merge instead of replacing, or
+		// every successful mint would drop them and break all future mints.
+		cookie = mergeCookies(d.cookie(), resp.Cookies())
 
 	} else {
 		return "", fmt.Errorf("getSessionToken :: failed to get session token, status code: %d", resp.StatusCode)
