@@ -2,6 +2,7 @@ package pikpak
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -80,7 +81,7 @@ func (p *PikPak) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return t.ID, nil
 }
 
-func (p *PikPak) Remove(task *tool.DownloadTask) error {
+func (p *PikPak) Remove(ctx context.Context, task *tool.DownloadTask) error {
 	storage, _, err := op.GetStorageAndActualPath(task.TempDir)
 	if err != nil {
 		return err
@@ -89,7 +90,6 @@ func (p *PikPak) Remove(task *tool.DownloadTask) error {
 	if !ok {
 		return fmt.Errorf("unsupported storage driver for offline download, only Pikpak is supported")
 	}
-	ctx := context.Background()
 	err = pikpakDriver.DeleteOfflineTasks(ctx, []string{task.GID}, false)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func (p *PikPak) Status(task *tool.DownloadTask) (*tool.Status, error) {
 				s.TotalBytes = 0
 			}
 			if t.Phase == "PHASE_TYPE_ERROR" {
-				s.Err = fmt.Errorf(t.Message)
+				s.Err = errors.New(t.Message)
 			}
 			return s, nil
 		}

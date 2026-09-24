@@ -2,6 +2,7 @@ package qbittorrent
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -20,11 +21,19 @@ type Client interface {
 	Delete(id string, deleteFiles bool) error
 }
 
+// ContextClient adds bounded deletion while preserving the Client contract.
+type ContextClient interface {
+	Client
+	DeleteContext(ctx context.Context, id string, deleteFiles bool) error
+}
+
 type client struct {
 	url    *url.URL
 	client http.Client
 	Client
 }
+
+var _ ContextClient = (*client)(nil)
 
 func New(webuiUrl string) (Client, error) {
 	u, err := url.Parse(webuiUrl)
@@ -61,24 +70,34 @@ func New(webuiUrl string) (Client, error) {
 }
 
 func (c *client) checkAuthorization() error {
+	return c.checkAuthorizationContext(context.Background())
+}
+
+func (c *client) checkAuthorizationContext(ctx context.Context) error {
 	// check authorization
-	if c.authorized() {
+	if c.authorizedContext(ctx) {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// check authorization after logging in
-	err := c.login()
+	err := c.loginContext(ctx)
 	if err != nil {
 		return err
 	}
-	if c.authorized() {
+	if c.authorizedContext(ctx) {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return errors.New("unauthorized qbittorrent url")
 }
 
-func (c *client) authorized() bool {
-	resp, err := c.post("/api/v2/app/version", nil)
+func (c *client) authorizedContext(ctx context.Context) bool {
+	resp, err := c.postContext(ctx, "/api/v2/app/version", nil)
 	if err != nil {
 		return false
 	}
@@ -86,13 +105,13 @@ func (c *client) authorized() bool {
 	return resp.StatusCode == 200 // the status code will be 403 if not authorized
 }
 
-func (c *client) login() error {
+func (c *client) loginContext(ctx context.Context) error {
 	// prepare HTTP request
 	v := url.Values{}
 	v.Set("username", c.url.User.Username())
 	passwd, _ := c.url.User.Password()
 	v.Set("password", passwd)
-	resp, err := c.post("/api/v2/auth/login", v)
+	resp, err := c.postContext(ctx, "/api/v2/auth/login", v)
 	if err != nil {
 		return err
 	}
@@ -120,10 +139,14 @@ func (c *client) login() error {
 }
 
 func (c *client) post(path string, data url.Values) (*http.Response, error) {
+	return c.postContext(context.Background(), path, data)
+}
+
+func (c *client) postContext(ctx context.Context, path string, data url.Values) (*http.Response, error) {
 	u := c.url.JoinPath(path)
 	u.User = nil // remove userinfo for requests
 
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader([]byte(data.Encode())))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader([]byte(data.Encode())))
 	if err != nil {
 		return nil, err
 	}
@@ -287,16 +310,20 @@ func NewInfoNotFoundError(id string) InfoNotFoundError {
 }
 
 func (c *client) GetInfo(id string) (TorrentInfo, error) {
+	return c.getInfo(context.Background(), id)
+}
+
+func (c *client) getInfo(ctx context.Context, id string) (TorrentInfo, error) {
 	var infos []TorrentInfo
 
-	err := c.checkAuthorization()
+	err := c.checkAuthorizationContext(ctx)
 	if err != nil {
 		return TorrentInfo{}, err
 	}
 
 	v := url.Values{}
 	v.Set("tag", "openlist-"+id)
-	response, err := c.post("/api/v2/torrents/info", v)
+	response, err := c.postContext(ctx, "/api/v2/torrents/info", v)
 	if err != nil {
 		return TorrentInfo{}, err
 	}
@@ -360,12 +387,14 @@ func (c *client) GetFiles(id string) ([]FileInfo, error) {
 }
 
 func (c *client) Delete(id string, deleteFiles bool) error {
-	err := c.checkAuthorization()
-	if err != nil {
-		return err
-	}
+	return c.DeleteContext(context.Background(), id, deleteFiles)
+}
 
-	info, err := c.GetInfo(id)
+func (c *client) DeleteContext(ctx context.Context, id string, deleteFiles bool) error {
+	// TorrentsController::deleteAction resolves hashes and passes KeepContent
+	// for deleteFiles=false. The tag is removed by the separate deleteTagsAction.
+	// Share one deadline across authentication, hash lookup and both mutations.
+	info, err := c.getInfo(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -376,23 +405,23 @@ func (c *client) Delete(id string, deleteFiles bool) error {
 	} else {
 		v.Set("deleteFiles", "false")
 	}
-	deleteResp, err := c.post("/api/v2/torrents/delete", v)
+	deleteResp, err := c.postContext(ctx, "/api/v2/torrents/delete", v)
 	if err != nil {
 		return err
 	}
 	defer deleteResp.Body.Close()
-	if deleteResp.StatusCode != 200 {
+	if deleteResp.StatusCode != http.StatusOK && deleteResp.StatusCode != http.StatusNoContent {
 		return errors.New("failed to delete qbittorrent task")
 	}
 
 	v = url.Values{}
 	v.Set("tags", "openlist-"+id)
-	deleteTagsResp, err := c.post("/api/v2/torrents/deleteTags", v)
+	deleteTagsResp, err := c.postContext(ctx, "/api/v2/torrents/deleteTags", v)
 	if err != nil {
 		return err
 	}
 	defer deleteTagsResp.Body.Close()
-	if deleteTagsResp.StatusCode != 200 {
+	if deleteTagsResp.StatusCode != http.StatusOK && deleteTagsResp.StatusCode != http.StatusNoContent {
 		return errors.New("failed to delete qbittorrent tag")
 	}
 	return nil

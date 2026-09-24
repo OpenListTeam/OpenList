@@ -2,6 +2,7 @@ package _115
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -79,7 +80,7 @@ func (p *Cloud115) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return hashs[0], nil
 }
 
-func (p *Cloud115) Remove(task *tool.DownloadTask) error {
+func (p *Cloud115) Remove(ctx context.Context, task *tool.DownloadTask) error {
 	storage, _, err := op.GetStorageAndActualPath(task.TempDir)
 	if err != nil {
 		return err
@@ -89,7 +90,6 @@ func (p *Cloud115) Remove(task *tool.DownloadTask) error {
 		return fmt.Errorf("unsupported storage driver for offline download, only 115 Cloud is supported")
 	}
 
-	ctx := context.Background()
 	if err := driver115.DeleteOfflineTasks(ctx, []string{task.GID}, false); err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func (p *Cloud115) Status(task *tool.DownloadTask) (*tool.Status, error) {
 			s.Completed = t.IsDone()
 			s.TotalBytes = t.Size
 			if t.IsFailed() {
-				s.Err = fmt.Errorf(t.GetStatus())
+				s.Err = errors.New(t.GetStatus())
 			}
 			return s, nil
 		}

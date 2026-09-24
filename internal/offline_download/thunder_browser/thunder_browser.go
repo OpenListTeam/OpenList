@@ -93,13 +93,11 @@ func (t *ThunderBrowser) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return task.ID, nil
 }
 
-func (t *ThunderBrowser) Remove(task *tool.DownloadTask) error {
+func (t *ThunderBrowser) Remove(ctx context.Context, task *tool.DownloadTask) error {
 	storage, _, err := op.GetStorageAndActualPath(task.TempDir)
 	if err != nil {
 		return err
 	}
-
-	ctx := context.Background()
 
 	switch v := storage.(type) {
 	case *thunder_browser.ThunderBrowser:

@@ -1,6 +1,8 @@
 package qbit
 
 import (
+	"context"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -53,9 +55,12 @@ func (a *QBittorrent) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return args.UID, nil
 }
 
-func (a *QBittorrent) Remove(task *tool.DownloadTask) error {
-	err := a.client.Delete(task.GID, false)
-	return err
+func (a *QBittorrent) Remove(ctx context.Context, task *tool.DownloadTask) error {
+	client, ok := a.client.(qbittorrent.ContextClient)
+	if !ok {
+		return errors.New("qBittorrent cleanup requires a ContextClient")
+	}
+	return client.DeleteContext(ctx, task.GID, false)
 }
 
 func (a *QBittorrent) Status(task *tool.DownloadTask) (*tool.Status, error) {
