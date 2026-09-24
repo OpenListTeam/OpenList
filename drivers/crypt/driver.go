@@ -283,10 +283,11 @@ func (d *Crypt) Link(ctx context.Context, file model.Obj, _ model.LinkArgs) (*mo
 			n, err := io.ReadFull(remoteReader, fileHeader)
 			if n != fileHeaderSize {
 				fileHeader = nil
+				_ = remoteReader.Close()
 				return nil, fmt.Errorf("failed to read all data: (expect =%d, actual =%d) %w", fileHeaderSize, n, err)
 			}
 			if limit <= fileHeaderSize {
-				remoteReader.Close()
+				_ = remoteReader.Close()
 				return io.NopCloser(bytes.NewReader(fileHeader[:limit])), nil
 			} else {
 				remoteReader = utils.ReadCloser{

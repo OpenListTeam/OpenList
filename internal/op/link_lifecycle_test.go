@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -51,19 +52,37 @@ func acquireTestLink(t *testing.T, d *linkLifecycleDriver) *model.Link {
 }
 
 func TestLinkLifecycleModes(t *testing.T) {
-	t.Run("TTL descriptor remains reusable after close", func(t *testing.T) {
+	t.Run("TTL borrowers are isolated while the descriptor is reused", func(t *testing.T) {
 		resetLinkLifecycleState(t)
 		ttl := time.Minute
 		d := &linkLifecycleDriver{
 			Storage: model.Storage{MountPath: "/ttl"},
-			links:   func() *model.Link { return &model.Link{URL: "https://example.test/file", Expiration: &ttl} },
+			links: func() *model.Link {
+				return &model.Link{
+					URL:        "https://example.test/file",
+					Header:     http.Header{"X-Link": {"cached"}},
+					Expiration: &ttl,
+				}
+			},
 		}
 
 		first := acquireTestLink(t, d)
+		if first.Expiration == nil || *first.Expiration != ttl {
+			t.Fatalf("borrower expiration = %v, want %v", first.Expiration, ttl)
+		}
+		*first.Expiration = time.Second
+		first.URL = "https://borrower.test/file"
+		first.Header.Set("X-Link", "borrower")
 		_ = first.Close()
 		second := acquireTestLink(t, d)
-		if second.URL != first.URL || d.calls.Load() != 1 {
-			t.Fatalf("TTL link was not reused: calls=%d", d.calls.Load())
+		if second.URL != "https://example.test/file" || second.Header.Get("X-Link") != "cached" {
+			t.Fatalf("cached descriptor was mutated: URL=%q Header=%q", second.URL, second.Header.Get("X-Link"))
+		}
+		if d.calls.Load() != 1 {
+			t.Fatalf("driver calls = %d, want 1", d.calls.Load())
+		}
+		if second.Expiration == nil || *second.Expiration != ttl {
+			t.Fatalf("cached expiration was mutated: %v", second.Expiration)
 		}
 		_ = second.Close()
 	})
