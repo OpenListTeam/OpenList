@@ -48,9 +48,17 @@ body:
       label: Additional Information
       description: |
         Any other context or screenshots related to this feature request, or information you find helpful.
-  - type: textarea
+  - type: checkboxes
     id: aigenerated
     attributes:
-      label: AI Generated Content (optional)
-      description: |
-        If this request was submitted with the assistance of an AI, please provide the complete chat log, including information about the model used.
+      label: AI Generated Content
+      description: Select exactly one option. Do not delete or modify the disclosure text.
+      options:
+        - label: I used AI tools to generate this content
+        - label: I did not use AI tools to generate this content
+  - type: input
+    id: ai-model
+    attributes:
+      label: AI model used
+      description: If you used AI tools, enter the model name; otherwise leave this blank.
+      placeholder: xxx

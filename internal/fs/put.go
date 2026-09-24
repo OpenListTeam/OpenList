@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -81,7 +80,7 @@ func putAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) 
 	t := &UploadTask{
 		TaskExtension: task.TaskExtension{
 			Creator: taskCreator,
-			ApiUrl:  common.GetApiUrl(ctx),
+			ApiUrl:  conf.GetApiUrl(ctx),
 		},
 		storage:          storage,
 		dstDirActualPath: dstDirActualPath,
