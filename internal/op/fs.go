@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -17,7 +16,6 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/time/rate"
 )
 
 var listG singleflight.Group[[]model.Obj]
@@ -32,9 +30,15 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
+	ctx, ownsProjection := enterSnapshotFrame(ctx)
 	log.Debugf("op.List %s", path)
 	key := Key(storage, path)
-	if !args.Refresh {
+	canonicalReqPath := utils.GetFullPath(storage.GetStorage().MountPath, path)
+	if args.ReqPath == "" {
+		args.ReqPath = canonicalReqPath
+	}
+	cacheable := args.ReqPath == canonicalReqPath && !args.S3ShowPlaceholder && !args.WithStorageDetails
+	if cacheable && !args.Refresh {
 		if dirCache, exists := Cache.dirCache.Get(key); exists {
 			log.Debugf("use cache when list %s", path)
 			objs := dirCache.GetSortedObjects(storage)
@@ -48,7 +52,22 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 	}
 
-	objs, err, _ := listG.Do(key, func() ([]model.Obj, error) {
+	flightKey := key + "\x00" + args.ReqPath
+	if args.S3ShowPlaceholder {
+		flightKey += "\x00placeholder"
+	}
+	if args.WithStorageDetails {
+		flightKey += "\x00details"
+	}
+	if args.Refresh {
+		flightKey += "\x00fresh"
+	}
+	objs, err, _ := listG.Do(flightKey, func() ([]model.Obj, error) {
+		var load directoryLoadToken
+		if cacheable {
+			load = Cache.beginDirectoryLoad(key, args.Refresh)
+			defer load.done()
+		}
 		dir, err := GetUnwrap(ctx, storage, path)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed get dir")
@@ -69,46 +88,47 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 		model.ExtractFolder(files, storage.GetStorage().ExtractFolder)
 
-		if !args.SkipHook {
-			// call hooks
-			go func(reqPath string, files []model.Obj) {
-				HandleObjsUpdateHook(context.WithoutCancel(ctx), reqPath, files)
-			}(utils.GetFullPath(storage.GetStorage().MountPath, path), files)
-		}
+		if cacheable {
+			accepted := load.commitIfCurrent(func() {
+				if !storage.Config().NoCache && len(files) > 0 {
+					log.Debugf("set cache: %s => %+v", key, files)
 
-		if !storage.Config().NoCache {
-			if len(files) > 0 {
-				log.Debugf("set cache: %s => %+v", key, files)
+					ttl := storage.GetStorage().CacheExpiration
 
-				ttl := storage.GetStorage().CacheExpiration
+					customCachePolicies := storage.GetStorage().CustomCachePolicies
+					if len(customCachePolicies) > 0 {
+						for configPolicy := range strings.SplitSeq(customCachePolicies, "\n") {
+							pattern, ttlstr, ok := strings.Cut(strings.TrimSpace(configPolicy), ":")
+							if !ok {
+								log.Warnf("Malformed custom cache policy entry: %s in storage %s for path %s. Expected format: pattern:ttl", configPolicy, storage.GetStorage().MountPath, path)
+								continue
+							}
+							if match, err1 := doublestar.Match(pattern, path); err1 != nil {
+								log.Warnf("Invalid glob pattern in custom cache policy: %s, error: %v", pattern, err1)
+								continue
+							} else if !match {
+								continue
+							}
 
-				customCachePolicies := storage.GetStorage().CustomCachePolicies
-				if len(customCachePolicies) > 0 {
-					for configPolicy := range strings.SplitSeq(customCachePolicies, "\n") {
-						pattern, ttlstr, ok := strings.Cut(strings.TrimSpace(configPolicy), ":")
-						if !ok {
-							log.Warnf("Malformed custom cache policy entry: %s in storage %s for path %s. Expected format: pattern:ttl", configPolicy, storage.GetStorage().MountPath, path)
-							continue
-						}
-						if match, err1 := doublestar.Match(pattern, path); err1 != nil {
-							log.Warnf("Invalid glob pattern in custom cache policy: %s, error: %v", pattern, err1)
-							continue
-						} else if !match {
-							continue
-						}
-
-						if configTtl, err1 := strconv.ParseInt(ttlstr, 10, 64); err1 == nil {
-							ttl = int(configTtl)
-							break
+							if configTtl, err1 := strconv.ParseInt(ttlstr, 10, 64); err1 == nil {
+								ttl = int(configTtl)
+								break
+							}
 						}
 					}
-				}
 
-				duration := time.Minute * time.Duration(ttl)
-				Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), duration)
-			} else {
-				log.Debugf("del cache: %s", key)
-				Cache.deleteDirectoryTree(key)
+					duration := time.Minute * time.Duration(ttl)
+					Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), duration)
+				} else if !storage.Config().NoCache {
+					log.Debugf("del cache: %s", key)
+					Cache.deleteDirectoryTree(key)
+				}
+				if ownsProjection {
+					ProjectSnapshot(context.WithoutCancel(ctx), canonicalReqPath, files)
+				}
+			})
+			if !accepted {
+				log.Debugf("discard stale list snapshot: %s", path)
 			}
 		}
 		return files, nil
@@ -342,33 +362,37 @@ func MakeDir(ctx context.Context, storage driver.Driver, path string) error {
 		}
 
 		var newObj model.Obj
+		mutationCtx, finishMutation := enterMutationFrame(ctx, storage, reconciliationTarget{path: parentPath})
+		defer finishMutation()
 		switch s := storage.(type) {
 		case driver.MkdirResult:
-			newObj, err = s.MakeDir(ctx, parentDir, dirName)
+			newObj, err = s.MakeDir(mutationCtx, parentDir, dirName)
 		case driver.Mkdir:
-			err = s.MakeDir(ctx, parentDir, dirName)
+			err = s.MakeDir(mutationCtx, parentDir, dirName)
 		default:
 			return nil, errs.NotImplement
 		}
 		if err != nil && !errs.IsObjectAlreadyExists(err) {
 			return nil, errors.WithStack(err)
 		}
-		if storage.Config().NoCache {
-			return nil, nil
-		}
-		if dirCache, exist := Cache.dirCache.Get(Key(storage, parentPath)); exist {
-			if newObj == nil {
-				t := time.Now()
-				newObj = &model.Object{
-					Name:     dirName,
-					IsFolder: true,
-					Modified: t,
-					Ctime:    t,
-					Mask:     model.Temp,
+		parentKey := Key(storage, parentPath)
+		commitNamespaceMutation(mutationCtx, storage, []string{parentKey}, func() {
+			if !storage.Config().NoCache {
+				if dirCache, exist := Cache.dirCache.Get(parentKey); exist {
+					if newObj == nil {
+						t := time.Now()
+						newObj = &model.Object{
+							Name:     dirName,
+							IsFolder: true,
+							Modified: t,
+							Ctime:    t,
+							Mask:     model.Temp,
+						}
+					}
+					dirCache.UpdateObject("", wrapObjName(storage, newObj))
 				}
 			}
-			dirCache.UpdateObject("", wrapObjName(storage, newObj))
-		}
+		}, reconciliationTarget{path: parentPath})
 		return nil, nil
 	})
 	return err
@@ -403,12 +427,20 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		return errors.WithStack(errs.PermissionDenied)
 	}
 
+	targets := []reconciliationTarget{{path: srcDirPath}}
+	if srcObj.IsDir() {
+		targets = append(targets, reconciliationTarget{path: stdpath.Join(dstDirPath, srcObj.GetName()), recursive: true})
+	} else {
+		targets = append(targets, reconciliationTarget{path: dstDirPath})
+	}
+	mutationCtx, finishMutation := enterMutationFrame(ctx, storage, targets...)
+	defer finishMutation()
 	var newObj model.Obj
 	switch s := storage.(type) {
 	case driver.MoveResult:
-		newObj, err = s.Move(ctx, srcObj, dstDir)
+		newObj, err = s.Move(mutationCtx, srcObj, dstDir)
 	case driver.Move:
-		err = s.Move(ctx, srcObj, dstDir)
+		err = s.Move(mutationCtx, srcObj, dstDir)
 	default:
 		err = errs.NotImplement
 	}
@@ -418,35 +450,28 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 
 	srcKey := Key(storage, srcDirPath)
 	dstKey := Key(storage, dstDirPath)
-	if !srcRawObj.IsDir() {
-		Cache.linkCache.DeleteKey(stdpath.Join(srcKey, srcRawObj.GetName()))
-		Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
-	}
-	if !storage.Config().NoCache {
-		if cache, exist := Cache.dirCache.Get(srcKey); exist {
-			if srcRawObj.IsDir() {
-				Cache.deleteDirectoryTree(stdpath.Join(srcKey, srcRawObj.GetName()))
-			}
-			cache.RemoveObject(srcRawObj.GetName())
+	commitNamespaceMutation(mutationCtx, storage, []string{srcKey, dstKey}, func() {
+		if !srcRawObj.IsDir() {
+			Cache.linkCache.DeleteKey(stdpath.Join(srcKey, srcRawObj.GetName()))
+			Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
 		}
-		if cache, exist := Cache.dirCache.Get(dstKey); exist {
-			if newObj == nil {
-				newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
-			} else {
-				newObj = wrapObjName(storage, newObj)
+		if !storage.Config().NoCache {
+			if cache, exist := Cache.dirCache.Get(srcKey); exist {
+				if srcRawObj.IsDir() {
+					Cache.deleteDirectoryTree(stdpath.Join(srcKey, srcRawObj.GetName()))
+				}
+				cache.RemoveObject(srcRawObj.GetName())
 			}
-			cache.UpdateObject(srcRawObj.GetName(), newObj)
+			if cache, exist := Cache.dirCache.Get(dstKey); exist {
+				if newObj == nil {
+					newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
+				} else {
+					newObj = wrapObjName(storage, newObj)
+				}
+				cache.UpdateObject(srcRawObj.GetName(), newObj)
+			}
 		}
-	}
-
-	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
-		return nil
-	}
-	if !srcObj.IsDir() {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
-	} else {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Join(dstDirPath, srcObj.GetName()), true)
-	}
+	}, targets...)
 	return nil
 }
 
@@ -468,12 +493,19 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 	oldName := srcRawObj.GetName()
 	srcObj := model.UnwrapObjName(srcRawObj)
 
+	dirPath := stdpath.Dir(srcPath)
+	targets := []reconciliationTarget{{path: dirPath}}
+	if srcObj.IsDir() {
+		targets = append(targets, reconciliationTarget{path: stdpath.Join(dirPath, dstName), recursive: true})
+	}
+	mutationCtx, finishMutation := enterMutationFrame(ctx, storage, targets...)
+	defer finishMutation()
 	var newObj model.Obj
 	switch s := storage.(type) {
 	case driver.RenameResult:
-		newObj, err = s.Rename(ctx, srcObj, dstName)
+		newObj, err = s.Rename(mutationCtx, srcObj, dstName)
 	case driver.Rename:
-		err = s.Rename(ctx, srcObj, dstName)
+		err = s.Rename(mutationCtx, srcObj, dstName)
 	default:
 		return errs.NotImplement
 	}
@@ -481,33 +513,25 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 		return errors.WithStack(err)
 	}
 
-	dirKey := Key(storage, stdpath.Dir(srcPath))
-	if !srcRawObj.IsDir() {
-		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, oldName))
-		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstName))
-	}
-	if !storage.Config().NoCache {
-		if cache, exist := Cache.dirCache.Get(dirKey); exist {
-			if srcRawObj.IsDir() {
-				Cache.deleteDirectoryTree(stdpath.Join(dirKey, oldName))
-			}
-			if newObj == nil {
-				newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
-			}
-			newObj = wrapObjName(storage, newObj)
-			cache.UpdateObject(oldName, newObj)
+	dirKey := Key(storage, dirPath)
+	commitNamespaceMutation(mutationCtx, storage, []string{dirKey}, func() {
+		if !srcRawObj.IsDir() {
+			Cache.linkCache.DeleteKey(stdpath.Join(dirKey, oldName))
+			Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstName))
 		}
-	}
-
-	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
-		return nil
-	}
-	dstDirPath := stdpath.Dir(srcPath)
-	if !srcObj.IsDir() {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
-	} else {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Join(dstDirPath, srcObj.GetName()), true)
-	}
+		if !storage.Config().NoCache {
+			if cache, exist := Cache.dirCache.Get(dirKey); exist {
+				if srcRawObj.IsDir() {
+					Cache.deleteDirectoryTree(stdpath.Join(dirKey, oldName))
+				}
+				if newObj == nil {
+					newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
+				}
+				newObj = wrapObjName(storage, newObj)
+				cache.UpdateObject(oldName, newObj)
+			}
+		}
+	}, targets...)
 	return nil
 }
 
@@ -537,12 +561,18 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		return errors.WithStack(errs.PermissionDenied)
 	}
 
+	target := reconciliationTarget{path: dstDirPath}
+	if srcObj.IsDir() {
+		target = reconciliationTarget{path: stdpath.Join(dstDirPath, srcObj.GetName()), recursive: true}
+	}
+	mutationCtx, finishMutation := enterMutationFrame(ctx, storage, target)
+	defer finishMutation()
 	var newObj model.Obj
 	switch s := storage.(type) {
 	case driver.CopyResult:
-		newObj, err = s.Copy(ctx, srcObj, dstDir)
+		newObj, err = s.Copy(mutationCtx, srcObj, dstDir)
 	case driver.Copy:
-		err = s.Copy(ctx, srcObj, dstDir)
+		err = s.Copy(mutationCtx, srcObj, dstDir)
 	default:
 		err = errs.NotImplement
 	}
@@ -551,28 +581,21 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	}
 
 	dstKey := Key(storage, dstDirPath)
-	if !srcRawObj.IsDir() {
-		Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
-	}
-	if !storage.Config().NoCache {
-		if cache, exist := Cache.dirCache.Get(dstKey); exist {
-			if newObj == nil {
-				newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
-			} else {
-				newObj = wrapObjName(storage, newObj)
-			}
-			cache.UpdateObject(srcRawObj.GetName(), newObj)
+	commitNamespaceMutation(mutationCtx, storage, []string{dstKey}, func() {
+		if !srcRawObj.IsDir() {
+			Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
 		}
-	}
-
-	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
-		return nil
-	}
-	if !srcObj.IsDir() {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
-	} else {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Join(dstDirPath, srcObj.GetName()), true)
-	}
+		if !storage.Config().NoCache {
+			if cache, exist := Cache.dirCache.Get(dstKey); exist {
+				if newObj == nil {
+					newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
+				} else {
+					newObj = wrapObjName(storage, newObj)
+				}
+				cache.UpdateObject(srcRawObj.GetName(), newObj)
+			}
+		}
+	}, target)
 	return nil
 }
 
@@ -597,12 +620,16 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 		return errors.WithStack(errs.PermissionDenied)
 	}
 	dirPath := stdpath.Dir(path)
+	mutationCtx, finishMutation := enterMutationFrame(ctx, storage, reconciliationTarget{path: dirPath})
+	defer finishMutation()
 
 	switch s := storage.(type) {
 	case driver.Remove:
-		err = s.Remove(ctx, model.UnwrapObjName(rawObj))
+		err = s.Remove(mutationCtx, model.UnwrapObjName(rawObj))
 		if err == nil {
-			Cache.removeDirectoryObject(storage, dirPath, rawObj)
+			commitNamespaceMutation(mutationCtx, storage, []string{Key(storage, dirPath)}, func() {
+				Cache.removeDirectoryObject(storage, dirPath, rawObj)
+			}, reconciliationTarget{path: dirPath})
 		}
 	default:
 		return errs.NotImplement
@@ -670,48 +697,49 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		file.CacheFullAndWriter(nil, nil)
 	}
 
+	mutationCtx, finishMutation := enterMutationFrame(ctx, storage, reconciliationTarget{path: dstDirPath})
+	defer finishMutation()
 	var newObj model.Obj
 	switch s := storage.(type) {
 	case driver.PutResult:
-		newObj, err = s.Put(ctx, parentDir, file, up)
+		newObj, err = s.Put(mutationCtx, parentDir, file, up)
 	case driver.Put:
-		err = s.Put(ctx, parentDir, file, up)
+		err = s.Put(mutationCtx, parentDir, file, up)
 	default:
 		return errs.NotImplement
 	}
 	if err == nil {
-		Cache.linkCache.DeleteKey(Key(storage, dstPath))
-		if !storage.Config().NoCache {
-			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				if newObj == nil {
-					newObj = &model.Object{
-						Name:     file.GetName(),
-						Size:     file.GetSize(),
-						Modified: file.ModTime(),
-						Ctime:    file.CreateTime(),
-						Mask:     model.Temp,
+		dstKey := Key(storage, dstDirPath)
+		commitNamespaceMutation(mutationCtx, storage, []string{dstKey}, func() {
+			Cache.linkCache.DeleteKey(Key(storage, dstPath))
+			if !storage.Config().NoCache {
+				if cache, exist := Cache.dirCache.Get(dstKey); exist {
+					if newObj == nil {
+						newObj = &model.Object{
+							Name:     file.GetName(),
+							Size:     file.GetSize(),
+							Modified: file.ModTime(),
+							Ctime:    file.CreateTime(),
+							Mask:     model.Temp,
+						}
 					}
+					newObj = wrapObjName(storage, newObj)
+					cache.UpdateObject(newObj.GetName(), newObj)
 				}
-				newObj = wrapObjName(storage, newObj)
-				cache.UpdateObject(newObj.GetName(), newObj)
 			}
-		}
-
-		if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
-			go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
-		}
+		}, reconciliationTarget{path: dstDirPath})
 	}
 	log.Debugf("put file [%s] done", file.GetName())
 	if storage.Config().NoOverwriteUpload && fi != nil && fi.GetSize() > 0 {
 		if err != nil {
 			// upload failed, recover old obj
-			err := Rename(ctx, storage, tempPath, file.GetName())
+			err := Rename(mutationCtx, storage, tempPath, file.GetName())
 			if err != nil {
 				log.Errorf("failed recover old obj: %+v", err)
 			}
 		} else {
 			// upload success, remove old obj
-			err = Remove(ctx, storage, tempPath)
+			err = Remove(mutationCtx, storage, tempPath)
 		}
 	}
 	return errors.WithStack(err)
@@ -738,36 +766,37 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	if model.ObjHasMask(dstDir, model.NoWrite) {
 		return errors.WithStack(errs.PermissionDenied)
 	}
+	mutationCtx, finishMutation := enterMutationFrame(ctx, storage, reconciliationTarget{path: dstDirPath})
+	defer finishMutation()
 	var newObj model.Obj
 	switch s := storage.(type) {
 	case driver.PutURLResult:
-		newObj, err = s.PutURL(ctx, dstDir, dstName, url)
+		newObj, err = s.PutURL(mutationCtx, dstDir, dstName, url)
 	case driver.PutURL:
-		err = s.PutURL(ctx, dstDir, dstName, url)
+		err = s.PutURL(mutationCtx, dstDir, dstName, url)
 	default:
 		return errors.WithStack(errs.NotImplement)
 	}
 	if err == nil {
-		Cache.linkCache.DeleteKey(Key(storage, dstPath))
-		if !storage.Config().NoCache {
-			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				if newObj == nil {
-					t := time.Now()
-					newObj = &model.Object{
-						Name:     dstName,
-						Modified: t,
-						Ctime:    t,
-						Mask:     model.Temp,
+		dstKey := Key(storage, dstDirPath)
+		commitNamespaceMutation(mutationCtx, storage, []string{dstKey}, func() {
+			Cache.linkCache.DeleteKey(Key(storage, dstPath))
+			if !storage.Config().NoCache {
+				if cache, exist := Cache.dirCache.Get(dstKey); exist {
+					if newObj == nil {
+						t := time.Now()
+						newObj = &model.Object{
+							Name:     dstName,
+							Modified: t,
+							Ctime:    t,
+							Mask:     model.Temp,
+						}
 					}
+					newObj = wrapObjName(storage, newObj)
+					cache.UpdateObject(newObj.GetName(), newObj)
 				}
-				newObj = wrapObjName(storage, newObj)
-				cache.UpdateObject(newObj.GetName(), newObj)
 			}
-
-			if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
-				go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
-			}
-		}
+		}, reconciliationTarget{path: dstDirPath})
 	}
 	log.Debugf("put url [%s](%s) done", dstName, url)
 	return errors.WithStack(err)
@@ -817,53 +846,6 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 		return nil, errors.WithStack(err)
 	}
 	return info, nil
-}
-
-func objsUpdateHook(ctx context.Context, storage driver.Driver, dirPath string, recursive bool) {
-	files, err := List(ctx, storage, dirPath, model.ListArgs{SkipHook: true})
-	if err != nil {
-		return
-	}
-	if !recursive {
-		HandleObjsUpdateHook(ctx, utils.GetFullPath(storage.GetStorage().MountPath, dirPath), files)
-		return
-	}
-	var limiter *rate.Limiter
-	if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
-		if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
-			limiter = rate.NewLimiter(rate.Limit(f), 1)
-		}
-	}
-	recursivelyObjsUpdateHook(ctx, storage, dirPath, files, limiter)
-}
-func recursivelyObjsUpdateHook(ctx context.Context, storage driver.Driver, dirPath string, files []model.Obj, limiter *rate.Limiter) {
-	HandleObjsUpdateHook(ctx, utils.GetFullPath(storage.GetStorage().MountPath, dirPath), files)
-	for _, f := range files {
-		if utils.IsCanceled(ctx) {
-			return
-		}
-		if !f.IsDir() {
-			continue
-		}
-		dstPath := stdpath.Join(dirPath, f.GetName())
-		if limiter != nil {
-			if err := limiter.Wait(ctx); err != nil {
-				return
-			}
-		}
-		files, err := List(ctx, storage, dstPath, model.ListArgs{SkipHook: true})
-		if err == nil {
-			recursivelyObjsUpdateHook(ctx, storage, dstPath, files, limiter)
-		}
-	}
-}
-
-func needHandleObjsUpdateHook() bool {
-	if len(objsUpdateHooks) < 1 {
-		return false
-	}
-	needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterWriting)
-	return needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1")
 }
 
 func wrapObjsName(storage driver.Driver, objs []model.Obj) {

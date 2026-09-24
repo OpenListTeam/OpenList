@@ -74,7 +74,7 @@ func (t *TransferTask) Run() error {
 				Mimetype: mimetype,
 				Closers:  utils.NewClosers(r),
 			}
-			return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress)
+			return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress)
 		}
 		return transferStdPath(t)
 	}
@@ -115,7 +115,7 @@ func (t *TransferTask) SetRetry(retry int, maxRetry int) {
 		(len(t.groupID) == 0 || // 重启恢复
 			(t.GetErr() == nil && t.GetState() != tache.StatePending)) { // 手动重试
 		t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
-		task_group.TransferCoordinator.AddTask(t.groupID, nil)
+		task_group.TransferCoordinator.AddTask(t.groupID)
 	}
 	t.TaskData.SetRetry(retry, maxRetry)
 }
@@ -149,7 +149,7 @@ func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 			DeletePolicy: deletePolicy,
 		}
 		t.groupID = path.Join(t.DstStorageMp, t.DstActualPath)
-		task_group.TransferCoordinator.AddTask(t.groupID, nil)
+		task_group.TransferCoordinator.AddTask(t.groupID)
 		TransferTaskManager.Add(t)
 	}
 	return nil
@@ -168,7 +168,6 @@ func transferStdPath(t *TransferTask) error {
 			return err
 		}
 		dstDirActualPath := stdpath.Join(t.DstActualPath, info.Name())
-		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstDirActualPath))
 		for _, entry := range entries {
 			srcRawPath := stdpath.Join(t.SrcActualPath, entry.Name())
 			task := &TransferTask{
@@ -186,7 +185,7 @@ func transferStdPath(t *TransferTask) error {
 				groupID:      t.groupID,
 				DeletePolicy: t.DeletePolicy,
 			}
-			task_group.TransferCoordinator.AddTask(t.groupID, nil)
+			task_group.TransferCoordinator.AddTask(t.groupID)
 			TransferTaskManager.Add(task)
 		}
 		t.Status = "src object is dir, added all transfer tasks of files"
@@ -238,7 +237,7 @@ func transferStdFile(t *TransferTask) error {
 		Closers:  utils.NewClosers(rc),
 	}
 	t.SetTotalBytes(info.Size())
-	err = op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, s, t.SetProgress)
+	err = op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, s, t.SetProgress)
 	if err != nil {
 		return err
 	}
@@ -287,7 +286,7 @@ func transferObj(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 			DeletePolicy: deletePolicy,
 		}
 		t.groupID = path.Join(t.DstStorageMp, t.DstActualPath)
-		task_group.TransferCoordinator.AddTask(t.groupID, nil)
+		task_group.TransferCoordinator.AddTask(t.groupID)
 		TransferTaskManager.Add(t)
 	}
 	return nil
@@ -306,13 +305,12 @@ func transferObjPath(t *TransferTask) error {
 			return errors.WithMessagef(err, "failed list src [%s] objs", t.SrcActualPath)
 		}
 		dstDirActualPath := stdpath.Join(t.DstActualPath, srcObj.GetName())
-		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstDirActualPath))
 		for _, obj := range objs {
 			if utils.IsCanceled(t.Ctx()) {
 				return nil
 			}
 			srcObjPath := stdpath.Join(t.SrcActualPath, obj.GetName())
-			task_group.TransferCoordinator.AddTask(t.groupID, nil)
+			task_group.TransferCoordinator.AddTask(t.groupID)
 			TransferTaskManager.Add(&TransferTask{
 				TaskData: fs.TaskData{
 					TaskExtension: task.TaskExtension{
@@ -355,7 +353,7 @@ func transferObjFile(t *TransferTask) error {
 		return errors.WithMessagef(err, "failed get [%s] stream", t.SrcActualPath)
 	}
 	t.SetTotalBytes(ss.GetSize())
-	return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
+	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
 }
 
 func removeObjTemp(t *TransferTask) {

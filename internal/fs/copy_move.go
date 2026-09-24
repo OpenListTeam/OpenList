@@ -13,7 +13,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/tache"
 	"github.com/pkg/errors"
 )
@@ -37,6 +36,13 @@ const (
 	copy taskType = iota
 	move
 	merge
+)
+
+type transferMode uint8
+
+const (
+	scheduledTransfer transferMode = iota
+	synchronousTransfer
 )
 
 type FileTransferTask struct {
@@ -67,7 +73,7 @@ func (t *FileTransferTask) Run() error {
 	t.SetStartTime(time.Now())
 	defer func() { t.SetEndTime(time.Now()) }()
 	return t.RunWithNextTaskCallback(func(nextTask *FileTransferTask) error {
-		task_group.TransferCoordinator.AddTask(t.groupID, nil)
+		task_group.TransferCoordinator.AddTask(t.groupID)
 		if t.TaskType == copy || t.TaskType == merge {
 			CopyTaskManager.Add(nextTask)
 		} else {
@@ -91,15 +97,14 @@ func (t *FileTransferTask) SetRetry(retry int, maxRetry int) {
 		(len(t.groupID) == 0 || // 重启恢复
 			(t.GetErr() == nil && t.GetState() != tache.StatePending)) { // 手动重试
 		t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
-		var payload any
+		task_group.TransferCoordinator.AddTask(t.groupID)
 		if t.TaskType == move {
-			payload = task_group.SrcPathToRemove(stdpath.Join(t.SrcStorageMp, t.SrcActualPath))
+			task_group.TransferCoordinator.RemoveSource(t.groupID, stdpath.Join(t.SrcStorageMp, t.SrcActualPath))
 		}
-		task_group.TransferCoordinator.AddTask(t.groupID, payload)
 	}
 }
 
-func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
+func transfer(ctx context.Context, taskType taskType, mode transferMode, srcObjPath, dstDirPath string) (task.TaskExtensionInfo, error) {
 	srcStorage, srcObjActualPath, err := op.GetStorageAndActualPath(srcObjPath)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed get src storage")
@@ -110,9 +115,6 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	}
 
 	if srcStorage.GetStorage() == dstStorage.GetStorage() {
-		if utils.IsBool(skipHook...) {
-			ctx = context.WithValue(ctx, conf.SkipHookKey, struct{}{})
-		}
 		if taskType == copy || taskType == merge {
 			err = op.Copy(ctx, srcStorage, srcObjActualPath, dstDirActualPath)
 			if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.NotSupport) {
@@ -140,8 +142,8 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	}
 
 	t.groupID = stdpath.Join(t.DstStorageMp, t.DstActualPath)
-	task_group.TransferCoordinator.AddTask(t.groupID, nil)
-	if ctx.Value(conf.NoTaskKey) != nil {
+	task_group.TransferCoordinator.AddTask(t.groupID)
+	if mode == synchronousTransfer {
 		var callback func(nextTask *FileTransferTask) error
 		hasSuccess := false
 		callback = func(nextTask *FileTransferTask) error {
@@ -158,7 +160,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 			hasSuccess = true
 		}
 		if taskType == move {
-			task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
+			task_group.TransferCoordinator.RemoveSource(t.groupID, srcObjPath)
 		}
 		task_group.TransferCoordinator.Done(context.WithoutCancel(ctx), t.groupID, hasSuccess)
 		return nil, err
@@ -169,7 +171,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	if taskType == copy || taskType == merge {
 		CopyTaskManager.Add(t)
 	} else {
-		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.SrcPathToRemove(srcObjPath))
+		task_group.TransferCoordinator.RemoveSource(t.groupID, srcObjPath)
 		MoveTaskManager.Add(t)
 	}
 	return t, nil
@@ -189,7 +191,6 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 			return errors.WithMessagef(err, "failed list src [%s] objs", t.SrcActualPath)
 		}
 		dstActualPath := stdpath.Join(t.DstActualPath, srcObj.GetName())
-		task_group.TransferCoordinator.AppendPayload(t.groupID, task_group.DstPathToHook(dstActualPath))
 
 		existedObjs := make(map[string]bool)
 		if t.TaskType == merge {
@@ -259,7 +260,7 @@ func (t *FileTransferTask) RunWithNextTaskCallback(f func(nextTask *FileTransfer
 	}
 	t.SetTotalBytes(ss.GetSize())
 	t.Status = "uploading"
-	return op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
+	return op.Put(t.Ctx(), t.DstStorage, t.DstActualPath, ss, t.SetProgress)
 }
 
 var (

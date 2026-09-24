@@ -92,10 +92,6 @@ func init() {
 			}
 		}
 
-		// Initialize and start task queue manager
-		m.taskQueue = NewTaskQueueManager(&m)
-		m.taskQueue.Start()
-
 		return &m, nil
 	})
 }

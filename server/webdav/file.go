@@ -58,7 +58,7 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if srcDir == dstDir {
 		err = fs.Rename(ctx, src, dstName)
 	} else {
-		_, err = fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
+		err = fs.MoveDirectly(ctx, src, dstDir)
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
@@ -98,7 +98,7 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !authz.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
-	_, err = fs.Copy(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
+	err = fs.CopyDirectly(ctx, src, dstDir)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}

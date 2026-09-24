@@ -3,12 +3,10 @@ package fs
 import (
 	"context"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 )
 
@@ -20,13 +18,10 @@ func makeDir(ctx context.Context, path string) error {
 	return op.MakeDir(ctx, storage, actualPath)
 }
 
-func rename(ctx context.Context, srcPath, dstName string, skipHook ...bool) error {
+func rename(ctx context.Context, srcPath, dstName string) error {
 	storage, srcActualPath, err := op.GetStorageAndActualPath(srcPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed get storage")
-	}
-	if utils.IsBool(skipHook...) {
-		ctx = context.WithValue(ctx, conf.SkipHookKey, struct{}{})
 	}
 	return op.Rename(ctx, storage, srcActualPath, dstName)
 }

@@ -94,7 +94,7 @@ func Rename(ctx context.Context, oldPath, newPath string) error {
 			return err
 		}
 		if srcBase != dstBase {
-			err = fs.Rename(ctx, srcPath, dstBase, true)
+			err = fs.Rename(ctx, srcPath, dstBase)
 			if err != nil {
 				return err
 			}

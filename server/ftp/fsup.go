@@ -110,7 +110,7 @@ func (f *FileUploadProxy) Close() error {
 			_ = fs.Rename(ctx, f.path, dstBase)
 		} else {
 			if name != dstBase {
-				e := fs.Rename(ctx, f.path, dstBase, true)
+				e := fs.Rename(ctx, f.path, dstBase)
 				if e != nil {
 					return
 				}
@@ -206,7 +206,7 @@ func (f *FileUploadWithLengthProxy) write(p []byte) (n int, err error) {
 			Reader:       reader,
 		}
 		go func() {
-			e := fs.PutDirectly(f.ctx, dir, s, true)
+			e := fs.PutDirectly(f.ctx, dir, s)
 			f.errChan <- e
 			close(f.errChan)
 		}()

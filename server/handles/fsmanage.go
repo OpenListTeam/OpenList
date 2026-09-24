@@ -141,11 +141,11 @@ func FsMove(c *gin.Context) {
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
-	for i, p := range req.Names {
+	for _, p := range req.Names {
 		if p == "" {
 			continue
 		}
-		t, err := fs.Move(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
+		t, err := fs.Move(c.Request.Context(), p, dstDir)
 		if t != nil {
 			addedTasks = append(addedTasks, t)
 		}
@@ -245,15 +245,15 @@ func FsCopy(c *gin.Context) {
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
-	for i, p := range req.Names {
+	for _, p := range req.Names {
 		if p == "" {
 			continue
 		}
 		var t task.TaskExtensionInfo
 		if req.Merge {
-			t, err = fs.Merge(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
+			t, err = fs.Merge(c.Request.Context(), p, dstDir)
 		} else {
-			t, err = fs.Copy(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
+			t, err = fs.Copy(c.Request.Context(), p, dstDir)
 		}
 		if t != nil {
 			addedTasks = append(addedTasks, t)
