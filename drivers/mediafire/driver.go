@@ -40,6 +40,13 @@ type Mediafire struct {
 
 	cron *cron.Cron
 
+	// Renewal lifecycle: renewCancel aborts in-flight renewals and renewWG
+	// lets Drop drain them, so no renewal outlives Drop and races with a
+	// re-Init on this same instance (storage updates reuse it).
+	renewCtx    context.Context
+	renewCancel context.CancelFunc
+	renewWG     sync.WaitGroup
+
 	// mu guards SessionToken and Cookie: request goroutines read the token
 	// while the renewal cron may refresh it in the background.
 	mu sync.RWMutex
@@ -72,9 +79,10 @@ func (d *Mediafire) cookie() string {
 }
 
 // setSessionToken stores a refreshed token (and login cookie when provided)
-// and persists them, safe to call from the renewal cron goroutine. Note that
-// framework-driven re-Init (admin storage update) rewrites the addition
-// outside this lock; the framework serializes those via Drop.
+// and persists them, safe to call from the renewal cron goroutine.
+// Framework-driven re-Init (admin storage update) rewrites the addition
+// outside this lock; that is safe because Drop cancels the renewal context
+// and drains any in-flight renewal before Init runs again.
 func (d *Mediafire) setSessionToken(token, cookie string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -95,6 +103,12 @@ func (d *Mediafire) GetAddition() driver.Additional {
 
 // Init initializes the MediaFire driver with session token and cookie validation
 func (d *Mediafire) Init(ctx context.Context) error {
+	// Storage updates re-Initialize this same instance (Drop then Init).
+	// Tear any leftover lifecycle down before anything else can return, in
+	// case Init is entered twice without a Drop in between (e.g. after a
+	// panic inside a previous Init, or an update that emptied the Cookie).
+	d.stopRenewal()
+
 	if d.cookie() == "" {
 		return fmt.Errorf("Init :: [MediaFire] {critical} missing Cookie")
 	}
@@ -105,12 +119,13 @@ func (d *Mediafire) Init(ctx context.Context) error {
 	}
 
 	// Obtain a session token: mint from the login cookie first, fall back to
-	// renewing the stored token. A transient failure here must not skip the
-	// scheduling below — the renewal cron self-heals on its next tick.
+	// renewing the stored token. The failure is remembered but not returned
+	// yet, so the cron below is still scheduled and a transient failure
+	// (e.g. DNS not up at container boot) self-heals on a later tick.
+	var tokenErr error
 	if _, err := d.getSessionToken(ctx); err != nil {
 		if renewErr := d.renewToken(ctx); renewErr != nil {
-			log.Warnf("mediafire[%s]: could not obtain a session token (mint: %v, renew: %v); will retry on the renewal cron",
-				d.MountPath, err, renewErr)
+			tokenErr = fmt.Errorf("failed to get session token (mint: %v, renew: %v)", err, renewErr)
 		}
 	}
 
@@ -118,29 +133,67 @@ func (d *Mediafire) Init(ctx context.Context) error {
 	// renewed periodically no matter how the first token was obtained.
 	num := rand.Intn(4) + 6
 
+	d.renewCtx, d.renewCancel = context.WithCancel(context.Background())
+	renewCtx := d.renewCtx
 	d.cron = cron.NewCron(time.Minute * time.Duration(num))
 	d.cron.Do(func() {
+		// Join the WaitGroup before checking cancellation: either Drop
+		// observes this callback in renewWG.Wait, or the check turns it
+		// into a no-op.
+		d.renewWG.Add(1)
+		defer d.renewWG.Done()
+		if utils.IsCanceled(renewCtx) {
+			return
+		}
 		// Renew while the token is still valid; if it already expired,
 		// mint a fresh one from the login cookie.
-		if err := d.renewToken(context.Background()); err != nil {
-			if _, mintErr := d.getSessionToken(context.Background()); mintErr != nil {
-				log.Warnf("mediafire[%s]: session token renewal failed: %v", d.MountPath, mintErr)
+		if err := d.renewToken(renewCtx); err != nil {
+			if _, mintErr := d.getSessionToken(renewCtx); mintErr != nil && !utils.IsCanceled(renewCtx) {
+				log.Warnf("mediafire[%s]: session token renewal failed (renew: %v, mint: %v)", d.MountPath, err, mintErr)
 			}
 		}
 	})
 
+	// Dead credentials must surface at mount time instead of leaving a
+	// storage that reports work but fails every token-dependent operation.
+	if tokenErr != nil {
+		return fmt.Errorf("Init :: [MediaFire] {critical} %w", tokenErr)
+	}
 	return nil
 }
 
-// Drop cleans up driver resources
-func (d *Mediafire) Drop(ctx context.Context) error {
-	// Stop the cron first so no in-flight renewal can repopulate the
-	// action token after it is cleared, then clear under the lock so a
-	// concurrent upload worker cannot read a stale value.
+// stopRenewal stops renewal scheduling and drains any in-flight renewal:
+// the canceled context aborts its HTTP calls, cron.Stop stops future ticks
+// (it blocks until the dispatch goroutine has exited, so no callback can be
+// dispatched after it returns), and renewWG.Wait blocks until the callback
+// has finished, so once this returns no renewal can still write the token,
+// cookie, or persisted storage.
+func (d *Mediafire) stopRenewal() {
+	if d.renewCancel != nil {
+		// Cancel before Stop: an in-flight callback then aborts its HTTP
+		// calls instead of running to completion first.
+		d.renewCancel()
+	}
 	if d.cron != nil {
 		d.cron.Stop()
 		d.cron = nil
 	}
+	if d.renewCancel != nil {
+		d.renewWG.Wait()
+		d.renewCancel = nil
+		d.renewCtx = nil
+	}
+}
+
+// Drop cleans up driver resources
+func (d *Mediafire) Drop(ctx context.Context) error {
+	// Drain the renewal lifecycle before touching shared state: the
+	// framework re-Initializes this same instance on storage updates, and a
+	// renewal surviving past this point could overwrite the token or
+	// persist the storage mid-re-Init.
+	d.stopRenewal()
+	// Clear the action token under the lock so a concurrent upload worker
+	// cannot keep reading a stale value.
 	d.mu.Lock()
 	d.actionToken = ""
 	d.mu.Unlock()
