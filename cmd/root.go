@@ -5,9 +5,10 @@ import (
 	"os"
 
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
-	_ "github.com/OpenListTeam/OpenList/v4/drivers"
+	"github.com/OpenListTeam/OpenList/v4/drivers"
 	_ "github.com/OpenListTeam/OpenList/v4/internal/archive"
 	_ "github.com/OpenListTeam/OpenList/v4/internal/offline_download"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +21,10 @@ Complete documentation is available at https://doc.oplist.org/`,
 }
 
 func Execute() {
+	if err := op.InstallDrivers(drivers.All()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := RootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

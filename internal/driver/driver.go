@@ -13,6 +13,8 @@ type Driver interface {
 	// Other
 }
 
+type Constructor func() Driver
+
 type Meta interface {
 	Config() Config
 	// GetStorage just get raw storage, no need to implement, because model.Storage have implemented

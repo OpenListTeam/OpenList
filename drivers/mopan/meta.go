@@ -2,7 +2,6 @@ package mopan
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -32,8 +31,6 @@ var config = driver.Config{
 	Alert:       "warning|This network disk may store your password in clear text. Please set your password carefully",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &MoPan{}
-	})
+func New() driver.Driver {
+	return &MoPan{}
 }

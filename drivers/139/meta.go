@@ -2,7 +2,6 @@ package _139
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -29,10 +28,8 @@ var config = driver.Config{
 	ProxyRangeOption: true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		d := &Yun139{}
-		d.ProxyRange = true
-		return d
-	})
+func New() driver.Driver {
+	d := &Yun139{}
+	d.ProxyRange = true
+	return d
 }

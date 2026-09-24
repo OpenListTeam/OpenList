@@ -17,7 +17,6 @@ Final opts by @Suyunjing @j2rong4cn @KirCute @Da3zKi7
 import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -36,25 +35,16 @@ type Addition struct {
 
 var config = driver.Config{
 	Name:              "MediaFire",
-	LocalSort:         false,
-	OnlyProxy:         false,
-	NoCache:           false,
-	NoUpload:          false,
-	NeedMs:            false,
 	DefaultRoot:       "/",
-	CheckStatus:       false,
-	Alert:             "",
 	NoOverwriteUpload: true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Mediafire{
-			appBase:    "https://app.mediafire.com",
-			apiBase:    "https://www.mediafire.com/api/1.5",
-			hostBase:   "https://www.mediafire.com",
-			maxRetries: 3,
-			userAgent:  base.UserAgent,
-		}
-	})
+func New() driver.Driver {
+	return &Mediafire{
+		appBase:    "https://app.mediafire.com",
+		apiBase:    "https://www.mediafire.com/api/1.5",
+		hostBase:   "https://www.mediafire.com",
+		maxRetries: 3,
+		userAgent:  base.UserAgent,
+	}
 }

@@ -2,7 +2,6 @@ package google_drive
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -24,8 +23,6 @@ var config = driver.Config{
 	DefaultRoot: "root",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &GoogleDrive{}
-	})
+func New() driver.Driver {
+	return &GoogleDrive{}
 }

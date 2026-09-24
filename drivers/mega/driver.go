@@ -12,7 +12,6 @@ import (
 	"github.com/rclone/rclone/lib/readers"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -144,10 +143,6 @@ func (d *Mega) Rename(ctx context.Context, srcObj model.Obj, newName string) err
 		return d.c.Rename(srcNode.n, newName)
 	}
 	return fmt.Errorf("unable to convert dir to mega n")
-}
-
-func (d *Mega) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	return errs.NotImplement
 }
 
 func (d *Mega) Remove(ctx context.Context, obj model.Obj) error {

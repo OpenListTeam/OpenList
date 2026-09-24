@@ -2,7 +2,7 @@ package ftp
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
+
 	"github.com/axgle/mahonia"
 )
 
@@ -39,8 +39,6 @@ var config = driver.Config{
 	NoLinkURL:   true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &FTP{}
-	})
+func New() driver.Driver {
+	return &FTP{}
 }
