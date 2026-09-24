@@ -81,7 +81,7 @@ func (t *Thunder) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return task.ID, nil
 }
 
-func (t *Thunder) Remove(task *tool.DownloadTask) error {
+func (t *Thunder) Remove(ctx context.Context, task *tool.DownloadTask) error {
 	storage, _, err := op.GetStorageAndActualPath(task.TempDir)
 	if err != nil {
 		return err
@@ -90,7 +90,6 @@ func (t *Thunder) Remove(task *tool.DownloadTask) error {
 	if !ok {
 		return fmt.Errorf("unsupported storage driver for offline download, only Thunder is supported")
 	}
-	ctx := context.Background()
 	err = thunderDriver.DeleteOfflineTasks(ctx, []string{task.GID}, false)
 	if err != nil {
 		return err

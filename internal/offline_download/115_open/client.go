@@ -2,6 +2,7 @@ package _115_open
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	_115_open "github.com/OpenListTeam/OpenList/v4/drivers/115_open"
@@ -75,7 +76,7 @@ func (o *Open115) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return hashs[0], nil
 }
 
-func (o *Open115) Remove(task *tool.DownloadTask) error {
+func (o *Open115) Remove(ctx context.Context, task *tool.DownloadTask) error {
 	storage, _, err := op.GetStorageAndActualPath(task.TempDir)
 	if err != nil {
 		return err
@@ -85,7 +86,6 @@ func (o *Open115) Remove(task *tool.DownloadTask) error {
 		return fmt.Errorf("unsupported storage driver for offline download, only 115 Open is supported")
 	}
 
-	ctx := context.Background()
 	if err := driver115Open.DeleteOfflineTask(ctx, task.GID, false); err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func (o *Open115) Status(task *tool.DownloadTask) (*tool.Status, error) {
 			s.Completed = t.IsDone()
 			s.TotalBytes = t.Size
 			if t.IsFailed() {
-				s.Err = fmt.Errorf(t.GetStatus())
+				s.Err = errors.New(t.GetStatus())
 			}
 			return s, nil
 		}

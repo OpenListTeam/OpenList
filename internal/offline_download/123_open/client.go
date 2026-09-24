@@ -71,7 +71,7 @@ func (*Open123) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return strconv.Itoa(taskID), nil
 }
 
-func (*Open123) Remove(_ *tool.DownloadTask) error {
+func (*Open123) Remove(_ context.Context, _ *tool.DownloadTask) error {
 	return errs.NotSupport
 }
 

@@ -77,7 +77,7 @@ func (g *GuangYaPan) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return task.TaskID, nil
 }
 
-func (g *GuangYaPan) Remove(task *tool.DownloadTask) error {
+func (g *GuangYaPan) Remove(ctx context.Context, task *tool.DownloadTask) error {
 	storage, _, err := op.GetStorageAndActualPath(task.TempDir)
 	if err != nil {
 		return err
@@ -86,7 +86,6 @@ func (g *GuangYaPan) Remove(task *tool.DownloadTask) error {
 	if !ok {
 		return errors.New("GuangYaPan offline download only supports GuangYaPan destination storage")
 	}
-	ctx := context.Background()
 	if err := driver.DeleteOfflineTasks(ctx, []string{task.GID}); err != nil {
 		return err
 	}

@@ -135,6 +135,10 @@ func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 	}
 	taskCreator, _ := ctx.Value(conf.UserKey).(*model.User)
 	for _, entry := range entries {
+		// Manager.Add gives each transfer its own context; stop this batch when the download is canceled.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		t := &TransferTask{
 			TaskData: fs.TaskData{
 				TaskExtension: task.TaskExtension{
@@ -271,6 +275,10 @@ func transferObj(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 	}
 	taskCreator, _ := ctx.Value(conf.UserKey).(*model.User) // taskCreator is nil when convert failed
 	for _, obj := range objs {
+		// Manager.Add gives each transfer its own context; stop this batch when the download is canceled.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		t := &TransferTask{
 			TaskData: fs.TaskData{
 				TaskExtension: task.TaskExtension{

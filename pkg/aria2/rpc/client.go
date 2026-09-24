@@ -17,10 +17,35 @@ type Client interface {
 	Close() error
 }
 
+// ContextClient adds per-call cancellation while preserving the Client contract.
+type ContextClient interface {
+	Client
+	// WithContext returns a view sharing the connection with per-call cancellation.
+	// Closing either client closes the shared connection.
+	WithContext(context.Context) Client
+}
+
 type client struct {
 	caller
 	url   *url.URL
 	token string
+}
+
+var _ ContextClient = (*client)(nil)
+
+type contextCaller struct {
+	caller
+	ctx context.Context
+}
+
+func (c contextCaller) Call(method string, params, reply interface{}) error {
+	return c.caller.CallContext(c.ctx, method, params, reply)
+}
+
+func (c *client) WithContext(ctx context.Context) Client {
+	view := *c
+	view.caller = contextCaller{caller: c.caller, ctx: ctx}
+	return &view
 }
 
 var (
