@@ -5,13 +5,17 @@ on:
     types: [opened]
 
 permissions:
+  contents: read
   issues: write
 
 jobs:
   auto-reply:
     runs-on: ubuntu-latest
+    outputs:
+      closed: ${{ steps.compliance.outputs.closed }}
     steps:
       - name: Check issue for unchecked tasks and reply
+        id: compliance
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
@@ -54,6 +58,7 @@ jobs:
             } else {
               return;
             }
+            core.setOutput('closed', String(closeIssue));
 
             await github.rest.issues.createComment({
               ...context.repo,
@@ -73,3 +78,32 @@ jobs:
                 issue_number: context.issue.number
               });
             }
+
+  ai-triage:
+    needs: auto-reply
+    # an issue the form check closed, and [Announcements], are left to the script alone
+    if: needs.auto-reply.outputs.closed != 'true' && !startsWith(github.event.issue.title, '[Announcements]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ILoveScratch2/action-auto-issue@main
+        with:
+          token: ${{ secrets.CUSTOM_GH_TOKEN || github.token }}
+          ai-base-url: ${{ secrets.CUSTOM_API_BASE_URL }}
+          ai-key: ${{ secrets.CUSTOM_API_KEY }}
+          model: ${{ secrets.CUSTOM_API_MODEL }}
+          max-tokens: '300000'
+          content-max-chars: '50000'
+          reference-repos: OpenListTeam/OpenList-Frontend,OpenList/OpenList-Docs
+          search-history: 'true'
+          issue-code-access: 'read'
+          pr-code-access: 'full'
+          apply-labels: 'true'
+          language: 'en'
+          answer-language: 'both'
+          extra-prompt: |
+            如果 Issue 是在请求支持新的存储驱动（新的 Driver、新的云盘或对象存储后端），请分类为 needs-discussion（优先级高于 bug 和 Module: Driver）。
+            驱动相关的故障报告、配置问题不要用 needs-discussion，照常用 bug 或 Module: Driver。
+          label-outcomes: |
+            {"needs-discussion": {"comment": "新存储驱动支持请在 Discussion #170 中提出：https://github.com/OpenListTeam/OpenList/discussions/170\n\nNew storage driver support requests are collected in Discussion #170: https://github.com/OpenListTeam/OpenList/discussions/170", "close": true, "lock": true}}
+          title-prefixes: 'bug=[Bug],enhancement=[Feature]'
+          labels: 'bug,duplicated,enhancement,info-needed,invalid,Module: Driver,Module: Filesystem,needs-discussion,needs-transfer: doc,needs-transfer: frontend,needs-triage/needs-confirm,WIP'
