@@ -40,6 +40,9 @@ func getTaskInfo[T task.TaskExtensionInfo](task T) TaskInfo {
 	if math.IsNaN(progress) {
 		progress = 100
 	}
+	if math.IsInf(progress, 0) {
+		progress = 0
+	}
 	creatorName := ""
 	creatorRole := -1
 	if task.GetCreator() != nil {
