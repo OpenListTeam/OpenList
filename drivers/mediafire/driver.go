@@ -20,14 +20,17 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
 
@@ -36,6 +39,17 @@ type Mediafire struct {
 	Addition
 
 	cron *cron.Cron
+
+	// Renewal lifecycle: renewCancel aborts in-flight renewals and renewWG
+	// lets Drop drain them, so no renewal outlives Drop and races with a
+	// re-Init on this same instance (storage updates reuse it).
+	renewCtx    context.Context
+	renewCancel context.CancelFunc
+	renewWG     sync.WaitGroup
+
+	// mu guards SessionToken and Cookie: request goroutines read the token
+	// while the renewal cron may refresh it in the background.
+	mu sync.RWMutex
 
 	actionToken string
 	limiter     *rate.Limiter
@@ -50,6 +64,35 @@ type Mediafire struct {
 	userAgent       string
 }
 
+// sessionToken returns the current session token for request building.
+func (d *Mediafire) sessionToken() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.SessionToken
+}
+
+// cookie returns the current login cookie for request building.
+func (d *Mediafire) cookie() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.Cookie
+}
+
+// setSessionToken stores a refreshed token (and login cookie when provided)
+// and persists them, safe to call from the renewal cron goroutine.
+// Framework-driven re-Init (admin storage update) rewrites the addition
+// outside this lock; that is safe because Drop cancels the renewal context
+// and drains any in-flight renewal before Init runs again.
+func (d *Mediafire) setSessionToken(token, cookie string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if cookie != "" {
+		d.Cookie = cookie
+	}
+	d.SessionToken = token
+	op.MustSaveDriverStorage(d)
+}
+
 func (d *Mediafire) Config() driver.Config {
 	return config
 }
@@ -60,15 +103,14 @@ func (d *Mediafire) GetAddition() driver.Additional {
 
 // Init initializes the MediaFire driver with session token and cookie validation
 func (d *Mediafire) Init(ctx context.Context) error {
-	if d.Cookie == "" {
-		return fmt.Errorf("Init :: [MediaFire] {critical} missing Cookie")
-	}
+	// Storage updates re-Initialize this same instance (Drop then Init).
+	// Tear any leftover lifecycle down before anything else can return, in
+	// case Init is entered twice without a Drop in between (e.g. after a
+	// panic inside a previous Init, or an update that emptied the Cookie).
+	d.stopRenewal()
 
-	// If SessionToken is empty, try to get it from cookie
-	if d.SessionToken == "" {
-		if _, err := d.getSessionToken(ctx); err != nil {
-			return fmt.Errorf("Init :: [MediaFire] {critical} failed to get session token from cookie: %w", err)
-		}
+	if d.cookie() == "" {
+		return fmt.Errorf("Init :: [MediaFire] {critical} missing Cookie")
 	}
 
 	// Setup rate limiter if rate limit is configured
@@ -76,32 +118,85 @@ func (d *Mediafire) Init(ctx context.Context) error {
 		d.limiter = rate.NewLimiter(rate.Limit(d.LimitRate), 1)
 	}
 
-	// Validate and refresh session token if needed
+	// Obtain a session token: mint from the login cookie first, fall back to
+	// renewing the stored token. The failure is remembered but not returned
+	// yet, so the cron below is still scheduled and a transient failure
+	// (e.g. DNS not up at container boot) self-heals on a later tick.
+	var tokenErr error
 	if _, err := d.getSessionToken(ctx); err != nil {
-		d.renewToken(ctx)
-
-		// Avoids 10 mins token expiry (6- 9)
-		num := rand.Intn(4) + 6
-
-		d.cron = cron.NewCron(time.Minute * time.Duration(num))
-		d.cron.Do(func() {
-			// Crazy, but working way to refresh session token
-			d.renewToken(ctx)
-		})
-
+		if renewErr := d.renewToken(ctx); renewErr != nil {
+			tokenErr = fmt.Errorf("failed to get session token (mint: %v, renew: %v)", err, renewErr)
+		}
 	}
 
+	// MediaFire session tokens expire in ~10 minutes, so they must be
+	// renewed periodically no matter how the first token was obtained.
+	num := rand.Intn(4) + 6
+
+	d.renewCtx, d.renewCancel = context.WithCancel(context.Background())
+	renewCtx := d.renewCtx
+	d.cron = cron.NewCron(time.Minute * time.Duration(num))
+	d.cron.Do(func() {
+		// Join the WaitGroup before checking cancellation: either Drop
+		// observes this callback in renewWG.Wait, or the check turns it
+		// into a no-op.
+		d.renewWG.Add(1)
+		defer d.renewWG.Done()
+		if utils.IsCanceled(renewCtx) {
+			return
+		}
+		// Renew while the token is still valid; if it already expired,
+		// mint a fresh one from the login cookie.
+		if err := d.renewToken(renewCtx); err != nil {
+			if _, mintErr := d.getSessionToken(renewCtx); mintErr != nil && !utils.IsCanceled(renewCtx) {
+				log.Warnf("mediafire[%s]: session token renewal failed (renew: %v, mint: %v)", d.MountPath, err, mintErr)
+			}
+		}
+	})
+
+	// Dead credentials must surface at mount time instead of leaving a
+	// storage that reports work but fails every token-dependent operation.
+	if tokenErr != nil {
+		return fmt.Errorf("Init :: [MediaFire] {critical} %w", tokenErr)
+	}
 	return nil
 }
 
-// Drop cleans up driver resources
-func (d *Mediafire) Drop(ctx context.Context) error {
-	// Clear cached resources
-	d.actionToken = ""
+// stopRenewal stops renewal scheduling and drains any in-flight renewal:
+// the canceled context aborts its HTTP calls, cron.Stop stops future ticks
+// (it blocks until the dispatch goroutine has exited, so no callback can be
+// dispatched after it returns), and renewWG.Wait blocks until the callback
+// has finished, so once this returns no renewal can still write the token,
+// cookie, or persisted storage.
+func (d *Mediafire) stopRenewal() {
+	if d.renewCancel != nil {
+		// Cancel before Stop: an in-flight callback then aborts its HTTP
+		// calls instead of running to completion first.
+		d.renewCancel()
+	}
 	if d.cron != nil {
 		d.cron.Stop()
 		d.cron = nil
 	}
+	if d.renewCancel != nil {
+		d.renewWG.Wait()
+		d.renewCancel = nil
+		d.renewCtx = nil
+	}
+}
+
+// Drop cleans up driver resources
+func (d *Mediafire) Drop(ctx context.Context) error {
+	// Drain the renewal lifecycle before touching shared state: the
+	// framework re-Initializes this same instance on storage updates, and a
+	// renewal surviving past this point could overwrite the token or
+	// persist the storage mid-re-Init.
+	d.stopRenewal()
+	// Clear the action token under the lock so a concurrent upload worker
+	// cannot keep reading a stale value.
+	d.mu.Lock()
+	d.actionToken = ""
+	d.mu.Unlock()
 	return nil
 }
 
@@ -150,7 +245,7 @@ func (d *Mediafire) Link(ctx context.Context, file model.Obj, args model.LinkArg
 // MakeDir creates a new folder in the specified parent directory
 func (d *Mediafire) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	data := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 		"parent_key":      parentDir.GetID(),
 		"foldername":      dirName,
@@ -187,7 +282,7 @@ func (d *Mediafire) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 		endpoint = "/folder/move.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"folder_key_src":  srcObj.GetID(),
 			"folder_key_dst":  dstDir.GetID(),
@@ -196,7 +291,7 @@ func (d *Mediafire) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 		endpoint = "/file/move.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"quick_key":       srcObj.GetID(),
 			"folder_key":      dstDir.GetID(),
@@ -225,7 +320,7 @@ func (d *Mediafire) Rename(ctx context.Context, srcObj model.Obj, newName string
 
 		endpoint = "/folder/update.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"folder_key":      srcObj.GetID(),
 			"foldername":      newName,
@@ -234,7 +329,7 @@ func (d *Mediafire) Rename(ctx context.Context, srcObj model.Obj, newName string
 
 		endpoint = "/file/update.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"quick_key":       srcObj.GetID(),
 			"filename":        newName,
@@ -270,7 +365,7 @@ func (d *Mediafire) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 		endpoint = "/folder/copy.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"folder_key_src":  srcObj.GetID(),
 			"folder_key_dst":  dstDir.GetID(),
@@ -279,7 +374,7 @@ func (d *Mediafire) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.O
 
 		endpoint = "/file/copy.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"quick_key":       srcObj.GetID(),
 			"folder_key":      dstDir.GetID(),
@@ -326,7 +421,7 @@ func (d *Mediafire) Remove(ctx context.Context, obj model.Obj) error {
 
 		endpoint = "/folder/delete.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"folder_key":      obj.GetID(),
 		}
@@ -334,7 +429,7 @@ func (d *Mediafire) Remove(ctx context.Context, obj model.Obj) error {
 
 		endpoint = "/file/delete.php"
 		data = map[string]string{
-			"session_token":   d.SessionToken,
+			"session_token":   d.sessionToken(),
 			"response_format": "json",
 			"quick_key":       obj.GetID(),
 		}
@@ -408,7 +503,7 @@ func (d *Mediafire) Put(ctx context.Context, dstDir model.Obj, file model.FileSt
 
 func (d *Mediafire) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	data := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 	}
 	var resp MediafireUserInfoResponse
