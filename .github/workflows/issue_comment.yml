@@ -93,7 +93,7 @@ jobs:
           model: ${{ secrets.CUSTOM_API_MODEL }}
           max-tokens: '300000'
           content-max-chars: '50000'
-          reference-repos: OpenListTeam/OpenList-Frontend,OpenList/OpenList-Docs
+          reference-repos: OpenListTeam/OpenList-Frontend,OpenListTeam/OpenList-Docs
           search-history: 'true'
           issue-code-access: 'read'
           pr-code-access: 'full'
