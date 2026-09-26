@@ -196,4 +196,5 @@ const (
 	PathKey
 	SharingIDKey
 	SkipHookKey
+	VhostPrefixKey
 )

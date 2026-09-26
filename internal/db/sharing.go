@@ -14,6 +14,16 @@ func GetSharingById(id string) (*model.SharingDB, error) {
 	return &s, nil
 }
 
+// GetSharingByDomain 根据绑定的域名查询 sharing 记录（用于虚拟主机能力）。
+// 仅当 sharing.Domain 字段精确匹配时返回；调用方需自行判断 Disabled / Expires / Files 等有效性。
+func GetSharingByDomain(domain string) (*model.SharingDB, error) {
+	var s model.SharingDB
+	if err := db.Where("domain = ?", domain).First(&s).Error; err != nil {
+		return nil, errors.Wrapf(err, "failed get sharing by domain")
+	}
+	return &s, nil
+}
+
 func GetSharings(pageIndex, pageSize int) (sharings []model.SharingDB, count int64, err error) {
 	sharingDB := db.Model(&model.SharingDB{})
 	if err := sharingDB.Count(&count).Error; err != nil {
@@ -38,6 +48,13 @@ func GetSharingsByCreatorId(creator uint, pageIndex, pageSize int) (sharings []m
 }
 
 func CreateSharing(s *model.SharingDB) (string, error) {
+	// domain 非空时做唯一性提前校验
+	if s.Domain != "" {
+		var exist model.SharingDB
+		if err := db.Where("domain = ?", s.Domain).First(&exist).Error; err == nil {
+			return "", errors.New("domain already used")
+		}
+	}
 	if s.ID == "" {
 		id := random.String(8)
 		for len(id) < 12 {
@@ -61,6 +78,13 @@ func CreateSharing(s *model.SharingDB) (string, error) {
 }
 
 func UpdateSharing(s *model.SharingDB) error {
+	// domain 非空时校验唯一性（排除自身）
+	if s.Domain != "" {
+		var exist model.SharingDB
+		if err := db.Where("domain = ? AND id <> ?", s.Domain, s.ID).First(&exist).Error; err == nil {
+			return errors.New("domain already used")
+		}
+	}
 	return errors.WithStack(db.Save(s).Error)
 }
 
