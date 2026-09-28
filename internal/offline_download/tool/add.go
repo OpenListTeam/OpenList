@@ -25,7 +25,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )
@@ -184,7 +183,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 	t := &DownloadTask{
 		TaskExtension: task.TaskExtension{
 			Creator: taskCreator,
-			ApiUrl:  common.GetApiUrl(ctx),
+			ApiUrl:  conf.GetApiUrl(ctx),
 		},
 		Url:          args.URL,
 		DstDirPath:   args.DstDirPath,
@@ -223,15 +222,17 @@ func isEd2kURL(urlStr string) bool {
 }
 
 func ed2kToolForStorage(storage driver.Driver) string {
-	switch toolNameForStorage(storage) {
+	name := NativeToolName(storage)
+	switch name {
 	case "115 Cloud", "115 Open":
-		return toolNameForStorage(storage)
+		return name
 	default:
 		return ""
 	}
 }
 
-func toolNameForStorage(storage driver.Driver) string {
+// NativeToolName returns the offline-download tool implemented by storage.
+func NativeToolName(storage driver.Driver) string {
 	switch storage.(type) {
 	case *_115.Pan115:
 		return "115 Cloud"

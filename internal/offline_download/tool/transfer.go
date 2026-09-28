@@ -20,7 +20,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -140,7 +139,7 @@ func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 			TaskData: fs.TaskData{
 				TaskExtension: task.TaskExtension{
 					Creator: taskCreator,
-					ApiUrl:  common.GetApiUrl(ctx),
+					ApiUrl:  conf.GetApiUrl(ctx),
 				},
 				SrcActualPath: stdpath.Join(tempDir, entry.Name()),
 				DstActualPath: dstDirActualPath,
@@ -276,7 +275,7 @@ func transferObj(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 			TaskData: fs.TaskData{
 				TaskExtension: task.TaskExtension{
 					Creator: taskCreator,
-					ApiUrl:  common.GetApiUrl(ctx),
+					ApiUrl:  conf.GetApiUrl(ctx),
 				},
 				SrcActualPath: stdpath.Join(srcObjActualPath, obj.GetName()),
 				DstActualPath: dstDirActualPath,

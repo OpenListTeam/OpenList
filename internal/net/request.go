@@ -222,7 +222,8 @@ func (d *downloader) download() (io.ReadCloser, error) {
 	if err != nil {
 		d.cancel(err)
 		d.cfg.ConcurrencyLimit.Release()
-		return nil, d.interrupt()
+		_ = d.interrupt()
+		return nil, err
 	}
 
 	d.mu.Lock()
@@ -297,10 +298,6 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 	if err != nil {
 		return err // 分片算法错误或者下载中断
 	}
-	if newConcurrency {
-		go d.downloadPart()
-		d.concurrency--
-	}
 	ch := chunk{
 		start: d.pos,
 		size:  finalSize,
@@ -315,6 +312,11 @@ func (d *downloader) sendChunkTask(newConcurrency bool) (err error) {
 	case <-d.ctx.Done():
 		return context.Cause(d.ctx)
 	case d.chunkCh <- ch:
+		if newConcurrency {
+			// The worker owns the acquired slot only after its chunk is queued.
+			go d.downloadPart()
+			d.concurrency--
+		}
 		return nil
 	}
 }

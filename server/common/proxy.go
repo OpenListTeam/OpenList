@@ -34,9 +34,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 		if link.RangeReader == nil {
 			r = r.WithContext(context.WithValue(r.Context(), conf.RequestHeaderKey, r.Header))
 		}
-		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), size, &model.RangeReadCloser{
-			RangeReader: rrf,
-		})
+		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), size, rrf)
 	}
 
 	if link.RangeReader != nil {
@@ -45,9 +43,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 		if size <= 0 {
 			size = file.GetSize()
 		}
-		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), size, &model.RangeReadCloser{
-			RangeReader: link.RangeReader,
-		})
+		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), size, link.RangeReader)
 	}
 
 	//transparent proxy

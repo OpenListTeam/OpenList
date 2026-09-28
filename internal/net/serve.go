@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -25,12 +25,8 @@ import (
 
 //this file is inspired by GO_SDK net.http.ServeContent
 
-//type RangeReadCloser struct {
-//	GetReaderForRange RangeReaderFunc
-//}
-
 // ServeHTTP replies to the request using the content in the
-// provided RangeReadCloser. The main benefit of ServeHTTP over io.Copy
+// provided range reader. The main benefit of ServeHTTP over io.Copy
 // is that it handles Range requests properly, sets the MIME type, and
 // handles If-Match, If-Unmodified-Since, If-None-Match, If-Modified-Since,
 // and If-Range requests.
@@ -47,13 +43,11 @@ import (
 // request includes an If-Modified-Since header, ServeHTTP uses
 // modtime to decide whether the content needs to be sent at all.
 //
-// The content's RangeReadCloser method must work: ServeHTTP gives a range,
-// caller will give the reader for that Range.
+// The content's RangeRead method must return a reader for the requested range.
 //
 // If the caller has set w's ETag header formatted per RFC 7232, section 2.3,
 // ServeHTTP uses it to handle requests using If-Match, If-None-Match, or If-Range.
-func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time.Time, size int64, RangeReadCloser model.RangeReadCloserIF) error {
-	defer RangeReadCloser.Close()
+func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time.Time, size int64, rangeReader model.RangeReaderIF) (err error) {
 	setLastModified(w, modTime)
 	done, rangeReq := checkPreconditions(w, r, modTime)
 	if done {
@@ -113,10 +107,11 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 	ctx := r.Context()
 	switch {
 	case len(ranges) == 0:
-		reader, err := RangeReadCloser.RangeRead(ctx, http_range.Range{Length: -1})
+		reader, err := openRange(ctx, rangeReader, http_range.Range{Length: -1})
 		if err != nil {
 			code = http.StatusRequestedRangeNotSatisfiable
-			if statusCode, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError); ok {
+			var statusCode HttpStatusCodeError
+			if errors.As(err, &statusCode) {
 				code = int(statusCode)
 			}
 			http.Error(w, err.Error(), code)
@@ -136,10 +131,11 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 		// does not request multiple parts might not support
 		// multipart responses."
 		ra := ranges[0]
-		sendContent, err = RangeReadCloser.RangeRead(ctx, ra)
+		sendContent, err = openRange(ctx, rangeReader, ra)
 		if err != nil {
 			code = http.StatusRequestedRangeNotSatisfiable
-			if statusCode, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError); ok {
+			var statusCode HttpStatusCodeError
+			if errors.As(err, &statusCode) {
 				code = int(statusCode)
 			}
 			http.Error(w, err.Error(), code)
@@ -159,7 +155,6 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 		mw := multipart.NewWriter(pw)
 		w.Header().Set("Content-Type", "multipart/byteranges; boundary="+mw.Boundary())
 		sendContent = pr
-		defer pr.Close() // cause writing goroutine to fail and exit if CopyN doesn't finish.
 		go func() {
 			for _, ra := range ranges {
 				part, err := mw.CreatePart(ra.MimeHeader(contentType, size))
@@ -167,21 +162,18 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 					pw.CloseWithError(err)
 					return
 				}
-				reader, err := RangeReadCloser.RangeRead(ctx, ra)
-				if err != nil {
-					pw.CloseWithError(err)
-					return
-				}
-				if _, err := utils.CopyWithBufferN(part, reader, ra.Length); err != nil {
+				if err := copyRange(ctx, part, rangeReader, ra); err != nil {
 					pw.CloseWithError(err)
 					return
 				}
 			}
 
-			mw.Close()
-			pw.Close()
+			_ = pw.CloseWithError(mw.Close())
 		}()
 	}
+	defer func() {
+		err = closeWithError(err, sendContent)
+	}()
 
 	w.Header().Set("Accept-Ranges", "bytes")
 	if w.Header().Get("Content-Encoding") == "" {
@@ -201,7 +193,8 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 				log.Warnf("Maybe size incorrect or reader not giving correct/full data, or connection closed before finish. written bytes: %d ,sendSize:%d, ", written, sendSize)
 			}
 			code = http.StatusInternalServerError
-			if statusCode, ok := errs.UnwrapOrSelf(err).(HttpStatusCodeError); ok {
+			var statusCode HttpStatusCodeError
+			if errors.As(err, &statusCode) {
 				code = int(statusCode)
 			}
 			w.WriteHeader(code)
@@ -209,6 +202,43 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 		}
 	}
 	return nil
+}
+
+func copyRange(ctx context.Context, dst io.Writer, rangeReader model.RangeReaderIF, requested http_range.Range) (err error) {
+	reader, err := openRange(ctx, rangeReader, requested)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = closeWithError(err, reader)
+	}()
+	_, err = utils.CopyWithBufferN(dst, reader, requested.Length)
+	return err
+}
+
+func openRange(ctx context.Context, rangeReader model.RangeReaderIF, requested http_range.Range) (io.ReadCloser, error) {
+	reader, err := rangeReader.RangeRead(ctx, requested)
+	if err != nil {
+		if reader != nil {
+			err = closeWithError(err, reader)
+		}
+		return nil, err
+	}
+	if reader == nil {
+		return nil, errors.New("range reader returned a nil body")
+	}
+	return reader, nil
+}
+
+func closeWithError(err error, closer io.Closer) error {
+	closeErr := closer.Close()
+	if err == nil {
+		return closeErr
+	}
+	if closeErr == nil {
+		return err
+	}
+	return stderrors.Join(err, closeErr)
 }
 func ProcessHeader(origin, override http.Header) http.Header {
 	result := http.Header{}
