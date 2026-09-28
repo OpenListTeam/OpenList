@@ -85,7 +85,7 @@ jobs:
     if: needs.auto-reply.outputs.closed != 'true' && !startsWith(github.event.issue.title, '[Announcements]')
     runs-on: ubuntu-latest
     steps:
-      - uses: ILoveScratch2/action-auto-issue@main
+      - uses: ILoveScratch2/action-auto-issue@66c4f23146ad9f76bc2fc0e4bf306de4f784e89d # reviewed commit
         with:
           token: ${{ secrets.CUSTOM_GH_TOKEN || github.token }}
           ai-base-url: ${{ secrets.CUSTOM_API_BASE_URL }}
