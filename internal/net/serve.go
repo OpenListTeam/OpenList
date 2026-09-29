@@ -240,16 +240,49 @@ func closeWithError(err error, closer io.Closer) error {
 	}
 	return stderrors.Join(err, closeErr)
 }
+
+// unsafeProxyHeaders are never forwarded from the client request to the
+// upstream storage, regardless of the proxy_ignore_headers setting. They either
+// carry the caller's credentials, describe the hop to this server rather than
+// the hop to upstream, or let the caller influence how upstream routes and
+// authenticates the request.
+var unsafeProxyHeaders = map[string]struct{}{
+	"authorization":       {},
+	"cookie":              {},
+	"proxy-authorization": {},
+	"www-authenticate":    {},
+	"host":                {},
+	"referer":             {},
+	"origin":              {},
+	"connection":          {},
+	"keep-alive":          {},
+	"proxy-connection":    {},
+	"te":                  {},
+	"trailer":             {},
+	"transfer-encoding":   {},
+	"upgrade":             {},
+	"forwarded":           {},
+	"x-forwarded-for":     {},
+	"x-forwarded-host":    {},
+	"x-forwarded-proto":   {},
+	"x-real-ip":           {},
+}
+
+
 func ProcessHeader(origin, override http.Header) http.Header {
 	result := http.Header{}
 	// client header
 	for h, val := range origin {
-		if utils.SliceContains(conf.SlicesMap[conf.ProxyIgnoreHeaders], strings.ToLower(h)) {
+		lower := strings.ToLower(h)
+		if _, unsafe := unsafeProxyHeaders[lower]; unsafe {
+			continue
+		}
+		if utils.SliceContains(conf.SlicesMap[conf.ProxyIgnoreHeaders], lower) {
 			continue
 		}
 		result[h] = val
 	}
-	// needed header
+	// needed header, produced by the storage driver rather than the client
 	for h, val := range override {
 		result[h] = val
 	}
