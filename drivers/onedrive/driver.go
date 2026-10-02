@@ -2,6 +2,7 @@ package onedrive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -109,12 +110,19 @@ func (d *Onedrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 	if err != nil {
 		return nil, err
 	}
-	if f.File == nil {
+	isFile := f.File != nil || (f.RemoteItem != nil && f.RemoteItem.File != nil)
+	if !isFile {
 		return nil, errs.NotFile
 	}
 	u := f.Url
+	if u == "" && f.RemoteItem != nil {
+		u = f.RemoteItem.Url
+	}
+	if u == "" {
+		return nil, errors.New("failed to get direct link")
+	}
 	if d.CustomHost != "" {
-		_u, err := url.Parse(f.Url)
+		_u, err := url.Parse(u)
 		if err != nil {
 			return nil, err
 		}
