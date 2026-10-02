@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	stdpath "path"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -165,7 +166,12 @@ func (d *Onedrive) Request(url string, method string, callback base.ReqCallback,
 
 func (d *Onedrive) getFiles(path string) ([]File, error) {
 	var res []File
-	nextLink := d.GetMetaUrl(false, path) + "/children?$top=1000&$expand=thumbnails($select=medium)&$select=id,name,size,fileSystemInfo,content.downloadUrl,file,parentReference,remoteItem,folder"
+	var nextLink string
+	if remoteDriveId, remoteItemId, subPath, ok := d.resolveRemotePath(path); ok {
+		nextLink = d.getRemoteMetaUrl(remoteDriveId, remoteItemId, subPath) + "/children?$top=1000&$expand=thumbnails($select=medium)&$select=id,name,size,fileSystemInfo,content.downloadUrl,file,parentReference,remoteItem,folder"
+	} else {
+		nextLink = d.GetMetaUrl(false, path) + "/children?$top=1000&$expand=thumbnails($select=medium)&$select=id,name,size,fileSystemInfo,content.downloadUrl,file,parentReference,remoteItem,folder"
+	}
 	for nextLink != "" {
 		var files Files
 		_, err := d.Request(nextLink, http.MethodGet, nil, &files)
@@ -179,6 +185,51 @@ func (d *Onedrive) getFiles(path string) ([]File, error) {
 }
 
 func (d *Onedrive) GetFile(path string) (*File, error) {
+	var file File
+	var u string
+	if remoteDriveId, remoteItemId, subPath, ok := d.resolveRemotePath(path); ok {
+		u = d.getRemoteMetaUrl(remoteDriveId, remoteItemId, subPath)
+	} else {
+		u = d.GetMetaUrl(false, path)
+	}
+	_, err := d.Request(u, http.MethodGet, nil, &file)
+	return &file, err
+}
+
+func (d *Onedrive) getRemoteMetaUrl(driveId, itemId, subPath string) string {
+	host, _ := onedriveHostMap[d.Region]
+	subPath = strings.TrimPrefix(subPath, "/")
+	if subPath == "" {
+		return fmt.Sprintf("%s/v1.0/drives/%s/items/%s", host.Api, driveId, itemId)
+	}
+	return fmt.Sprintf("%s/v1.0/drives/%s/items/%s:%s:", host.Api, driveId, itemId, utils.EncodePath("/"+subPath, true))
+}
+
+func (d *Onedrive) resolveRemotePath(reqPath string) (driveId, itemId, subPath string, ok bool) {
+	reqPath = stdpath.Clean(reqPath)
+	if reqPath == "/" || reqPath == "." {
+		return "", "", "", false
+	}
+	parts := strings.Split(strings.Trim(reqPath, "/"), "/")
+	var currentPath string
+	for i, part := range parts {
+		currentPath = stdpath.Join(currentPath, part)
+		f, err := d.getDirectFile("/" + currentPath)
+		if err != nil {
+			return "", "", "", false
+		}
+		if f.RemoteItem != nil && f.RemoteItem.ParentReference.DriveId != "" {
+			remoteDriveId := f.RemoteItem.ParentReference.DriveId
+			remoteItemId := f.RemoteItem.Id
+			remaining := parts[i+1:]
+			sub := strings.Join(remaining, "/")
+			return remoteDriveId, remoteItemId, sub, true
+		}
+	}
+	return "", "", "", false
+}
+
+func (d *Onedrive) getDirectFile(path string) (*File, error) {
 	var file File
 	u := d.GetMetaUrl(false, path)
 	_, err := d.Request(u, http.MethodGet, nil, &file)
