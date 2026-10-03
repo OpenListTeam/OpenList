@@ -170,7 +170,11 @@ func Start() {
 	if conf.Conf.Scheme.UnixFile != "" {
 		fmt.Printf("start unix server @ %s\n", conf.Conf.Scheme.UnixFile)
 		utils.Log.Infof("start unix server @ %s", conf.Conf.Scheme.UnixFile)
-		unixSrv = &http.Server{Handler: httpHandler}
+		unixHandler := httpHandler
+		if conf.Conf.Scheme.UnixFileTrusted {
+			unixHandler = middlewares.UnixFileTrusted(unixHandler)
+		}
+		unixSrv = &http.Server{Handler: unixHandler}
 		go func() {
 			listener, err := net.Listen("unix", conf.Conf.Scheme.UnixFile)
 			if err != nil {

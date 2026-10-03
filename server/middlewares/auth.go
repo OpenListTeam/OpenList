@@ -1,7 +1,9 @@
 package middlewares
 
 import (
+	"context"
 	"crypto/subtle"
+	"net/http"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -16,6 +18,9 @@ import (
 // if token is empty, set user to guest
 func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 	return func(c *gin.Context) {
+		if authenticateUnixFileTrusted(c) {
+			return
+		}
 		token := c.GetHeader("Authorization")
 		if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 			admin, err := op.GetAdmin()
@@ -76,6 +81,9 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 }
 
 func Authn(c *gin.Context) {
+	if authenticateUnixFileTrusted(c) {
+		return
+	}
 	token := c.GetHeader("Authorization")
 	if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 		admin, err := op.GetAdmin()
@@ -127,6 +135,36 @@ func Authn(c *gin.Context) {
 	common.GinAppendValues(c, conf.UserKey, user)
 	log.Debugf("use login token: %+v", user)
 	c.Next()
+}
+
+func authenticateUnixFileTrusted(c *gin.Context) bool {
+	if !IsUnixFileTrusted(c) {
+		return false
+	}
+	admin, err := op.GetAdmin()
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		c.Abort()
+		return true
+	}
+	common.GinAppendValues(c, conf.UserKey, admin)
+	log.Debug("use admin identity for trusted Unix socket request")
+	c.Next()
+	return true
+}
+
+type unixFileTrustedKey struct{}
+
+func UnixFileTrusted(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), unixFileTrustedKey{}, true)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func IsUnixFileTrusted(c *gin.Context) bool {
+	trusted, _ := c.Request.Context().Value(unixFileTrustedKey{}).(bool)
+	return conf.Conf.Scheme.UnixFileTrusted && trusted
 }
 
 func AuthNotGuest(c *gin.Context) {
