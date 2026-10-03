@@ -15,7 +15,6 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -246,12 +245,6 @@ func (d *ILanZou) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 		return nil, err
 	}
 	return &model.Object{ID: srcObj.GetID(), Name: newName, Size: srcObj.GetSize(), Modified: time.Now(), Ctime: srcObj.CreateTime(), IsFolder: srcObj.IsDir()}, nil
-}
-
-// iLanzou has no server-side copy primitive. Returning NotImplement delegates
-// to OpenList's persistent CopyTaskManager instead of blocking the HTTP request.
-func (d *ILanZou) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	return nil, errs.NotImplement
 }
 
 func (d *ILanZou) Remove(ctx context.Context, obj model.Obj) error {

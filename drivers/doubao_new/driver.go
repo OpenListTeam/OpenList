@@ -260,11 +260,6 @@ func (d *DoubaoNew) Rename(ctx context.Context, srcObj model.Obj, newName string
 	return srcObj, nil
 }
 
-func (d *DoubaoNew) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// TODO copy obj, optional
-	return nil, errs.NotImplement
-}
-
 func (d *DoubaoNew) Remove(ctx context.Context, obj model.Obj) error {
 	if obj == nil {
 		return errors.New("nil object")
