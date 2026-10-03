@@ -2,10 +2,12 @@ package _189pc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -34,9 +36,27 @@ type Cloud189PC struct {
 	familyTransferFolder    *Cloud189Folder
 	cleanFamilyTransferFile func()
 
+	// 跨账号家庭转移：使用第二账号上传到家庭云
+	owner         *Cloud189PC  // 主账号实例，第二账号会话通过它持久化凭证
+	second        *Cloud189PC  // 第二账号会话
+	secondMu      sync.RWMutex // 保护 second
+	secondLoginMu sync.Mutex   // 保证第二账号只登录一次
+	saveMu        sync.Mutex   // 序列化配置持久化
 	storageConfig driver.Config
 	ref           *Cloud189PC
 	cron          *cron.Cron
+}
+
+// normalizeAddition 校正跨账号家庭转移的配置
+func (y *Cloud189PC) normalizeAddition() {
+	y.Addition.SecondUsername = strings.TrimSpace(y.Addition.SecondUsername)
+	y.Addition.SecondPassword = strings.TrimSpace(y.Addition.SecondPassword)
+	y.Addition.SecondAccessToken = strings.TrimSpace(y.Addition.SecondAccessToken)
+	y.Addition.SecondRefreshToken = strings.TrimSpace(y.Addition.SecondRefreshToken)
+	if y.Addition.SecondAccountTransfer {
+		// 跨账号家庭转移本质上依赖家庭云中转，强制开启家庭云转存
+		y.Addition.FamilyTransfer = true
+	}
 }
 
 func (y *Cloud189PC) Config() driver.Config {
@@ -51,18 +71,8 @@ func (y *Cloud189PC) GetAddition() driver.Additional {
 }
 
 func (y *Cloud189PC) Init(ctx context.Context) (err error) {
-	y.storageConfig = config
-	if y.isFamily() {
-		// 兼容旧上传接口
-		if y.Addition.RapidUpload || y.Addition.UploadMethod == "old" {
-			y.storageConfig.NoOverwriteUpload = true
-		}
-	} else {
-		// 家庭云转存，不支持覆盖上传
-		if y.Addition.FamilyTransfer {
-			y.storageConfig.NoOverwriteUpload = true
-		}
-	}
+	y.normalizeAddition()
+	y.storageConfig = y.Addition.toStorageConfig()
 	// 处理个人云和家庭云参数
 	if y.isFamily() && y.RootFolderID == "-11" {
 		y.RootFolderID = ""
@@ -109,15 +119,29 @@ func (y *Cloud189PC) Init(ctx context.Context) (err error) {
 		y.cron.Do(y.keepAlive)
 	}
 
-	// 处理家庭云ID
-	if y.FamilyID == "" {
-		if y.FamilyID, err = y.getFamilyID(); err != nil {
+	// 跨账号家庭转移：先初始化第二账号（上传号）并定位家庭云中转目录
+	// 复用其他存储会话时不重复初始化，统一由被引用实例负责
+	if y.ref == nil && y.SecondAccountEnabled() {
+		if err = y.initSecondAccount(ctx); err != nil {
 			return err
 		}
 	}
 
-	// 创建中转文件夹
-	if y.FamilyTransfer {
+	// 处理家庭云ID。
+	// 跨账号家庭转移时以第二账号的家庭云为准，保证两个账号操作同一个家庭
+	if y.FamilyID == "" {
+		if y.ref == nil && y.SecondAccountEnabled() {
+			if y.FamilyID = y.getSecondClientFamilyID(); y.FamilyID == "" {
+				return errors.New("failed to get the family id of the second account, please fill in family_id manually")
+			}
+		} else if y.FamilyID, err = y.getFamilyID(); err != nil {
+			return err
+		}
+	}
+
+	// 创建中转文件夹。
+	// 跨账号家庭转移时中转目录已由第二账号定位/创建，此处不再重复创建
+	if y.FamilyTransfer && !(y.ref == nil && y.SecondAccountEnabled()) {
 		if err := y.createFamilyTransferFolder(); err != nil {
 			return err
 		}
@@ -146,6 +170,17 @@ func (y *Cloud189PC) Drop(ctx context.Context) error {
 	if y.cron != nil {
 		y.cron.Stop()
 		y.cron = nil
+	}
+	y.secondMu.Lock()
+	second := y.second
+	y.second = nil
+	y.secondMu.Unlock()
+	if second != nil {
+		if second.cron != nil {
+			second.cron.Stop()
+			second.cron = nil
+		}
+		second.owner = nil
 	}
 	return nil
 }
@@ -366,9 +401,27 @@ func (y *Cloud189PC) Remove(ctx context.Context, obj model.Obj) error {
 	return y.WaitBatchTask("DELETE", resp.TaskID, time.Millisecond*200)
 }
 
+// uploadMethodFor 计算实际上传方式
+func (y *Cloud189PC) uploadMethodFor(stream model.FileStreamer) string {
+	if stream.IsForceStreamUpload() {
+		return "stream"
+	}
+	if y.Addition.RapidUpload && stream.GetFile() != nil {
+		// 文件流支持随机读取，走FastUpload计算MD5并尝试秒传
+		return "rapid"
+	}
+	return y.UploadMethod
+}
+
 func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (newObj model.Obj, err error) {
 	overwrite := true
 	isFamily := y.isFamily()
+
+	// 跨账号家庭转移：使用第二账号上传到家庭云，再由当前账号转存到个人云
+	// 家庭云不支持 stream 上传，因此在两个账号上都不做妙传
+	if !isFamily && y.SecondAccountEnabled() {
+		return y.PutBySecondAccount(ctx, dstDir, stream, up)
+	}
 
 	// 响应时间长,按需启用
 	if y.Addition.RapidUpload && !stream.IsForceStreamUpload() {
@@ -378,13 +431,8 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 		}
 	}
 
-	uploadMethod := y.UploadMethod
-	if stream.IsForceStreamUpload() {
-		uploadMethod = "stream"
-	} else if y.Addition.RapidUpload && stream.GetFile() != nil {
-		// 文件流支持随机读取，走FastUpload计算MD5并尝试秒传
-		uploadMethod = "rapid"
-	} else if uploadMethod == "old" {
+	uploadMethod := y.uploadMethodFor(stream)
+	if uploadMethod == "old" {
 		// 旧版上传家庭云也有限制
 		return y.OldUpload(ctx, dstDir, stream, up, isFamily, overwrite)
 	}

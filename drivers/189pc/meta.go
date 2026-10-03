@@ -23,6 +23,13 @@ type Addition struct {
 	RapidUpload     bool   `json:"rapid_upload"`
 	NoUseOcr        bool   `json:"no_use_ocr"`
 	GenerateTorrent bool   `json:"generate_torrent" help:"Generate torrent file with CAS extension after upload"`
+
+	// 跨账号家庭转移：使用第二账号（上传号）上传到家庭云，再由当前账号转存到个人云
+	SecondAccountTransfer bool   `json:"second_account_transfer" help:"Upload to the family cloud with the second account, then transfer the file to the personal cloud of the current account. Auto enables family_transfer"`
+	SecondUsername        string `json:"second_username" help:"Username of the second account used for family cloud upload"`
+	SecondPassword        string `json:"second_password" help:"Password of the second account used for family cloud upload"`
+	SecondAccessToken     string `json:"second_access_token" required:"false"`
+	SecondRefreshToken    string `json:"second_refresh_token" help:"To switch the second account, please clear this field"`
 }
 
 var config = driver.Config{

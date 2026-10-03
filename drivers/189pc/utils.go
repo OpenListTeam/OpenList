@@ -313,7 +313,7 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 			}
 
 			y.Status = err.Error()
-			op.MustSaveDriverStorage(y)
+			y.saveAddition()
 		}
 	}()
 
@@ -371,7 +371,7 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 	y.Addition.AccessToken = tokenInfo.AccessToken
 	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
-	op.MustSaveDriverStorage(y)
+	y.saveAddition()
 	return err
 }
 
@@ -430,7 +430,7 @@ func (y *Cloud189PC) loginByQRCode() error {
 		y.Addition.AccessToken = tokenInfo.AccessToken
 		y.Addition.RefreshToken = tokenInfo.RefreshToken
 		y.tokenInfo = &tokenInfo
-		op.MustSaveDriverStorage(y)
+		y.saveAddition()
 		return nil
 	case -11001: // 二维码过期
 		y.qrcodeParam = nil
@@ -638,7 +638,7 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 	if retryCount >= 3 {
 		if y.Addition.RefreshToken != "" {
 			y.Addition.RefreshToken = ""
-			op.MustSaveDriverStorage(y)
+			y.saveAddition()
 		}
 		return errors.New("refresh token failed after maximum retries")
 	}
@@ -664,7 +664,7 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 	if erron.HasError() {
 		if y.Addition.RefreshToken != "" {
 			y.Addition.RefreshToken = ""
-			op.MustSaveDriverStorage(y)
+			y.saveAddition()
 		}
 
 		// 根据登录类型决定下一步行为
@@ -678,7 +678,7 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 	y.Addition.AccessToken = tokenInfo.AccessToken
 	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
-	op.MustSaveDriverStorage(y)
+	y.saveAddition()
 	return y.refreshSessionWithRetry(retryCount + 1)
 }
 
