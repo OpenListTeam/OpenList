@@ -14,6 +14,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -925,6 +926,10 @@ func (y *Cloud189PC) FastUpload(ctx context.Context, dstDir model.Obj, file mode
 	return y.fastUpload(ctx, dstDir, file, up, isFamily, overwrite, generateTorrent)
 }
 
+func uploadProgressKeys(sessionKey, fileMD5, fileName string) []string {
+	return []string{sessionKey, fileMD5, path.Ext(fileName)}
+}
+
 func (y *Cloud189PC) fastUpload(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress, isFamily bool, overwrite bool, generateTorrent bool) (model.Obj, error) {
 	var (
 		cache = file.GetFile()
@@ -1027,7 +1032,8 @@ func (y *Cloud189PC) fastUpload(ctx context.Context, dstDir model.Obj, file mode
 	}
 
 	// 尝试恢复进度
-	uploadProgress, ok := base.GetUploadProgress[*UploadProgress](y, y.getTokenInfo().SessionKey, fileMd5Hex)
+	progressKeys := uploadProgressKeys(y.getTokenInfo().SessionKey, fileMd5Hex, file.GetName())
+	uploadProgress, ok := base.GetUploadProgress[*UploadProgress](y, progressKeys...)
 	if !ok {
 		// step.2 预上传
 		params := Params{
@@ -1095,7 +1101,7 @@ func (y *Cloud189PC) fastUpload(ctx context.Context, dstDir model.Obj, file mode
 		if err = threadG.Wait(); err != nil {
 			if errors.Is(err, context.Canceled) {
 				uploadProgress.UploadParts = utils.SliceFilter(uploadProgress.UploadParts, func(s string) bool { return s != "" })
-				base.SaveUploadProgress(y, uploadProgress, y.getTokenInfo().SessionKey, fileMd5Hex)
+				base.SaveUploadProgress(y, uploadProgress, progressKeys...)
 			}
 			return nil, err
 		}
