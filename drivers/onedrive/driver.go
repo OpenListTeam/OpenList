@@ -52,16 +52,20 @@ func (d *Onedrive) InitReference(refStorage driver.Driver) error {
 }
 
 func (d *Onedrive) Drop(ctx context.Context) error {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	// RootFolderPath may change before this driver instance is reinitialized.
+	d.root = nil
 	d.ref = nil
 	return nil
 }
 
 func (d *Onedrive) GetRoot(ctx context.Context) (model.Obj, error) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
 	if d.root != nil {
 		return d.root, nil
 	}
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
 	root := &Object{
 		ObjThumb: model.ObjThumb{
 			Object: model.Object{
