@@ -450,6 +450,74 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	return nil
 }
 
+// Replace atomically publishes src at dst for drivers that can keep dst continuously addressable.
+// src and dst must be siblings; cross-directory replacement should use the normal move path.
+func Replace(ctx context.Context, storage driver.Driver, srcPath, dstPath string) error {
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	srcPath = utils.FixAndCleanPath(srcPath)
+	dstPath = utils.FixAndCleanPath(dstPath)
+	if stdpath.Dir(srcPath) != stdpath.Dir(dstPath) {
+		return errors.WithStack(errs.NotSupport)
+	}
+	if utils.PathEqual(srcPath, "/") || utils.PathEqual(dstPath, "/") {
+		return errors.New("replace root folder is not allowed")
+	}
+
+	srcRawObj, err := Get(ctx, storage, srcPath, true)
+	if err != nil {
+		return errors.WithMessage(err, "failed to get src object")
+	}
+	dstRawObj, err := Get(ctx, storage, dstPath, true)
+	if err != nil {
+		return errors.WithMessage(err, "failed to get dst object")
+	}
+	if model.ObjHasMask(srcRawObj, model.NoMove|model.NoRename) || model.ObjHasMask(dstRawObj, model.NoRemove) {
+		return errors.WithStack(errs.PermissionDenied)
+	}
+
+	replacer, ok := storage.(driver.Replace)
+	if !ok {
+		return errors.WithStack(errs.NotImplement)
+	}
+	dstName := stdpath.Base(dstPath)
+	dirKey := Key(storage, stdpath.Dir(srcPath))
+	var cachedDir *directoryCache
+	if !srcRawObj.IsDir() {
+		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, srcRawObj.GetName()))
+		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstRawObj.GetName()))
+	}
+	if !storage.Config().NoCache {
+		if cache, exist := Cache.dirCache.Get(dirKey); exist {
+			cachedDir = cache
+			// Publish src under the canonical cache key before the backend handoff.
+			// This prevents readers that already have a warm directory cache from
+			// following the soon-to-be-deleted destination object during Replace.
+			newObj := &model.ObjWrapName{Name: dstName, Obj: model.UnwrapObjName(srcRawObj)}
+			cache.UpdateObject(dstRawObj.GetName(), wrapObjName(storage, newObj))
+		}
+	}
+
+	if err := replacer.Replace(ctx, model.UnwrapObjName(srcRawObj), model.UnwrapObjName(dstRawObj), dstName); err != nil {
+		if cachedDir != nil {
+			cachedDir.UpdateObject(dstName, dstRawObj)
+		}
+		return errors.WithStack(err)
+	}
+
+	if cachedDir != nil {
+		if srcRawObj.IsDir() {
+			Cache.deleteDirectoryTree(stdpath.Join(dirKey, srcRawObj.GetName()))
+		}
+		cachedDir.RemoveObject(srcRawObj.GetName())
+	}
+	if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Dir(dstPath), srcRawObj.IsDir())
+	}
+	return nil
+}
+
 func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string) error {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
 		return errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)

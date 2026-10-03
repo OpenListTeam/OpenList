@@ -55,7 +55,22 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
-	if srcDir == dstDir {
+	dstExisted := false
+	if _, getErr := fs.Get(ctx, dst, &fs.GetArgs{NoLog: true}); getErr == nil {
+		dstExisted = true
+		if !overwrite {
+			return http.StatusPreconditionFailed, nil
+		}
+	} else if !errs.IsObjectNotFound(getErr) {
+		return http.StatusInternalServerError, getErr
+	}
+
+	if dstExisted && srcDir == dstDir {
+		err = fs.Replace(ctx, src, dst)
+		if errors.Is(errors.Cause(err), errs.NotImplement) || errors.Is(errors.Cause(err), errs.NotSupport) {
+			err = fs.Rename(ctx, src, dstName)
+		}
+	} else if srcDir == dstDir {
 		err = fs.Rename(ctx, src, dstName)
 	} else {
 		_, err = fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
@@ -69,7 +84,9 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	// TODO if there are no files copy, should return 204
+	if dstExisted {
+		return http.StatusNoContent, nil
+	}
 	return http.StatusCreated, nil
 }
 
