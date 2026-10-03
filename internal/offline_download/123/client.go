@@ -72,7 +72,7 @@ func (*Pan123) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return strconv.FormatInt(taskID, 10), nil
 }
 
-func (*Pan123) Remove(task *tool.DownloadTask) error {
+func (*Pan123) Remove(ctx context.Context, task *tool.DownloadTask) error {
 	taskID, err := strconv.ParseInt(task.GID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse task ID: %s", task.GID)
@@ -85,7 +85,7 @@ func (*Pan123) Remove(task *tool.DownloadTask) error {
 	if !ok {
 		return fmt.Errorf("unsupported storage driver for offline download, only 123Pan is supported")
 	}
-	return driver123.DeleteOfflineTasks(context.Background(), []int64{taskID})
+	return driver123.DeleteOfflineTasks(ctx, []int64{taskID})
 }
 
 func (*Pan123) Status(task *tool.DownloadTask) (*tool.Status, error) {

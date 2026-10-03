@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -40,7 +41,7 @@ func (s SimpleHttp) AddURL(args *tool.AddUrlArgs) (string, error) {
 	panic("should not be called")
 }
 
-func (s SimpleHttp) Remove(task *tool.DownloadTask) error {
+func (s SimpleHttp) Remove(_ context.Context, task *tool.DownloadTask) error {
 	panic("should not be called")
 }
 

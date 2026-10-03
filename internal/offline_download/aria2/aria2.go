@@ -2,6 +2,7 @@ package aria2
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -77,9 +78,53 @@ func (a *Aria2) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return gid, nil
 }
 
-func (a *Aria2) Remove(task *tool.DownloadTask) error {
-	_, err := a.client.Remove(task.GID)
-	return err
+func (a *Aria2) Remove(ctx context.Context, task *tool.DownloadTask) error {
+	contextClient, ok := a.client.(rpc.ContextClient)
+	if !ok {
+		return errors.New("aria2 cleanup requires a ContextClient")
+	}
+	client := contextClient.WithContext(ctx)
+	pending := []string{task.GID}
+	visited := make(map[string]bool)
+	var cleanupErr error
+	for len(pending) > 0 {
+		gid := pending[0]
+		pending = pending[1:]
+		if visited[gid] {
+			continue
+		}
+		visited[gid] = true
+		notify.Signals.Delete(gid)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// aria2 1.37 RpcMethodImpl.cc::removeDownload sets a halt flag and
+		// returns the GID immediately. Keep graceful tracker shutdown; the RPC
+		// context bounds the network request for both HTTP and WebSocket.
+		_, err := client.Remove(gid)
+		var rpcErr *rpc.Error
+		if stderrors.As(err, &rpcErr) {
+			// Completed metadata lives in downloadResults, outside findGroup().
+			// TellStatus exposes its followedBy GIDs even when Remove rejects
+			// the parent. Follow every child when cancellation races that handoff.
+			info, statusErr := client.TellStatus(gid, "status", "followedBy")
+			if statusErr == nil {
+				pending = append(pending, info.FollowedBy...)
+				switch info.Status {
+				case "complete", "error", "removed":
+					err = nil // The stopped result already represents an inactive task.
+				}
+			}
+		}
+		if err != nil {
+			if cleanupErr == nil {
+				cleanupErr = err
+			} else {
+				cleanupErr = fmt.Errorf("%w; %w", cleanupErr, err)
+			}
+		}
+	}
+	return cleanupErr
 }
 
 func (a *Aria2) Status(task *tool.DownloadTask) (*tool.Status, error) {

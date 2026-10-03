@@ -22,49 +22,39 @@ func NewNotify() *Notify {
 }
 
 func (n *Notify) OnDownloadStart(events []rpc.Event) {
-	for _, e := range events {
-		if signal, ok := n.Signals.Load(e.Gid); ok {
-			signal <- Downloading
-		}
-	}
+	n.send(events, Downloading)
 }
 
 func (n *Notify) OnDownloadPause(events []rpc.Event) {
-	for _, e := range events {
-		if signal, ok := n.Signals.Load(e.Gid); ok {
-			signal <- Paused
-		}
-	}
+	n.send(events, Paused)
 }
 
 func (n *Notify) OnDownloadStop(events []rpc.Event) {
-	for _, e := range events {
-		if signal, ok := n.Signals.Load(e.Gid); ok {
-			signal <- Stopped
-		}
-	}
+	n.send(events, Stopped)
 }
 
 func (n *Notify) OnDownloadComplete(events []rpc.Event) {
-	for _, e := range events {
-		if signal, ok := n.Signals.Load(e.Gid); ok {
-			signal <- Completed
-		}
-	}
+	n.send(events, Completed)
 }
 
 func (n *Notify) OnDownloadError(events []rpc.Event) {
-	for _, e := range events {
-		if signal, ok := n.Signals.Load(e.Gid); ok {
-			signal <- Errored
-		}
-	}
+	n.send(events, Errored)
 }
 
 func (n *Notify) OnBtDownloadComplete(events []rpc.Event) {
+	n.send(events, Completed)
+}
+
+func (n *Notify) send(events []rpc.Event, status int) {
 	for _, e := range events {
 		if signal, ok := n.Signals.Load(e.Gid); ok {
-			signal <- Completed
+			// Notifications and RPC replies share the WebSocket reader. A task
+			// may already have exited or be waiting for its cleanup reply. Status
+			// polling supplies the fallback when this wake-up is dropped.
+			select {
+			case signal <- status:
+			default:
+			}
 		}
 	}
 }

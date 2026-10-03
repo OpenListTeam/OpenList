@@ -40,12 +40,12 @@ type settingsTool struct {
 	initCalls int
 }
 
-func (t *settingsTool) Name() string                          { return t.name }
-func (*settingsTool) Items() []model.SettingItem              { return nil }
-func (t *settingsTool) Init() (string, error)                 { t.initCalls++; return t.version, nil }
-func (*settingsTool) IsReady() bool                           { return true }
-func (*settingsTool) AddURL(*tool.AddUrlArgs) (string, error) { return "", nil }
-func (*settingsTool) Remove(*tool.DownloadTask) error         { return nil }
+func (t *settingsTool) Name() string                                   { return t.name }
+func (*settingsTool) Items() []model.SettingItem                       { return nil }
+func (t *settingsTool) Init() (string, error)                          { t.initCalls++; return t.version, nil }
+func (*settingsTool) IsReady() bool                                    { return true }
+func (*settingsTool) AddURL(*tool.AddUrlArgs) (string, error)          { return "", nil }
+func (*settingsTool) Remove(context.Context, *tool.DownloadTask) error { return nil }
 func (*settingsTool) Status(*tool.DownloadTask) (*tool.Status, error) {
 	return &tool.Status{}, nil
 }

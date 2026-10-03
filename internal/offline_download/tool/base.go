@@ -31,8 +31,9 @@ type Tool interface {
 	IsReady() bool
 	// AddURL add an uri to download, return the task id
 	AddURL(args *AddUrlArgs) (string, error)
-	// Remove the download if task been canceled
-	Remove(task *DownloadTask) error
+	// Remove cancels the provider-side download using cleanupCtx. cleanupCtx is
+	// detached from the task cancellation signal and has a bounded deadline.
+	Remove(cleanupCtx context.Context, task *DownloadTask) error
 	// Status return the status of the download task, if an error occurred, return the error in Status.Err
 	Status(task *DownloadTask) (*Status, error)
 

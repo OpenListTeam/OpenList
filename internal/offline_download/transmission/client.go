@@ -125,16 +125,17 @@ func (t *Transmission) AddURL(args *tool.AddUrlArgs) (string, error) {
 	return gid, nil
 }
 
-func (t *Transmission) Remove(task *tool.DownloadTask) error {
+func (t *Transmission) Remove(ctx context.Context, task *tool.DownloadTask) error {
 	gid, err := strconv.ParseInt(task.GID, 10, 64)
 	if err != nil {
 		return err
 	}
-	err = t.client.TorrentRemove(task.Ctx(), transmissionrpc.TorrentRemovePayload{
-		IDs:             []int64{gid},
+	return t.client.TorrentRemove(ctx, transmissionrpc.TorrentRemovePayload{
+		IDs: []int64{gid},
+		// Transmission 4.0.6 rpcimpl.cc::torrentRemove passes this flag to
+		// removeTorrentInSessionThread. Retain payload files for transfer tasks.
 		DeleteLocalData: false,
 	})
-	return err
 }
 
 func (t *Transmission) Status(task *tool.DownloadTask) (*tool.Status, error) {

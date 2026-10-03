@@ -17,6 +17,7 @@ import (
 type caller interface {
 	// Call sends a request of rpc to aria2 daemon
 	Call(method string, params, reply interface{}) (err error)
+	CallContext(ctx context.Context, method string, params, reply interface{}) error
 	Close() error
 }
 
@@ -118,11 +119,22 @@ func (h *httpCaller) setNotifier(ctx context.Context, u url.URL, notifier Notifi
 }
 
 func (h *httpCaller) Call(method string, params, reply interface{}) (err error) {
+	return h.CallContext(context.Background(), method, params, reply)
+}
+
+func (h *httpCaller) CallContext(ctx context.Context, method string, params, reply interface{}) (err error) {
 	payload, err := EncodeClientRequest(method, params)
 	if err != nil {
 		return
 	}
-	r, err := h.c.Post(h.uri, "application/json", payload)
+	// The request context also bounds reading the response body; the transport's
+	// ResponseHeaderTimeout only covers receiving headers.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.uri, payload)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	r, err := h.c.Do(req)
 	if err != nil {
 		return
 	}
@@ -132,12 +144,14 @@ func (h *httpCaller) Call(method string, params, reply interface{}) (err error) 
 }
 
 type websocketCaller struct {
-	conn     *websocket.Conn
-	sendChan chan *sendRequest
-	cancel   context.CancelFunc
-	wg       *sync.WaitGroup
-	once     sync.Once
-	timeout  time.Duration
+	conn      *websocket.Conn
+	sendChan  chan *sendRequest
+	cancel    context.CancelFunc
+	wg        *sync.WaitGroup
+	once      sync.Once
+	timeout   time.Duration
+	ctx       context.Context
+	processor *ResponseProcessor
 }
 
 func newWebsocketCaller(ctx context.Context, uri string, timeout time.Duration, notifier Notifier) (*websocketCaller, error) {
@@ -150,8 +164,8 @@ func newWebsocketCaller(ctx context.Context, uri string, timeout time.Duration, 
 	sendChan := make(chan *sendRequest, 16)
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(ctx)
-	w := &websocketCaller{conn: conn, wg: &wg, cancel: cancel, sendChan: sendChan, timeout: timeout}
 	processor := NewResponseProcessor()
+	w := &websocketCaller{conn: conn, wg: &wg, cancel: cancel, sendChan: sendChan, timeout: timeout, ctx: ctx, processor: processor}
 	wg.Add(1)
 	go func() { // routine:recv
 		defer wg.Done()
@@ -205,19 +219,22 @@ func newWebsocketCaller(ctx context.Context, uri string, timeout time.Duration, 
 		for {
 			select {
 			case <-ctx.Done():
+				w.conn.SetWriteDeadline(time.Now().Add(timeout))
 				if err := w.conn.WriteMessage(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
 					log.Printf("sending websocket close message: %v", err)
 				}
 				return
 			case req := <-sendChan:
-				processor.Add(req.request.Id, func(resp clientResponse) error {
-					err := resp.decode(req.reply)
-					req.cancel()
-					return err
-				})
-				w.conn.SetWriteDeadline(time.Now().Add(timeout))
-				w.conn.WriteJSON(req.request)
+				if req.ctx.Err() != nil {
+					continue
+				}
+				deadline, _ := req.ctx.Deadline()
+				w.conn.SetWriteDeadline(deadline)
+				if err := w.conn.WriteJSON(req.request); err != nil {
+					req.writeErr <- err
+					return
+				}
 			}
 		}
 	}()
@@ -234,31 +251,60 @@ func (w *websocketCaller) Close() (err error) {
 }
 
 func (w *websocketCaller) Call(method string, params, reply interface{}) (err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
+	return w.CallContext(context.Background(), method, params, reply)
+}
+
+func (w *websocketCaller) CallContext(parent context.Context, method string, params, reply interface{}) error {
+	ctx, cancel := context.WithTimeout(parent, w.timeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	id := reqid()
+	responses := make(chan clientResponse, 1)
+	writeErr := make(chan error, 1)
+	// Decode on the calling goroutine. A late response after timeout must only
+	// touch this buffered channel, since the caller has already regained reply.
+	w.processor.Add(id, func(resp clientResponse) error {
+		select {
+		case responses <- resp:
+		default:
+		}
+		return nil
+	})
+	defer w.processor.remove(id)
 	select {
-	case w.sendChan <- &sendRequest{cancel: cancel, request: &clientRequest{
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.ctx.Done():
+		return w.ctx.Err()
+	case w.sendChan <- &sendRequest{ctx: ctx, writeErr: writeErr, request: &clientRequest{
 		Version: "2.0",
 		Method:  method,
 		Params:  params,
-		Id:      reqid(),
-	}, reply: reply}:
+		Id:      id,
+	}}:
 
 	default:
 		return errors.New("sending channel blocking")
 	}
 
-	<-ctx.Done()
-	if err := ctx.Err(); err == context.DeadlineExceeded {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.ctx.Done():
+		return w.ctx.Err()
+	case err := <-writeErr:
 		return err
+	case resp := <-responses:
+		return resp.decode(reply)
 	}
-	return
 }
 
 type sendRequest struct {
-	cancel  context.CancelFunc
-	request *clientRequest
-	reply   interface{}
+	ctx      context.Context
+	request  *clientRequest
+	writeErr chan error
 }
 
 var reqid = func() func() uint64 {

@@ -2,6 +2,7 @@ package _115
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -241,7 +242,23 @@ func (d *Pan115) OfflineDownload(ctx context.Context, uris []string, dstDir mode
 }
 
 func (d *Pan115) DeleteOfflineTasks(ctx context.Context, hashes []string, deleteFiles bool) error {
-	return d.client.DeleteOfflineTasks(hashes, deleteFiles)
+	// 115driver v1.3.5 offline.go::DeleteOfflineTasks builds a request with a
+	// background context. Use its wire format and response handling here so
+	// the offline-download cleanup deadline reaches the HTTP request.
+	form := url.Values{"hash": hashes, "flag": {"0"}}
+	if deleteFiles {
+		form.Set("flag", "1")
+	}
+	var result driver115.MkdirResp
+	// Client.R creates a request per call; the SDK's NewRequest also writes to
+	// its shared Request field. Keep cleanup contexts local to each request.
+	resp, err := d.client.Client.R().
+		SetContext(ctx).
+		SetFormDataFromValues(form).
+		SetResult(&result).
+		ForceContentType("application/json;charset=UTF-8").
+		Post(driver115.ApiDelOfflineUrl)
+	return driver115.CheckErr(err, &result, resp)
 }
 
 func (d *Pan115) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
