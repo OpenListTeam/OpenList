@@ -12,6 +12,7 @@ import (
 	"golang.org/x/time/rate"
 
 	_123 "github.com/OpenListTeam/OpenList/v4/drivers/123"
+	_123_open "github.com/OpenListTeam/OpenList/v4/drivers/123_open"
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -26,6 +27,7 @@ type Pan123Share struct {
 	Addition
 	apiRateLimit sync.Map
 	ref          *_123.Pan123
+	refOpen      *_123_open.Open123
 }
 
 func (d *Pan123Share) Config() driver.Config {
@@ -43,12 +45,14 @@ func (d *Pan123Share) Init(ctx context.Context) error {
 }
 
 func (d *Pan123Share) InitReference(storage driver.Driver) error {
-	refStorage, ok := storage.(*_123.Pan123)
-	if ok {
+	if refStorage, ok := storage.(*_123.Pan123); ok {
 		d.ref = refStorage
 		return nil
+	} else if refStorage, ok := storage.(*_123_open.Open123); ok {
+		d.refOpen = refStorage
+		return nil
 	}
-	return fmt.Errorf("ref: storage is not 123Pan")
+	return fmt.Errorf("ref: storage is not 123Pan or 123Open")
 }
 
 func (d *Pan123Share) Drop(ctx context.Context) error {
@@ -70,6 +74,23 @@ func (d *Pan123Share) List(ctx context.Context, dir model.Obj, args model.ListAr
 func (d *Pan123Share) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	// TODO return link of file, required
 	if f, ok := file.(File); ok {
+		if d.refOpen != nil {
+			// 1. 转存到缓存文件夹
+			s, err := d.refOpen.Create(d.Addition.TempDirID, f.FileName, f.Etag, f.Size, 2, false)
+			if err != nil {
+				return nil, err
+			}
+			if !s.Data.Reuse {
+				return nil, fmt.Errorf("failed to transfer share file")
+			}
+			// 2. 获取直链
+			res, err := d.refOpen.GetDownloadInfo(s.Data.FileID)
+			if err != nil {
+				return nil, err
+			}
+			exp := 5 * time.Minute
+			return &model.Link{URL: res.Data.DownloadUrl, Expiration: &exp}, nil
+		}
 		data := base.Json{
 			"shareKey":  d.ShareKey,
 			"SharePwd":  d.SharePwd,
