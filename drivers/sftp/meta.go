@@ -2,7 +2,6 @@ package sftp
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -24,8 +23,6 @@ var config = driver.Config{
 	NoLinkURL:   true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &SFTP{}
-	})
+func New() driver.Driver {
+	return &SFTP{}
 }

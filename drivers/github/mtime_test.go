@@ -17,6 +17,9 @@ import (
 )
 
 func TestDriverInfoIncludesAccurateModifiedTimeDefault(t *testing.T) {
+	if err := op.InstallDrivers([]odriver.Constructor{New}); err != nil {
+		t.Fatal(err)
+	}
 	info := op.GetDriverInfoMap()["GitHub API"]
 	for _, item := range info.Additional {
 		if item.Name != "accurate_modified_time" {

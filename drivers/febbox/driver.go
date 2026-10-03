@@ -9,7 +9,6 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
@@ -124,10 +123,6 @@ func (d *FebBox) Remove(ctx context.Context, obj model.Obj) error {
 	}
 
 	return nil
-}
-
-func (d *FebBox) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	return nil, errs.NotImplement
 }
 
 var _ driver.Driver = (*FebBox)(nil)

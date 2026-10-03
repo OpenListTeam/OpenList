@@ -2,7 +2,6 @@ package aliyundrive_share
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -16,14 +15,10 @@ type Addition struct {
 
 var config = driver.Config{
 	Name:        "AliyundriveShare",
-	LocalSort:   false,
-	OnlyProxy:   false,
 	NoUpload:    true,
 	DefaultRoot: "root",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &AliyundriveShare{}
-	})
+func New() driver.Driver {
+	return &AliyundriveShare{}
 }

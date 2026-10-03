@@ -57,9 +57,11 @@ func (d *closeTrackingDriver) Link(context.Context, model.Obj, model.LinkArgs) (
 func TestGetObjectClosesRangeBodyBeforeLink(t *testing.T) {
 	ctx := context.Background()
 	var closed []string
-	op.RegisterDriver(func() driver.Driver {
+	if err := op.InstallDrivers([]driver.Constructor{local.New, func() driver.Driver {
 		return &closeTrackingDriver{closed: &closed}
-	})
+	}}); err != nil {
+		t.Fatal(err)
+	}
 
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "fixture.txt"), []byte("body"), 0o600); err != nil {

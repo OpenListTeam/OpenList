@@ -2,7 +2,6 @@ package quark_uc_tv
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -29,41 +28,39 @@ type Conf struct {
 	codeApi  string
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &QuarkUCTV{
-			config: driver.Config{
-				Name:              "QuarkTV",
-				DefaultRoot:       "0",
-				NoOverwriteUpload: true,
-				NoUpload:          true,
-			},
-			conf: Conf{
-				api:      "https://open-api-drive.quark.cn",
-				clientID: "d3194e61504e493eb6222857bccfed94",
-				signKey:  "kw2dvtd7p4t3pjl2d9ed9yc8yej8kw2d",
-				appVer:   "1.8.2.2",
-				channel:  "GENERAL",
-				codeApi:  "http://api.extscreen.com/quarkdrive",
-			},
-		}
-	})
-	op.RegisterDriver(func() driver.Driver {
-		return &QuarkUCTV{
-			config: driver.Config{
-				Name:              "UCTV",
-				DefaultRoot:       "0",
-				NoOverwriteUpload: true,
-				NoUpload:          true,
-			},
-			conf: Conf{
-				api:      "https://open-api-drive.uc.cn",
-				clientID: "5acf882d27b74502b7040b0c65519aa7",
-				signKey:  "l3srvtd7p42l0d0x1u8d7yc8ye9kki4d",
-				appVer:   "1.7.2.2",
-				channel:  "UCTVOFFICIALWEB",
-				codeApi:  "http://api.extscreen.com/ucdrive",
-			},
-		}
-	})
+func New() driver.Driver {
+	return &QuarkUCTV{
+		config: driver.Config{
+			Name:              "QuarkTV",
+			DefaultRoot:       "0",
+			NoOverwriteUpload: true,
+			NoUpload:          true,
+		},
+		conf: Conf{
+			api:      "https://open-api-drive.quark.cn",
+			clientID: "d3194e61504e493eb6222857bccfed94",
+			signKey:  "kw2dvtd7p4t3pjl2d9ed9yc8yej8kw2d",
+			appVer:   "1.8.2.2",
+			channel:  "GENERAL",
+			codeApi:  "http://api.extscreen.com/quarkdrive",
+		},
+	}
+}
+func New2() driver.Driver {
+	return &QuarkUCTV{
+		config: driver.Config{
+			Name:              "UCTV",
+			DefaultRoot:       "0",
+			NoOverwriteUpload: true,
+			NoUpload:          true,
+		},
+		conf: Conf{
+			api:      "https://open-api-drive.uc.cn",
+			clientID: "5acf882d27b74502b7040b0c65519aa7",
+			signKey:  "l3srvtd7p42l0d0x1u8d7yc8ye9kki4d",
+			appVer:   "1.7.2.2",
+			channel:  "UCTVOFFICIALWEB",
+			codeApi:  "http://api.extscreen.com/ucdrive",
+		},
+	}
 }

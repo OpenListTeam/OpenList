@@ -2,7 +2,6 @@ package _123Link
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -16,8 +15,6 @@ var config = driver.Config{
 	Name: "123PanLink",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Pan123Link{}
-	})
+func New() driver.Driver {
+	return &Pan123Link{}
 }

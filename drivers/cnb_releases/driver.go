@@ -129,10 +129,6 @@ func (d *CnbReleases) MakeDir(ctx context.Context, parentDir model.Obj, dirName 
 	return errs.NotImplement
 }
 
-func (d *CnbReleases) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	return nil, errs.NotImplement
-}
-
 func (d *CnbReleases) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
 	if srcObj.IsDir() && !d.UseTagName {
 		return d.Request(http.MethodPatch, "/{repo}/-/releases/{release_id}", func(req *resty.Request) {
@@ -144,10 +140,6 @@ func (d *CnbReleases) Rename(ctx context.Context, srcObj model.Obj, newName stri
 		}, nil)
 	}
 	return errs.NotImplement
-}
-
-func (d *CnbReleases) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	return nil, errs.NotImplement
 }
 
 func (d *CnbReleases) Remove(ctx context.Context, obj model.Obj) error {

@@ -2,7 +2,6 @@ package alias
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -21,14 +20,11 @@ var config = driver.Config{
 	Name:             "Alias",
 	LocalSort:        true,
 	NoCache:          true,
-	NoUpload:         false,
 	DefaultRoot:      "/",
 	ProxyRangeOption: true,
 	LinkCacheMode:    driver.LinkCacheAuto,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Alias{}
-	})
+func New() driver.Driver {
+	return &Alias{}
 }
