@@ -14,9 +14,9 @@ func TestBufferStore(t *testing.T) {
 		off int64
 	}
 	bs := &hybrid_cache.BufferStore{}
-	bs.Append([]byte("github.com"))
-	bs.Append([]byte("/OpenList"))
-	bs.Append([]byte("Team/?"))
+	initial := []byte("github.com/OpenListTeam/?")
+	_ = bs.GrowTo(int64(len(initial)))
+	_, _ = bs.WriteAt(initial, 0)
 	b := []byte("OpenList")
 	off := bs.Size() - 1
 	_ = bs.GrowTo(off + int64(len(b)))

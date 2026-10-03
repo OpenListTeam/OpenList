@@ -34,13 +34,12 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 		down := net.NewDownloader(func(d *net.Downloader) {
 			d.Concurrency = link.Concurrency
 			d.PartSize = link.PartSize
-			d.HttpClient = net.GetRangeReaderHttpRequestFunc(link.RangeReader)
+			d.OpenPart = func(ctx context.Context, request net.PartRequest) (io.ReadCloser, error) {
+				return link.RangeReader.RangeRead(ctx, request.Range)
+			}
 		})
 		rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
-			return down.Download(ctx, &net.HttpRequestParams{
-				Range: httpRange,
-				Size:  size,
-			})
+			return down.Download(ctx, size, httpRange)
 		}
 		// RangeReader只能在驱动限速
 		return RangeReaderFunc(rangeReader), nil
@@ -54,30 +53,19 @@ func GetRangeReaderFromLink(size int64, link *model.Link) (model.RangeReaderIF, 
 		down := net.NewDownloader(func(d *net.Downloader) {
 			d.Concurrency = link.Concurrency
 			d.PartSize = link.PartSize
-			d.HttpClient = func(ctx context.Context, params *net.HttpRequestParams) (*http.Response, error) {
-				if ServerDownloadLimit == nil {
-					return net.DefaultHttpRequestFunc(ctx, params)
-				}
-				resp, err := net.DefaultHttpRequestFunc(ctx, params)
-				if err == nil && resp.Body != nil {
-					resp.Body = &RateLimitReader{
-						Ctx:     ctx,
-						Reader:  resp.Body,
-						Limiter: ServerDownloadLimit,
-					}
-				}
-				return resp, err
-			}
 		})
 		rangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
 			requestHeader, _ := ctx.Value(conf.RequestHeaderKey).(http.Header)
 			header := net.ProcessHeader(requestHeader, link.Header)
-			return down.Download(ctx, &net.HttpRequestParams{
-				Range:     httpRange,
-				Size:      size,
-				URL:       link.URL,
-				HeaderRef: header,
-			})
+			requestDownloader := *down
+			requestDownloader.OpenPart = func(ctx context.Context, request net.PartRequest) (io.ReadCloser, error) {
+				body, err := net.OpenHTTPPart(ctx, link.URL, header, size, request)
+				if err != nil || ServerDownloadLimit == nil {
+					return body, err
+				}
+				return &RateLimitReader{Ctx: ctx, Reader: body, Limiter: ServerDownloadLimit}, nil
+			}
+			return requestDownloader.Download(ctx, size, httpRange)
 		}
 		return RangeReaderFunc(rangeReader), nil
 	}

@@ -93,7 +93,6 @@ func redirect(c *gin.Context, link *model.Link) {
 }
 
 func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
-	defer link.Close()
 	var err error
 	if link.URL != "" && setting.GetBool(conf.ForwardDirectLinkParams) {
 		query := c.Request.URL.Query()
@@ -102,15 +101,13 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 		}
 		link.URL, err = utils.InjectQuery(link.URL, query)
 		if err != nil {
+			_ = link.Close()
 			common.ErrorPage(c, err, 500)
 			return
 		}
 	}
-	if proxyRange {
-		link = common.ProxyRange(c, link, file.GetSize())
-	}
 	Writer := &common.WrittenResponseWriter{ResponseWriter: c.Writer}
-	err = common.Proxy(Writer, c.Request, link, file)
+	err = common.Proxy(Writer, c.Request, link, file, proxyRange)
 	if err == nil {
 		return
 	}
