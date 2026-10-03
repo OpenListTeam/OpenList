@@ -7,6 +7,7 @@ toolchain go1.27.1
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.0
+	github.com/FilenCloudDienste/filen-sdk-go v0.0.39
 	github.com/KarpelesLab/reflink v1.0.2
 	github.com/KirCute/zip v1.0.1
 	github.com/OpenListTeam/go-cache v0.1.0
@@ -111,6 +112,7 @@ require (
 	github.com/cloudsoda/sddl v0.0.0-20250224235906-926454e91efc // indirect
 	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
 	github.com/cronokirby/saferith v0.33.1-0.20250226174546-1f11f94ce488 // indirect
+	github.com/dromara/dongle v1.0.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/emersion/go-message v0.18.2 // indirect
@@ -139,6 +141,7 @@ require (
 	github.com/stangelandcl/ppmd v0.1.1 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.mongodb.org/mongo-driver v1.17.9 // indirect
@@ -151,6 +154,7 @@ require (
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.23.1 // indirect
+	moul.io/http2curl/v2 v2.3.0 // indirect
 )
 
 require (
