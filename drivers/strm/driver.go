@@ -221,7 +221,7 @@ func (d *Strm) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 		}, nil
 	}
 
-	return link.Clone(), nil
+	return link, nil
 }
 
 var _ driver.Driver = (*Strm)(nil)

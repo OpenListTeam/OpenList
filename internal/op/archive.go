@@ -85,7 +85,6 @@ func GetArchiveToolAndStream(ctx context.Context, storage driver.Driver, path st
 	// Get first part stream
 	ss, err := stream.NewSeekableStream(&stream.FileStream{Ctx: ctx, Obj: obj}, l)
 	if err != nil {
-		_ = l.Close()
 		return nil, nil, nil, errors.WithMessagef(err, "failed get [%s] stream", path)
 	}
 	ret := []*stream.SeekableStream{ss}
@@ -120,7 +119,6 @@ func GetArchiveToolAndStream(ctx context.Context, storage driver.Driver, path st
 		}
 		ss1, e := stream.NewSeekableStream(&stream.FileStream{Ctx: ctx, Obj: o1}, l1)
 		if e != nil {
-			_ = l1.Close()
 			err = errors.WithMessagef(e, "failed get [%s] stream", p)
 			break
 		}
@@ -390,9 +388,24 @@ func ArchiveGet(ctx context.Context, storage driver.Driver, path string, args mo
 }
 
 type objWithLink struct {
-	link   *model.Link
-	obj    model.Obj
-	policy linkCachePolicy
+	link *model.Link
+	obj  model.Obj
+}
+
+var errConflictingLinkLifecycle = stderrors.New("invalid link lifecycle: expiration cannot be combined with owned closers or RequireReference")
+
+func admitLink(link *model.Link, obj model.Obj) (*objWithLink, error) {
+	if link.Expiration != nil && (link.RequireReference || link.SyncClosers.Length() > 0) {
+		return nil, stderrors.Join(errConflictingLinkLifecycle, link.Close())
+	}
+	return &objWithLink{link: link, obj: obj}, nil
+}
+
+func (ol *objWithLink) acquire() *model.Link {
+	if ol.link.Expiration != nil || ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+		return ol.link.Clone()
+	}
+	return nil
 }
 
 var (
@@ -406,8 +419,8 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
 	if ol, ok := extractCache.Get(key); ok {
-		if ol.acquire() {
-			return ol.link, ol.obj, nil
+		if link := ol.acquire(); link != nil {
+			return link, ol.obj, nil
 		}
 	}
 
@@ -416,8 +429,8 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
-		if ol.policy.expiration != nil {
-			extractCache.SetWithTTL(key, ol, *ol.policy.expiration)
+		if ol.link.Expiration != nil {
+			extractCache.SetWithTTL(key, ol, *ol.link.Expiration)
 		} else {
 			extractCache.SetWithExpirable(key, ol, &ol.link.SyncClosers)
 		}
@@ -429,8 +442,8 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		if err != nil {
 			return nil, nil, err
 		}
-		if ol.acquire() {
-			return ol.link, ol.obj, nil
+		if link := ol.acquire(); link != nil {
+			return link, ol.obj, nil
 		}
 	}
 }

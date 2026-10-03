@@ -275,12 +275,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	defer link.Close()
-
-	if storage.GetStorage().ProxyRange {
-		link = common.ProxyRange(ctx, link, fi.GetSize())
-	}
-	err = common.Proxy(w, r, link, fi)
+	err = common.Proxy(w, r, link, fi, storage.GetStorage().ProxyRange)
 	if err != nil {
 		if statusCode, ok := errs.UnwrapOrSelf(err).(net.HttpStatusCodeError); ok {
 			return int(statusCode), err
