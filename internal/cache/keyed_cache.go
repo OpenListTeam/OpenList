@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -68,6 +69,29 @@ func (c *KeyedCache[T]) Delete(key string) {
 	defer c.mu.Unlock()
 
 	delete(c.entries, key)
+}
+
+// DeletePrefix removes the key and all keys below it as a slash-delimited
+// path. A path boundary prevents /foo from matching /foobar.
+func (c *KeyedCache[T]) DeletePrefix(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for key := range c.entries {
+		if pathPrefixMatch(key, prefix) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+func pathPrefixMatch(key, prefix string) bool {
+	if key == prefix {
+		return true
+	}
+	if prefix == "/" {
+		return strings.HasPrefix(key, "/")
+	}
+	return strings.HasPrefix(key, prefix+"/")
 }
 
 func (c *KeyedCache[T]) Pop(key string) (T, bool) {
