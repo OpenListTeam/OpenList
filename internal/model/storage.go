@@ -19,6 +19,7 @@ type Storage struct {
 	Disabled            bool      `json:"disabled"` // if disabled
 	DisableIndex        bool      `json:"disable_index"`
 	EnableSign          bool      `json:"enable_sign"`
+	SeedPolicy          string    `json:"seed_policy" gorm:"default:inherit"`
 	Sort
 	Proxy
 }
