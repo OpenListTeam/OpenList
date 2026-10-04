@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -229,7 +230,10 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 		return nil, errs.NotImplement
 	}
 	path := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
-	contentType := utils.GetMimeType(fileName)
+	contentType, _ := ctx.Value(conf.DirectUploadContentTypeKey).(string)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
 	req, _ := d.directUploadClient.PutObjectRequest(&s3.PutObjectInput{
 		Bucket:      &d.Bucket,
 		Key:         &path,
