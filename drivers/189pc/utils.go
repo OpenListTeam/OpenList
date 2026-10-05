@@ -30,6 +30,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/skip2/go-qrcode"
 
 	"github.com/avast/retry-go"
@@ -41,9 +42,13 @@ import (
 
 const (
 	ACCOUNT_TYPE = "02"
-	APP_ID       = "8025431004"
-	CLIENT_TYPE  = "10020"
-	VERSION      = "6.2"
+	// 官方 PC 端（cloud.189.cn 网页/客户端）使用的 appId，
+	// 登录、生成二维码、换取 session 必须全程使用同一个 appId
+	APP_ID      = "9317140619"
+	CLIENT_TYPE = "10020"
+	// 扫码状态轮询使用的 clientType，与密码登录的 10020 不同
+	QR_CLIENT_TYPE = "1"
+	VERSION        = "7.2.4.0"
 
 	WEB_URL    = "https://cloud.189.cn"
 	AUTH_URL   = "https://open.e.189.cn"
@@ -57,8 +62,18 @@ const (
 
 	CHANNEL_ID = "web_cloud.189.cn"
 
+	// 服务端通过短信二次校验后下发的设备标识，复用它可以避免再次触发校验
+	DEVICE_ID_COOKIE = "DEVICEID"
+
+	// 扫码登录本地轮询参数，超时后把二维码交回前端，避免请求被反向代理掐断
+	QRCODE_POLL_INTERVAL = 2 * time.Second
+	QRCODE_POLL_TIMEOUT  = 20 * time.Second
+
 	// Error codes
 	UserInvalidOpenTokenError = "UserInvalidOpenToken"
+
+	// 密码登录返回该结果表示需要设备二次校验
+	SecondDeviceAuthResult = -133
 )
 
 func (y *Cloud189PC) SignatureHeader(url, method, params string, isFamily bool) map[string]string {
@@ -288,7 +303,70 @@ func (y *Cloud189PC) login() error {
 	if y.LoginType == "qrcode" {
 		return y.loginByQRCode()
 	}
+	if y.Username == "" || y.Password == "" {
+		return errors.New("please fill in the username and password, or provide an access token / refresh token")
+	}
 	return y.loginByPassword()
+}
+
+// 设备指纹，为空时生成并保存，服务端以此识别是否为同一台设备
+func (y *Cloud189PC) getUserFinger() string {
+	if y.Addition.UserFinger == "" {
+		y.Addition.UserFinger = fmt.Sprint(random.Rand.Int63n(9e9) + 1e9)
+		op.MustSaveDriverStorage(y)
+	}
+	return y.Addition.UserFinger
+}
+
+// 换取会话时携带的设备参数，与官方PC客户端保持一致
+// clientSn/jgOpenId 只在用户从官方客户端抓到并填写后才发送，避免上报一个服务端不认识的设备号
+func (y *Cloud189PC) deviceParams() map[string]string {
+	params := map[string]string{"returnType": "JSON"}
+	if y.Addition.ClientSn != "" {
+		params["clientSn"] = y.Addition.ClientSn
+	}
+	if y.Addition.JgOpenId != "" {
+		params["jgOpenId"] = y.Addition.JgOpenId
+	}
+	return params
+}
+
+// logbox接口的公共请求头，缺少user-finger和Referer会被判定为陌生设备
+func (y *Cloud189PC) loginHeaders(param BaseLoginParam) map[string]string {
+	return map[string]string{
+		"REQID":       param.ReqId,
+		"lt":          param.Lt,
+		"user-finger": y.getUserFinger(),
+		"Referer":     IF(param.Referer != "", param.Referer, AUTH_URL),
+	}
+}
+
+// 把已保存的设备标识写入cookie，避免重复触发设备二次校验
+func (y *Cloud189PC) applyDeviceID(jar http.CookieJar) {
+	if y.Addition.DeviceID == "" {
+		return
+	}
+	authUrl, err := url.Parse(AUTH_URL)
+	if err != nil {
+		return
+	}
+	jar.SetCookies(authUrl, []*http.Cookie{{
+		Name:   DEVICE_ID_COOKIE,
+		Value:  y.Addition.DeviceID,
+		Domain: "e.189.cn",
+		Path:   "/",
+	}})
+}
+
+// 保存服务端下发的设备标识，下次登陆复用即可跳过设备二次校验
+func (y *Cloud189PC) saveDeviceID(res *resty.Response) {
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == DEVICE_ID_COOKIE && cookie.Value != "" && cookie.Value != y.Addition.DeviceID {
+			y.Addition.DeviceID = cookie.Value
+			op.MustSaveDriverStorage(y)
+			return
+		}
+	}
 }
 
 func (y *Cloud189PC) loginByPassword() (err error) {
@@ -299,9 +377,16 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 			return err
 		}
 	}
+	// 设备二次校验必须复用同一套登陆参数，此时不能销毁也不能重新初始化
+	keepLoginParam := false
 	defer func() {
 		// 销毁验证码
 		y.VCode = ""
+		if keepLoginParam {
+			y.Status = err.Error()
+			op.MustSaveDriverStorage(y)
+			return
+		}
 		// 销毁登陆参数
 		y.loginParam = nil
 		// 遇到错误，重新加载登陆参数(刷新验证码)
@@ -319,17 +404,18 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 
 	param := y.loginParam
 	var loginresp LoginResp
-	_, err = y.client.R().
+	res, err := y.client.R().
 		ForceContentType("application/json;charset=UTF-8").SetResult(&loginresp).
-		SetHeaders(map[string]string{
-			"REQID": param.ReqId,
-			"lt":    param.Lt,
-		}).
+		SetHeaders(y.loginHeaders(param.BaseLoginParam)).
 		SetFormData(map[string]string{
+			"version":      "v2.0",
+			"apToken":      "",
 			"appKey":       APP_ID,
+			"pageKey":      "normal",
 			"accountType":  ACCOUNT_TYPE,
 			"userName":     param.RsaUsername,
 			"password":     param.RsaPassword,
+			"epd":          param.RsaPassword,
 			"validateCode": y.VCode,
 			"captchaToken": param.CaptchaToken,
 			"returnUrl":    RETURN_URL,
@@ -345,17 +431,106 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 	if err != nil {
 		return err
 	}
+	y.saveDeviceID(res)
+
+	// 设备二次校验：服务端要求短信验证，保留登陆参数并引导填写短信验证码
+	if loginresp.Result == SecondDeviceAuthResult {
+		err = y.secondDeviceAuth(loginresp.Mobile)
+		// 校验未完成时保留登陆参数，等待用户回填短信验证码
+		keepLoginParam = err != nil && y.loginParam != nil
+		return err
+	}
+
 	if loginresp.ToUrl == "" {
 		return fmt.Errorf("login failed,No toUrl obtained, msg: %s", loginresp.Msg)
 	}
 
-	// 获取Session
+	return y.getSessionByRedirectURL(loginresp.ToUrl)
+}
+
+// 设备二次校验：先发短信，用户回填验证码后再提交
+func (y *Cloud189PC) secondDeviceAuth(mobile string) error {
+	param := y.loginParam
+	if mobile != "" {
+		param.SecondAuthMobile = mobile
+	}
+	if param.SecondAuthMobile == "" {
+		return errors.New("second device verification is required, but no mobile was returned")
+	}
+
+	// 已填写短信验证码，直接提交校验
+	if y.SmsCode != "" {
+		smsCode := y.SmsCode
+		y.SmsCode = ""
+		op.MustSaveDriverStorage(y)
+		return y.submitSecondDeviceAuth(smsCode)
+	}
+
+	var smsResp LoginResp
+	_, err := y.client.R().
+		ForceContentType("application/json;charset=UTF-8").SetResult(&smsResp).
+		SetHeaders(y.loginHeaders(param.BaseLoginParam)).
+		SetFormData(map[string]string{
+			"mobile": param.SecondAuthMobile,
+			"appKey": APP_ID,
+		}).
+		Post(AUTH_URL + "/api/logbox/oauth2/sendSmsCodeForSecondAuth.do")
+	if err != nil {
+		return err
+	}
+	if smsResp.Result != 0 {
+		return fmt.Errorf("failed to send the verification SMS: %s", smsResp.Msg)
+	}
+	// 保留登陆参数，等待用户回填短信验证码后重新保存
+	return errors.New("second device verification is required, an SMS code has been sent, please fill it into `sms_code` and save again")
+}
+
+// 提交短信验证码完成设备二次校验
+// 注意：该接口没有独立的短信码字段，短信码要加密后放在epd里（登陆时epd装的是密码）
+func (y *Cloud189PC) submitSecondDeviceAuth(smsCode string) error {
+	param := y.loginParam
+	var authResp LoginResp
+	res, err := y.client.R().
+		ForceContentType("application/json;charset=UTF-8").SetResult(&authResp).
+		SetHeaders(y.loginHeaders(param.BaseLoginParam)).
+		SetFormData(map[string]string{
+			"mobile":      param.SecondAuthMobile,
+			"appKey":      APP_ID,
+			"userName":    param.RsaUsername,
+			"epd":         param.encryptSecret(smsCode),
+			"accountType": ACCOUNT_TYPE,
+			"returnUrl":   RETURN_URL,
+			"isOauth2":    "false",
+			"cb_SaveName": "1",
+			"state":       "",
+			"paramId":     param.ParamId,
+		}).
+		Post(AUTH_URL + "/api/logbox/oauth2/submitForSecondAuth.do")
+	if err != nil {
+		return err
+	}
+	// 校验通过后服务端会下发DEVICEID，保存下来以后就不会再触发二次校验
+	y.saveDeviceID(res)
+
+	if authResp.Result != 0 {
+		return fmt.Errorf("second device verification failed: %s", authResp.Msg)
+	}
+	if authResp.ToUrl == "" {
+		return fmt.Errorf("second device verification failed, no toUrl obtained, msg: %s", authResp.Msg)
+	}
+	return y.getSessionByRedirectURL(authResp.ToUrl)
+}
+
+// 用登陆结果的跳转地址换取会话
+func (y *Cloud189PC) getSessionByRedirectURL(redirectURL string) error {
 	var erron RespErr
 	var tokenInfo AppSessionResp
-	_, err = y.client.R().
+	_, err := y.client.R().
 		SetResult(&tokenInfo).SetError(&erron).
 		SetQueryParams(clientSuffix()).
-		SetQueryParam("redirectURL", loginresp.ToUrl).
+		SetQueryParams(y.deviceParams()).
+		SetQueryParam("redirectURL", redirectURL).
+		SetHeader("X-Request-ID", uuid.NewString()).
 		Post(API_URL + "/getSessionForPC.action")
 	if err != nil {
 		return err
@@ -365,14 +540,13 @@ func (y *Cloud189PC) loginByPassword() (err error) {
 		return &erron
 	}
 	if tokenInfo.ResCode != 0 {
-		err = fmt.Errorf(tokenInfo.ResMessage)
-		return err
+		return errors.New(tokenInfo.ResMessage)
 	}
 	y.Addition.AccessToken = tokenInfo.AccessToken
 	y.Addition.RefreshToken = tokenInfo.RefreshToken
 	y.tokenInfo = &tokenInfo
 	op.MustSaveDriverStorage(y)
-	return err
+	return nil
 }
 
 func (y *Cloud189PC) loginByQRCode() error {
@@ -383,66 +557,74 @@ func (y *Cloud189PC) loginByQRCode() error {
 		}
 	}
 
-	var state struct {
-		Status      int    `json:"status"`
-		RedirectUrl string `json:"redirectUrl"`
-		Msg         string `json:"msg"`
+	// 本地轮询，扫码确认后自动继续，不需要用户反复保存
+	deadline := time.Now().Add(QRCODE_POLL_TIMEOUT)
+	lastStatus := -106
+	for {
+		state, err := y.checkQRCodeState()
+		if err != nil {
+			return fmt.Errorf("failed to check QR code state: %w", err)
+		}
+		lastStatus = state.Status
+
+		switch state.Status {
+		case 0: // 登录成功
+			y.qrcodeParam = nil
+			return y.getSessionByRedirectURL(state.RedirectUrl)
+		case -106, -11002: // -106 等待扫描，-11002 已扫描等待确认
+		case -11001: // 二维码过期
+			y.qrcodeParam = nil
+			return errors.New("QR code expired, please try again")
+		default: // 其他错误
+			y.qrcodeParam = nil
+			return fmt.Errorf("QR code login failed with status %d: %s", state.Status, state.Msg)
+		}
+
+		if time.Now().Add(QRCODE_POLL_INTERVAL).After(deadline) {
+			break
+		}
+		time.Sleep(QRCODE_POLL_INTERVAL)
 	}
 
+	// 轮询超时，把二维码交回前端等待下一次保存
+	if lastStatus == -11002 {
+		return y.genQRCode("QR code has been scanned, please confirm the login on your phone and save again")
+	}
+	return y.genQRCode("QR code has not been scanned yet, please scan and save again")
+}
+
+type qrCodeState struct {
+	Status      int    `json:"status"`
+	RedirectUrl string `json:"redirectUrl"`
+	Msg         string `json:"msg"`
+}
+
+// 查询扫码状态，参数需与官方PC端一致，否则服务端不会返回授权结果
+func (y *Cloud189PC) checkQRCodeState() (*qrCodeState, error) {
 	now := time.Now()
+	var state qrCodeState
 	_, err := y.client.R().
-		SetHeaders(map[string]string{
-			"Referer": AUTH_URL,
-			"Reqid":   y.qrcodeParam.ReqId,
-			"lt":      y.qrcodeParam.Lt,
-		}).
+		SetHeaders(y.loginHeaders(y.qrcodeParam.BaseLoginParam)).
 		SetFormData(map[string]string{
-			"appId":      APP_ID,
-			"clientType": CLIENT_TYPE,
-			"returnUrl":  RETURN_URL,
-			"paramId":    y.qrcodeParam.ParamId,
-			"uuid":       y.qrcodeParam.UUID,
-			"encryuuid":  y.qrcodeParam.EncryUUID,
-			"date":       formatDate(now),
-			"timeStamp":  fmt.Sprint(now.UTC().UnixNano() / 1e6),
+			"appId":       APP_ID,
+			"clientType":  QR_CLIENT_TYPE,
+			"returnUrl":   RETURN_URL,
+			"paramId":     y.qrcodeParam.ParamId,
+			"uuid":        y.qrcodeParam.UUID,
+			"encryuuid":   y.qrcodeParam.EncryUUID,
+			"cb_SaveName": "3",
+			"isOauth2":    "false",
+			"state":       "",
+			"date":        formatDate(now),
+			"timeStamp":   fmt.Sprint(now.UTC().UnixNano() / 1e6),
 		}).
 		ForceContentType("application/json;charset=UTF-8").
 		SetResult(&state).
 		Post(AUTH_URL + "/api/logbox/oauth2/qrcodeLoginState.do")
 	if err != nil {
-		return fmt.Errorf("failed to check QR code state: %w", err)
+		return nil, err
 	}
-
-	switch state.Status {
-	case 0: // 登录成功
-		var tokenInfo AppSessionResp
-		_, err = y.client.R().
-			SetResult(&tokenInfo).
-			SetQueryParams(clientSuffix()).
-			SetQueryParam("redirectURL", state.RedirectUrl).
-			Post(API_URL + "/getSessionForPC.action")
-		if err != nil {
-			return err
-		}
-		if tokenInfo.ResCode != 0 {
-			return fmt.Errorf(tokenInfo.ResMessage)
-		}
-		y.Addition.AccessToken = tokenInfo.AccessToken
-		y.Addition.RefreshToken = tokenInfo.RefreshToken
-		y.tokenInfo = &tokenInfo
-		op.MustSaveDriverStorage(y)
-		return nil
-	case -11001: // 二维码过期
-		y.qrcodeParam = nil
-		return errors.New("QR code expired, please try again")
-	case -106: // 等待扫描
-		return y.genQRCode("QR code has not been scanned yet, please scan and save again")
-	case -11002: // 等待确认
-		return y.genQRCode("QR code has been scanned, please confirm the login on your phone and save again")
-	default: // 其他错误
-		y.qrcodeParam = nil
-		return fmt.Errorf("QR code login failed with status %d: %s", state.Status, state.Msg)
-	}
+	return &state, nil
 }
 
 func (y *Cloud189PC) genQRCode(text string) error {
@@ -468,8 +650,9 @@ func (y *Cloud189PC) genQRCode(text string) error {
 }
 
 func (y *Cloud189PC) initBaseParams() (*BaseLoginParam, error) {
-	// 清除cookie
+	// 清除cookie，并带上已保存的设备标识
 	jar, _ := cookiejar.New(nil)
+	y.applyDeviceID(jar)
 	y.client.SetCookieJar(jar)
 
 	res, err := y.client.R().
@@ -484,12 +667,96 @@ func (y *Cloud189PC) initBaseParams() (*BaseLoginParam, error) {
 		return nil, err
 	}
 
+	// 当前登陆页把lt/reqId放在跳转地址上，老页面则写在页内变量里，两种都要支持
+	param, err := parseBaseParamFromRedirect(res.RawResponse.Request.URL)
+	if err != nil {
+		param, err = parseBaseParamFromPage(res.String())
+		if err != nil {
+			return nil, err
+		}
+		return param, nil
+	}
+
+	// 跳转地址上没有paramId，需要再问一次appConf.do
+	var appConf AppConfResp
+	_, err = y.client.R().
+		SetHeaders(y.loginHeaders(*param)).
+		ForceContentType("application/json;charset=UTF-8").
+		SetResult(&appConf).
+		SetFormData(map[string]string{
+			"version": "2.0",
+			"appKey":  APP_ID,
+		}).
+		Post(AUTH_URL + "/api/logbox/oauth2/appConf.do")
+	if err != nil {
+		return nil, err
+	}
+	if !appConf.Succeeded() || appConf.Data.ParamId == "" {
+		return nil, fmt.Errorf("failed to get the login paramId: %s", appConf.Msg)
+	}
+	param.ParamId = appConf.Data.ParamId
+	return param, nil
+}
+
+// parseBaseParamFromRedirect 从logbox跳转地址提取登陆参数，并以该地址作为后续请求的Referer
+func parseBaseParamFromRedirect(finalUrl *url.URL) (*BaseLoginParam, error) {
+	if finalUrl == nil {
+		return nil, errors.New("no login page redirect")
+	}
+	query := finalUrl.Query()
+	lt, reqId := query.Get("lt"), query.Get("reqId")
+	if lt == "" || reqId == "" {
+		return nil, errors.New("no lt/reqId in the login page redirect")
+	}
 	return &BaseLoginParam{
-		CaptchaToken: regexp.MustCompile(`'captchaToken' value='(.+?)'`).FindStringSubmatch(res.String())[1],
-		Lt:           regexp.MustCompile(`lt = "(.+?)"`).FindStringSubmatch(res.String())[1],
-		ParamId:      regexp.MustCompile(`paramId = "(.+?)"`).FindStringSubmatch(res.String())[1],
-		ReqId:        regexp.MustCompile(`reqId = "(.+?)"`).FindStringSubmatch(res.String())[1],
+		Lt:      lt,
+		ReqId:   reqId,
+		Referer: finalUrl.String(),
 	}, nil
+}
+
+// parseBaseParamFromPage 兼容把参数写在页内变量里的老登陆页
+func parseBaseParamFromPage(body string) (*BaseLoginParam, error) {
+	lt, err := matchLoginParam(body, `lt = "(.+?)"`, "lt")
+	if err != nil {
+		return nil, err
+	}
+	reqId, err := matchLoginParam(body, `reqId = "(.+?)"`, "reqId")
+	if err != nil {
+		return nil, err
+	}
+	paramId, err := matchLoginParam(body, `paramId = "(.+?)"`, "paramId")
+	if err != nil {
+		return nil, err
+	}
+	// 老页面才有内嵌的图形验证码token
+	captchaToken, _ := matchLoginParam(body, `'captchaToken' value='(.+?)'`, "captchaToken")
+
+	param := &BaseLoginParam{
+		CaptchaToken: captchaToken,
+		Lt:           lt,
+		ParamId:      paramId,
+		ReqId:        reqId,
+	}
+	encryptUrl, _ := matchLoginParam(body, `encryptUrl = "(.+?)"`, "encryptUrl")
+	param.Referer = AUTH_URL + "/api/logbox/separate/web/index.html?" + strings.Join([]string{
+		"appId=" + url.QueryEscape(APP_ID),
+		"lt=" + url.QueryEscape(param.Lt),
+		"reqId=" + url.QueryEscape(param.ReqId),
+	}, "&")
+	if encryptUrl != "" {
+		param.Referer += "&encryptUrl=" + url.QueryEscape(encryptUrl)
+	}
+	return param, nil
+}
+
+// matchLoginParam 从登陆页面提取参数，缺失时返回可读的错误而不是panic
+func matchLoginParam(body, pattern, name string) (string, error) {
+	matches := regexp.MustCompile(pattern).FindStringSubmatch(body)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("failed to get %s from the login page", name)
+	}
+	return matches[1], nil
 }
 
 /* 初始化登陆需要的参数
@@ -516,12 +783,13 @@ func (y *Cloud189PC) initLoginParam() error {
 	}
 
 	y.loginParam.jRsaKey = fmt.Sprintf("-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----", encryptConf.Data.PubKey)
-	y.loginParam.RsaUsername = encryptConf.Data.Pre + RsaEncrypt(y.loginParam.jRsaKey, y.Username)
-	y.loginParam.RsaPassword = encryptConf.Data.Pre + RsaEncrypt(y.loginParam.jRsaKey, y.Password)
+	y.loginParam.rsaPrefix = encryptConf.Data.Pre
+	y.loginParam.RsaUsername = y.loginParam.encryptSecret(y.Username)
+	y.loginParam.RsaPassword = y.loginParam.encryptSecret(y.Password)
 
 	// 判断是否需要验证码
 	resp, err := y.client.R().
-		SetHeader("REQID", y.loginParam.ReqId).
+		SetHeaders(y.loginHeaders(y.loginParam.BaseLoginParam)).
 		SetFormData(map[string]string{
 			"appKey":      APP_ID,
 			"accountType": ACCOUNT_TYPE,
@@ -576,12 +844,16 @@ func (y *Cloud189PC) initQRCodeParam() (err error) {
 
 	var qrcodeParam QRLoginParam
 	_, err = y.client.R().
+		SetHeaders(y.loginHeaders(*baseParam)).
 		SetFormData(map[string]string{"appId": APP_ID}).
 		ForceContentType("application/json;charset=UTF-8").
 		SetResult(&qrcodeParam).
 		Post(AUTH_URL + "/api/logbox/oauth2/getUUID.do")
 	if err != nil {
 		return err
+	}
+	if qrcodeParam.UUID == "" {
+		return errors.New("failed to get the QR code uuid")
 	}
 	qrcodeParam.BaseLoginParam = *baseParam
 	y.qrcodeParam = &qrcodeParam
@@ -603,6 +875,7 @@ func (y *Cloud189PC) refreshSessionWithRetry(retryCount int) (err error) {
 	_, err = y.client.R().
 		SetResult(&userSessionResp).SetError(&erron).
 		SetQueryParams(clientSuffix()).
+		SetQueryParams(y.deviceParams()).
 		SetQueryParams(map[string]string{
 			"appId":       APP_ID,
 			"accessToken": y.tokenInfo.AccessToken,
@@ -643,12 +916,11 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 		return errors.New("refresh token failed after maximum retries")
 	}
 
-	var erron RespErr
-	var tokenInfo AppSessionResp
+	// 该接口刷新失败时以HTTP 200返回 result/msg，SetError不会触发，必须解析响应体判断
+	var tokenInfo RefreshTokenResp
 	_, err = y.client.R().
 		SetResult(&tokenInfo).
 		ForceContentType("application/json;charset=UTF-8").
-		SetError(&erron).
 		SetFormData(map[string]string{
 			"clientId":     APP_ID,
 			"refreshToken": y.tokenInfo.RefreshToken,
@@ -661,7 +933,8 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 	}
 
 	// 如果刷新失败，返回错误给上层处理
-	if erron.HasError() {
+	if tokenInfo.HasError() {
+		refreshErr := tokenInfo.Error()
 		if y.Addition.RefreshToken != "" {
 			y.Addition.RefreshToken = ""
 			op.MustSaveDriverStorage(y)
@@ -669,7 +942,11 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 
 		// 根据登录类型决定下一步行为
 		if y.LoginType == "qrcode" {
-			return errors.New("QR code session has expired, please re-scan the code to log in")
+			return fmt.Errorf("QR code session has expired, please re-scan the code to log in: %s", refreshErr)
+		}
+		// 没有账号密码时无法回退到完整登录，直接把刷新失败的原因返回
+		if y.Username == "" || y.Password == "" {
+			return errors.New(refreshErr)
 		}
 		// 密码登录模式下，尝试回退到完整登录
 		return y.login()
@@ -677,7 +954,8 @@ func (y *Cloud189PC) refreshTokenWithRetry(retryCount int) (err error) {
 
 	y.Addition.AccessToken = tokenInfo.AccessToken
 	y.Addition.RefreshToken = tokenInfo.RefreshToken
-	y.tokenInfo = &tokenInfo
+	y.tokenInfo.AccessToken = tokenInfo.AccessToken
+	y.tokenInfo.RefreshToken = tokenInfo.RefreshToken
 	op.MustSaveDriverStorage(y)
 	return y.refreshSessionWithRetry(retryCount + 1)
 }
