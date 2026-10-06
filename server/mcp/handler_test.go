@@ -199,17 +199,20 @@ func TestInitializeNegotiatesUnsupportedProtocolVersion(t *testing.T) {
 
 func TestCreateSessionPrunesUserSessionLimit(t *testing.T) {
 	srv := newTestServer(nil)
-	var firstSessionID string
+	var firstSession *session
 	for i := range maxUserSessions {
 		currentSession := srv.createSession(1)
 		if i == 0 {
-			firstSessionID = currentSession.id
+			firstSession = currentSession
 		}
 	}
+	// Backdate the oldest session so pruning is deterministic even when the
+	// clock granularity is too coarse to distinguish creation times.
+	firstSession.lastUsedAt = time.Now().Add(-time.Hour)
 	srv.createSession(2)
 	srv.createSession(1)
 
-	if _, ok := srv.sessions[firstSessionID]; ok {
+	if _, ok := srv.sessions[firstSession.id]; ok {
 		t.Fatal("expected oldest user session to be pruned")
 	}
 	if got := countSessionsForUser(srv, 1); got != maxUserSessions {
@@ -222,16 +225,19 @@ func TestCreateSessionPrunesUserSessionLimit(t *testing.T) {
 
 func TestCreateSessionPrunesGlobalSessionLimit(t *testing.T) {
 	srv := newTestServer(nil)
-	var firstSessionID string
+	var firstSession *session
 	for i := range maxSessions {
 		currentSession := srv.createSession(uint(i + 1))
 		if i == 0 {
-			firstSessionID = currentSession.id
+			firstSession = currentSession
 		}
 	}
+	// Backdate the oldest session so pruning is deterministic even when the
+	// clock granularity is too coarse to distinguish creation times.
+	firstSession.lastUsedAt = time.Now().Add(-time.Hour)
 	srv.createSession(uint(maxSessions + 1))
 
-	if _, ok := srv.sessions[firstSessionID]; ok {
+	if _, ok := srv.sessions[firstSession.id]; ok {
 		t.Fatal("expected oldest global session to be pruned")
 	}
 	if got := len(srv.sessions); got != maxSessions {
