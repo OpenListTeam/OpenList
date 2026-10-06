@@ -93,6 +93,15 @@ func (d *Mediafire) setSessionToken(token, cookie string) {
 	op.MustSaveDriverStorage(d)
 }
 
+// setStorageStatus persists the visible storage status so the admin UI
+// reflects reality. Only called from the renewal cron callback, which Drop
+// drains (stopRenewal) before any framework-driven re-Init can run, so no
+// callback can race the framework rewriting the status.
+func (d *Mediafire) setStorageStatus(status string) {
+	d.GetStorage().SetStatus(status)
+	op.MustSaveDriverStorage(d)
+}
+
 func (d *Mediafire) Config() driver.Config {
 	return config
 }
@@ -147,10 +156,24 @@ func (d *Mediafire) Init(ctx context.Context) error {
 		}
 		// Renew while the token is still valid; if it already expired,
 		// mint a fresh one from the login cookie.
-		if err := d.renewToken(renewCtx); err != nil {
-			if _, mintErr := d.getSessionToken(renewCtx); mintErr != nil && !utils.IsCanceled(renewCtx) {
-				log.Warnf("mediafire[%s]: session token renewal failed (renew: %v, mint: %v)", d.MountPath, err, mintErr)
-			}
+		err := d.renewToken(renewCtx)
+		if err != nil {
+			_, err = d.getSessionToken(renewCtx)
+		}
+		if utils.IsCanceled(renewCtx) {
+			return
+		}
+		if err != nil {
+			log.Warnf("mediafire[%s]: session token renewal failed (renew+mint: %v)", d.MountPath, err)
+			// Surface the dead credentials in the storage status so the
+			// admin UI stops reporting a healthy storage that fails every
+			// token-dependent operation.
+			d.setStorageStatus(fmt.Sprintf(
+				"renewal :: [MediaFire] failed to get session token: %v", err))
+		} else if d.GetStorage().Status != op.WORK {
+			// A previous tick (or a failed Init) flagged this storage as
+			// unhealthy; this renewal succeeded, so credentials recovered.
+			d.setStorageStatus(op.WORK)
 		}
 	})
 

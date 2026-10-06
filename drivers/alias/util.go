@@ -362,6 +362,11 @@ func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, stri
 		if err != nil {
 			continue
 		}
+		// A backend flagged unhealthy (e.g. dead credentials) must not be an
+		// upload candidate even when it cannot report its quota.
+		if s.Config().CheckStatus && s.GetStorage().Status != op.WORK {
+			continue
+		}
 		if _, ok := s.(driver.WithDetails); !ok {
 			continue
 		}
