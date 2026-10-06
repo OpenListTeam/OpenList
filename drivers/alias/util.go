@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	stdpath "path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -16,6 +17,90 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
+
+const defaultFanoutConcurrency = 16
+
+func (d *Alias) fanoutConcurrency() int {
+	if d.FanoutConcurrency > 0 {
+		return d.FanoutConcurrency
+	}
+	return defaultFanoutConcurrency
+}
+
+// fanOut runs fn over items concurrently with a bounded parallelism and
+// returns the results in the original order, so downstream consumers keep
+// deterministic per-backend ordering no matter which call finishes first.
+func fanOut[T any, R any](ctx context.Context, concurrency int, items []T, fn func(context.Context, T) R) []R {
+	results := make([]R, len(items))
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i, item := range items {
+		wg.Add(1)
+		go func(i int, item T) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = fn(ctx, item)
+		}(i, item)
+	}
+	wg.Wait()
+	return results
+}
+
+type listResult struct {
+	dirPath string
+	objs    []model.Obj
+}
+
+// mergeLists merges per-backend listings into a single view. Backend order is
+// significant: on name collisions the earlier backend wins, which keeps the
+// merged result stable regardless of fan-out completion order.
+func mergeLists(lists []listResult) []model.Obj {
+	objMap := make(map[string]model.Obj)
+	for _, list := range lists {
+		for _, obj := range list.objs {
+			name := obj.GetName()
+			if _, exists := objMap[name]; exists {
+				continue
+			}
+			mask := model.GetObjMask(obj) &^ model.Temp
+			objRes := model.Object{
+				Name:     name,
+				Path:     stdpath.Join(list.dirPath, name),
+				Size:     obj.GetSize(),
+				Modified: obj.ModTime(),
+				IsFolder: obj.IsDir(),
+				Mask:     mask,
+			}
+			var objRet model.Obj
+			if thumb, ok := model.GetThumb(obj); ok {
+				objRet = &model.ObjThumb{
+					Object: objRes,
+					Thumbnail: model.Thumbnail{
+						Thumbnail: thumb,
+					},
+				}
+			} else {
+				objRet = &objRes
+			}
+			if details, ok := model.GetStorageDetails(obj); ok {
+				objRet = &model.ObjStorageDetails{
+					Obj:            objRet,
+					StorageDetails: details,
+				}
+			}
+			objMap[name] = objRet
+		}
+	}
+	objs := make([]model.Obj, 0, len(objMap))
+	for _, obj := range objMap {
+		objs = append(objs, obj)
+	}
+	return objs
+}
 
 type detailWithIndex struct {
 	idx int
@@ -122,44 +207,55 @@ func isConsistent(a, b model.Obj) bool {
 
 func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(err error) (bool, error)) (BalancedObjs, error) {
 	objs := bObj.(BalancedObjs)
-	length := 0
-	for _, o := range objs {
-		var err error
-		var obj model.Obj
-		temp, isTemp := o.(*tempObj)
-		if isTemp {
-			obj, err = fs.Get(ctx, o.GetPath(), &fs.GetArgs{NoLog: true})
-			if err == nil {
-				if !bObj.IsDir() {
-					if obj.IsDir() {
-						err = errs.NotFile
-					} else if d.FileConsistencyCheck && !isConsistent(bObj, obj) {
-						err = errs.ObjectNotFound
-					}
-				} else if !obj.IsDir() {
-					err = errs.NotFolder
-				}
-			}
-		} else if o == nil {
-			err = errs.ObjectNotFound
+	// Resolve every backend entry concurrently, then walk the results in the
+	// original order so conflict policies observe the exact same sequence of
+	// successes and failures as a sequential implementation would.
+	type resolvedObj struct {
+		obj    model.Obj
+		err    error
+		isTemp bool
+		temp   *tempObj
+	}
+	resolved := fanOut(ctx, d.fanoutConcurrency(), objs, func(ctx context.Context, o model.Obj) resolvedObj {
+		if o == nil {
+			return resolvedObj{err: errs.ObjectNotFound}
 		}
-
-		cont, err := ifContinue(err)
+		temp, isTemp := o.(*tempObj)
+		if !isTemp {
+			return resolvedObj{obj: o}
+		}
+		obj, err := fs.Get(ctx, o.GetPath(), &fs.GetArgs{NoLog: true})
+		if err == nil {
+			if !bObj.IsDir() {
+				if obj.IsDir() {
+					err = errs.NotFile
+				} else if d.FileConsistencyCheck && !isConsistent(bObj, obj) {
+					err = errs.ObjectNotFound
+				}
+			} else if !obj.IsDir() {
+				err = errs.NotFolder
+			}
+		}
+		return resolvedObj{obj: obj, err: err, isTemp: true, temp: temp}
+	})
+	length := 0
+	for _, r := range resolved {
+		cont, err := ifContinue(r.err)
 		if err != nil {
 			if cont {
 				continue
 			}
 			return nil, err
 		}
-		if isTemp {
-			objRes := temp.Object
-			// objRes.Name = obj.GetName()
-			// objRes.Size = obj.GetSize()
-			// objRes.Modified = obj.ModTime()
-			// objRes.HashInfo = obj.GetHash()
+		if r.isTemp {
+			objRes := r.temp.Object
+			// objRes.Name = r.obj.GetName()
+			// objRes.Size = r.obj.GetSize()
+			// objRes.Modified = r.obj.ModTime()
+			// objRes.HashInfo = r.obj.GetHash()
 			objs[length] = &objRes
 		} else {
-			objs[length] = o
+			objs[length] = r.obj
 		}
 		length++
 		if !cont {

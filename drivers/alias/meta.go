@@ -15,6 +15,7 @@ type Addition struct {
 	DownloadPartSize     int    `json:"download_part_size" default:"0" type:"number" required:"false" help:"Need to enable proxy. Unit: KB"`
 	ProviderPassThrough  bool   `json:"provider_pass_through" type:"bool" default:"false"`
 	DetailsPassThrough   bool   `json:"details_pass_through" type:"bool" default:"false"`
+	FanoutConcurrency    int    `json:"fanout_concurrency" default:"16" required:"false" type:"number" help:"Max concurrent requests when a balanced path fans out to its backends (listing, object resolution). 0 uses the default of 16. Raise it to speed up cold listings across many backends, lower it if the backend throttles by IP."`
 }
 
 var config = driver.Config{
