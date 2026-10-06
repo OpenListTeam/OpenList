@@ -55,10 +55,18 @@ func (d *Teldrive) Drop(ctx context.Context) error {
 }
 
 func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+	dirPath := dir.GetPath()
+	if dirPath == "" {
+		dirPath = d.GetRootPath()
+	}
+	if dirPath == "" {
+		dirPath = "/"
+	}
+
 	var firstResp ListResp
 	err := d.request(http.MethodGet, "/api/files", func(req *resty.Request) {
 		req.SetQueryParams(map[string]string{
-			"path":  dir.GetPath(),
+			"path":  dirPath,
 			"limit": "500",
 			"page":  "1",
 		})
@@ -87,7 +95,7 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 				var resp ListResp
 				err := d.request(http.MethodGet, "/api/files", func(req *resty.Request) {
 					req.SetQueryParams(map[string]string{
-						"path":  dir.GetPath(),
+						"path":  dirPath,
 						"limit": "500",
 						"page":  strconv.Itoa(page),
 					})
@@ -114,7 +122,7 @@ func (d *Teldrive) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 
 	return utils.SliceConvert(allItems, func(src Object) (model.Obj, error) {
 		return &model.Object{
-			Path: path.Join(dir.GetPath(), src.Name),
+			Path: path.Join(dirPath, src.Name),
 			ID:   src.ID,
 			Name: src.Name,
 			Size: func() int64 {
