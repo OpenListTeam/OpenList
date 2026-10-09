@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/go-resty/resty/v2"
+	log "github.com/sirupsen/logrus"
 )
 
 // LskyPro maps a Lsky Pro (v2, API v1) gallery to a two level tree:
@@ -129,6 +130,13 @@ func (d *LskyPro) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 	}
 	if img.OriginName == "" {
 		img.OriginName = file.GetName()
+	}
+	// Lsky Pro keeps same-named images side by side, so replace the old one
+	// when OpenList is overwriting an existing file.
+	if old := file.GetExist(); old != nil && old.GetID() != img.Key {
+		if err := d.Remove(ctx, old); err != nil {
+			log.Warnf("lsky_pro: failed to remove overwritten image %s: %v", old.GetID(), err)
+		}
 	}
 	return img.toObj(), nil
 }

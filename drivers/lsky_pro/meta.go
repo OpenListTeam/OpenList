@@ -15,11 +15,10 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:              "LskyPro",
-	LocalSort:         true,
-	OnlyProxy:         false,
-	NoOverwriteUpload: true,
-	DefaultRoot:       "0",
+	Name:        "LskyPro",
+	LocalSort:   true,
+	OnlyProxy:   false,
+	DefaultRoot: "0",
 }
 
 func init() {
