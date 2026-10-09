@@ -16,8 +16,7 @@ import (
 
 // LskyPro maps a Lsky Pro (v2, API v1) gallery to a two level tree:
 // the root holds albums (folders) and the images that belong to no album,
-// each album holds its images. Albums are read-only (list/delete): the
-// stock API can neither create albums nor upload into one.
+// each album holds its images.
 type LskyPro struct {
 	model.Storage
 	Addition
@@ -87,6 +86,20 @@ func (d *LskyPro) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	return nil, errs.NotSupport
 }
 
+func (d *LskyPro) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
+	if id := parentDir.GetID(); id != "0" && id != "" {
+		return nil, errs.NotSupport // albums cannot be nested
+	}
+	var album Album
+	err := d.request(ctx, http.MethodPost, "/albums", func(req *resty.Request) {
+		req.SetFormData(map[string]string{"name": dirName})
+	}, &album)
+	if err != nil {
+		return nil, err
+	}
+	return album.toObj(), nil
+}
+
 func (d *LskyPro) Remove(ctx context.Context, obj model.Obj) error {
 	path := "/images/" + obj.GetID()
 	if obj.IsDir() {
@@ -96,12 +109,10 @@ func (d *LskyPro) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *LskyPro) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	// the upload API cannot target an album: images go to the root
-	// (or to the user's default album, if one is configured on the site)
-	if id := dstDir.GetID(); id != "0" && id != "" {
-		return nil, errs.NotSupport
-	}
 	fields := map[string]string{}
+	if id := dstDir.GetID(); id != "0" && id != "" {
+		fields["album_id"] = id
+	}
 	if d.StrategyID != "" {
 		fields["strategy_id"] = d.StrategyID
 	}
@@ -123,7 +134,8 @@ func (d *LskyPro) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 }
 
 var (
-	_ driver.Driver    = (*LskyPro)(nil)
-	_ driver.PutResult = (*LskyPro)(nil)
-	_ driver.Remove    = (*LskyPro)(nil)
+	_ driver.Driver      = (*LskyPro)(nil)
+	_ driver.MkdirResult = (*LskyPro)(nil)
+	_ driver.PutResult   = (*LskyPro)(nil)
+	_ driver.Remove      = (*LskyPro)(nil)
 )
