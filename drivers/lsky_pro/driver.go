@@ -111,7 +111,9 @@ func (d *LskyPro) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *LskyPro) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	fields := map[string]string{}
+	// album_id=0 asks Lsky Pro to skip the account's default album, so a root
+	// upload really lands in the root (sites without the patch ignore it)
+	fields := map[string]string{"album_id": "0"}
 	if id := dstDir.GetID(); id != "0" && id != "" {
 		fields["album_id"] = id
 	}
