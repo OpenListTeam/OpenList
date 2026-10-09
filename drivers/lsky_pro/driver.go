@@ -77,6 +77,7 @@ func (d *LskyPro) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	for _, i := range images {
 		objs = append(objs, i.toObj())
 	}
+	uniqueNames(objs)
 	return objs, nil
 }
 
@@ -135,7 +136,11 @@ func (d *LskyPro) Put(ctx context.Context, dstDir model.Obj, file model.FileStre
 	// when OpenList is overwriting an existing file.
 	if old := file.GetExist(); old != nil && old.GetID() != img.Key {
 		if err := d.Remove(ctx, old); err != nil {
-			log.Warnf("lsky_pro: failed to remove overwritten image %s: %v", old.GetID(), err)
+			// keep a single record per name: drop the new upload and fail
+			if rerr := d.Remove(ctx, img.toObj()); rerr != nil {
+				log.Warnf("lsky_pro: failed to clean up image %s: %v", img.Key, rerr)
+			}
+			return nil, fmt.Errorf("lsky pro: failed to replace the existing image: %w", err)
 		}
 	}
 	return img.toObj(), nil

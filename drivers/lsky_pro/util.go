@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -59,5 +62,27 @@ func listAll[T any](ctx context.Context, d *LskyPro, path string, params map[str
 		if page >= p.LastPage || len(p.Data) == 0 {
 			return all, nil
 		}
+	}
+}
+
+// uniqueNames makes names in one listing unique. Lsky Pro allows several
+// images (or albums) with the same name, but OpenList resolves a path to the
+// first object with that name. Later duplicates get their id inserted before
+// the extension, e.g. "a.png" -> "a (Le5rYe).png".
+func uniqueNames(objs []model.Obj) {
+	seen := make(map[string]struct{}, len(objs))
+	for _, o := range objs {
+		name := o.GetName()
+		if _, dup := seen[name]; dup {
+			ext := path.Ext(name)
+			name = name[:len(name)-len(ext)] + " (" + o.GetID() + ")" + ext
+			switch v := o.(type) {
+			case *imageObj:
+				v.Name = name
+			case *model.Object:
+				v.Name = name
+			}
+		}
+		seen[name] = struct{}{}
 	}
 }
