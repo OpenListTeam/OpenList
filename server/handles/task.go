@@ -33,7 +33,9 @@ type TaskInfo struct {
 }
 
 type TaskPathReq struct {
-	Path string `json:"path"`
+	Path          string `json:"path"`
+	DryRun        bool   `json:"dry_run,omitempty"`
+	ExpectedCount *int   `json:"expected_count,omitempty"`
 }
 
 type TaskPathResult struct {
@@ -195,7 +197,10 @@ func matchingPathTasks[T task.TaskWithPaths](manager task.Manager[T], isAdmin bo
 }
 
 func applyPathBatch[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool, uid uint, prefix string, op pathBatchOp[T]) TaskPathResult {
-	tasks := matchingPathTasks(manager, isAdmin, uid, prefix, op.filter)
+	return applySelectedPathBatch(manager, matchingPathTasks(manager, isAdmin, uid, prefix, op.filter), op)
+}
+
+func applySelectedPathBatch[T task.TaskWithPaths](manager task.Manager[T], tasks []T, op pathBatchOp[T]) TaskPathResult {
 	result := TaskPathResult{Matched: len(tasks)}
 	for _, t := range tasks {
 		if op.apply(manager, t) {
@@ -206,7 +211,10 @@ func applyPathBatch[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool,
 }
 
 func deletePathBatch[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool, uid uint, prefix string) TaskPathResult {
-	tasks := matchingPathTasks(manager, isAdmin, uid, prefix, func(T) bool { return true })
+	return deleteSelectedPathBatch(manager, matchingPathTasks(manager, isAdmin, uid, prefix, func(T) bool { return true }))
+}
+
+func deleteSelectedPathBatch[T task.TaskWithPaths](manager task.Manager[T], tasks []T) TaskPathResult {
 	result := TaskPathResult{Matched: len(tasks)}
 	waitFor := make([]T, 0, len(tasks))
 	pending := make(map[string]struct{}, len(tasks))
@@ -257,7 +265,7 @@ func deletePathBatch[T task.TaskWithPaths](manager task.Manager[T], isAdmin bool
 	return result
 }
 
-func getPathBatchHandler[T task.TaskWithPaths](manager task.Manager[T], execute func(task.Manager[T], bool, uint, string) TaskPathResult) gin.HandlerFunc {
+func getPathBatchHandler[T task.TaskWithPaths](manager task.Manager[T], filter func(T) bool, execute func(task.Manager[T], []T) TaskPathResult) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		user, ok := getUser(c)
 		if !ok {
@@ -274,25 +282,41 @@ func getPathBatchHandler[T task.TaskWithPaths](manager task.Manager[T], execute 
 			common.ErrorStrResp(c, err.Error(), 400)
 			return
 		}
-		common.SuccessResp(c, execute(manager, user.IsAdmin(), user.ID, prefix))
+		if req.ExpectedCount != nil && *req.ExpectedCount < 0 {
+			common.ErrorStrResp(c, "expected_count must not be negative", 400)
+			return
+		}
+		// Count and execute the same selection: avoid a second scan between
+		// the count guard and application, especially during concurrent changes.
+		selected := matchingPathTasks(manager, user.IsAdmin(), user.ID, prefix, filter)
+		if req.DryRun {
+			common.SuccessResp(c, TaskPathResult{Matched: len(selected)})
+			return
+		}
+		if req.ExpectedCount != nil && *req.ExpectedCount != len(selected) {
+			common.ErrorStrResp(c, "matched task count changed; preview again", 409)
+			return
+		}
+		common.SuccessResp(c, execute(manager, selected))
 	}
 }
 
-func pathBatchExecutor[T task.TaskWithPaths](op pathBatchOp[T]) func(task.Manager[T], bool, uint, string) TaskPathResult {
-	return func(manager task.Manager[T], isAdmin bool, uid uint, prefix string) TaskPathResult {
-		return applyPathBatch(manager, isAdmin, uid, prefix, op)
+func pathBatchExecutor[T task.TaskWithPaths](op pathBatchOp[T]) func(task.Manager[T], []T) TaskPathResult {
+	return func(manager task.Manager[T], selected []T) TaskPathResult {
+		return applySelectedPathBatch(manager, selected, op)
 	}
 }
 
 func deleteByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
-	return getPathBatchHandler(manager, deletePathBatch[T])
+	return getPathBatchHandler(manager, func(T) bool { return true }, deleteSelectedPathBatch[T])
 }
 
 func cancelByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
-	return getPathBatchHandler(manager, pathBatchExecutor(pathBatchOp[T]{
-		filter: func(t T) bool {
-			return !argsContains(t.GetState(), taskDoneStates...)
-		},
+	filter := func(t T) bool {
+		return !argsContains(t.GetState(), taskDoneStates...)
+	}
+	return getPathBatchHandler(manager, filter, pathBatchExecutor(pathBatchOp[T]{
+		filter: filter,
 		apply: func(m task.Manager[T], selected T) bool {
 			current, ok := m.GetByID(selected.GetID())
 			if !ok || argsContains(current.GetState(), taskDoneStates...) {
@@ -305,10 +329,11 @@ func cancelByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc
 }
 
 func retryByPath[T task.TaskWithPaths](manager task.Manager[T]) gin.HandlerFunc {
-	return getPathBatchHandler(manager, pathBatchExecutor(pathBatchOp[T]{
-		filter: func(t T) bool {
-			return t.GetState() == tache.StateFailed
-		},
+	filter := func(t T) bool {
+		return t.GetState() == tache.StateFailed
+	}
+	return getPathBatchHandler(manager, filter, pathBatchExecutor(pathBatchOp[T]{
+		filter: filter,
 		apply: func(m task.Manager[T], selected T) bool {
 			current, ok := m.GetByID(selected.GetID())
 			if !ok || current.GetState() != tache.StateFailed {

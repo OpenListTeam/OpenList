@@ -195,3 +195,65 @@ func TestCancelAndRetryByPathHTTPStateFiltering(t *testing.T) {
 		t.Fatalf("pending task state after cancel = %v", st)
 	}
 }
+
+func TestPathBatchHTTPPreviewAndExpectedCount(t *testing.T) {
+	ensureTaskTestConf()
+	owner := &model.User{ID: 20, Role: model.GENERAL, BasePath: "/home/u20"}
+	other := &model.User{ID: 21, Role: model.GENERAL, BasePath: "/home/u21"}
+	m := newPathManager(1)
+	mine := addPathTask(m, owner, "", "/home/u20/a/file", tache.StatePending)
+	foreign := addPathTask(m, other, "", "/home/u20/a/foreign", tache.StatePending)
+	r := buildPathRouter(m, owner)
+
+	_, out := postPath(t, r, "/task/copy/delete_by_path", `{"path":"a","dry_run":true}`)
+	if got := respResult(t, out); got != (TaskPathResult{Matched: 1, Processed: 0}) {
+		t.Fatalf("preview should exclude foreign tasks and have no side effects: %+v", got)
+	}
+	if _, ok := m.GetByID(mine.GetID()); !ok {
+		t.Fatal("dry run unexpectedly removed task")
+	}
+
+	_, out = postPath(t, r, "/task/copy/delete_by_path", `{"path":"a","expected_count":0}`)
+	if got := respCode(out); got != 409 {
+		t.Fatalf("incorrect expected_count code = %d, want 409 (%v)", got, out)
+	}
+	if _, ok := m.GetByID(mine.GetID()); !ok {
+		t.Fatal("expected_count mismatch unexpectedly removed task")
+	}
+
+	_, out = postPath(t, r, "/task/copy/delete_by_path", `{"path":"a","expected_count":-1}`)
+	if got := respCode(out); got != 400 {
+		t.Fatalf("negative expected_count code = %d, want 400 (%v)", got, out)
+	}
+
+	_, out = postPath(t, r, "/task/copy/delete_by_path", `{"path":"a","expected_count":1}`)
+	if got := respResult(t, out); got != (TaskPathResult{Matched: 1, Processed: 1}) {
+		t.Fatalf("guarded delete result = %+v", got)
+	}
+	if _, ok := m.GetByID(foreign.GetID()); !ok {
+		t.Fatal("SECURITY: foreign task removed")
+	}
+}
+
+func TestPathBatchHTTPPreviewUsesStateFilters(t *testing.T) {
+	ensureTaskTestConf()
+	admin := &model.User{ID: 1, Role: model.ADMIN}
+	m := newPathManager(1)
+	addPathTask(m, admin, "", "/p/pending", tache.StatePending)
+	addPathTask(m, admin, "", "/p/failed", tache.StateFailed)
+	addPathTask(m, admin, "", "/p/done", tache.StateSucceeded)
+	r := buildPathRouter(m, admin)
+	for _, tc := range []struct {
+		endpoint string
+		want     int
+	}{
+		{"/task/copy/delete_by_path", 3},
+		{"/task/copy/cancel_by_path", 1},
+		{"/task/copy/retry_by_path", 1},
+	} {
+		_, out := postPath(t, r, tc.endpoint, `{"path":"/p","dry_run":true}`)
+		if got := respResult(t, out); got != (TaskPathResult{Matched: tc.want}) {
+			t.Fatalf("%s preview result = %+v, want matched=%d", tc.endpoint, got, tc.want)
+		}
+	}
+}

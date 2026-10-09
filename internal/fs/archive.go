@@ -148,6 +148,7 @@ func (t *ArchiveContentUploadTask) GetName() string {
 }
 
 func (t *ArchiveContentUploadTask) GetSrcPath() string {
+	// Source data comes from a local temporary archive, not a virtual storage path.
 	return ""
 }
 

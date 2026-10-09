@@ -14,9 +14,19 @@ Supported task types are `upload`, `copy`, `move`, `offline_download`,
 
 ```json
 {
-  "path": "/storage/folder"
+  "path": "/storage/folder",
+  "dry_run": true
 }
 ```
+
+- `dry_run: true` returns the matching count without altering tasks. The
+  response is `{"matched": N, "processed": 0}`.
+- After reviewing the count, send the same request with `dry_run` omitted
+  and `expected_count: N`. If the current selection differs from N, the
+  server rejects the operation with HTTP 409 and makes no changes.
+- `expected_count` is optional for existing API clients; it must be
+  non-negative. The guard and action use the same selected tasks, but
+  running tasks may still change state while the operation executes.
 
 `path` is normalized with the same virtual-path rules used by OpenList. Both
 forward and backward slashes are accepted, repeated separators are collapsed,
@@ -28,8 +38,11 @@ A root-wide operation is destructive and therefore requires the explicit input
 HTTP 400.
 
 For non-admin users, the normalized path is resolved against the user's base
-path. A non-admin operation can only match tasks created by that user. An admin
-can match tasks from all users.
+path. A non-admin `.` may therefore legitimately mean their own base path,
+not the global root. A non-admin operation can only match tasks created by
+that user. Ownership filtering happens **before counting matches**, so the
+response never counts another user's tasks. An admin can match tasks from
+all users.
 
 ## Matching contract
 
@@ -58,6 +71,15 @@ started are removed immediately. Active tasks are first cancelled, then the API
 waits for execution to stop and failure cleanup hooks to finish before removing
 them from the manager. A task that does not stop before the server-side timeout
 remains visible in the manager and is not counted as processed.
+
+The timeout is a **fixed, shared 30-second deadline for the whole request**,
+not 30 seconds per matched task. Cancellation requests are issued to all
+matching active tasks before waiting, so they can stop concurrently. If some
+tasks remain active after the deadline, they stay in the manager and can be
+inspected or deleted again later. Large requests may run into reverse-proxy
+timeouts; clients should not assume a network timeout means every task was
+deleted. Future asynchronous operation tracking may be useful for very large
+batches.
 
 ### `cancel_by_path`
 
