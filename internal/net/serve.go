@@ -302,20 +302,18 @@ func RequestHttp(ctx context.Context, httpMethod string, headerOverride http.Hea
 	}
 	// TODO clean header with blocklist or passlist
 	res.Header.Del("set-cookie")
-	var reader io.Reader
 	if res.StatusCode >= 400 {
-		// 根据 Content-Encoding 判断 Body 是否压缩
-		switch res.Header.Get("Content-Encoding") {
-		case "gzip":
-			// 使用gzip.NewReader解压缩
-			reader, _ = gzip.NewReader(res.Body)
-			defer reader.(*gzip.Reader).Close()
-		default:
-			// 没有Content-Encoding，直接读取
-			reader = res.Body
+		defer res.Body.Close()
+		var reader io.Reader = res.Body
+		if res.Header.Get("Content-Encoding") == "gzip" {
+			gzipReader, err := gzip.NewReader(res.Body)
+			if err != nil {
+				return nil, fmt.Errorf("http request [%s] failure,status: %w decode gzip response: %v", URL, HttpStatusCodeError(res.StatusCode), err)
+			}
+			defer gzipReader.Close()
+			reader = gzipReader
 		}
 		all, _ := io.ReadAll(reader)
-		_ = res.Body.Close()
 		msg := string(all)
 		log.Debugln(msg)
 		return nil, fmt.Errorf("http request [%s] failure,status: %w response:%s", URL, HttpStatusCodeError(res.StatusCode), msg)
