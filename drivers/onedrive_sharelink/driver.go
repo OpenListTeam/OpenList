@@ -168,26 +168,6 @@ func (d *OnedriveSharelink) MakeDir(ctx context.Context, parentDir model.Obj, di
 	}
 }
 
-func (d *OnedriveSharelink) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	// TODO move obj, optional
-	return errs.NotImplement
-}
-
-func (d *OnedriveSharelink) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	// TODO rename obj, optional
-	return errs.NotImplement
-}
-
-func (d *OnedriveSharelink) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	// TODO copy obj, optional
-	return errs.NotImplement
-}
-
-func (d *OnedriveSharelink) Remove(ctx context.Context, obj model.Obj) error {
-	// TODO remove obj, optional
-	return errs.NotImplement
-}
-
 func (d *OnedriveSharelink) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	info, err := d.createUploadInfo(ctx, stdpath.Join(dstDir.GetPath(), stream.GetName()), stream.GetSize())
 	if err != nil {
