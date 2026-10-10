@@ -49,7 +49,7 @@ import (
 // ServeHTTP uses it to handle requests using If-Match, If-None-Match, or If-Range.
 func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time.Time, size int64, rangeReader model.RangeReaderIF) (err error) {
 	setLastModified(w, modTime)
-	done, rangeReq := checkPreconditions(w, r, modTime)
+	done, rangeReq := CheckPreconditions(w, r, modTime, true)
 	if done {
 		return nil
 	}
