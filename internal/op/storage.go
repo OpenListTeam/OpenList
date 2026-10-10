@@ -11,13 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/generic_sync"
-	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -98,11 +96,25 @@ func getCurrentGoroutineStack() string {
 
 // initStorage initialize the driver and store to storagesMap
 func initStorage(ctx context.Context, storage model.Storage, storageDriver driver.Driver) (err error) {
+	change, err := beginStorageDetailsChange(storageDriver, storage.MountPath)
+	if err != nil {
+		return err
+	}
+	ready := false
+	defer func() { finishStorageDetailsChange(storageDriver, change, ready) }()
+	err = initializeStorage(ctx, storage, storageDriver)
+	ready = err == nil
+	return err
+}
+
+// initializeStorage is called with capacity admission suspended by its caller.
+func initializeStorage(ctx context.Context, storage model.Storage, storageDriver driver.Driver) (err error) {
 	storageDriver.SetStorage(storage)
 	driverStorage := storageDriver.GetStorage()
 	defer func() {
-		if err := recover(); err != nil {
-			errInfo := fmt.Sprintf("[panic] err: %v\nstack: %s\n", err, getCurrentGoroutineStack())
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("panic initializing storage: %v", recovered)
+			errInfo := fmt.Sprintf("[panic] err: %v\nstack: %s\n", recovered, getCurrentGoroutineStack())
 			log.Errorf("panic init storage: %s", errInfo)
 			driverStorage.SetStatus(errInfo)
 			MustSaveDriverStorage(storageDriver)
@@ -202,6 +214,11 @@ func DisableStorage(ctx context.Context, id uint) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed get storage driver")
 	}
+	change, err := beginStorageDetailsChange(storageDriver, storage.MountPath)
+	if err != nil {
+		return err
+	}
+	defer finishStorageDetailsChange(storageDriver, change, false)
 	// drop the storage in the driver
 	if err := storageDriver.Drop(ctx); err != nil {
 		return errors.Wrap(err, "failed drop storage")
@@ -231,33 +248,37 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 	}
 	storage.Modified = time.Now()
 	storage.MountPath = utils.FixAndCleanPath(storage.MountPath)
-	err = db.UpdateStorage(&storage)
-	if err != nil {
-		return errors.WithMessage(err, "failed update storage in database")
-	}
 	if storage.Disabled {
-		return nil
+		return errors.WithMessage(db.UpdateStorage(&storage), "failed update storage in database")
 	}
 	storageDriver, err := GetStorageByMountPath(oldStorage.MountPath)
 	if err != nil {
 		return errors.WithMessage(err, "failed get storage driver")
 	}
+	change, err := beginStorageDetailsChange(storageDriver, oldStorage.MountPath, storage.MountPath)
+	if err != nil {
+		return err
+	}
+	ready := false
+	defer func() { finishStorageDetailsChange(storageDriver, change, ready) }()
+	err = db.UpdateStorage(&storage)
+	if err != nil {
+		return errors.WithMessage(err, "failed update storage in database")
+	}
 	// Storage settings may change which objects are exposed at the same mount
 	// path, so cached entries must be discarded before reinitializing the driver.
 	Cache.DeleteDirectoryTree(storageDriver, "/")
-	Cache.InvalidateStorageDetails(storageDriver)
 	if oldStorage.MountPath != storage.MountPath {
 		// mount path renamed, need to drop the storage
 		storagesMap.Delete(oldStorage.MountPath)
-		InvalidateStorageDetailsState(oldStorage.MountPath)
 	}
-	InvalidateStorageDetailsState(storage.MountPath)
 	err = storageDriver.Drop(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "failed drop storage")
 	}
 
-	err = initStorage(ctx, storage, storageDriver)
+	err = initializeStorage(ctx, storage, storageDriver)
+	ready = err == nil
 	go callStorageHooks("update", storageDriver)
 	log.Debugf("storage %+v is update", storageDriver)
 	return err
@@ -274,6 +295,11 @@ func DeleteStorageById(ctx context.Context, id uint) error {
 		if err != nil {
 			return errors.WithMessage(err, "failed get storage driver")
 		}
+		change, err := beginStorageDetailsChange(storageDriver, storage.MountPath)
+		if err != nil {
+			return err
+		}
+		defer finishStorageDetailsChange(storageDriver, change, false)
 		// drop the storage in the driver
 		if err := storageDriver.Drop(ctx); err != nil {
 			dropErr = errors.Wrapf(err, "failed drop storage")
@@ -281,8 +307,6 @@ func DeleteStorageById(ctx context.Context, id uint) error {
 		// delete the storage in the memory
 		storagesMap.Delete(storage.MountPath)
 		Cache.DeleteDirectoryTree(storageDriver, "/")
-		Cache.InvalidateStorageDetails(storageDriver)
-		InvalidateStorageDetailsState(storage.MountPath)
 		go callStorageHooks("del", storageDriver)
 	}
 	// delete the storage in the database
@@ -365,7 +389,6 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 	if hideDetails {
 		return getStorageVirtualFilesByPath(prefix, nil, filterByName)
 	}
-	timeoutSec := time.Duration(GetSettingInt(conf.StorageDetailsTimeoutSeconds, 15)) * time.Second
 	return getStorageVirtualFilesByPath(prefix, func(d driver.Driver, obj model.Obj) model.Obj {
 		if _, ok := obj.(*model.ObjStorageDetails); ok {
 			return obj
@@ -375,15 +398,13 @@ func GetStorageVirtualFilesWithDetailsByPath(ctx context.Context, prefix string,
 			StorageDetails: nil,
 		}
 		resultChan := make(chan *model.StorageDetails, 1)
-		bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeoutSec)
 		go func(dri driver.Driver) {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Errorf("panic recovered in storage details probe for %s: %v", dri.GetStorage().MountPath, r)
 				}
 			}()
-			defer cancel()
-			details, err := GetStorageDetails(bgCtx, dri, refresh)
+			details, err := GetStorageDetails(ctx, dri, refresh)
 			if err != nil {
 				if !errors.Is(err, errs.NotImplement) && !errors.Is(err, errs.StorageNotInit) {
 					log.Errorf("failed get %s storage details: %+v", dri.GetStorage().MountPath, err)
@@ -486,101 +507,4 @@ func GetBalancedStorage(path string) driver.Driver {
 		balanceMap.Store(virtualPath, i)
 		return storages[i]
 	}
-}
-
-// lastDoneExpireThreshold defines the expiration duration in seconds (24 hours) for recorded storage details cooldown timestamps.
-const lastDoneExpireThreshold = 86400
-
-var (
-	detailsG      singleflight.Group[*model.StorageDetails]
-	detailsLock   sync.RWMutex
-	lastDoneTimes = make(map[string]int64)
-	cacheVersions = make(map[string]uint64)
-)
-
-func InvalidateStorageDetailsState(mountPath string) {
-	actual := utils.GetActualMountPath(mountPath)
-	detailsLock.Lock()
-	delete(lastDoneTimes, actual)
-	delete(cacheVersions, actual)
-	cleanExpiredLastDoneTimesLocked(time.Now().Unix())
-	detailsLock.Unlock()
-}
-
-func cleanExpiredLastDoneTimesLocked(now int64) {
-	for k, t := range lastDoneTimes {
-		if now-t > lastDoneExpireThreshold {
-			delete(lastDoneTimes, k)
-		}
-	}
-}
-
-func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bool) (*model.StorageDetails, error) {
-	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
-		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
-	}
-	wd, ok := storage.(driver.WithDetails)
-	if !ok {
-		return nil, errs.NotImplement
-	}
-	mountPath := utils.GetActualMountPath(storage.GetStorage().MountPath)
-	cooldownSec := GetSettingInt(conf.StorageDetailsCooldownSeconds, 0)
-
-	detailsLock.RLock()
-	lastDone := lastDoneTimes[mountPath]
-	ver := cacheVersions[mountPath]
-	detailsLock.RUnlock()
-
-	now := time.Now().Unix()
-	isRefresh := utils.IsBool(refresh...)
-
-	var flightKey string
-	if isRefresh {
-		flightKey = mountPath + ":refresh"
-	} else {
-		flightKey = mountPath
-	}
-
-	// 强刷时：若超出冷却期（或默认 cooldown=0），先主动清空旧缓存，保证强一致性
-	if isRefresh && (cooldownSec <= 0 || now-lastDone >= int64(cooldownSec)) {
-		Cache.InvalidateStorageDetails(storage)
-		detailsLock.Lock()
-		cacheVersions[mountPath]++
-		ver = cacheVersions[mountPath]
-		detailsLock.Unlock()
-	} else {
-		// 普通读取 或 处于冷却期内：优先读取有效缓存
-		if ret, ok := Cache.GetStorageDetails(storage); ok {
-			return ret, nil
-		}
-	}
-
-	details, err, _ := detailsG.Do(flightKey, func() (ret *model.StorageDetails, err error) {
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("panic in driver GetDetails: %v", r)
-				log.Errorf("panic recovered in driver GetDetails for %s: %v", mountPath, r)
-			}
-		}()
-		ret, err = wd.GetDetails(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		nowDone := time.Now().Unix()
-		detailsLock.Lock()
-		// 仅当探测期间未发生新的强刷失效时才写回缓存，杜绝慢速旧协程复活旧缓存
-		if cacheVersions[mountPath] == ver {
-			Cache.SetStorageDetails(storage, ret)
-			lastDoneTimes[mountPath] = nowDone
-			if len(lastDoneTimes) > 256 {
-				cleanExpiredLastDoneTimesLocked(nowDone)
-			}
-		} else {
-			log.Debugf("discarding stale storage details for %s: cache version %d was superseded by %d", mountPath, ver, cacheVersions[mountPath])
-		}
-		detailsLock.Unlock()
-		return ret, nil
-	})
-	return details, err
 }

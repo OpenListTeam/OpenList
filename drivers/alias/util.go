@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -54,18 +53,15 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 			Obj:            objs[idx],
 			StorageDetails: nil,
 		}
-		timeoutSec := time.Duration(op.GetSettingInt(conf.StorageDetailsTimeoutSeconds, 15)) * time.Second
-		bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeoutSec)
 		workerCount++
 		go func(dri driver.Driver, i int) {
-			defer cancel()
 			defer func() {
 				if r := recover(); r != nil {
 					log.Errorf("panic in alias GetStorageDetails for %s: %v", dri.GetStorage().MountPath, r)
 					detailsChan <- detailWithIndex{idx: i, val: nil}
 				}
 			}()
-			details, e := op.GetStorageDetails(bgCtx, dri, refresh)
+			details, e := op.GetStorageDetails(ctx, dri, refresh)
 			if e != nil {
 				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
 					log.Errorf("failed get %s storage details: %+v", dri.GetStorage().MountPath, e)

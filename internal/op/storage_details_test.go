@@ -2,21 +2,51 @@ package op_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"gorm.io/gorm"
 )
+
+func setMockDetailsCooldown(t *testing.T, value string) {
+	t.Helper()
+	previous, err := db.GetSettingItemByKey(conf.StorageDetailsCooldownSeconds)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatal(err)
+	}
+	if err := op.SaveSettingItem(&model.SettingItem{
+		Key: conf.StorageDetailsCooldownSeconds, Value: value, Type: conf.TypeNumber, Group: model.STYLE,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if previous != nil {
+			if err := op.SaveSettingItem(previous); err != nil {
+				t.Error(err)
+			}
+		} else {
+			if err := db.DeleteSettingItemByKey(conf.StorageDetailsCooldownSeconds); err != nil {
+				t.Error(err)
+			}
+			op.SettingCacheUpdate()
+		}
+	})
+}
 
 type mockDriverWithDetails struct {
 	model.Storage
-	callCount int64
-	delay     time.Duration
+	callCount    int64
+	delay        time.Duration
+	firstEntered chan struct{}
+	releaseFirst chan struct{}
 }
 
 func (m *mockDriverWithDetails) Config() driver.Config {
@@ -44,7 +74,15 @@ func (m *mockDriverWithDetails) Link(ctx context.Context, file model.Obj, args m
 }
 
 func (m *mockDriverWithDetails) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
-	atomic.AddInt64(&m.callCount, 1)
+	count := atomic.AddInt64(&m.callCount, 1)
+	if count == 1 && m.firstEntered != nil {
+		close(m.firstEntered)
+		select {
+		case <-m.releaseFirst:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if m.delay > 0 {
 		select {
 		case <-time.After(m.delay):
@@ -97,12 +135,7 @@ func TestGetStorageDetailsInvalidateOnRefresh(t *testing.T) {
 	}
 
 	// Default cooldown is 0
-	_ = op.SaveSettingItem(&model.SettingItem{
-		Key:   conf.StorageDetailsCooldownSeconds,
-		Value: "0",
-		Type:  conf.TypeNumber,
-		Group: model.STYLE,
-	})
+	setMockDetailsCooldown(t, "0")
 
 	ctx := context.Background()
 
@@ -144,12 +177,7 @@ func TestGetStorageDetailsCooldown(t *testing.T) {
 	}
 
 	// Set cooldown to 3 seconds for test
-	_ = op.SaveSettingItem(&model.SettingItem{
-		Key:   conf.StorageDetailsCooldownSeconds,
-		Value: "3",
-		Type:  conf.TypeNumber,
-		Group: model.STYLE,
-	})
+	setMockDetailsCooldown(t, "3")
 
 	ctx := context.Background()
 
@@ -235,12 +263,7 @@ func TestInvalidateStorageDetailsState(t *testing.T) {
 		},
 	}
 
-	_ = op.SaveSettingItem(&model.SettingItem{
-		Key:   conf.StorageDetailsCooldownSeconds,
-		Value: "60",
-		Type:  conf.TypeNumber,
-		Group: model.STYLE,
-	})
+	setMockDetailsCooldown(t, "60")
 
 	ctx := context.Background()
 
@@ -280,28 +303,33 @@ func TestGetStorageDetailsRefreshBarrier(t *testing.T) {
 			Status:          op.WORK,
 			CacheExpiration: 30,
 		},
-		delay: 80 * time.Millisecond,
+		firstEntered: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
 	}
 
-	_ = op.SaveSettingItem(&model.SettingItem{
-		Key:   conf.StorageDetailsCooldownSeconds,
-		Value: "0",
-		Type:  conf.TypeNumber,
-		Group: model.STYLE,
-	})
+	setMockDetailsCooldown(t, "0")
 
 	ctx := context.Background()
 
 	// 1. 发起一个慢速的非强刷请求
+	op.InvalidateStorageDetailsState(mock.MountPath)
+	op.Cache.InvalidateStorageDetails(mock)
 	var wg sync.WaitGroup
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(mock.releaseFirst) }) }
+	t.Cleanup(func() { release(); wg.Wait() })
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		_, _ = op.GetStorageDetails(ctx, mock, false)
 	}()
 
-	// 等待 20ms，确保非强刷请求已进入 singleflight 执行
-	time.Sleep(20 * time.Millisecond)
+	// Synchronize with the first driver call instead of assuming a sleep is enough.
+	select {
+	case <-mock.firstEntered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ordinary probe did not enter driver")
+	}
 
 	// 2. 此时触发强刷请求，强刷不应复用慢速旧协程，而应通过代数屏障触发独立探测
 	d2, err := op.GetStorageDetails(ctx, mock, true)
@@ -309,6 +337,7 @@ func TestGetStorageDetailsRefreshBarrier(t *testing.T) {
 		t.Fatalf("forced refresh call failed: %v", err)
 	}
 
+	release()
 	wg.Wait()
 
 	// 驱动调用次数应当为 2（一次普通请求，一次强刷请求，未被错误合并）
