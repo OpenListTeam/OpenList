@@ -159,9 +159,18 @@ func s3RequestAuthorized(r *http.Request, authPairs map[string]string) bool {
 	if len(authPairs) == 0 {
 		return true
 	}
-	result := signature.V4SignVerify(r)
+	// Verify against the keys this server was configured with. V4SignVerify and
+	// V2SignVerify read the signature package's process-wide key store, which
+	// gofakes3 never writes (keys are kept per instance), so they always
+	// returned InvalidAccessKeyId and the 302/307 direct-transfer redirects
+	// never ran. Same V4-then-V2 order the auth middleware uses.
+	lookup := func(accessKey string) (string, bool) {
+		secret, ok := authPairs[accessKey]
+		return secret, ok
+	}
+	result := signature.V4SignVerifyWithLookup(r, lookup)
 	if result == signature.ErrUnsupportAlgorithm {
-		result = signature.V2SignVerify(r)
+		result = signature.V2SignVerifyWithLookup(r, lookup)
 	}
 	return result == signature.ErrNone
 }
