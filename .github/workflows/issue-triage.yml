@@ -1,0 +1,40 @@
+name: Issue Triage (LLM)
+
+# 在 Issue 创建 / 编辑 / 重新打开时触发；评论触发用于多轮追问对话。
+on:
+  issues:
+    types: [opened, edited, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    # 忽略「由 PR 转换而来的 Issue」（PR 用独立流程处理）
+    if: github.event.issue.pull_request == null
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Issue Triage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 自定义 LLM API（OpenAI 兼容协议）配置，在仓库 Secrets 中配置：
+          #   CUSTOM_API_BASE_URL  例如 https://api.deepseek.com/v1 或你的网关地址
+          #   CUSTOM_API_KEY       你的 API Key
+          #   CUSTOM_API_MODEL     模型名，例如 deepseek-chat / gpt-4o-mini
+          CUSTOM_API_BASE_URL: ${{ secrets.CUSTOM_API_BASE_URL }}
+          CUSTOM_API_KEY: ${{ secrets.CUSTOM_API_KEY }}
+          CUSTOM_API_MODEL: ${{ secrets.CUSTOM_API_MODEL }}
+          SYSTEM_PROMPT_FILE: .github/issue-triage/system-prompt.md
+        run: python .github/issue-triage/triage.py
