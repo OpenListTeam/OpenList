@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -31,9 +33,80 @@ import (
 const (
 	// File list query fields
 	FilesListFields = "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken"
-	// Single file query fields
+	// Single file query fields (used when fetching shortcut target metadata)
 	FileInfoFields = "id,name,mimeType,size,md5Checksum,sha1Checksum,sha256Checksum"
+	// Fields fetched during Link() to decide the download strategy
+	FileLinkFields = "mimeType,capabilities/canDownload"
 )
+
+// downloadKind distinguishes the two Drive download strategies.
+type downloadKind int
+
+const (
+	kindMedia  downloadKind = iota // files.get?alt=media
+	kindExport                     // files.export?mimeType=...
+)
+
+// downloadStrategy describes which endpoint and parameters to use for a given file.
+type downloadStrategy struct {
+	Kind       downloadKind
+	ExportMIME string
+	// Extension is the file extension (e.g. ".pptx") to append to the downloaded filename
+	// for kindExport strategies. Empty for kindMedia.
+	Extension string
+}
+
+// resolveDownloadStrategy returns the correct download strategy for the given Drive source
+// MIME type. It returns an error for Google Workspace types that cannot be downloaded.
+func resolveDownloadStrategy(sourceMIME string) (downloadStrategy, error) {
+	if ef, ok := googleWorkspaceExports[sourceMIME]; ok {
+		return downloadStrategy{Kind: kindExport, ExportMIME: ef.MIME, Extension: ef.Extension}, nil
+	}
+	if reason, ok := googleWorkspaceUnsupported[sourceMIME]; ok {
+		return downloadStrategy{}, fmt.Errorf("unsupported Google Workspace file type %q: %s", sourceMIME, reason)
+	}
+	// All other MIME types — including unrecognised application/vnd.google-apps.* variants
+	// and all binary/uploaded files — fall through to the media download endpoint to preserve
+	// compatibility with Drive MIME types not covered by the maps above.
+	return downloadStrategy{Kind: kindMedia}, nil
+}
+
+// buildDownloadURL constructs the correct Drive download URL for the given file ID and strategy.
+//
+// Binary files use files.get with alt=media:
+//
+//	GET /drive/v3/files/{id}?alt=media&acknowledgeAbuse=true&...
+//
+// Workspace-native files use files.export with only mimeType:
+//
+//	GET /drive/v3/files/{id}/export?mimeType=<encoded-mime>
+//
+// Note: files.export responses are capped by Google Drive at 10 MB. Larger or unsupported
+// Workspace downloads may require the files.download long-running-operation (LRO) flow.
+func buildDownloadURL(fileID string, strategy downloadStrategy) string {
+	base := "https://www.googleapis.com/drive/v3/files/" + fileID
+	switch strategy.Kind {
+	case kindExport:
+		q := url.Values{}
+		q.Set("mimeType", strategy.ExportMIME)
+		return base + "/export?" + q.Encode()
+	default: // kindMedia
+		q := url.Values{}
+		q.Set("alt", "media")
+		q.Set("acknowledgeAbuse", "true")
+		q.Set("supportsAllDrives", "true")
+		return base + "?" + q.Encode()
+	}
+}
+
+// exportedFileName returns name with ext appended, unless name already ends with
+// ext (case-insensitive), which avoids doubling extensions like "file.pptx.pptx".
+func exportedFileName(name, ext string) string {
+	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(ext)) {
+		return name
+	}
+	return name + ext
+}
 
 type googleDriveServiceAccount struct {
 	// Type                    string `json:"type"`
