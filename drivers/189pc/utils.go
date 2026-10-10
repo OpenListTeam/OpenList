@@ -1871,6 +1871,9 @@ func (y *Cloud189PC) WaitBatchTask(aType string, taskID string, t time.Duration)
 		case 2:
 			return ErrIsConflict
 		case 4:
+			if state.FailedCount > 0 {
+				return fmt.Errorf("189pc %s batch task %s finished with %d failed", aType, taskID, state.FailedCount)
+			}
 			return nil
 		}
 		time.Sleep(t)
