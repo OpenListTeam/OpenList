@@ -62,9 +62,7 @@ func readLockInfo(r io.Reader) (li lockInfo, status int, err error) {
 		}
 		return lockInfo{}, http.StatusBadRequest, err
 	}
-	// We only support exclusive (non-shared) write locks. In practice, these are
-	// the only types of locks that seem to matter.
-	if li.Exclusive == nil || li.Shared != nil || li.Write == nil {
+	if (li.Exclusive == nil) == (li.Shared == nil) || li.Write == nil {
 		return lockInfo{}, http.StatusNotImplemented, errUnsupportedLockInfo
 	}
 	return li, 0, nil
@@ -86,18 +84,22 @@ func writeLockInfo(w io.Writer, token string, ld LockDetails) (int, error) {
 	if ld.ZeroDepth {
 		depth = "0"
 	}
+	scope := "exclusive"
+	if ld.Shared {
+		scope = "shared"
+	}
 	timeout := ld.Duration / time.Second
 	return fmt.Fprintf(w, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"+
 		"<D:prop xmlns:D=\"DAV:\"><D:lockdiscovery><D:activelock>\n"+
-		"	<D:locktype><D:write/></D:locktype>\n"+
-		"	<D:lockscope><D:exclusive/></D:lockscope>\n"+
-		"	<D:depth>%s</D:depth>\n"+
-		"	<D:owner>%s</D:owner>\n"+
-		"	<D:timeout>Second-%d</D:timeout>\n"+
-		"	<D:locktoken><D:href>%s</D:href></D:locktoken>\n"+
-		"	<D:lockroot><D:href>%s</D:href></D:lockroot>\n"+
+		"\t<D:locktype><D:write/></D:locktype>\n"+
+		"\t<D:lockscope><D:%s/></D:lockscope>\n"+
+		"\t<D:depth>%s</D:depth>\n"+
+		"\t<D:owner>%s</D:owner>\n"+
+		"\t<D:timeout>Second-%d</D:timeout>\n"+
+		"\t<D:locktoken><D:href>%s</D:href></D:locktoken>\n"+
+		"\t<D:lockroot><D:href>%s</D:href></D:lockroot>\n"+
 		"</D:activelock></D:lockdiscovery></D:prop>",
-		depth, ld.OwnerXML, timeout, escape(token), escape(ld.Root),
+		scope, depth, ld.OwnerXML, timeout, escape(token), escape(ld.Root),
 	)
 }
 
@@ -176,19 +178,31 @@ type propfind struct {
 }
 
 func readPropfind(r io.Reader) (pf propfind, status int, err error) {
-	c := countingReader{r: r}
-	if err = ixml.NewDecoder(&c).Decode(&pf); err != nil {
+	// 64KB is more than enough for a well-formed PROPFIND body.
+	const maxBody = 64 << 10
+	body, err := io.ReadAll(io.LimitReader(r, maxBody))
+	if err != nil {
+		return propfind{}, http.StatusBadRequest, err
+	}
+	// If the limit was reached, the body was too large.
+	if len(body) >= maxBody {
+		// Drain any remaining bytes so the connection stays usable.
+		_, _ = io.Copy(io.Discard, r)
+		return propfind{}, http.StatusRequestEntityTooLarge, nil
+	}
+	if len(body) == 0 {
+		// An empty body means to propfind allprop.
+		return propfind{Allprop: new(struct{})}, 0, nil
+	}
+	if hasEmptyNamespacePrefix(body) {
+		return propfind{}, http.StatusBadRequest, errInvalidPropfind
+	}
+	if err = ixml.NewDecoder(bytes.NewReader(body)).Decode(&pf); err != nil {
 		if err == io.EOF {
-			if c.n == 0 {
-				// An empty body means to propfind allprop.
-				// http://www.webdav.org/specs/rfc4918.html#METHOD_PROPFIND
-				return propfind{Allprop: new(struct{})}, 0, nil
-			}
 			err = errInvalidPropfind
 		}
 		return propfind{}, http.StatusBadRequest, err
 	}
-
 	if pf.Allprop == nil && pf.Include != nil {
 		return propfind{}, http.StatusBadRequest, errInvalidPropfind
 	}
@@ -202,6 +216,33 @@ func readPropfind(r io.Reader) (pf propfind, status int, err error) {
 		return propfind{}, http.StatusBadRequest, errInvalidPropfind
 	}
 	return pf, 0, nil
+}
+
+func hasEmptyNamespacePrefix(body []byte) bool {
+	for offset := 0; ; {
+		i := bytes.Index(body[offset:], []byte("xmlns:"))
+		if i < 0 {
+			return false
+		}
+		i += offset + len("xmlns:")
+		j := i
+		for j < len(body) && body[j] != '=' && body[j] != '>' && body[j] != '/' && body[j] != ' ' && body[j] != '\t' && body[j] != '\n' && body[j] != '\r' {
+			j++
+		}
+		for j < len(body) && (body[j] == ' ' || body[j] == '\t' || body[j] == '\n' || body[j] == '\r') {
+			j++
+		}
+		if j < len(body) && body[j] == '=' {
+			j++
+			for j < len(body) && (body[j] == ' ' || body[j] == '\t' || body[j] == '\n' || body[j] == '\r') {
+				j++
+			}
+			if j+1 < len(body) && (body[j] == '\'' || body[j] == '"') && body[j+1] == body[j] {
+				return true
+			}
+		}
+		offset = i
+	}
 }
 
 // Property represents a single DAV resource property as defined in RFC 4918.
