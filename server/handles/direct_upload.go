@@ -1,6 +1,8 @@
 package handles
 
 import (
+	"context"
+	"mime"
 	"net/url"
 	stdpath "path"
 
@@ -15,10 +17,11 @@ import (
 )
 
 type FsGetDirectUploadInfoReq struct {
-	Path     string `json:"path" form:"path"`
-	FileName string `json:"file_name" form:"file_name"`
-	FileSize int64  `json:"file_size" form:"file_size"`
-	Tool     string `json:"tool" form:"tool"`
+	Path        string `json:"path" form:"path"`
+	FileName    string `json:"file_name" form:"file_name"`
+	FileSize    int64  `json:"file_size" form:"file_size"`
+	ContentType string `json:"content_type" form:"content_type"`
+	Tool        string `json:"tool" form:"tool"`
 }
 
 // FsGetDirectUploadInfo returns the direct upload info if supported by the driver
@@ -91,7 +94,14 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 			return
 		}
 	}
-	directUploadInfo, err := fs.GetDirectUploadInfo(c, req.Tool, path, req.FileName, req.FileSize, overwrite)
+	if req.ContentType != "" {
+		if _, _, err := mime.ParseMediaType(req.ContentType); err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+	}
+	ctx := context.WithValue(c, conf.DirectUploadContentTypeKey, req.ContentType)
+	directUploadInfo, err := fs.GetDirectUploadInfo(ctx, req.Tool, path, req.FileName, req.FileSize, overwrite)
 	if err != nil {
 		if !overwrite && errs.IsObjectAlreadyExists(err) {
 			common.ErrorStrResp(c, "file exists", 403)
