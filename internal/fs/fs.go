@@ -100,6 +100,14 @@ func Rename(ctx context.Context, srcPath, dstName string, skipHook ...bool) erro
 	return err
 }
 
+func Replace(ctx context.Context, srcPath, dstPath string) error {
+	err := replace(ctx, srcPath, dstPath)
+	if err != nil {
+		log.Errorf("failed replace %s with %s: %+v", dstPath, srcPath, err)
+	}
+	return err
+}
+
 func Remove(ctx context.Context, path string) error {
 	err := remove(ctx, path)
 	if err != nil {
