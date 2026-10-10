@@ -2,7 +2,6 @@ package alidoc
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -11,13 +10,10 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:        "AliDoc",
-	LocalSort:   true,
-	DefaultRoot: "",
+	Name:      "AliDoc",
+	LocalSort: true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &AliDoc{}
-	})
+func New() driver.Driver {
+	return &AliDoc{}
 }

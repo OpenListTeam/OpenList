@@ -2,7 +2,6 @@ package aliyundrive
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -23,8 +22,6 @@ Deprecated, no longer maintained and will be removed in a future version.
 We recommend using the official driver AliyundriveOpen.`,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &AliDrive{}
-	})
+func New() driver.Driver {
+	return &AliDrive{}
 }

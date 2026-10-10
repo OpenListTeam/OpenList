@@ -344,13 +344,6 @@ func (d *CloudreveV4) Extract(ctx context.Context, obj model.Obj, args model.Arc
 	return nil, errs.NotImplement
 }
 
-func (d *CloudreveV4) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) ([]model.Obj, error) {
-	// TODO extract args.InnerPath path in the archive srcObj to the dstDir location, optional
-	// a folder with the same name as the archive file needs to be created to store the extracted results if args.PutIntoNewDir
-	// return errs.NotImplement to use an internal archive tool
-	return nil, errs.NotImplement
-}
-
 func (d *CloudreveV4) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
 	// TODO return storage details (total space, free space, etc.)
 	var r CapacityResp

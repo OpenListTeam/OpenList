@@ -9,7 +9,6 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
@@ -141,11 +140,6 @@ func (d *Degoo) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 		return err
 	}
 	return nil
-}
-
-func (d *Degoo) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// Copy is not implemented, Degoo API does not support direct copy.
-	return nil, errs.NotImplement
 }
 
 func (d *Degoo) Remove(ctx context.Context, obj model.Obj) error {

@@ -3,6 +3,7 @@ package op
 import (
 	"reflect"
 	"strings"
+	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 
@@ -10,21 +11,43 @@ import (
 	"github.com/pkg/errors"
 )
 
-type DriverConstructor func() driver.Driver
-
-var driverMap = map[string]DriverConstructor{}
-var driverInfoMap = map[string]driver.Info{}
-
-func RegisterDriver(driver DriverConstructor) {
-	// log.Infof("register driver: [%s]", config.Name)
-	tempDriver := driver()
-	tempConfig := tempDriver.Config()
-	registerDriverItems(tempConfig, tempDriver.GetAddition())
-	driverMap[tempConfig.Name] = driver
+type driverCatalog struct {
+	drivers map[string]driver.Constructor
+	info    map[string]driver.Info
 }
 
-func GetDriver(name string) (DriverConstructor, error) {
-	n, ok := driverMap[name]
+var installedDrivers atomic.Pointer[driverCatalog]
+
+func InstallDrivers(constructors []driver.Constructor) error {
+	catalog := &driverCatalog{
+		drivers: make(map[string]driver.Constructor, len(constructors)),
+		info:    make(map[string]driver.Info, len(constructors)),
+	}
+	for _, constructor := range constructors {
+		if constructor == nil {
+			return errors.New("nil driver constructor")
+		}
+		instance := constructor()
+		if instance == nil || (reflect.ValueOf(instance).Kind() == reflect.Pointer && reflect.ValueOf(instance).IsNil()) {
+			return errors.New("driver constructor returned nil")
+		}
+		config := instance.Config()
+		if _, exists := catalog.drivers[config.Name]; exists {
+			return errors.Errorf("duplicate driver named: %s", config.Name)
+		}
+		catalog.drivers[config.Name] = constructor
+		catalog.info[config.Name] = driverInfo(config, instance.GetAddition())
+	}
+	installedDrivers.Store(catalog)
+	return nil
+}
+
+func GetDriver(name string) (driver.Constructor, error) {
+	catalog := installedDrivers.Load()
+	if catalog == nil {
+		return nil, errors.New("drivers are not installed")
+	}
+	n, ok := catalog.drivers[name]
 	if !ok {
 		return nil, errors.Errorf("no driver named: %s", name)
 	}
@@ -32,18 +55,26 @@ func GetDriver(name string) (DriverConstructor, error) {
 }
 
 func GetDriverNames() []string {
+	catalog := installedDrivers.Load()
+	if catalog == nil {
+		return nil
+	}
 	var driverNames []string
-	for k := range driverInfoMap {
+	for k := range catalog.info {
 		driverNames = append(driverNames, k)
 	}
 	return driverNames
 }
 
 func GetDriverInfoMap() map[string]driver.Info {
-	return driverInfoMap
+	catalog := installedDrivers.Load()
+	if catalog == nil {
+		return nil
+	}
+	return catalog.info
 }
 
-func registerDriverItems(config driver.Config, addition driver.Additional) {
+func driverInfo(config driver.Config, addition driver.Additional) driver.Info {
 	// log.Debugf("addition of %s: %+v", config.Name, addition)
 	tAddition := reflect.TypeOf(addition)
 	for tAddition.Kind() == reflect.Pointer {
@@ -51,7 +82,7 @@ func registerDriverItems(config driver.Config, addition driver.Additional) {
 	}
 	mainItems := getMainItems(config)
 	additionalItems := getAdditionalItems(tAddition, config.DefaultRoot)
-	driverInfoMap[config.Name] = driver.Info{
+	return driver.Info{
 		Common:     mainItems,
 		Additional: additionalItems,
 		Config:     config,

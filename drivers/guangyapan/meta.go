@@ -2,7 +2,6 @@ package guangyapan
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -24,14 +23,11 @@ type Addition struct {
 
 var config = driver.Config{
 	Name:              "GuangYaPan",
-	DefaultRoot:       "",
 	CheckStatus:       true,
 	Alert:             "info|Two-stage SMS login: (1) fill phone_number (+ captcha_token if needed), set send_code=true and save; (2) fill verify_code and save to finish login and auto-save access_token/refresh_token.",
 	NoOverwriteUpload: true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &GuangYaPan{}
-	})
+func New() driver.Driver {
+	return &GuangYaPan{}
 }

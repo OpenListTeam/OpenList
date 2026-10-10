@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/OpenListTeam/OpenList/v4/drivers/local"
+	"github.com/OpenListTeam/OpenList/v4/drivers/local"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 
@@ -23,6 +24,9 @@ import (
 )
 
 func init() {
+	if err := op.InstallDrivers([]driver.Constructor{local.New}); err != nil {
+		panic(err)
+	}
 	dataDir, err := os.MkdirTemp("", "openlist-s3-mp-*")
 	if err != nil {
 		panic(err)

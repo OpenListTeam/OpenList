@@ -2,7 +2,6 @@ package alist_v3
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -25,8 +24,6 @@ var config = driver.Config{
 	LinkCacheMode:    driver.LinkCacheAuto,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &AListV3{}
-	})
+func New() driver.Driver {
+	return &AListV3{}
 }
