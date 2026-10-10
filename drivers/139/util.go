@@ -148,9 +148,9 @@ func (d *Yun139) refreshToken() error {
 // loginAfterAuthorizationFailure deliberately skips cookie fast login. Mail
 // cookies are only reused as device context for the password login request.
 func (d *Yun139) loginAfterAuthorizationFailure(cause error) error {
-	log.Warnf("139yun: %v; trying password login.", cause)
+	log.Warnf("[139yun] %v; trying password login.", cause)
 	newAuth, err := d.loginWithPassword()
-	log.Debugf("139yun: password fallback generated authorization: %t", newAuth != "")
+	log.Debugf("[139yun] password fallback generated authorization: %t", newAuth != "")
 	if err != nil {
 		return fmt.Errorf("%v; password login failed: %w", cause, err)
 	}
@@ -196,23 +196,23 @@ func (d *Yun139) request(url string, method string, callback base.ReqCallback, r
 
 	var e BaseResp
 	req.SetResult(&e)
-	log.Debugf("[139] request: %s %s, body: %s", method, url, string(body))
+	log.Debugf("[139yun] request: %s %s, body: %s", method, url, string(body))
 	res, err := req.Execute(method, url)
 	if err != nil {
-		log.Debugf("[139] request error: %v", err)
+		log.Debugf("[139yun] request error: %v", err)
 		return nil, err
 	}
-	log.Debugf("[139] response body: %s", res.String())
+	log.Debugf("[139yun] response body: %s", res.String())
 	if !e.Success {
 		// Always try to unmarshal to the specific response type first if 'resp' is provided.
 		if resp != nil {
 			err = utils.Json.Unmarshal(res.Body(), resp)
 			if err != nil {
-				log.Debugf("[139] failed to unmarshal response to specific type: %v", err)
+				log.Debugf("[139yun] failed to unmarshal response to specific type: %v", err)
 				return nil, err // Return unmarshal error
 			}
 			if createBatchOprTaskResp, ok := resp.(*CreateBatchOprTaskResp); ok {
-				log.Debugf("[139] CreateBatchOprTaskResp.Result.ResultCode: %s", createBatchOprTaskResp.Result.ResultCode)
+				log.Debugf("[139yun] CreateBatchOprTaskResp.Result.ResultCode: %s", createBatchOprTaskResp.Result.ResultCode)
 				if createBatchOprTaskResp.Result.ResultCode == "0" {
 					goto SUCCESS_PROCESS
 				}
@@ -885,13 +885,13 @@ func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback
 
 	var e BaseResp
 	req.SetResult(&e)
-	log.Debugf("[139] personal request: %s %s, body: %s", method, url, string(body))
+	log.Debugf("[139yun] personal request: %s %s, body: %s", method, url, string(body))
 	res, err := req.Execute(method, url)
 	if err != nil {
-		log.Debugf("[139] personal request error: %v", err)
+		log.Debugf("[139yun] personal request error: %v", err)
 		return nil, err
 	}
-	log.Debugf("[139] personal response body: %s", res.String())
+	log.Debugf("[139yun] personal response body: %s", res.String())
 	if !e.Success {
 		return nil, errors.New(e.Message)
 	}
@@ -1073,7 +1073,7 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 		}
 		partSize := partInfos[index].PartSize
 		offset := partInfos[index].ParallelHashCtx.PartOffset
-		log.Debugf("[139] uploading part %+v/%+v", index, len(partInfos))
+		log.Debugf("[139yun] uploading part %+v/%+v", index, len(partInfos))
 
 		rd, getErr := ss.GetSectionReader(offset, partSize)
 		if getErr != nil {
@@ -1104,7 +1104,7 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 					return doErr
 				}
 				defer res.Body.Close()
-				log.Debugf("[139] uploaded: %+v", res)
+				log.Debugf("[139yun] uploaded part %d/%d, status: %d", index+1, len(partInfos), res.StatusCode)
 				if res.StatusCode != http.StatusOK {
 					body, _ := io.ReadAll(res.Body)
 					return fmt.Errorf("unexpected status code: %d, body: %s", res.StatusCode, string(body))
@@ -1340,7 +1340,7 @@ func (d *Yun139) verifySMSCode(riskCode string) (string, error) {
 }
 
 func (d *Yun139) step1_password_login() (string, error) {
-	log.Debugf("--- 执行步骤 1: 登录 API ---")
+	log.Debug("[139yun] Mail login step 1 started")
 	loginURL := mailPasswordURL
 
 	// 密码 SHA1 哈希
@@ -1379,8 +1379,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 	loginData.Set("clientId", "1003")
 	loginData.Set("authType", "2")
 
-	log.Debugf("DEBUG: 登录请求 URL: %s", loginURL)
-	log.Debugf("DEBUG: 登录请求已准备")
+	log.Debug("[139yun] Mail login step 1 request prepared")
 
 	res, err := new139RestyClient().
 		SetRetryCount(0).
@@ -1393,8 +1392,8 @@ func (d *Yun139) step1_password_login() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("step1 login request failed: %w", err)
 	}
-	log.Debugf("DEBUG: 登录响应 Status Code: %d", res.StatusCode())
-	log.Debugf("DEBUG: 登录响应 Location present: %t", res.Header().Get("Location") != "")
+	log.Debugf("[139yun] Mail login step 1 response status: %d", res.StatusCode())
+	log.Debugf("[139yun] Mail login step 1 redirect location present: %t", res.Header().Get("Location") != "")
 
 	d.MailCookies = mergeMailCookieHeader(d.MailCookies, res.Cookies())
 
@@ -1434,7 +1433,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 }
 
 func (d *Yun139) step2_get_single_token(sid string) (string, error) {
-	log.Debugf("\n--- 执行步骤 2: 换artifact API ---")
+	log.Debug("[139yun] Mail login step 2 started")
 	cguid := strconv.FormatInt(time.Now().UnixMilli(), 10)
 
 	exchangeArtifactURL := fmt.Sprintf("https://smsrebuild1.mail.10086.cn/setting/s?func=%s&sid=%s&cguid=%s", url.QueryEscape("umc:getArtifact"), sid, cguid)
@@ -1460,8 +1459,7 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 		"User-Agent":      "okhttp/4.12.0",
 	}
 
-	log.Debugf("DEBUG: 换passid 请求 URL: %s", exchangeArtifactURL)
-	log.Debugf("DEBUG: 换passid 请求 Headers: %+v", exchangePassidHeaders)
+	log.Debug("[139yun] Mail login step 2 artifact request prepared")
 
 	res, err := base.RestyClient.R().
 		SetHeaders(exchangePassidHeaders).
@@ -1471,15 +1469,13 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 		return "", fmt.Errorf("step2 exchange artifact request failed: %w", err)
 	}
 
-	log.Debugf("DEBUG: 换passid 响应 Status Code: %d", res.StatusCode())
-	log.Debugf("DEBUG: 换passid 响应 Headers: %+v", res.Header())
-	log.Debugf("DEBUG: 换passid 响应 Body: %s...", res.String()[:min(len(res.String()), 500)])
+	log.Debugf("[139yun] Mail login step 2 response status: %d", res.StatusCode())
 
 	dycpwd := jsoniter.Get(res.Body(), "var", "artifact").ToString()
 	if dycpwd == "" {
 		return "", errors.New("failed to extract dycpwd from artifact exchange response")
 	}
-	log.Debugf("DEBUG: 提取到 dycpwd: %s", dycpwd)
+	log.Debug("[139yun] Mail login step 2 artifact extracted")
 
 	return dycpwd, nil
 }
@@ -1646,7 +1642,7 @@ func (d *Yun139) yun139EncryptedRequest(url string, body interface{}, headers ma
 	if err != nil {
 		return nil, fmt.Errorf("yun139EncryptedRequest: failed to marshal and sort body: %w", err)
 	}
-	log.Debugf("yun139EncryptedRequest: Request Body (plaintext): %s", sortedJson)
+	log.Debug("[139yun] encrypted request payload prepared")
 
 	// 3. Encrypt the body using AES/CBC
 	iv := make([]byte, 16) // 16 bytes for AES-128
@@ -1670,7 +1666,7 @@ func (d *Yun139) yun139EncryptedRequest(url string, body interface{}, headers ma
 	}
 
 	if res.StatusCode() != 200 {
-		return nil, fmt.Errorf("yun139EncryptedRequest: unexpected status code %d: %s", res.StatusCode(), res.String())
+		return nil, fmt.Errorf("yun139EncryptedRequest: unexpected status code %d", res.StatusCode())
 	}
 
 	// 5. Decrypt the response
@@ -1678,12 +1674,12 @@ func (d *Yun139) yun139EncryptedRequest(url string, body interface{}, headers ma
 	var decryptedBytes []byte
 
 	if len(respBody) > 0 && respBody[0] == '{' {
-		log.Warnf("yun139EncryptedRequest: received a plain JSON response, not an encrypted string. Body: %s", string(respBody))
+		log.Warn("[139yun] encrypted request received a plain JSON response")
 		decryptedBytes = respBody
 	} else {
 		decodedResp, err := base64.StdEncoding.DecodeString(string(respBody))
 		if err != nil {
-			return nil, fmt.Errorf("yun139EncryptedRequest: response base64 decode failed: %w. Body: '%s'", err, string(respBody))
+			return nil, fmt.Errorf("yun139EncryptedRequest: response base64 decode failed: %w", err)
 		}
 
 		if len(decodedResp) < 16 {
@@ -1699,7 +1695,7 @@ func (d *Yun139) yun139EncryptedRequest(url string, body interface{}, headers ma
 		}
 	}
 
-	log.Debugf("yun139EncryptedRequest: Response Body (decrypted): %s", string(decryptedBytes))
+	log.Debug("[139yun] encrypted response decrypted")
 
 	// 6. Unmarshal to the final response struct
 	if resp != nil {
@@ -1713,7 +1709,7 @@ func (d *Yun139) yun139EncryptedRequest(url string, body interface{}, headers ma
 }
 
 func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
-	log.Debugf("\n--- 执行步骤 3: 单点登录 API ---")
+	log.Debug("[139yun] Mail login step 3 started")
 	ssoLoginURL := "https://user-njs.yun.139.com/user/thirdlogin"
 
 	// 构建原始请求体
@@ -1752,7 +1748,7 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 	if hexInner == "" {
 		return "", errors.New("missing data field in first layer decryption result")
 	}
-	log.Debugf("DEBUG: 第一层解密提取到 hex_inner: %s...", hexInner[:min(len(hexInner), 50)])
+	log.Debug("[139yun] Mail login step 3 first-layer response decrypted")
 
 	// 第二层解密
 	key2, err := hex.DecodeString(KEY_HEX_2)
@@ -1767,14 +1763,14 @@ func (d *Yun139) step3_third_party_login(dycpwd string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("step3 response layer2 aes ecb decrypt failed: %w", err)
 	}
-	log.Debugf("DEBUG: 最终解密结果: %s", string(finalJsonStrBytes))
+	log.Debug("[139yun] Mail login step 3 response decrypted")
 
 	// 提取 authToken
 	authToken := jsoniter.Get(finalJsonStrBytes, "authToken").ToString()
 	if authToken == "" {
 		return "", errors.New("failed to extract authToken from final decryption result")
 	}
-	log.Debugf("DEBUG: 提取到 authToken: %s", authToken)
+	log.Debug("[139yun] Mail login step 3 authorization token extracted")
 
 	// 提取 account 和 userDomainId
 	account := jsoniter.Get(finalJsonStrBytes, "account").ToString()
@@ -1817,27 +1813,27 @@ func hasCookiePair(raw string) bool {
 func (d *Yun139) tryFastLoginWithCookies() bool {
 	sid, rmkey := extractFastLoginCookies(d.MailCookies)
 	if sid == "" || rmkey == "" {
-		log.Warnf("139yun: fast login skipped, required cookies missing: Os_SSo_Sid=%t RMKEY=%t", sid != "", rmkey != "")
+		log.Warnf("[139yun] fast login skipped, required cookies missing: Os_SSo_Sid=%t RMKEY=%t", sid != "", rmkey != "")
 		return false
 	}
 
-	log.Infof("139yun: attempting fast login using existing SID/Cookies (Step 2).")
+	log.Infof("[139yun] attempting fast login using existing SID/Cookies (Step 2).")
 	token, err := d.step2_get_single_token(sid)
 	if err != nil || token == "" {
-		log.Warnf("139yun: fast login Step 2 failed: %v", err)
+		log.Warnf("[139yun] fast login Step 2 failed: %v", err)
 		return false
 	}
 
-	log.Infof("139yun: Step 2 success. Proceeding to Step 3.")
+	log.Infof("[139yun] Step 2 success. Proceeding to Step 3.")
 	auth, err := d.step3_third_party_login(token)
 	if err != nil {
-		log.Warnf("139yun: fast login Step 3 failed: %v", err)
+		log.Warnf("[139yun] fast login Step 3 failed: %v", err)
 		return false
 	}
 
 	d.Authorization = auth
 	op.MustSaveDriverStorage(d)
-	log.Infof("139yun: fast login success (Step 2 -> Step 3).")
+	log.Infof("[139yun] fast login success (Step 2 -> Step 3).")
 	return true
 }
 
@@ -1850,10 +1846,10 @@ func (d *Yun139) validateAndInitCredentials() error {
 	switch state {
 	case credentialStateAuthorization:
 		// Authorization is refreshed by Init immediately after this helper returns.
-		log.Debugf("139yun: Authorization exists, skipping initialization login.")
+		log.Debugf("[139yun] Authorization exists, skipping initialization login.")
 		return nil
 	case credentialStateFullLogin, credentialStateCookiesOnly:
-		log.Infof("139yun: Authorization missing, attempting login...")
+		log.Infof("[139yun] Authorization missing, attempting login...")
 		if d.MailCookies != "" && d.tryFastLoginWithCookies() {
 			return nil
 		}
@@ -1862,7 +1858,7 @@ func (d *Yun139) validateAndInitCredentials() error {
 			return fmt.Errorf("fast login with cookies failed, and cannot fallback to password login (missing username/password)")
 		}
 
-		log.Infof("139yun: fast login failed or not possible, performing full password login (Step 1).")
+		log.Infof("[139yun] fast login failed or not possible, performing full password login (Step 1).")
 		_, err := d.loginWithPassword()
 		if err != nil {
 			return fmt.Errorf("login with password failed: %w", err)
@@ -1915,19 +1911,19 @@ func (d *Yun139) loginWithPassword() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Infof("Step 1 success, passId: %s", passId)
+	log.Info("[139yun] Mail login step 1 succeeded")
 
 	token, err := d.step2_get_single_token(passId)
 	if err != nil {
 		return "", err
 	}
-	log.Infof("Step 2 success, token: %s", token)
+	log.Info("[139yun] Mail login step 2 succeeded")
 
 	newAuth, err := d.step3_third_party_login(token)
 	if err != nil {
 		return "", err
 	}
-	log.Infof("Step 3 success, new authorization generated.")
+	log.Info("[139yun] Mail login step 3 succeeded; authorization generated")
 
 	d.Authorization = newAuth // Ensure Authorization is also updated before saving
 	op.MustSaveDriverStorage(d)
