@@ -116,12 +116,20 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	if len(roots) == 0 {
 		return nil, errs.ObjectNotFound
 	}
-	for idx, root := range roots {
-		rawPath := stdpath.Join(root, sub)
-		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
+	// Probe all roots concurrently, then pick the first hit in root order so
+	// read conflict policies see the same winner as before.
+	probes := fanOut(ctx, d.fanoutConcurrency(), roots, func(ctx context.Context, root string) model.Obj {
+		obj, err := fs.Get(ctx, stdpath.Join(root, sub), &fs.GetArgs{NoLog: true})
 		if err != nil {
+			return nil
+		}
+		return obj
+	})
+	for idx, obj := range probes {
+		if obj == nil {
 			continue
 		}
+		rawPath := stdpath.Join(roots[idx], sub)
 		mask := model.GetObjMask(obj) &^ model.Temp
 		if sub == "" {
 			// 根目录
@@ -148,20 +156,20 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 			}
 		}
 
-		roots = roots[idx+1:]
+		restRoots := roots[idx+1:]
 		var objs BalancedObjs
 		if idx > 0 {
-			objs = make(BalancedObjs, 0, len(roots)+2)
+			objs = make(BalancedObjs, 0, len(restRoots)+2)
 		} else {
-			objs = make(BalancedObjs, 0, len(roots)+1)
+			objs = make(BalancedObjs, 0, len(restRoots)+1)
 		}
 		objs = append(objs, obj)
 		if idx > 0 {
 			objs = append(objs, nil)
 		}
-		for _, d := range roots {
+		for _, root := range restRoots {
 			objs = append(objs, &tempObj{model.Object{
-				Path: stdpath.Join(d, sub),
+				Path: stdpath.Join(root, sub),
 			}})
 		}
 		return objs, nil
@@ -177,10 +185,11 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 
 	// 因为alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
 	// 所以这里对象不会传回到alias，也就不需要返回BalancedObjs了
-	objMap := make(map[string]model.Obj)
-	for _, dir := range dirs {
+	// List every backend concurrently with bounded parallelism; mergeLists
+	// keeps first-backend-wins semantics regardless of completion order.
+	lists := fanOut(ctx, d.fanoutConcurrency(), dirs, func(ctx context.Context, dir model.Obj) listResult {
 		if dir == nil {
-			continue
+			return listResult{}
 		}
 		dirPath := dir.GetPath()
 		tmp, err := fs.List(ctx, dirPath, &fs.ListArgs{
@@ -189,46 +198,11 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
 		})
 		if err != nil {
-			continue
+			return listResult{dirPath: dirPath}
 		}
-		for _, obj := range tmp {
-			name := obj.GetName()
-			if _, exists := objMap[name]; exists {
-				continue
-			}
-			mask := model.GetObjMask(obj) &^ model.Temp
-			objRes := model.Object{
-				Name:     name,
-				Path:     stdpath.Join(dirPath, name),
-				Size:     obj.GetSize(),
-				Modified: obj.ModTime(),
-				IsFolder: obj.IsDir(),
-				Mask:     mask,
-			}
-			var objRet model.Obj
-			if thumb, ok := model.GetThumb(obj); ok {
-				objRet = &model.ObjThumb{
-					Object: objRes,
-					Thumbnail: model.Thumbnail{
-						Thumbnail: thumb,
-					},
-				}
-			} else {
-				objRet = &objRes
-			}
-			if details, ok := model.GetStorageDetails(obj); ok {
-				objRet = &model.ObjStorageDetails{
-					Obj:            objRet,
-					StorageDetails: details,
-				}
-			}
-			objMap[name] = objRet
-		}
-	}
-	objs := make([]model.Obj, 0, len(objMap))
-	for _, obj := range objMap {
-		objs = append(objs, obj)
-	}
+		return listResult{dirPath: dirPath, objs: tmp}
+	})
+	objs := mergeLists(lists)
 	if d.OrderBy == "" {
 		sort := getAllSort(dirs)
 		if sort.OrderBy != "" {

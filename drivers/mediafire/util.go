@@ -29,7 +29,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -43,6 +42,28 @@ func checkAPIResult(result string) error {
 		return fmt.Errorf("MediaFire API error: %s", result)
 	}
 	return nil
+}
+
+// mergeCookies overlays fresh response cookies onto the stored cookie
+// header, preserving cookies the endpoint did not re-issue.
+func mergeCookies(currentHeader string, fresh []*http.Cookie) string {
+	jar := make(map[string]string)
+	for _, part := range strings.Split(currentHeader, "; ") {
+		if part == "" {
+			continue
+		}
+		if i := strings.Index(part, "="); i > 0 {
+			jar[part[:i]] = part[i+1:]
+		}
+	}
+	for _, c := range fresh {
+		jar[c.Name] = c.Value
+	}
+	pairs := make([]string, 0, len(jar))
+	for name, value := range jar {
+		pairs = append(pairs, name+"="+value)
+	}
+	return strings.Join(pairs, "; ")
 }
 
 // getSessionToken retrieves and validates session token from MediaFire
@@ -64,7 +85,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Content-Length", "0")
-	req.Header.Set("Cookie", d.Cookie)
+	req.Header.Set("Cookie", d.cookie())
 	req.Header.Set("DNT", "1")
 	req.Header.Set("Origin", d.hostBase)
 	req.Header.Set("Priority", "u=1, i")
@@ -92,7 +113,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer gzipReader.Close()
-		body, _ = io.ReadAll(gzipReader)
+		body, err = io.ReadAll(gzipReader)
 	} else {
 		body, err = io.ReadAll(resp.Body)
 	}
@@ -110,6 +131,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 		} `json:"response"`
 	}
 
+	var cookie string
 	if resp.StatusCode == 200 {
 		if err := json.Unmarshal(body, &tokenResp); err != nil {
 			return "", err
@@ -119,40 +141,25 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("empty session token received")
 		}
 
-		cookieMap := make(map[string]string)
-		for _, cookie := range resp.Cookies() {
-			cookieMap[cookie.Name] = cookie.Value
-		}
-
-		if len(cookieMap) > 0 {
-
-			var cookies []string
-			for name, value := range cookieMap {
-				cookies = append(cookies, fmt.Sprintf("%s=%s", name, value))
-			}
-			d.Cookie = strings.Join(cookies, "; ")
-			op.MustSaveDriverStorage(d)
-
-			// fmt.Printf("getSessionToken :: Captured cookies: %s\n", d.Cookie)
-		}
+		// The mint endpoint only re-issues Cloudflare cookies (__cf_bm);
+		// the auth cookies (ukey, skey, session, user, ...) come from the
+		// login page and are never re-sent. Merge instead of replacing, or
+		// every successful mint would drop them and break all future mints.
+		cookie = mergeCookies(d.cookie(), resp.Cookies())
 
 	} else {
 		return "", fmt.Errorf("getSessionToken :: failed to get session token, status code: %d", resp.StatusCode)
 	}
 
-	d.SessionToken = tokenResp.Response.SessionToken
+	d.setSessionToken(tokenResp.Response.SessionToken, cookie)
 
-	// fmt.Printf("Init :: Obtain Session Token %v", d.SessionToken)
-
-	op.MustSaveDriverStorage(d)
-
-	return d.SessionToken, nil
+	return tokenResp.Response.SessionToken, nil
 }
 
 // renewToken refreshes the current session token when expired
 func (d *Mediafire) renewToken(ctx context.Context) error {
 	query := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 	}
 
@@ -169,11 +176,7 @@ func (d *Mediafire) renewToken(ctx context.Context) error {
 		return fmt.Errorf("MediaFire token renewal failed: %s", resp.Response.Result)
 	}
 
-	d.SessionToken = resp.Response.SessionToken
-
-	// fmt.Printf("Init :: Renew Session Token: %s", resp.Response.Result)
-
-	op.MustSaveDriverStorage(d)
+	d.setSessionToken(resp.Response.SessionToken, "")
 
 	return nil
 }
@@ -247,7 +250,7 @@ func (d *Mediafire) getFolderContent(ctx context.Context, folderKey string, chun
 
 func (d *Mediafire) getFolderContentByType(ctx context.Context, folderKey, contentType string, chunkNumber int) (*MediafireResponse, error) {
 	data := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 		"folder_key":      folderKey,
 		"content_type":    contentType,
@@ -299,7 +302,7 @@ func (d *Mediafire) fileToObj(f File) *model.ObjThumb {
 
 func (d *Mediafire) setCommonHeaders(req *resty.Request) {
 	req.SetHeaders(map[string]string{
-		"Cookie":     d.Cookie,
+		"Cookie":     d.cookie(),
 		"User-Agent": d.userAgent,
 		"Origin":     d.appBase,
 		"Referer":    d.appBase + "/",
@@ -364,7 +367,7 @@ func (d *Mediafire) postForm(ctx context.Context, endpoint string, data map[stri
 
 func (d *Mediafire) getDirectDownloadLink(ctx context.Context, fileID string) (string, error) {
 	data := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"quick_key":       fileID,
 		"link_type":       "direct_download",
 		"response_format": "json",
@@ -621,15 +624,18 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 }*/
 
 func (d *Mediafire) getActionToken(ctx context.Context) (string, error) {
-	if d.actionToken != "" {
-		return d.actionToken, nil
+	d.mu.RLock()
+	cached := d.actionToken
+	d.mu.RUnlock()
+	if cached != "" {
+		return cached, nil
 	}
 
 	data := map[string]string{
 		"type":            "upload",
 		"lifespan":        "1440",
 		"response_format": "json",
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 	}
 
 	var resp MediafireActionTokenResponse
@@ -641,6 +647,10 @@ func (d *Mediafire) getActionToken(ctx context.Context) (string, error) {
 	if resp.Response.Result != "Success" {
 		return "", fmt.Errorf("MediaFire action token failed: %s", resp.Response.Result)
 	}
+
+	d.mu.Lock()
+	d.actionToken = resp.Response.ActionToken
+	d.mu.Unlock()
 
 	return resp.Response.ActionToken, nil
 }
@@ -710,7 +720,7 @@ func (d *Mediafire) getExistingFileInfo(ctx context.Context, fileHash, filename,
 
 func (d *Mediafire) getFileByHash(ctx context.Context, hash string) (*model.ObjThumb, error) {
 	query := map[string]string{
-		"session_token":   d.SessionToken,
+		"session_token":   d.sessionToken(),
 		"response_format": "json",
 		"hash":            hash,
 	}
