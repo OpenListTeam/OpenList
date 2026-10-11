@@ -185,6 +185,40 @@ func (d *Onedrive) GetFile(path string) (*File, error) {
 	return &file, err
 }
 
+// deletePermanently removes an item without moving it to the recycle bin.
+// The Graph action is only exposed as an item id scoped to a drive, so both
+// ids are resolved before the request: the item id comes from the listed
+// object, falling back to a metadata lookup when it is unknown, and the drive
+// id from the item's parent reference or the drive itself.
+// ApiDoc: https://learn.microsoft.com/en-us/graph/api/driveitem-permanentdelete
+func (d *Onedrive) deletePermanently(ctx context.Context, obj model.Obj) error {
+	itemID := obj.GetID()
+	driveID := ""
+	if itemID == "" {
+		file, err := d.GetFile(obj.GetPath())
+		if err != nil {
+			return err
+		}
+		itemID, driveID = file.Id, file.ParentReference.DriveId
+	}
+	if driveID == "" {
+		drive, err := d.getDrive(ctx)
+		if err != nil {
+			return err
+		}
+		driveID = drive.ID
+	}
+	if itemID == "" || driveID == "" {
+		return fmt.Errorf("onedrive: failed to resolve the drive or item id of %s", obj.GetPath())
+	}
+	host, _ := onedriveHostMap[d.Region]
+	url := fmt.Sprintf("%s/v1.0/drives/%s/items/%s/permanentDelete", host.Api, driveID, itemID)
+	_, err := d.Request(url, http.MethodPost, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, nil)
+	return err
+}
+
 func (d *Onedrive) upSmall(ctx context.Context, dstDir model.Obj, stream model.FileStreamer) error {
 	filepath := stdpath.Join(dstDir.GetPath(), stream.GetName())
 	// 1. upload new file
