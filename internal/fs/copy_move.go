@@ -14,7 +14,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
 	"github.com/pkg/errors"
 )
@@ -166,7 +165,7 @@ func transfer(ctx context.Context, taskType taskType, srcObjPath, dstDirPath str
 	}
 
 	t.Creator, _ = ctx.Value(conf.UserKey).(*model.User)
-	t.ApiUrl = common.GetApiUrl(ctx)
+	t.ApiUrl = conf.GetApiUrl(ctx)
 	if taskType == copy || taskType == merge {
 		CopyTaskManager.Add(t)
 	} else {

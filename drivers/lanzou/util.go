@@ -315,6 +315,36 @@ var findDownPageParamReg = regexp.MustCompile(`<iframe.*?src="(.+?)"`)
 // 获取文件ID
 var findFileIDReg = regexp.MustCompile(`'/ajax(?:file|m)\.php\?file=(\d+)'`)
 
+// 2026-10 改版：文件页将下载参数移入 /fn? 内页，接口变为 apifile 绝对地址并携带签名
+var (
+	fnDomainReg   = regexp.MustCompile(`var\s+domain[12]\s*=\s*'([^']*(?:ajaxfile|ajaxm)\.php\?file=(\d+)[^']*)'`)
+	fnSignReg     = regexp.MustCompile(`var\s+wp_sign\s*=\s*'([^']*)'`)
+	fnAjaxDataReg = regexp.MustCompile(`var\s+ajaxdata\s*=\s*'([^']*)'`)
+)
+
+// parseFnPage 从改版后的 /fn? 内页提取下载接口地址与签名表单
+// 对应页面 JS：POST domain1 {'action':'downprocess','websignkey':ajaxdata,'signs':ajaxdata,'sign':wp_sign,'websign':'2','kd':kdns,'ves':1}
+func parseFnPage(pageData string) (string, map[string]string, error) {
+	matches := fnDomainReg.FindStringSubmatch(pageData)
+	if len(matches) < 3 {
+		return "", nil, fmt.Errorf("not find fn ajax url")
+	}
+	sign := fnSignReg.FindStringSubmatch(pageData)
+	ajaxdata := fnAjaxDataReg.FindStringSubmatch(pageData)
+	if len(sign) < 2 || len(ajaxdata) < 2 {
+		return "", nil, fmt.Errorf("not find fn sign")
+	}
+	return matches[1], map[string]string{
+		"action":     "downprocess",
+		"websignkey": ajaxdata[1],
+		"signs":      ajaxdata[1],
+		"sign":       sign[1],
+		"websign":    "2",
+		"kd":         "1",
+		"ves":        "1",
+	}, nil
+}
+
 // 获取分享链接主界面
 func (d *LanZou) getShareUrlHtml(shareID string) (string, error) {
 	var vs string
@@ -437,18 +467,23 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 			return nil, err
 		}
 		nextPageData := RemoveNotes(string(data))
-		param, err = htmlJsonToMap(nextPageData)
-		if err != nil {
-			return nil, err
-		}
 
+		var resp FileShareInfoAndUrlResp[int]
 		matches := findFileIDReg.FindStringSubmatch(nextPageData)
-		if len(matches) < 2 {
+		if len(matches) >= 2 {
+			// 旧版结构：相对路径 /ajaxm.php?file=N
+			param, err = htmlJsonToMap(nextPageData)
+			if err != nil {
+				return nil, err
+			}
+			ajaxUrl := d.ShareUrl + matches[0][1:len(matches[0])-1]
+			_, err = d.post(ajaxUrl, func(req *resty.Request) { req.SetFormData(param) }, &resp)
+		} else if fnUrl, fnForm, ferr := parseFnPage(nextPageData); ferr == nil {
+			// 2026-10 改版结构：/fn? 内页携带 apifile 绝对地址与签名参数
+			_, err = d.post(fnUrl, func(req *resty.Request) { req.SetFormData(fnForm) }, &resp)
+		} else {
 			return nil, fmt.Errorf("not find file id")
 		}
-		ajaxUrl := d.ShareUrl + matches[0][1:len(matches[0])-1]
-		var resp FileShareInfoAndUrlResp[int]
-		_, err = d.post(ajaxUrl, func(req *resty.Request) { req.SetFormData(param) }, &resp)
 		if err != nil {
 			return nil, err
 		}

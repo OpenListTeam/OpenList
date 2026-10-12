@@ -878,7 +878,7 @@ func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback
 		"X-Yun-Api-Version":    "v1",
 		"X-Yun-App-Channel":    "10000034",
 		"X-Yun-Channel-Source": "10000034",
-		"X-Yun-Client-Info":    "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
+		"X-Yun-Client-Info":    "||13|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
 		"X-Yun-Module-Type":    "100",
 		"X-Yun-Svc-Type":       "1",
 	})

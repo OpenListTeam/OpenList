@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -123,10 +125,10 @@ func TestListPagePaginatesContentsAndCommonPrefixesTogether(t *testing.T) {
 	if len(first.Contents) != 1 || first.Contents[0].Key != "data/a" {
 		t.Fatalf("first contents = %#v, want data/a", first.Contents)
 	}
-	if len(first.CommonPrefixes) != 1 || first.CommonPrefixes[0].Prefix != "data/b" {
-		t.Fatalf("first prefixes = %#v, want data/b", first.CommonPrefixes)
+	if len(first.CommonPrefixes) != 1 || first.CommonPrefixes[0].Prefix != "data/b/" {
+		t.Fatalf("first prefixes = %#v, want data/b/", first.CommonPrefixes)
 	}
-	if !first.IsTruncated || first.NextMarker != "data/b" {
+	if !first.IsTruncated || first.NextMarker != "data/b/" {
 		t.Fatalf("first page truncated = %v, next marker = %q", first.IsTruncated, first.NextMarker)
 	}
 
@@ -141,8 +143,8 @@ func TestListPagePaginatesContentsAndCommonPrefixesTogether(t *testing.T) {
 	if len(second.Contents) != 1 || second.Contents[0].Key != "data/c" {
 		t.Fatalf("second contents = %#v, want data/c", second.Contents)
 	}
-	if len(second.CommonPrefixes) != 1 || second.CommonPrefixes[0].Prefix != "data/d" {
-		t.Fatalf("second prefixes = %#v, want data/d", second.CommonPrefixes)
+	if len(second.CommonPrefixes) != 1 || second.CommonPrefixes[0].Prefix != "data/d/" {
+		t.Fatalf("second prefixes = %#v, want data/d/", second.CommonPrefixes)
 	}
 	if second.IsTruncated || second.NextMarker != "" {
 		t.Fatalf("second page truncated = %v, next marker = %q", second.IsTruncated, second.NextMarker)
@@ -277,5 +279,68 @@ func TestListPageDoesNotReorderDirectoryCacheEntries(t *testing.T) {
 		if entries[i].GetName() != want {
 			t.Fatalf("entry %d = %q, want original order %q", i, entries[i].GetName(), want)
 		}
+	}
+}
+
+func TestListPageMixedDirectoryAndFilePaginatesInKeyOrder(t *testing.T) {
+	tree := map[string][]model.Obj{
+		"bucket/data": {
+			&model.Object{Name: "c", Size: 1},
+			&model.Object{Name: "b", IsFolder: true},
+			&model.Object{Name: "b.txt", Size: 1},
+			&model.Object{Name: "b-c", IsFolder: true},
+			&model.Object{Name: "a", Size: 1},
+		},
+		"bucket/data/b":   {&model.Object{Name: "y", Size: 1}, &model.Object{Name: "x", Size: 1}},
+		"bucket/data/b-c": {&model.Object{Name: "k", Size: 1}},
+	}
+	b := &s3Backend{
+		listDir: func(_ context.Context, dir string) ([]model.Obj, error) {
+			return tree[dir], nil
+		},
+	}
+	tests := []struct {
+		name      string
+		delimiter bool
+		want      []string
+	}{
+		{"delimiter", true, []string{"data/a", "data/b-c/", "data/b.txt", "data/b/", "data/c"}},
+		{"recursive", false, []string{"data/a", "data/b-c/k", "data/b.txt", "data/b/x", "data/b/y", "data/c"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !sort.StringsAreSorted(tt.want) {
+				t.Fatalf("expectation is not in key order: %v", tt.want)
+			}
+			for maxKeys := int64(1); maxKeys <= int64(len(tt.want))+1; maxKeys++ {
+				var got []string
+				page := gofakes3.ListBucketPage{MaxKeys: maxKeys}
+				for i := 0; i <= len(tt.want); i++ {
+					list, err := b.listPage(context.Background(), "bucket", "data", "", tt.delimiter, page)
+					if err != nil {
+						t.Fatalf("MaxKeys=%d: listPage() error = %v", maxKeys, err)
+					}
+					var keys []string
+					for _, item := range list.Contents {
+						keys = append(keys, item.Key)
+					}
+					for _, prefix := range list.CommonPrefixes {
+						if !strings.HasSuffix(prefix.Prefix, "/") {
+							t.Fatalf("common prefix %q does not end with /", prefix.Prefix)
+						}
+						keys = append(keys, prefix.Prefix)
+					}
+					sort.Strings(keys)
+					got = append(got, keys...)
+					if !list.IsTruncated {
+						break
+					}
+					page.Marker, page.HasMarker = list.NextMarker, true
+				}
+				if !slices.Equal(got, tt.want) {
+					t.Fatalf("MaxKeys=%d: listing = %v, want %v", maxKeys, got, tt.want)
+				}
+			}
+		})
 	}
 }
