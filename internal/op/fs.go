@@ -50,10 +50,8 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 
 	flightKey := key
-	if storage.Config().NoCache {
-		if base, ok := ctx.Value(conf.ThumbnailBaseURLKey).(*url.URL); ok {
-			flightKey += ":" + strconv.Quote(base.String())
-		}
+	if base, ok := ctx.Value(conf.ThumbnailBaseURLKey).(*url.URL); ok && storage.Config().NoCache {
+		flightKey += ":" + strconv.Quote(base.String())
 	}
 	objs, err, _ := listG.Do(flightKey, func() ([]model.Obj, error) {
 		dir, err := GetUnwrap(ctx, storage, path)
