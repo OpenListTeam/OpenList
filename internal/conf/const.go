@@ -198,4 +198,5 @@ const (
 	SharingIDKey
 	SkipHookKey
 	DirectUploadContentTypeKey
+	ThumbnailBaseURLKey
 )
