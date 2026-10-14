@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	stdpath "path"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -153,9 +155,13 @@ func (d *Local) FileInfoToObj(ctx context.Context, f fs.FileInfo, reqPath string
 	thumb := ""
 	if d.Thumbnail {
 		if d.supportsThumbnail(f.Name()) {
-			thumb = common.GetApiUrl(ctx) + stdpath.Join("/d", reqPath, f.Name())
-			thumb = utils.EncodePath(thumb, true)
-			thumb += "?type=thumb&sign=" + sign.Sign(stdpath.Join(reqPath, f.Name()))
+			if base, ok := ctx.Value(conf.ThumbnailBaseURLKey).(*url.URL); ok {
+				thumb = common.GetApiUrl(ctx) + base.JoinPath(url.PathEscape(f.Name())).String()
+			} else {
+				thumb = common.GetApiUrl(ctx) + stdpath.Join("/d", reqPath, f.Name())
+				thumb = utils.EncodePath(thumb, true)
+				thumb += "?type=thumb&sign=" + sign.Sign(stdpath.Join(reqPath, f.Name()))
+			}
 		}
 	}
 	isFolder := f.IsDir() || isSymlinkDir(f, fullPath)

@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"net/url"
 	stdpath "path"
 	"strconv"
 	"strings"
@@ -48,7 +49,13 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 	}
 
-	objs, err, _ := listG.Do(key, func() ([]model.Obj, error) {
+	flightKey := key
+	if storage.Config().NoCache {
+		if base, ok := ctx.Value(conf.ThumbnailBaseURLKey).(*url.URL); ok {
+			flightKey += ":" + strconv.Quote(base.String())
+		}
+	}
+	objs, err, _ := listG.Do(flightKey, func() ([]model.Obj, error) {
 		dir, err := GetUnwrap(ctx, storage, path)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed get dir")

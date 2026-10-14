@@ -199,4 +199,5 @@ const (
 	SkipHookKey
 	DirectUploadContentTypeKey
 	SkipNoOverwriteKey
+	ThumbnailBaseURLKey
 )
