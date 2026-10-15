@@ -2,9 +2,11 @@ package stream_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -13,6 +15,75 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
+
+type observedReadCloser struct {
+	io.Reader
+	close func()
+}
+
+func (r *observedReadCloser) Close() error {
+	r.close()
+	return nil
+}
+
+func TestNewSeekableStreamOwnsLinkOnConstructionFailure(t *testing.T) {
+	openErr := errors.New("open failed")
+	var closed []string
+	link := &model.Link{
+		RangeReader: &model.FileRangeReader{RangeReaderIF: stream.RangeReaderFunc(func(context.Context, http_range.Range) (io.ReadCloser, error) {
+			return &observedReadCloser{Reader: bytes.NewReader(nil), close: func() { closed = append(closed, "body") }}, openErr
+		})},
+		SyncClosers: utils.NewSyncClosers(utils.CloseFunc(func() error {
+			closed = append(closed, "link")
+			return nil
+		})),
+	}
+
+	got, err := stream.NewSeekableStream(&stream.FileStream{Ctx: t.Context(), Obj: &model.Object{Name: "file", Size: 4}}, link)
+	if got != nil || !errors.Is(err, openErr) {
+		t.Fatalf("NewSeekableStream() = %v, %v; want nil, %v", got, err, openErr)
+	}
+	if want := []string{"body", "link"}; !slices.Equal(closed, want) {
+		t.Fatalf("close order = %v, want %v", closed, want)
+	}
+}
+
+func TestSeekableStreamOwnsRepeatedRangeBodiesAndLink(t *testing.T) {
+	data := []byte("abcd")
+	var closed []string
+	link := &model.Link{
+		RangeReader: stream.RangeReaderFunc(func(_ context.Context, requested http_range.Range) (io.ReadCloser, error) {
+			end := requested.Start + requested.Length
+			return &observedReadCloser{Reader: bytes.NewReader(data[requested.Start:end]), close: func() { closed = append(closed, "body") }}, nil
+		}),
+		SyncClosers: utils.NewSyncClosers(utils.CloseFunc(func() error {
+			closed = append(closed, "link")
+			return nil
+		})),
+	}
+	ss, err := stream.NewSeekableStream(&stream.FileStream{Ctx: t.Context(), Obj: &model.Object{Name: "file", Size: int64(len(data))}}, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, requested := range []http_range.Range{{Start: 0, Length: 2}, {Start: 2, Length: 2}} {
+		reader, err := ss.RangeRead(requested)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadAll(reader); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(closed) != 0 {
+		t.Fatalf("premature closes = %v", closed)
+	}
+	if err := ss.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"body", "body", "link"}; !slices.Equal(closed, want) {
+		t.Fatalf("close order = %v, want %v", closed, want)
+	}
+}
 
 func TestRangeRead(t *testing.T) {
 	type args struct {

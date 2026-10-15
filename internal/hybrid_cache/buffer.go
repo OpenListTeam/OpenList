@@ -3,33 +3,33 @@ package hybrid_cache
 import (
 	"fmt"
 	"io"
+	"sync"
 )
 
 type BufferStore struct {
+	mu     sync.RWMutex
 	blocks [][]byte
 	size   int64
 }
 
 func (m *BufferStore) Size() int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.size
 }
 
-// 用于存储不复用的[]byte
-func (m *BufferStore) Append(buf []byte) {
-	m.size += int64(len(buf))
-	m.blocks = append(m.blocks, buf)
-}
-
 func (m *BufferStore) Close() error {
-	if len(m.blocks) > 0 {
-		clear(m.blocks)
-		m.blocks = m.blocks[:0]
-		m.size = 0
-	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.blocks)
+	m.blocks = nil
+	m.size = 0
 	return nil
 }
 
 func (m *BufferStore) ReadAt(p []byte, off int64) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -55,6 +55,8 @@ func (m *BufferStore) ReadAt(p []byte, off int64) (int, error) {
 }
 
 func (m *BufferStore) WriteAt(p []byte, off int64) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -80,6 +82,8 @@ func (m *BufferStore) WriteAt(p []byte, off int64) (int, error) {
 }
 
 func (m *BufferStore) GrowTo(size int64) (err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if size <= m.size {
 		return nil
 	}
