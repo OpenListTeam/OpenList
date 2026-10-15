@@ -45,6 +45,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/guangyapan"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/halalcloud_open"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/huggingface"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/ilanzou"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/ipfs_api"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/kodbox"
