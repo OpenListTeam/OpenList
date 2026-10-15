@@ -852,10 +852,10 @@ const (
 )
 
 // yunClientInfo returns the X-Yun-Client-Info header value for the configured
-// client_type addition. Empty or unknown values fall back to the web client.
+// client_type addition. Anything other than pc falls back to the web client.
 func (d *Yun139) yunClientInfo() string {
 	clientType := yunClientTypeWeb
-	if strings.EqualFold(strings.TrimSpace(d.ClientType), "pc") {
+	if d.ClientType == "pc" {
 		clientType = yunClientTypePC
 	}
 	return "||" + clientType + "|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||"
