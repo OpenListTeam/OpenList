@@ -133,7 +133,7 @@ func UpdateIndex() {
 }
 
 func manifestIcon(src string) ManifestIcon {
-	icon := ManifestIcon{Src: src}
+	icon := ManifestIcon{Src: src, Sizes: "any"}
 	u, err := url.Parse(src)
 	if err != nil {
 		return icon
@@ -141,9 +141,6 @@ func manifestIcon(src string) ManifestIcon {
 	mimeType := utils.GetMimeType(u.Path)
 	if strings.HasPrefix(mimeType, "image/") {
 		icon.Type = mimeType
-	}
-	if mimeType == "image/svg+xml" {
-		icon.Sizes = "any"
 	}
 	return icon
 }
