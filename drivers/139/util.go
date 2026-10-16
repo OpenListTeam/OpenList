@@ -927,12 +927,18 @@ func (d *Yun139) yunChannel() string {
 }
 
 // applyAppHeaders applies the App only header tweaks: the App uses its own
-// Android HTTP stack and does not send the web Caller header.
+// Android HTTP stack with its own protocol headers and does not send the web
+// Caller header.
 func (d *Yun139) applyAppHeaders(headers map[string]string) {
 	if !d.isAppClient() {
 		return
 	}
 	headers["User-Agent"] = yunAppUserAgent
+	headers["Accept-Language"] = "zh-CN"
+	headers["Content-Type"] = "application/json; charset=UTF-8"
+	headers["x-yun-url-type"] = "1"
+	headers["x-yun-op-type"] = "1"
+	headers["x-yun-sub-op-type"] = "100"
 	delete(headers, "Caller")
 }
 

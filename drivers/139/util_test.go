@@ -126,8 +126,18 @@ func TestApplyAppHeaders(t *testing.T) {
 	app := Yun139{Account: "18800000000", Addition: Addition{ClientType: "app"}}
 	headers := map[string]string{"Caller": "web", "X-Yun-Client-Info": "unset"}
 	app.applyAppHeaders(headers)
-	if got := headers["User-Agent"]; got != yunAppUserAgent {
-		t.Fatalf("User-Agent = %q, want %q", got, yunAppUserAgent)
+	want := map[string]string{
+		"User-Agent":        yunAppUserAgent,
+		"Accept-Language":   "zh-CN",
+		"Content-Type":      "application/json; charset=UTF-8",
+		"x-yun-url-type":    "1",
+		"x-yun-op-type":     "1",
+		"x-yun-sub-op-type": "100",
+	}
+	for key, value := range want {
+		if got := headers[key]; got != value {
+			t.Fatalf("header %s = %q, want %q", key, got, value)
+		}
 	}
 	if _, ok := headers["Caller"]; ok {
 		t.Fatal("Caller must not be sent by the app client")
@@ -139,7 +149,7 @@ func TestApplyAppHeaders(t *testing.T) {
 	web := Yun139{}
 	webHeaders := map[string]string{"Caller": "web", "User-Agent": "keep"}
 	web.applyAppHeaders(webHeaders)
-	if webHeaders["User-Agent"] != "keep" || webHeaders["Caller"] != "web" {
+	if len(webHeaders) != 2 || webHeaders["User-Agent"] != "keep" || webHeaders["Caller"] != "web" {
 		t.Fatalf("web headers were modified: %v", webHeaders)
 	}
 }
