@@ -32,6 +32,25 @@ type File struct {
 	File           *struct {
 		MimeType string `json:"mimeType"`
 	} `json:"file"`
+	Folder *struct {
+		ChildCount int `json:"childCount"`
+	} `json:"folder"`
+	RemoteItem *struct {
+		Id             string               `json:"id"`
+		Name           string               `json:"name"`
+		Size           int64                `json:"size"`
+		FileSystemInfo *FileSystemInfoFacet `json:"fileSystemInfo"`
+		Url            string               `json:"@microsoft.graph.downloadUrl"`
+		File           *struct {
+			MimeType string `json:"mimeType"`
+		} `json:"file"`
+		Folder *struct {
+			ChildCount int `json:"childCount"`
+		} `json:"folder"`
+		ParentReference struct {
+			DriveId string `json:"driveId"`
+		} `json:"parentReference"`
+	} `json:"remoteItem"`
 	Thumbnails []struct {
 		Medium struct {
 			Url string `json:"url"`
@@ -52,14 +71,35 @@ func fileToObj(f File, parentID string) *Object {
 	if len(f.Thumbnails) > 0 {
 		thumb = f.Thumbnails[0].Medium.Url
 	}
+	id := f.Id
+	name := f.Name
+	size := f.Size
+	modified := f.FileSystemInfo.LastModifiedDateTime
+	isFolder := f.Folder != nil || (f.File == nil && f.RemoteItem == nil)
+	if f.RemoteItem != nil {
+		if f.RemoteItem.Id != "" {
+			id = f.RemoteItem.Id
+		}
+		if f.RemoteItem.Size > 0 {
+			size = f.RemoteItem.Size
+		}
+		if f.RemoteItem.FileSystemInfo != nil && !f.RemoteItem.FileSystemInfo.LastModifiedDateTime.IsZero() {
+			modified = f.RemoteItem.FileSystemInfo.LastModifiedDateTime
+		}
+		if f.RemoteItem.Folder != nil {
+			isFolder = true
+		} else if f.RemoteItem.File != nil {
+			isFolder = false
+		}
+	}
 	return &Object{
 		ObjThumb: model.ObjThumb{
 			Object: model.Object{
-				ID:       f.Id,
-				Name:     f.Name,
-				Size:     f.Size,
-				Modified: f.FileSystemInfo.LastModifiedDateTime,
-				IsFolder: f.File == nil,
+				ID:       id,
+				Name:     name,
+				Size:     size,
+				Modified: modified,
+				IsFolder: isFolder,
 			},
 			Thumbnail: model.Thumbnail{Thumbnail: thumb},
 			//Url:       model.Url{Url: f.Url},
