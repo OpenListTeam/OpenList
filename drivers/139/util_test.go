@@ -1,6 +1,7 @@
 package _139
 
 import (
+	"crypto/md5"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -43,29 +45,130 @@ func TestExtractFastLoginCookies(t *testing.T) {
 }
 
 func TestYunClientInfoClientType(t *testing.T) {
+	const (
+		web         = "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||"
+		pc          = "||13|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||"
+		testAccount = "18800000000"
+	)
+	wantAppDeviceID := fmt.Sprintf("%X", md5.Sum([]byte(testAccount)))
+	app := "1|127.0.0.1|1|" + yunAppVersion + "|Xiaomi|" + yunAppModel + "|" + wantAppDeviceID +
+		"|" + yunAppMAC + "|" + yunAppOS + "|" + yunAppResolution + "|zh||||032|0|"
+
 	tests := []struct {
 		name       string
 		clientType string
-		want       string
+		wantDevice string
+		wantInfo   string
+		wantChan   string
 	}{
 		{
-			name: "default web client",
-			want: "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
+			name:       "default web client",
+			wantDevice: web,
+			wantInfo:   web + "dW5kZWZpbmVk||",
+			wantChan:   yunWebChannel,
 		},
 		{
 			name:       "pc client",
 			clientType: "pc",
-			want:       "||13|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
+			wantDevice: pc,
+			wantInfo:   pc + "dW5kZWZpbmVk||",
+			wantChan:   yunWebChannel,
+		},
+		{
+			name:       "app client",
+			clientType: "app",
+			wantDevice: app,
+			wantInfo:   app,
+			wantChan:   yunAppChannel,
+		},
+		{
+			name:       "unknown client falls back to web",
+			clientType: "mobile",
+			wantDevice: web,
+			wantInfo:   web + "dW5kZWZpbmVk||",
+			wantChan:   yunWebChannel,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := Yun139{Addition: Addition{ClientType: tt.clientType}}
-			if got := d.yunClientInfo(); got != tt.want {
-				t.Fatalf("yunClientInfo() = %q, want %q", got, tt.want)
+			d := Yun139{Account: testAccount, Addition: Addition{ClientType: tt.clientType}}
+			if got := d.deviceInfo(); got != tt.wantDevice {
+				t.Fatalf("deviceInfo() = %q, want %q", got, tt.wantDevice)
+			}
+			if got := d.yunClientInfo(); got != tt.wantInfo {
+				t.Fatalf("yunClientInfo() = %q, want %q", got, tt.wantInfo)
+			}
+			if got := d.yunChannel(); got != tt.wantChan {
+				t.Fatalf("yunChannel() = %q, want %q", got, tt.wantChan)
 			}
 		})
+	}
+}
+
+func TestAppDeviceIDIsStableAndHex(t *testing.T) {
+	const account = "18800000000"
+	d := Yun139{Account: account, Addition: Addition{ClientType: "app"}}
+	want := fmt.Sprintf("%X", md5.Sum([]byte(account)))
+	if got := d.appDeviceID(); got != want {
+		t.Fatalf("appDeviceID() = %q, want %q", got, want)
+	}
+	if got := d.appDeviceID(); got != want {
+		t.Fatalf("appDeviceID() is not stable: %q", got)
+	}
+	empty := Yun139{}
+	if got := empty.appDeviceID(); len(got) != 32 || got != strings.ToUpper(got) {
+		t.Fatalf("appDeviceID() without account = %q, want 32 upper case characters", got)
+	}
+}
+
+func TestApplyAppHeaders(t *testing.T) {
+	app := Yun139{Account: "18800000000", Addition: Addition{ClientType: "app"}}
+	headers := map[string]string{"Caller": "web", "X-Yun-Client-Info": "unset"}
+	app.applyAppHeaders(headers)
+	if got := headers["User-Agent"]; got != yunAppUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, yunAppUserAgent)
+	}
+	if _, ok := headers["Caller"]; ok {
+		t.Fatal("Caller must not be sent by the app client")
+	}
+	if got := headers["X-Yun-Client-Info"]; got != "unset" {
+		t.Fatalf("applyAppHeaders must not rewrite other headers, got %q", got)
+	}
+
+	web := Yun139{}
+	webHeaders := map[string]string{"Caller": "web", "User-Agent": "keep"}
+	web.applyAppHeaders(webHeaders)
+	if webHeaders["User-Agent"] != "keep" || webHeaders["Caller"] != "web" {
+		t.Fatalf("web headers were modified: %v", webHeaders)
+	}
+}
+
+type fakeFileStreamer struct {
+	model.FileStreamer
+	name string
+}
+
+func (f *fakeFileStreamer) GetName() string {
+	return f.name
+}
+
+func TestUploadFinalName(t *testing.T) {
+	raw := &fakeFileStreamer{name: "movie.mkv"}
+	if got := uploadFinalName(raw); got != "movie.mkv" {
+		t.Fatalf("uploadFinalName() = %q, want %q", got, "movie.mkv")
+	}
+
+	uploaded := &imageSuffixUploadStreamer{
+		FileStreamer: raw,
+		uploadName:   "movie.mkv" + imageSuffixUploadSuffix,
+		finalName:    "movie.mkv",
+	}
+	if got := uploaded.GetName(); got != "movie.mkv.jpg" {
+		t.Fatalf("GetName() = %q, want %q", got, "movie.mkv.jpg")
+	}
+	if got := uploadFinalName(uploaded); got != "movie.mkv" {
+		t.Fatalf("uploadFinalName() = %q, want %q", got, "movie.mkv")
 	}
 }
 
