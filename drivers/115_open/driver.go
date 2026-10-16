@@ -171,10 +171,21 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = stdpath.Join(d.parentPath, path)
 	resp, err := d.client.GetFolderInfoByPath(ctx, path)
 	if err != nil {
+		// SDK-level "object not found" (empty array response from API)
 		if errors.Is(err, sdk.ErrObjectNotFound) {
 			return d.getFromParent(ctx, path, "")
 		}
+		// API-level error response (State=false), treat as not found
+		// since this is a path-lookup that can't resolve the target
+		var apiErr *sdk.Error
+		if errors.As(err, &apiErr) {
+			return nil, errs.ObjectNotFound
+		}
 		return nil, err
+	}
+	// Handle null/empty response (e.g., API returns null data for non-existent path)
+	if resp.FileID == "" {
+		return nil, errs.ObjectNotFound
 	}
 	obj := &Obj{
 		Fid:  resp.FileID,
