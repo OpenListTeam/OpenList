@@ -4,6 +4,8 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 )
 
 var (
@@ -25,10 +27,11 @@ var FilenameCharMap = make(map[string]string)
 var PrivacyReg []*regexp.Regexp
 
 var (
+	CachePolicy cache.Policy = cache.PolicyAuto
 	// 在HybridCache中使用[]byte缓存数据流的限制，内存为Go自动管理，直到GC
 	AutoMemoryLimit uint64 = 4 * 1024 * 1024
-	// 最小空闲内存，当内存不足时，HybridCache会回退到文件缓存。
-	// 如果为0，HybridCache会使用文件缓存，不占用内存。
+	// 最小空闲内存，当内存不足时，auto策略会回退到文件缓存。
+	// 如果为0，auto策略会使用文件缓存，不占用内存。
 	MinFreeMemory uint64 = 16 * 1024 * 1024
 	// 限制HybridCache手动管理内存单次的扩容大小，超过该阈值将分多次扩容。
 	// MinFreeMemory大于0时，也限制 Downloader 的PartSize
