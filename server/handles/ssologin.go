@@ -98,7 +98,7 @@ func generateSSOBindingToken(c *gin.Context, purpose, ssoID string) (string, err
 		c.SetCookie(
 			ssoBindingCookie,
 			session,
-			int((stateExpire+ssoBindingExpire).Seconds()),
+			int((stateExpire + ssoBindingExpire).Seconds()),
 			path.Join(conf.URL.Path, "/api"),
 			"",
 			strings.HasPrefix(common.GetApiUrl(c), "https://"),
@@ -223,6 +223,8 @@ func SSOLoginRedirect(c *gin.Context) {
 		urlValues.Add("scope", "openid")
 		urlValues.Add("prompt", "consent")
 		urlValues.Add("response_type", "code")
+	case "Feishu":
+		rUrl = "https://accounts.feishu.cn/open-apis/authen/v1/authorize?"
 	case "Casdoor":
 		endpoint := strings.TrimSuffix(setting.GetStr(conf.SSOEndpointName), "/")
 		rUrl = endpoint + "/login/oauth/authorize?"
@@ -429,7 +431,8 @@ func SSOLoginCallback(c *gin.Context) {
 	clientId := setting.GetStr(conf.SSOClientId)
 	platform := setting.GetStr(conf.SSOLoginPlatform)
 	clientSecret := setting.GetStr(conf.SSOClientSecret)
-	var tokenUrl, userUrl, scope, authField, idField, usernameField string
+	var tokenUrl, userUrl, scope, authField string
+	var idField, usernameField []interface{}
 	additionalForm := make(map[string]string)
 	switch platform {
 	case "Github":
@@ -437,30 +440,37 @@ func SSOLoginCallback(c *gin.Context) {
 		userUrl = "https://api.github.com/user"
 		authField = "code"
 		scope = "read:user"
-		idField = "id"
-		usernameField = "login"
+		idField = []interface{}{"id"}
+		usernameField = []interface{}{"login"}
 	case "Microsoft":
 		tokenUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 		userUrl = "https://graph.microsoft.com/v1.0/me"
 		additionalForm["grant_type"] = "authorization_code"
 		scope = "user.read"
 		authField = "code"
-		idField = "id"
-		usernameField = "displayName"
+		idField = []interface{}{"id"}
+		usernameField = []interface{}{"displayName"}
 	case "Google":
 		tokenUrl = "https://oauth2.googleapis.com/token"
 		userUrl = "https://www.googleapis.com/oauth2/v1/userinfo"
 		additionalForm["grant_type"] = "authorization_code"
 		scope = "https://www.googleapis.com/auth/userinfo.profile"
 		authField = "code"
-		idField = "id"
-		usernameField = "name"
+		idField = []interface{}{"id"}
+		usernameField = []interface{}{"name"}
 	case "Dingtalk":
 		tokenUrl = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken"
 		userUrl = "https://api.dingtalk.com/v1.0/contact/users/me"
 		authField = "authCode"
-		idField = "unionId"
-		usernameField = "nick"
+		idField = []interface{}{"unionId"}
+		usernameField = []interface{}{"nick"}
+	case "Feishu":
+		tokenUrl = "https://accounts.feishu.cn/oauth/v3/token"
+		userUrl = "https://open.feishu.cn/open-apis/authen/v1/user_info"
+		additionalForm["grant_type"] = "authorization_code"
+		authField = "code"
+		idField = []interface{}{"data", "open_id"}
+		usernameField = []interface{}{"data", "name"}
 	case "Casdoor":
 		endpoint := strings.TrimSuffix(setting.GetStr(conf.SSOEndpointName), "/")
 		tokenUrl = endpoint + "/api/login/oauth/access_token"
@@ -468,8 +478,8 @@ func SSOLoginCallback(c *gin.Context) {
 		additionalForm["grant_type"] = "authorization_code"
 		scope = "profile"
 		authField = "code"
-		idField = "sub"
-		usernameField = "preferred_username"
+		idField = []interface{}{"sub"}
+		usernameField = []interface{}{"preferred_username"}
 	case "OIDC":
 		OIDCLoginCallback(c)
 		return
@@ -506,14 +516,17 @@ func SSOLoginCallback(c *gin.Context) {
 		} else {
 			redirect_uri = common.GetApiUrl(c) + "/api/auth/sso_callback" + "?method=" + argument
 		}
+		formData := map[string]string{
+			"client_id":     clientId,
+			"client_secret": clientSecret,
+			"code":          callbackCode,
+			"redirect_uri":  redirect_uri,
+		}
+		if scope != "" {
+			formData["scope"] = scope
+		}
 		resp, err = ssoClient.R().SetHeader("Accept", "application/json").
-			SetFormData(map[string]string{
-				"client_id":     clientId,
-				"client_secret": clientSecret,
-				"code":          callbackCode,
-				"redirect_uri":  redirect_uri,
-				"scope":         scope,
-			}).SetFormData(additionalForm).Post(tokenUrl)
+			SetFormData(formData).SetFormData(additionalForm).Post(tokenUrl)
 	}
 	if err != nil {
 		common.ErrorResp(c, err, 400)
@@ -532,7 +545,7 @@ func SSOLoginCallback(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	userID := utils.Json.Get(resp.Body(), idField).ToString()
+	userID := utils.Json.Get(resp.Body(), idField...).ToString()
 	if utils.SliceContains([]string{"", "0"}, userID) {
 		common.ErrorResp(c, errors.New("error occurred"), 400)
 		return
@@ -550,7 +563,7 @@ func SSOLoginCallback(c *gin.Context) {
 		ssoPostMessage(c, map[string]string{"sso_id": bindingProof})
 		return
 	}
-	username := utils.Json.Get(resp.Body(), usernameField).ToString()
+	username := utils.Json.Get(resp.Body(), usernameField...).ToString()
 	user, err := db.GetUserBySSOID(userID)
 	if err != nil {
 		user, err = autoRegister(username, userID, err)
