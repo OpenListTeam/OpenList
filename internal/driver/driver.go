@@ -218,3 +218,8 @@ type DirectUploader interface {
 	// return errs.NotImplement if the driver does not support the given direct upload tool
 	GetDirectUploadInfo(ctx context.Context, tool string, dstDir model.Obj, fileName string, fileSize int64) (any, error)
 }
+
+type DirectUploadCompleter interface {
+	// CompleteDirectUpload commits a frontend-direct upload after the client has uploaded bytes to storage.
+	CompleteDirectUpload(ctx context.Context, tool string, dstDir model.Obj, fileName string, uploadToken string) (model.Obj, error)
+}
