@@ -2,7 +2,6 @@ package openlist
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -26,8 +25,6 @@ var config = driver.Config{
 	LinkCacheMode:    driver.LinkCacheAuto,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &OpenList{}
-	})
+func New() driver.Driver {
+	return &OpenList{}
 }

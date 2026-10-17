@@ -2,7 +2,6 @@ package halalcloudopen
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -20,15 +19,11 @@ type Addition struct {
 
 var config = driver.Config{
 	Name:        "HalalCloudOpen",
-	OnlyProxy:   false,
 	DefaultRoot: "/",
-	NoLinkURL:   false,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &HalalCloudOpen{}
-	})
+func New() driver.Driver {
+	return &HalalCloudOpen{}
 }
 
 type UploadedFile struct {

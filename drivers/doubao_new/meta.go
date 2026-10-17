@@ -2,7 +2,6 @@ package doubao_new
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -22,18 +21,14 @@ type Addition struct {
 }
 
 var config = driver.Config{
-	Name:        "DoubaoNew",
-	LocalSort:   true,
-	DefaultRoot: "",
+	Name:      "DoubaoNew",
+	LocalSort: true,
 	Alert: `danger|Do not use 302 if the storage is public accessible.
 Otherwise, the download link may leak sensitive information such as access token or signature.
 Others may use the leaked link to access all your files.`,
-	NoOverwriteUpload: false,
-	PreferProxy:       true,
+	PreferProxy: true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &DoubaoNew{}
-	})
+func New() driver.Driver {
+	return &DoubaoNew{}
 }

@@ -2,7 +2,6 @@ package strm
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 const (
@@ -37,12 +36,10 @@ var config = driver.Config{
 	NoLinkURL:   true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Strm{
-			Addition: Addition{
-				EncodePath: true,
-			},
-		}
-	})
+func New() driver.Driver {
+	return &Strm{
+		Addition: Addition{
+			EncodePath: true,
+		},
+	}
 }

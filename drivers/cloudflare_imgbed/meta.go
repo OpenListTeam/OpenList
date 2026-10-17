@@ -2,7 +2,6 @@ package cloudflare_imgbed
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -18,10 +17,9 @@ type Addition struct {
 var config = driver.Config{
 	Name:        "cloudflare_imgbed",
 	LocalSort:   true,
-	NoUpload:    false,
 	DefaultRoot: "/",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver { return &CFImgBed{} })
+func New() driver.Driver {
+	return &CFImgBed{}
 }

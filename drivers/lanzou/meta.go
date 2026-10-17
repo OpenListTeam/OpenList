@@ -2,7 +2,6 @@ package lanzou
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -35,8 +34,6 @@ var config = driver.Config{
 	DefaultRoot: "-1",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &LanZou{}
-	})
+func New() driver.Driver {
+	return &LanZou{}
 }

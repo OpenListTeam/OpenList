@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -29,8 +28,6 @@ var config = driver.Config{
 	DefaultRoot: "/",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &OnedriveSharelink{}
-	})
+func New() driver.Driver {
+	return &OnedriveSharelink{}
 }
