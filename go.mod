@@ -26,7 +26,7 @@ require (
 	github.com/blevesearch/bleve/v2 v2.6.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/caarlos0/env/v9 v9.0.0
-	github.com/charmbracelet/bubbles v0.21.1
+	github.com/charmbracelet/bubbles/v2 v2.2.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/city404/v6-public-rpc-proto/go v0.0.0-20240817070657-90f8e24b653e
