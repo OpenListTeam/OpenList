@@ -139,10 +139,21 @@ func (d *OnedriveAPP) GetFile(path string) (*File, error) {
 }
 
 func (d *OnedriveAPP) upSmall(ctx context.Context, dstDir model.Obj, stream model.FileStreamer) error {
-	url := d.GetMetaUrl(false, stdpath.Join(dstDir.GetPath(), stream.GetName())) + "/content"
+	filepath := stdpath.Join(dstDir.GetPath(), stream.GetName())
+	url := d.GetMetaUrl(false, filepath) + "/content"
+	var item File
 	_, err := d.Request(url, http.MethodPut, func(req *resty.Request) {
 		req.SetBody(driver.NewLimitedUploadStream(ctx, stream)).SetContext(ctx)
-	}, nil)
+	}, &item)
+	if err != nil {
+		return err
+	}
+	// verify stored size: a stalled body can still get a 2xx while fewer
+	// bytes (even 0) were actually stored, which would silently corrupt data.
+	// Skip when the expected size is unknown (e.g. chunked WebDAV PUTs).
+	if stream.GetSize() >= 0 && item.Size != stream.GetSize() {
+		return fmt.Errorf("OnedriveAPP: uploaded file size mismatch (path=%v): stored %d bytes, expected %d", filepath, item.Size, stream.GetSize())
+	}
 	return err
 }
 
