@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -109,6 +110,40 @@ func (d *GoogleDrive) Remove(ctx context.Context, obj model.Obj) error {
 	url := "https://www.googleapis.com/drive/v3/files/" + obj.GetID()
 	_, err := d.request(url, http.MethodDelete, nil, nil)
 	return err
+}
+
+var replaceCleanupDelay = 30 * time.Second
+
+// Replace installs src at dst without invalidating readers that already resolved
+// the previous destination object. Google Drive permits duplicate names, so the
+// source is published first, then the previous destination is renamed out of the
+// canonical namespace. Its file ID is kept alive briefly so in-flight readers can
+// finish resolving/downloading it before asynchronous cleanup deletes it.
+func (d *GoogleDrive) Replace(ctx context.Context, srcObj, dstObj model.Obj, dstName string) error {
+	publish := base.Json{"name": dstName}
+	url := "https://www.googleapis.com/drive/v3/files/" + srcObj.GetID()
+	_, err := d.request(url, http.MethodPatch, func(req *resty.Request) {
+		req.SetBody(publish)
+	}, nil)
+	if err != nil {
+		return err
+	}
+
+	tombstoneName := ".openlist-replaced-" + dstObj.GetID()
+	tombstone := base.Json{"name": tombstoneName}
+	url = "https://www.googleapis.com/drive/v3/files/" + dstObj.GetID()
+	_, err = d.request(url, http.MethodPatch, func(req *resty.Request) {
+		req.SetBody(tombstone)
+	}, nil)
+	if err != nil {
+		return err
+	}
+
+	time.AfterFunc(replaceCleanupDelay, func() {
+		url := "https://www.googleapis.com/drive/v3/files/" + dstObj.GetID()
+		_, _ = d.request(url, http.MethodDelete, nil, nil)
+	})
+	return nil
 }
 
 func (d *GoogleDrive) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
