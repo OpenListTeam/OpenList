@@ -79,6 +79,12 @@ func InitConfig() {
 		if err != nil {
 			log.Fatalf("load config error: %+v", err)
 		}
+		if flags.DataDir != "" {
+			conf.Conf.Database.DBFile = filepath.Join(flags.DataDir, "data.db")
+			conf.Conf.TempDir = filepath.Join(flags.DataDir, "temp")
+			conf.Conf.BleveDir = filepath.Join(flags.DataDir, "bleve")
+			conf.Conf.Log.Name = filepath.Join(flags.DataDir, "log/log.log")
+		}
 		LastLaunchedVersion = conf.Conf.LastLaunchedVersion
 		if strings.HasPrefix(conf.Version, "v") || LastLaunchedVersion == "" {
 			conf.Conf.LastLaunchedVersion = conf.Version
