@@ -22,6 +22,8 @@ const (
 	MainColor                      = "main_color"
 	HideStorageDetails             = "hide_storage_details"
 	HideStorageDetailsInManagePage = "hide_storage_details_in_manage_page"
+	StorageDetailsCooldownSeconds  = "storage_details_cooldown_seconds"
+	StorageDetailsTimeoutSeconds   = "storage_details_timeout_seconds"
 
 	// preview
 	TextTypes                     = "text_types"

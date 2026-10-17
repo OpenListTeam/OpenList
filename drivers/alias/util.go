@@ -55,6 +55,12 @@ func (d *Alias) listRoot(ctx context.Context, withDetails, refresh bool) []model
 		}
 		workerCount++
 		go func(dri driver.Driver, i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Errorf("panic in alias GetStorageDetails for %s: %v", dri.GetStorage().MountPath, r)
+					detailsChan <- detailWithIndex{idx: i, val: nil}
+				}
+			}()
 			details, e := op.GetStorageDetails(ctx, dri, refresh)
 			if e != nil {
 				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
