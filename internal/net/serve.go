@@ -49,7 +49,7 @@ import (
 // ServeHTTP uses it to handle requests using If-Match, If-None-Match, or If-Range.
 func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time.Time, size int64, rangeReader model.RangeReaderIF) (err error) {
 	setLastModified(w, modTime)
-	done, rangeReq := checkPreconditions(w, r, modTime)
+	done, rangeReq := CheckPreconditions(w, r, modTime, true)
 	if done {
 		return nil
 	}
@@ -240,16 +240,49 @@ func closeWithError(err error, closer io.Closer) error {
 	}
 	return stderrors.Join(err, closeErr)
 }
+
+// unsafeProxyHeaders are never forwarded from the client request to the
+// upstream storage, regardless of the proxy_ignore_headers setting. They either
+// carry the caller's credentials, describe the hop to this server rather than
+// the hop to upstream, or let the caller influence how upstream routes and
+// authenticates the request.
+var unsafeProxyHeaders = map[string]struct{}{
+	"authorization":       {},
+	"cookie":              {},
+	"proxy-authorization": {},
+	"www-authenticate":    {},
+	"host":                {},
+	"referer":             {},
+	"origin":              {},
+	"connection":          {},
+	"keep-alive":          {},
+	"proxy-connection":    {},
+	"te":                  {},
+	"trailer":             {},
+	"transfer-encoding":   {},
+	"upgrade":             {},
+	"forwarded":           {},
+	"x-forwarded-for":     {},
+	"x-forwarded-host":    {},
+	"x-forwarded-proto":   {},
+	"x-real-ip":           {},
+}
+
+
 func ProcessHeader(origin, override http.Header) http.Header {
 	result := http.Header{}
 	// client header
 	for h, val := range origin {
-		if utils.SliceContains(conf.SlicesMap[conf.ProxyIgnoreHeaders], strings.ToLower(h)) {
+		lower := strings.ToLower(h)
+		if _, unsafe := unsafeProxyHeaders[lower]; unsafe {
+			continue
+		}
+		if utils.SliceContains(conf.SlicesMap[conf.ProxyIgnoreHeaders], lower) {
 			continue
 		}
 		result[h] = val
 	}
-	// needed header
+	// needed header, produced by the storage driver rather than the client
 	for h, val := range override {
 		result[h] = val
 	}
@@ -269,20 +302,18 @@ func RequestHttp(ctx context.Context, httpMethod string, headerOverride http.Hea
 	}
 	// TODO clean header with blocklist or passlist
 	res.Header.Del("set-cookie")
-	var reader io.Reader
 	if res.StatusCode >= 400 {
-		// 根据 Content-Encoding 判断 Body 是否压缩
-		switch res.Header.Get("Content-Encoding") {
-		case "gzip":
-			// 使用gzip.NewReader解压缩
-			reader, _ = gzip.NewReader(res.Body)
-			defer reader.(*gzip.Reader).Close()
-		default:
-			// 没有Content-Encoding，直接读取
-			reader = res.Body
+		defer res.Body.Close()
+		var reader io.Reader = res.Body
+		if res.Header.Get("Content-Encoding") == "gzip" {
+			gzipReader, err := gzip.NewReader(res.Body)
+			if err != nil {
+				return nil, fmt.Errorf("http request [%s] failure,status: %w decode gzip response: %v", URL, HttpStatusCodeError(res.StatusCode), err)
+			}
+			defer gzipReader.Close()
+			reader = gzipReader
 		}
 		all, _ := io.ReadAll(reader)
-		_ = res.Body.Close()
 		msg := string(all)
 		log.Debugln(msg)
 		return nil, fmt.Errorf("http request [%s] failure,status: %w response:%s", URL, HttpStatusCodeError(res.StatusCode), msg)
