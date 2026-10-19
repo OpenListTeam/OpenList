@@ -393,13 +393,19 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	// "godoc os RemoveAll" says that "If the path does not exist, RemoveAll
 	// returns nil (no error)." WebDAV semantics are that it should return a
 	// "404 Not Found". We therefore have to Stat before we RemoveAll.
-	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
-		if errs.IsObjectNotFound(err) {
+	parentPath := path.Dir(reqPath)
+	if _, err := fs.List(ctx, parentPath, &fs.ListArgs{Refresh: true, NoLog: true}); err != nil {
+		if errs.IsNotFoundError(err) {
 			return http.StatusNotFound, err
 		}
 		return http.StatusMethodNotAllowed, err
 	}
-	parentPath := path.Dir(reqPath)
+	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
+		if errs.IsNotFoundError(err) {
+			return http.StatusNotFound, err
+		}
+		return http.StatusMethodNotAllowed, err
+	}
 	parentMeta, err := op.GetNearestMeta(parentPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
@@ -670,7 +676,7 @@ func (h *Handler) handleCopyMove(w http.ResponseWriter, r *http.Request) (status
 				return http.StatusBadRequest, errInvalidDepth
 			}
 		}
-		return copyFiles(ctx, src, dst, r.Header.Get("Overwrite") != "F")
+		return copyFiles(ctx, src, dst, r.Header.Get("Overwrite") != "F", depth)
 	}
 
 	release, status, err := h.confirmLocks(r, src, dst)

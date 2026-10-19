@@ -151,9 +151,15 @@ func installStagedObject(ctx context.Context, stagePath, dstDir, dstName string)
 	return nil
 }
 
-func copyWithRollback(ctx context.Context, src, dstDir, dstName string, dstExisted bool) (*fileMutation, error) {
+func copyWithRollback(ctx context.Context, src, dstDir, dstName string, dstExisted, shallow bool) (*fileMutation, error) {
 	stagePath := path.Join(dstDir, ".openlist-copy-"+uuid.NewString())
-	if _, err := fs.CopyTo(stagingContext(ctx), src, dstDir, path.Base(stagePath)); err != nil {
+	var err error
+	if shallow {
+		err = fs.MakeDir(stagingContext(ctx), stagePath)
+	} else {
+		_, err = fs.CopyTo(stagingContext(ctx), src, dstDir, path.Base(stagePath))
+	}
+	if err != nil {
 		return nil, cleanupAfterFailure(ctx, stagePath, err)
 	}
 	dstPath := path.Join(dstDir, dstName)
@@ -362,7 +368,7 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 // Individual item permission checks are skipped for performance reasons.
 //
 // See section 9.8.5 for when various HTTP status codes apply.
-func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int, err error) {
+func copyFiles(ctx context.Context, src, dst string, overwrite bool, depth int) (status int, err error) {
 	srcDir := path.Dir(src)
 	dstDir := path.Dir(dst)
 	dstName := path.Base(dst)
@@ -384,12 +390,14 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
-	if _, err = fs.Get(ctx, src, &fs.GetArgs{}); err != nil {
+	srcInfo, err := fs.Get(ctx, src, &fs.GetArgs{})
+	if err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusNotFound, err
 		}
 		return http.StatusInternalServerError, err
 	}
+	shallow := depth == 0 && srcInfo.IsDir()
 	if dstDirInfo, err := fs.Get(ctx, dstDir, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusConflict, err
@@ -411,7 +419,7 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	err = runDeadPropsFileMutation(ctx,
 		func(tx *gorm.DB) error { return copyDeadProps(tx, src, dst) },
 		func() (*fileMutation, error) {
-			return copyWithRollback(ctx, src, dstDir, dstName, dstExisted && overwrite)
+			return copyWithRollback(ctx, src, dstDir, dstName, dstExisted && overwrite, shallow)
 		},
 	)
 	if err != nil {
