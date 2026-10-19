@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -22,14 +21,18 @@ func TestRemoveWithCancelledTaskCtx(t *testing.T) {
 	var removed atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(body), "torrent-remove") {
+		var req struct {
+			Method    string `json:"method"`
+			Tag       int    `json:"tag"`
+			Arguments struct {
+				IDs []int64 `json:"ids"`
+			} `json:"arguments"`
+		}
+		_ = json.Unmarshal(body, &req)
+		if req.Method == "torrent-remove" && len(req.Arguments.IDs) == 1 && req.Arguments.IDs[0] == 1 {
 			removed.Add(1)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		var req struct {
-			Tag int `json:"tag"`
-		}
-		_ = json.Unmarshal(body, &req)
 		_, _ = fmt.Fprintf(w, `{"result":"success","arguments":{},"tag":%d}`, req.Tag)
 	}))
 	defer srv.Close()
