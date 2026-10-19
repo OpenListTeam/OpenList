@@ -468,6 +468,16 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 		return http.StatusForbidden, errs.IgnoredSystemFile
 	}
 	parentPath := path.Dir(reqPath)
+	parent, err := fs.Get(ctx, parentPath, &fs.GetArgs{})
+	if err != nil {
+		if errs.IsNotFoundError(err) {
+			return http.StatusConflict, err
+		}
+		return http.StatusInternalServerError, err
+	}
+	if !parent.IsDir() {
+		return http.StatusConflict, errs.NotFolder
+	}
 	parentMeta, err := op.GetNearestMeta(parentPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
@@ -561,15 +571,21 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	//405 (Method Not Allowed) - MKCOL can only be executed on an unmapped URL
 	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err == nil {
 		return http.StatusMethodNotAllowed, err
+	} else if !errs.IsNotFoundError(err) {
+		return http.StatusInternalServerError, err
 	}
 	// RFC 4918 9.3.1
 	// 409 (Conflict) The server MUST NOT create those intermediate collections automatically.
 	parentPath := path.Dir(reqPath)
-	if _, err := fs.Get(ctx, parentPath, &fs.GetArgs{}); err != nil {
-		if errs.IsObjectNotFound(err) {
+	parent, err := fs.Get(ctx, parentPath, &fs.GetArgs{})
+	if err != nil {
+		if errs.IsNotFoundError(err) {
 			return http.StatusConflict, err
 		}
-		return http.StatusMethodNotAllowed, err
+		return http.StatusInternalServerError, err
+	}
+	if !parent.IsDir() {
+		return http.StatusConflict, errs.NotFolder
 	}
 	parentMeta, err := op.GetNearestMeta(parentPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
