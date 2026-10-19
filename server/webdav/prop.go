@@ -172,9 +172,9 @@ var liveProps = map[xml.Name]struct {
 // TODO(nigeltao) merge props and allprop?
 
 // Props returns the status of the properties named pnames for resource name.
-func props(ctx context.Context, ls LockSystem, name string, fi model.Obj, pnames []xml.Name) ([]Propstat, error) {
+func props(tx *gorm.DB, ctx context.Context, ls LockSystem, name string, fi model.Obj, pnames []xml.Name) ([]Propstat, error) {
 	isDir := fi.IsDir()
-	deadProps, err := getDeadProps(name)
+	deadProps, err := getDeadProps(tx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -199,9 +199,9 @@ func props(ctx context.Context, ls LockSystem, name string, fi model.Obj, pnames
 }
 
 // Propnames returns the property names defined for resource name.
-func propnames(_ context.Context, _ LockSystem, name string, fi model.Obj) ([]xml.Name, error) {
+func propnames(tx *gorm.DB, name string, fi model.Obj) ([]xml.Name, error) {
 	isDir := fi.IsDir()
-	deadProps, err := getDeadProps(name)
+	deadProps, err := getDeadProps(tx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -218,8 +218,8 @@ func propnames(_ context.Context, _ LockSystem, name string, fi model.Obj) ([]xm
 }
 
 // Allprop returns the properties defined for resource name and the properties named in include.
-func allprop(ctx context.Context, ls LockSystem, name string, fi model.Obj, include []xml.Name) ([]Propstat, error) {
-	pnames, err := propnames(ctx, ls, name, fi)
+func allprop(tx *gorm.DB, ctx context.Context, ls LockSystem, name string, fi model.Obj, include []xml.Name) ([]Propstat, error) {
+	pnames, err := propnames(tx, name, fi)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func allprop(ctx context.Context, ls LockSystem, name string, fi model.Obj, incl
 			pnames = append(pnames, pn)
 		}
 	}
-	return props(ctx, ls, name, fi, pnames)
+	return props(tx, ctx, ls, name, fi, pnames)
 }
 
 // Patch patches the properties of resource name.
@@ -267,15 +267,11 @@ loop:
 		return makePropstats(pstatForbidden, pstatFailedDep), nil
 	}
 
-	database := db.GetDb()
-	if database == nil {
-		return nil, errors.New("webdav property database is not initialized")
-	}
 	pstat := Propstat{Status: http.StatusOK}
 	var err error
 	for attempt := 0; attempt < 10; attempt++ {
 		pstat.Props = nil
-		err = database.Transaction(func(tx *gorm.DB) error {
+		err = withDeadPropsTransaction(ctx, func(tx *gorm.DB) error {
 			for _, patch := range patches {
 				for _, prop := range patch.Props {
 					if patch.Remove {
@@ -310,13 +306,12 @@ loop:
 	return []Propstat{pstat}, nil
 }
 
-func getDeadProps(path string) (map[xml.Name]Property, error) {
-	database := db.GetDb()
-	if database == nil {
-		return nil, errors.New("webdav property database is not initialized")
-	}
+func getDeadProps(tx *gorm.DB, path string) (map[xml.Name]Property, error) {
 	var rows []model.WebDAVProperty
-	if err := database.Where("path = ?", path).Find(&rows).Error; err != nil {
+	if tx == nil {
+		return nil, errors.New("webdav property transaction is not initialized")
+	}
+	if err := tx.Where("path = ?", path).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	props := make(map[xml.Name]Property, len(rows))
@@ -328,6 +323,26 @@ func getDeadProps(path string) (map[xml.Name]Property, error) {
 		}
 	}
 	return props, nil
+}
+
+func withDeadPropsTransaction(ctx context.Context, fn func(*gorm.DB) error) error {
+	database := db.GetDb()
+	if database == nil {
+		return errors.New("webdav property database is not initialized")
+	}
+	var transaction *gorm.DB
+	err := database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		transaction = tx
+		var probe int
+		if err := tx.Raw("SELECT 1").Scan(&probe).Error; err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+	if err != nil && transaction != nil {
+		_ = transaction.Rollback().Error
+	}
+	return err
 }
 
 func escapeXML(s string) string {
@@ -354,69 +369,62 @@ func deadPropsSubtree(tx *gorm.DB, path string) *gorm.DB {
 	return tx.Where("path = ? OR path LIKE ? ESCAPE '\\'", path, deadPropsLikePath(path)+"/%")
 }
 
-func deleteDeadProps(path string) error {
-	database := db.GetDb()
-	if database == nil {
-		return errors.New("webdav property database is not initialized")
-	}
-	return database.Transaction(func(tx *gorm.DB) error {
-		return deadPropsSubtree(tx, path).Delete(&model.WebDAVProperty{}).Error
-	})
+func deleteDeadProps(tx *gorm.DB, path string) error {
+	return deadPropsSubtree(tx, path).Delete(&model.WebDAVProperty{}).Error
 }
 
-func copyDeadProps(src, dst string) error {
-	database := db.GetDb()
-	if database == nil {
-		return errors.New("webdav property database is not initialized")
-	}
-	return database.Transaction(func(tx *gorm.DB) error {
-		var rows []model.WebDAVProperty
-		if err := deadPropsSubtree(tx, src).Find(&rows).Error; err != nil {
+func removeResourceWithDeadProps(ctx context.Context, path string, remove func() error) (removeErr, transactionErr error) {
+	transactionErr = withDeadPropsTransaction(ctx, func(tx *gorm.DB) error {
+		if err := deleteDeadProps(tx, path); err != nil {
 			return err
 		}
-		if err := deadPropsSubtree(tx, dst).Delete(&model.WebDAVProperty{}).Error; err != nil {
-			return err
-		}
-		for _, row := range rows {
-			copy := row
-			copy.ID = 0
-			copy.Path = dst + strings.TrimPrefix(row.Path, src)
-			if err := tx.Create(&copy).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		removeErr = remove()
+		return removeErr
 	})
+	return removeErr, transactionErr
 }
 
-func moveDeadProps(src, dst string) error {
-	database := db.GetDb()
-	if database == nil {
-		return errors.New("webdav property database is not initialized")
+func copyDeadProps(tx *gorm.DB, src, dst string) error {
+	var rows []model.WebDAVProperty
+	if err := deadPropsSubtree(tx, src).Find(&rows).Error; err != nil {
+		return err
 	}
-	return database.Transaction(func(tx *gorm.DB) error {
-		var rows []model.WebDAVProperty
-		if err := deadPropsSubtree(tx, src).Find(&rows).Error; err != nil {
+	if err := deadPropsSubtree(tx, dst).Delete(&model.WebDAVProperty{}).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		copy := row
+		copy.ID = 0
+		copy.Path = dst + strings.TrimPrefix(row.Path, src)
+		if err := tx.Create(&copy).Error; err != nil {
 			return err
 		}
-		// Clear destination only after the source rows are staged in memory.
-		if err := deadPropsSubtree(tx, dst).Delete(&model.WebDAVProperty{}).Error; err != nil {
+	}
+	return nil
+}
+
+func moveDeadProps(tx *gorm.DB, src, dst string) error {
+	var rows []model.WebDAVProperty
+	if err := deadPropsSubtree(tx, src).Find(&rows).Error; err != nil {
+		return err
+	}
+	// Clear destination only after the source rows are staged in memory.
+	if err := deadPropsSubtree(tx, dst).Delete(&model.WebDAVProperty{}).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		newPath := dst + strings.TrimPrefix(row.Path, src)
+		copy := row
+		copy.ID = 0
+		copy.Path = newPath
+		if err := tx.Create(&copy).Error; err != nil {
 			return err
 		}
-		for _, row := range rows {
-			newPath := dst + strings.TrimPrefix(row.Path, src)
-			copy := row
-			copy.ID = 0
-			copy.Path = newPath
-			if err := tx.Create(&copy).Error; err != nil {
-				return err
-			}
-			if err := tx.Delete(&row).Error; err != nil {
-				return err
-			}
+		if err := tx.Delete(&row).Error; err != nil {
+			return err
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func findResourceType(ctx context.Context, ls LockSystem, name string, fi model.Obj) (string, error) {

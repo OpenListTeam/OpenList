@@ -29,6 +29,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -406,11 +407,14 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if !common.CanWrite(user, parentMeta, parentPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
-	if err := fs.Remove(ctx, reqPath); err != nil {
-		return http.StatusMethodNotAllowed, err
+	removeErr, transactionErr := removeResourceWithDeadProps(ctx, reqPath, func() error {
+		return fs.Remove(ctx, reqPath)
+	})
+	if removeErr != nil {
+		return http.StatusMethodNotAllowed, removeErr
 	}
-	if err := deleteDeadProps(reqPath); err != nil {
-		return http.StatusInternalServerError, err
+	if transactionErr != nil {
+		return http.StatusInternalServerError, transactionErr
 	}
 	//fs.ClearCache(path.Dir(reqPath))
 	return http.StatusNoContent, nil
@@ -867,43 +871,44 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 
 	mw := multistatusWriter{w: w}
 
-	walkFn := func(reqPath string, info model.Obj, err error) error {
-		if err != nil {
-			return err
-		}
-		var pstats []Propstat
-		if pf.Propname != nil {
-			pnames, err := propnames(ctx, h.LockSystem, reqPath, info)
-			if err != nil {
-				return err
+	err = withDeadPropsTransaction(ctx, func(tx *gorm.DB) error {
+		walkFn := func(currentPath string, info model.Obj, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
 			}
-			pstat := Propstat{Status: http.StatusOK}
-			for _, xmlname := range pnames {
-				pstat.Props = append(pstat.Props, Property{XMLName: xmlname})
+			var pstats []Propstat
+			if pf.Propname != nil {
+				pnames, err := propnames(tx, currentPath, info)
+				if err != nil {
+					return err
+				}
+				pstat := Propstat{Status: http.StatusOK}
+				for _, xmlname := range pnames {
+					pstat.Props = append(pstat.Props, Property{XMLName: xmlname})
+				}
+				pstats = append(pstats, pstat)
+			} else if pf.Allprop != nil {
+				pstats, walkErr = allprop(tx, ctx, h.LockSystem, currentPath, info, pf.Prop)
+			} else {
+				pstats, walkErr = props(tx, ctx, h.LockSystem, currentPath, info, pf.Prop)
 			}
-			pstats = append(pstats, pstat)
-		} else if pf.Allprop != nil {
-			pstats, err = allprop(ctx, h.LockSystem, reqPath, info, pf.Prop)
-		} else {
-			pstats, err = props(ctx, h.LockSystem, reqPath, info, pf.Prop)
+			if walkErr != nil {
+				return walkErr
+			}
+			href := path.Join(h.Prefix, strings.TrimPrefix(currentPath, user.BasePath))
+			if href != "/" && info.IsDir() {
+				href += "/"
+			}
+			return mw.write(makePropstatResponse(href, pstats))
 		}
-		if err != nil {
-			return err
-		}
-		href := path.Join(h.Prefix, strings.TrimPrefix(reqPath, user.BasePath))
-		if href != "/" && info.IsDir() {
-			href += "/"
-		}
-		return mw.write(makePropstatResponse(href, pstats))
-	}
 
-	walkErr := walkFS(ctx, depth, reqPath, fi, walkFn)
-	closeErr := mw.close()
-	if walkErr != nil {
-		return http.StatusInternalServerError, walkErr
-	}
-	if closeErr != nil {
-		return http.StatusInternalServerError, closeErr
+		if walkErr := walkFS(ctx, depth, reqPath, fi, walkFn); walkErr != nil {
+			return walkErr
+		}
+		return mw.close()
+	})
+	if err != nil {
+		return http.StatusInternalServerError, err
 	}
 	return 0, nil
 }
