@@ -1507,7 +1507,7 @@ func UpdateSeed(c *gin.Context) {
 }
 
 // saveSeedFilesToPath saves selected seed files into one target directory.
-func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, dstPath string, rapidOnly bool) ([]gin.H, string, string, error) {
+func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, dstPath string, rapidOnly bool, allowOffline bool) ([]gin.H, string, string, error) {
 	results := make([]gin.H, 0, len(seed.Files))
 	fullPath, err := user.JoinPath(dstPath)
 	if err != nil {
@@ -1588,6 +1588,10 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 				continue
 			}
 		}
+		if !allowOffline {
+			results = append(results, gin.H{"path": file.Path, "name": name, "method": "offline_download", "error": "transit requires a synchronous intermediate save (rapid upload or PutURL)"})
+			continue
+		}
 		if !user.CanAddOfflineDownloadTasks() {
 			results = append(results, gin.H{"path": file.Path, "name": name, "method": "offline_download", "error": "offline download permission is required"})
 			continue
@@ -1629,7 +1633,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	transitResults, _, _, err := saveSeedFilesToPath(c, user, seed, req, transitPath, false)
+	transitResults, _, _, err := saveSeedFilesToPath(c, user, seed, req, transitPath, false, false)
 	if err != nil {
 		common.ErrorResp(c, err, seedSaveErrorCode(err))
 		return
@@ -1797,7 +1801,7 @@ func QuickSaveSeed(c *gin.Context) {
 		transferSeedViaTransit(c, user, seed, req, transitPath)
 		return
 	}
-	results, driverName, mountPath, err := saveSeedFilesToPath(c, user, seed, req, req.Path, rapidOnly)
+	results, driverName, mountPath, err := saveSeedFilesToPath(c, user, seed, req, req.Path, rapidOnly, true)
 	if err != nil {
 		common.ErrorResp(c, err, seedSaveErrorCode(err))
 		return
