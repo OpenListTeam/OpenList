@@ -42,13 +42,9 @@ func TestMakeDirAfterMissingWebDAVStat(t *testing.T) {
 	}
 }
 
-// TestGetRetriesCollectionWithTrailingSlash reproduces the InfiniCloud
-// behavior that broke every nested upload: the server answers PROPFIND on a
-// collection path WITHOUT the trailing slash with a redirect that the HTTP
-// client follows into a plain 200 HTML response (PROPFIND must return 207),
-// so the directory stat fails although the directory exists. The driver
-// must retry the stat once with the slash appended, which the same server
-// answers correctly with 207.
+// TestGetRetriesCollectionWithTrailingSlash covers servers that return
+// 200 HTML for a slash-less collection PROPFIND. RFC 4918 Section 5.2
+// recommends using the trailing-slash for all collection URLs.
 func TestGetRetriesCollectionWithTrailingSlash(t *testing.T) {
 	collectionXML := func(href string) string {
 		return `<?xml version="1.0" encoding="utf-8"?>
