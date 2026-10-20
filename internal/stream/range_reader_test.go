@@ -1,6 +1,7 @@
-package sftp
+package stream
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -45,14 +46,14 @@ func (f *countingReaderAt) ops() []readOp {
 	return append([]readOp(nil), f.reads...)
 }
 
-// shortReaderAt always returns less than requested without reporting an error.
+// shortReaderAt simulates a file ending before its advertised size.
 type shortReaderAt struct {
 	countingReaderAt
 }
 
 func (f *shortReaderAt) ReadAt(p []byte, off int64) (int, error) {
-	n, err := f.countingReaderAt.ReadAt(p[:len(p)/2], off)
-	return n, err
+	n, _ := f.countingReaderAt.ReadAt(p[:len(p)/2], off)
+	return n, io.EOF
 }
 
 func testData(size int) []byte {
@@ -85,7 +86,7 @@ func drain(t *testing.T, rc io.ReadCloser, chunk int) []byte {
 func TestRangeReaderReadsWholeWindows(t *testing.T) {
 	data := testData(3*windowSize + 1234)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)))
+	rr := newRangeReader(f, int64(len(data)), &windowPool)
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
 	if err != nil {
@@ -110,7 +111,7 @@ func TestRangeReaderReadsWholeWindows(t *testing.T) {
 func TestRangeReaderHonoursRange(t *testing.T) {
 	data := testData(2 * windowSize)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)))
+	rr := newRangeReader(f, int64(len(data)), &windowPool)
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Start: 1234, Length: 1000})
 	if err != nil {
@@ -128,7 +129,7 @@ func TestRangeReaderHonoursRange(t *testing.T) {
 func TestRangeReaderClampsToSize(t *testing.T) {
 	data := testData(100)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)))
+	rr := newRangeReader(f, int64(len(data)), &windowPool)
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Start: 80, Length: 50})
 	if err != nil {
@@ -142,7 +143,7 @@ func TestRangeReaderClampsToSize(t *testing.T) {
 func TestRangeReaderAtEndIsEmpty(t *testing.T) {
 	data := testData(100)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)))
+	rr := newRangeReader(f, int64(len(data)), &windowPool)
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Start: 100, Length: -1})
 	if err != nil {
@@ -159,7 +160,7 @@ func TestRangeReaderAtEndIsEmpty(t *testing.T) {
 func TestRangeReaderUnknownSize(t *testing.T) {
 	data := testData(windowSize + 10)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, -1)
+	rr := newRangeReader(f, -1, &windowPool)
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
 	if err != nil {
@@ -173,7 +174,7 @@ func TestRangeReaderUnknownSize(t *testing.T) {
 func TestRangeReaderShortReadEndsRange(t *testing.T) {
 	data := testData(windowSize)
 	f := &shortReaderAt{countingReaderAt{data: data}}
-	rr := newRangeReader(f, int64(len(data)))
+	rr := newRangeReader(f, int64(len(data)), &windowPool)
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
 	if err != nil {
@@ -191,7 +192,7 @@ func TestRangeReaderShortReadEndsRange(t *testing.T) {
 func TestRangeReaderContextCancel(t *testing.T) {
 	data := testData(windowSize)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)))
+	rr := NewBufferedRangeReader(f, int64(len(data)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -203,12 +204,22 @@ func TestRangeReaderContextCancel(t *testing.T) {
 	if _, err := rc.Read(make([]byte, 1024)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
+	if ops := f.ops(); len(ops) != 0 {
+		t.Fatalf("canceled range performed reads: %v", ops)
+	}
+	other, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := drain(t, other, 64*1024); !bytes.Equal(got, data) {
+		t.Fatal("canceling one range affected another")
+	}
 }
 
 func TestRangeReaderConcurrentRanges(t *testing.T) {
 	data := testData(6 * windowSize)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)))
+	rr := newRangeReader(f, int64(len(data)), &windowPool)
 
 	const ranges = 8
 	var wg sync.WaitGroup
@@ -239,5 +250,68 @@ func TestRangeReaderConcurrentRanges(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+
+func TestRangeReaderDegradedWindow(t *testing.T) {
+	data := testData(windowSize + 1234)
+	f := &countingReaderAt{data: data}
+	rr := newRangeReader(f, int64(len(data)), &degradedPool)
+
+	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := drain(t, rc, 64*1024); !bytes.Equal(got, data) {
+		t.Fatal("content mismatch")
+	}
+	ops := f.ops()
+	if len(ops) != int((int64(len(data))+degradedWindowSize-1)/degradedWindowSize) {
+		t.Fatalf("expected degraded windows, got %v", ops)
+	}
+	if ops[0].n != degradedWindowSize {
+		t.Fatalf("expected first read of %d bytes, got %d", degradedWindowSize, ops[0].n)
+	}
+}
+
+func TestRangeReaderCloseOnce(t *testing.T) {
+	data := testData(100)
+	buffer := bufio.NewReaderSize(nil, degradedWindowSize)
+	// Reuse the same buffer even if GC clears the pool between ranges.
+	pool := &sync.Pool{New: func() any { return buffer }}
+	rr := newRangeReader(bytes.NewReader(data), int64(len(data)), pool)
+	first, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := drain(t, second, 16); !bytes.Equal(got, data) {
+		t.Fatal("closing the first range again affected the reused buffer")
+	}
+}
+
+func TestRangeReaderLargeRead(t *testing.T) {
+	data := testData(2*windowSize + 1234)
+	f := &countingReaderAt{data: data}
+	rr := newRangeReader(f, int64(len(data)), &windowPool)
+	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := drain(t, rc, 2*windowSize); !bytes.Equal(got, data) {
+		t.Fatal("content mismatch")
+	}
+	if ops := f.ops(); len(ops) != 2 || ops[0].n != 2*windowSize || ops[1].n != 1234 {
+		t.Fatalf("expected direct reads into the caller's buffer, got %v", ops)
 	}
 }

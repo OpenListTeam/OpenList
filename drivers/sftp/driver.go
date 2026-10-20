@@ -9,6 +9,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/sftp"
 	log "github.com/sirupsen/logrus"
@@ -64,7 +65,7 @@ func (d *SFTP) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 		return nil, err
 	}
 	return &model.Link{
-		RangeReader:      newRangeReader(remoteFile, file.GetSize()),
+		RangeReader:      stream.NewBufferedRangeReader(remoteFile, file.GetSize()),
 		SyncClosers:      utils.NewSyncClosers(remoteFile),
 		RequireReference: true,
 	}, nil
