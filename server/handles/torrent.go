@@ -687,7 +687,6 @@ type SeedDataReq struct {
 type SeedConvertReq struct {
 	SeedDataReq
 	TargetFormat string `json:"target_format"`
-	Format       string `json:"format"`
 	Path         string `json:"path"`
 }
 

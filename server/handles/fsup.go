@@ -104,6 +104,12 @@ func FsStream(c *gin.Context) {
 		mimetype = utils.GetMimeType(name)
 	}
 	generateSeed := shouldGenerateUploadSeed(c, dir)
+	if generateSeed {
+		if err = validateUploadSeedRequest(c); err != nil {
+			common.ErrorStrResp(c, err.Error(), 400)
+			return
+		}
+	}
 	if generateSeed && asTask {
 		common.ErrorStrResp(c, "seed sidecar generation requires synchronous upload", 400)
 		return
@@ -218,6 +224,12 @@ func FsForm(c *gin.Context) {
 		mimetype = utils.GetMimeType(name)
 	}
 	generateSeed := shouldGenerateUploadSeed(c, dir)
+	if generateSeed {
+		if err = validateUploadSeedRequest(c); err != nil {
+			common.ErrorStrResp(c, err.Error(), 400)
+			return
+		}
+	}
 	if generateSeed && asTask {
 		common.ErrorStrResp(c, "seed sidecar generation requires synchronous upload", 400)
 		return
@@ -313,6 +325,29 @@ func configuredSeedFormats() string {
 		}
 	}
 	return strings.Join(formats, ",")
+}
+
+// validateUploadSeedRequest rejects invalid seed sidecar headers before the
+// main file is stored, so a bad X-Seed-* header cannot leave a partially
+// uploaded file behind.
+func validateUploadSeedRequest(c *gin.Context) error {
+	formatsHeader := strings.TrimSpace(c.GetHeader("X-Seed-Sidecars"))
+	if formatsHeader == "" {
+		formatsHeader = strings.TrimSpace(c.GetHeader("X-Seed-Format"))
+	}
+	if formatsHeader == "" {
+		formatsHeader = configuredSeedFormats()
+	}
+	if _, err := fs.NormalizeSeedFormats(strings.Split(formatsHeader, ",")); err != nil {
+		return err
+	}
+	if raw := strings.TrimSpace(c.GetHeader("X-Seed-Hash-Matrix")); raw != "" {
+		var matrix SeedHashMatrix
+		if err := json.Unmarshal([]byte(raw), &matrix); err != nil {
+			return fmt.Errorf("invalid seed hash matrix: %w", err)
+		}
+	}
+	return nil
 }
 
 func writeUploadSeedSidecar(c *gin.Context, dir, name string, expectedSize int64, hasher *torrent.HashWriter) error {

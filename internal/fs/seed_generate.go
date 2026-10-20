@@ -41,6 +41,13 @@ func SeedGenerateNeedsAsync(ctx context.Context, user *model.User, paths []strin
 		if err != nil {
 			return false, err
 		}
+		meta, metaErr := op.GetNearestMeta(fullPath)
+		if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
+			return false, metaErr
+		}
+		if !common.CanRead(user, meta, fullPath) {
+			return false, errs.PermissionDenied
+		}
 		storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
 		if err != nil {
 			return false, err
