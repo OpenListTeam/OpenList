@@ -12,7 +12,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
-// Large reads reduce network round trips and let clients pipeline requests.
 const windowSize = utils.MB
 
 var windowPool = sync.Pool{New: func() any {
