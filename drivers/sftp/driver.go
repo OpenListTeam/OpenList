@@ -9,7 +9,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/sftp"
 	log "github.com/sirupsen/logrus"
@@ -64,13 +63,8 @@ func (d *SFTP) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 	if err != nil {
 		return nil, err
 	}
-	mFile := &stream.RateLimitFile{
-		File:    remoteFile,
-		Limiter: stream.ServerDownloadLimit,
-		Ctx:     ctx,
-	}
 	return &model.Link{
-		RangeReader:      stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
+		RangeReader:      newRangeReader(remoteFile, file.GetSize()),
 		SyncClosers:      utils.NewSyncClosers(remoteFile),
 		RequireReference: true,
 	}, nil
