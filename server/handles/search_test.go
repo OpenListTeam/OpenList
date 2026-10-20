@@ -25,6 +25,7 @@ func fakeResolveMeta(metas map[string]*model.Meta) func(string) (*model.Meta, er
 func TestIsSearchNodeAccessible(t *testing.T) {
 	tests := []struct {
 		name         string
+		basePath     string
 		metas        map[string]*model.Meta
 		node         model.SearchNode
 		want         bool
@@ -53,14 +54,19 @@ func TestIsSearchNodeAccessible(t *testing.T) {
 		},
 		{
 			name:         "outside base path",
+			basePath:     "/team",
 			node:         model.SearchNode{Parent: "/other", Name: "private", IsDir: true},
 			want:         false,
 			wantMetaPath: "",
 		},
 	}
-	user := &model.User{ID: 2, BasePath: "/"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			basePath := tt.basePath
+			if basePath == "" {
+				basePath = "/"
+			}
+			user := &model.User{ID: 2, BasePath: basePath}
 			resolve := fakeResolveMeta(tt.metas)
 			var gotMetaPath string
 			spy := func(p string) (*model.Meta, error) {
