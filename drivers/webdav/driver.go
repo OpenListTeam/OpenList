@@ -132,13 +132,8 @@ func (d *WebDav) Get(ctx context.Context, _path string) (model.Obj, error) {
 	_path = path.Join(d.GetRootPath(), _path)
 	info, err := d.client.Stat(_path)
 	if err != nil && !gowebdav.IsErrNotFound(err) && !strings.HasSuffix(_path, "/") {
-		// Some WebDAV servers (e.g. InfiniCloud) answer a PROPFIND on a
-		// collection path without a trailing slash with a redirect (or a
-		// plain HTML page) that never yields the 207 Multi-Status the
-		// client requires, so the stat fails even though the directory
-		// exists. Retry once against the canonical collection URL with
-		// the slash appended before giving up; a trailing-slash stat is
-		// also what ReadDir already does for directories.
+		// As in RFC 4918 Section 5.2, retry failed slash-less collection PROPFINDs
+                // once with the canonical trailing-slash URL
 		info, err = d.client.Stat(_path + "/")
 	}
 	if err != nil {
