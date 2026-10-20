@@ -13,32 +13,14 @@ import (
 )
 
 // Large reads reduce network round trips and let clients pipeline requests.
-const (
-	windowSize         = utils.MB
-	degradedWindowSize = 64 * utils.KB
-)
+const windowSize = utils.MB
 
-var (
-	windowPool = sync.Pool{New: func() any {
-		return bufio.NewReaderSize(nil, windowSize)
-	}}
-	degradedPool = sync.Pool{New: func() any {
-		return bufio.NewReaderSize(nil, degradedWindowSize)
-	}}
-)
+var windowPool = sync.Pool{New: func() any {
+	return bufio.NewReaderSize(nil, windowSize)
+}}
 
-// NewBufferedRangeReader buffers remote ranges and applies the server download
-// limit using each range's context. Closing a range does not close the file.
+// NewBufferedRangeReader applies the server download limit using each range's context.
 func NewBufferedRangeReader(file io.ReaderAt, size int64) RangeReaderFunc {
-	pool := &windowPool
-	if mem.MemoryGrowCheck(windowSize) != nil {
-		pool = &degradedPool
-	}
-	return newRangeReader(file, size, pool)
-}
-
-// Each range buffers independently and uses ReadAt without changing the shared file's seek offset.
-func newRangeReader(file io.ReaderAt, size int64, pool *sync.Pool) RangeReaderFunc {
 	return func(ctx context.Context, r http_range.Range) (io.ReadCloser, error) {
 		start, length := max(r.Start, 0), r.Length
 		if size >= 0 {
@@ -49,15 +31,21 @@ func newRangeReader(file io.ReaderAt, size int64, pool *sync.Pool) RangeReaderFu
 		} else if length < 0 {
 			length = math.MaxInt64 - start
 		}
-		reader := pool.Get().(*bufio.Reader)
-		reader.Reset(io.NewSectionReader(file, start, length))
-		return utils.NewReadCloser(&RateLimitReader{
+		reader := &RateLimitReader{
 			Ctx:     ctx,
 			Limiter: ServerDownloadLimit,
-			Reader:  reader,
-		}, sync.OnceValue(func() error {
-			reader.Reset(nil)
-			pool.Put(reader)
+			Reader:  io.NewSectionReader(file, start, length),
+		}
+		// Check available memory and skip the extra buffer when memory is low.
+		if length == 0 || mem.MemoryGrowCheck(windowSize) != nil {
+			return reader, nil
+		}
+		buffer := windowPool.Get().(*bufio.Reader)
+		buffer.Reset(reader.Reader)
+		reader.Reader = buffer
+		return utils.NewReadCloser(reader, sync.OnceValue(func() error {
+			buffer.Reset(nil)
+			windowPool.Put(buffer)
 			return nil
 		})), nil
 	}

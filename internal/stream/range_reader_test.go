@@ -1,7 +1,6 @@
 package stream
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -10,7 +9,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 // countingReaderAt records every ReadAt so tests can assert how much data is
@@ -83,10 +84,24 @@ func drain(t *testing.T, rc io.ReadCloser, chunk int) []byte {
 	}
 }
 
+func setMinFreeMemory(t *testing.T, value uint64) {
+	t.Helper()
+	previous := conf.MinFreeMemory
+	t.Cleanup(func() { conf.MinFreeMemory = previous })
+	conf.MinFreeMemory = value
+}
+
+// bufferedRangeReader returns a range reader which is allowed to buffer.
+func bufferedRangeReader(t *testing.T, file io.ReaderAt, size int64) RangeReaderFunc {
+	t.Helper()
+	setMinFreeMemory(t, 1)
+	return NewBufferedRangeReader(file, size)
+}
+
 func TestRangeReaderReadsWholeWindows(t *testing.T) {
 	data := testData(3*windowSize + 1234)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)), &windowPool)
+	rr := bufferedRangeReader(t, f, int64(len(data)))
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
 	if err != nil {
@@ -111,7 +126,7 @@ func TestRangeReaderReadsWholeWindows(t *testing.T) {
 func TestRangeReaderHonoursRange(t *testing.T) {
 	data := testData(2 * windowSize)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)), &windowPool)
+	rr := bufferedRangeReader(t, f, int64(len(data)))
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Start: 1234, Length: 1000})
 	if err != nil {
@@ -129,7 +144,7 @@ func TestRangeReaderHonoursRange(t *testing.T) {
 func TestRangeReaderClampsToSize(t *testing.T) {
 	data := testData(100)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)), &windowPool)
+	rr := bufferedRangeReader(t, f, int64(len(data)))
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Start: 80, Length: 50})
 	if err != nil {
@@ -143,7 +158,7 @@ func TestRangeReaderClampsToSize(t *testing.T) {
 func TestRangeReaderAtEndIsEmpty(t *testing.T) {
 	data := testData(100)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)), &windowPool)
+	rr := bufferedRangeReader(t, f, int64(len(data)))
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Start: 100, Length: -1})
 	if err != nil {
@@ -160,7 +175,7 @@ func TestRangeReaderAtEndIsEmpty(t *testing.T) {
 func TestRangeReaderUnknownSize(t *testing.T) {
 	data := testData(windowSize + 10)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, -1, &windowPool)
+	rr := bufferedRangeReader(t, f, -1)
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
 	if err != nil {
@@ -174,7 +189,7 @@ func TestRangeReaderUnknownSize(t *testing.T) {
 func TestRangeReaderShortReadEndsRange(t *testing.T) {
 	data := testData(windowSize)
 	f := &shortReaderAt{countingReaderAt{data: data}}
-	rr := newRangeReader(f, int64(len(data)), &windowPool)
+	rr := bufferedRangeReader(t, f, int64(len(data)))
 
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
 	if err != nil {
@@ -192,7 +207,7 @@ func TestRangeReaderShortReadEndsRange(t *testing.T) {
 func TestRangeReaderContextCancel(t *testing.T) {
 	data := testData(windowSize)
 	f := &countingReaderAt{data: data}
-	rr := NewBufferedRangeReader(f, int64(len(data)))
+	rr := bufferedRangeReader(t, f, int64(len(data)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -219,7 +234,7 @@ func TestRangeReaderContextCancel(t *testing.T) {
 func TestRangeReaderConcurrentRanges(t *testing.T) {
 	data := testData(6 * windowSize)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)), &windowPool)
+	rr := bufferedRangeReader(t, f, int64(len(data)))
 
 	const ranges = 8
 	var wg sync.WaitGroup
@@ -253,33 +268,9 @@ func TestRangeReaderConcurrentRanges(t *testing.T) {
 	}
 }
 
-func TestRangeReaderDegradedWindow(t *testing.T) {
-	data := testData(windowSize + 1234)
-	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)), &degradedPool)
-
-	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := drain(t, rc, 64*1024); !bytes.Equal(got, data) {
-		t.Fatal("content mismatch")
-	}
-	ops := f.ops()
-	if len(ops) != int((int64(len(data))+degradedWindowSize-1)/degradedWindowSize) {
-		t.Fatalf("expected degraded windows, got %v", ops)
-	}
-	if ops[0].n != degradedWindowSize {
-		t.Fatalf("expected first read of %d bytes, got %d", degradedWindowSize, ops[0].n)
-	}
-}
-
 func TestRangeReaderCloseOnce(t *testing.T) {
 	data := testData(100)
-	buffer := bufio.NewReaderSize(nil, degradedWindowSize)
-	// Reuse the same buffer even if GC clears the pool between ranges.
-	pool := &sync.Pool{New: func() any { return buffer }}
-	rr := newRangeReader(bytes.NewReader(data), int64(len(data)), pool)
+	rr := bufferedRangeReader(t, bytes.NewReader(data), int64(len(data)))
 	first, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +294,8 @@ func TestRangeReaderCloseOnce(t *testing.T) {
 func TestRangeReaderLargeRead(t *testing.T) {
 	data := testData(2*windowSize + 1234)
 	f := &countingReaderAt{data: data}
-	rr := newRangeReader(f, int64(len(data)), &windowPool)
+	rr := bufferedRangeReader(t, f, int64(len(data)))
+
 	rc, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
 	if err != nil {
 		t.Fatal(err)
@@ -313,5 +305,74 @@ func TestRangeReaderLargeRead(t *testing.T) {
 	}
 	if ops := f.ops(); len(ops) != 2 || ops[0].n != 2*windowSize || ops[1].n != 1234 {
 		t.Fatalf("expected direct reads into the caller's buffer, got %v", ops)
+	}
+}
+
+func TestBufferedRangeReaderLowMemory(t *testing.T) {
+	setMinFreeMemory(t, 0)
+	data := []byte("0123456789")
+
+	for _, size := range []int64{int64(len(data)), -1} {
+		rr := NewBufferedRangeReader(bytes.NewReader(data), size)
+		rc, err := rr.RangeRead(context.Background(), http_range.Range{Start: 3, Length: -1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rc.Close()
+		limited, ok := rc.(*RateLimitReader)
+		if !ok {
+			t.Fatalf("expected unbuffered rate-limited reader, got %T", rc)
+		}
+		if _, ok := limited.Reader.(*io.SectionReader); !ok {
+			t.Fatalf("expected direct section reader, got %T", limited.Reader)
+		}
+		got, err := io.ReadAll(rc)
+		if err != nil || !bytes.Equal(got, data[3:]) {
+			t.Fatalf("read = %q, %v; want %q", got, err, data[3:])
+		}
+	}
+}
+
+func TestBufferedRangeReaderChecksMemoryPerRange(t *testing.T) {
+	setMinFreeMemory(t, 1)
+	rr := NewBufferedRangeReader(bytes.NewReader([]byte("data")), 4)
+	first, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := first.(utils.ReadCloser); !ok {
+		t.Skip("not enough available memory to exercise the buffered path")
+	}
+
+	conf.MinFreeMemory = 0
+	second, err := rr.RangeRead(context.Background(), http_range.Range{Length: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if _, ok := second.(*RateLimitReader); !ok {
+		t.Fatalf("expected unbuffered fallback for the next range, got %T", second)
+	}
+}
+
+func TestBufferedRangeReaderEmptyRangeIsUnbuffered(t *testing.T) {
+	setMinFreeMemory(t, 1)
+	data := testData(100)
+	f := &countingReaderAt{data: data}
+	rr := NewBufferedRangeReader(f, int64(len(data)))
+
+	rc, err := rr.RangeRead(context.Background(), http_range.Range{Start: 100, Length: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	if _, ok := rc.(*RateLimitReader); !ok {
+		t.Fatalf("expected empty range to skip buffering, got %T", rc)
+	}
+	if ops := f.ops(); len(ops) != 0 {
+		t.Fatalf("expected no server read, got %v", ops)
 	}
 }
