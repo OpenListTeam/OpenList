@@ -1,0 +1,75 @@
+name: Issue Auto Reply
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  auto-reply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check issue for unchecked tasks and reply
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            if (context.payload.issue.title.startsWith('[Announcements]')) return;
+            const titleNotEdited = /(请修改标题|Please modify the title)/i.test(context.payload.issue.title);
+            const issueBody = context.payload.issue.body || "";
+            const aiSection = issueBody.match(/^### (AI生成内容|AI Generated Content)\r?\n([\s\S]*?)(?=^### |$(?![\s\S]))/m);
+            const aiOptionsPattern = aiSection?.[1] === 'AI生成内容'
+              ? /^\s*- \[([ xX])\] 我使用了AI工具生成此内容\r?\n- \[([ xX])\] 我没有使用AI工具生成此内容\s*$/
+              : /^\s*- \[([ xX])\] I used AI tools to generate this content\r?\n- \[([ xX])\] I did not use AI tools to generate this content\s*$/;
+            const aiOptions = (aiSection?.[2] || '').match(aiOptionsPattern);
+            const validAiDisclosure = aiOptions !== null && (aiOptions[1] !== ' ') !== (aiOptions[2] !== ' ');
+            const aiModelSection = issueBody.match(/^### (AI模型是|AI model used)\r?\n([\s\S]*?)(?=^### |$(?![\s\S]))/m);
+            const aiModel = (aiModelSection?.[2] || '').trim();
+            const missingAiModel = validAiDisclosure && aiOptions[1] !== ' ' && (aiModel === '' || aiModel === '_No response_');
+            const confirmNotRead = /- \[[xX]\] (?:我没有阅读这个清单|I have not read these checkboxes)/.test(issueBody);
+            const closeIssue = titleNotEdited || confirmNotRead || !validAiDisclosure || missingAiModel;
+            let comment;
+            if (titleNotEdited) {
+              comment = `⚠️ 请修改标题以更好地描述您的问题或需求，并删除示例提示。当前 Issue 将被自动关闭并锁定。如需继续提交，请创建新的 Issue。
+            ⚠️ Please modify the title to better describe your issue or request, and remove the example prompt. This issue will be automatically closed and locked. If you wish to proceed, please create a new issue.
+            `;
+            } else if (confirmNotRead || !validAiDisclosure || missingAiModel) {
+              comment = `⚠️ 你的 Issue 不符合提交规则。请先阅读相关规范后再重新提交。当前 Issue 将被自动关闭并锁定。如需继续提交，请确认已了解规则后创建新的 Issue。
+            ⚠️ Your issue does not comply with the submission rules. Please read the guidelines before submitting again. This issue will be automatically closed and locked. If you wish to proceed, please confirm that you have reviewed the rules before creating a new issue.
+            `;
+            } else if (/- \[ \] (?!我没有阅读这个清单|I have not read these checkboxes)/.test(issueBody.replace(aiSection[0], ''))) {
+              comment = `感谢您联系OpenList。我们会尽快回复您。
+            Thanks for contacting OpenList. We will reply to you as soon as possible.
+
+            由于您提出的 Issue 中包含部分未确认的项目，为了更好地管理项目，在人工审核后可能会直接关闭此问题。
+            如果您能确认并补充相关未确认项目的信息，欢迎随时重新提交。我们会及时关注并处理。感谢您的理解与支持！
+            Since your issue contains some unchecked tasks, it may be closed after manual review.
+            If you can confirm and provide information for the unchecked tasks, feel free to resubmit.
+            We will pay attention and handle it in a timely manner.
+
+            感谢您的理解与支持！
+            Thank you for your understanding and support!
+            `;
+            } else {
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+            if (closeIssue) {
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+                labels: ['invalid']
+              });
+              await github.rest.issues.lock({
+                ...context.repo,
+                issue_number: context.issue.number
+              });
+            }

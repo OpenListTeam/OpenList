@@ -95,6 +95,9 @@ const (
 	// thunder_browser
 	ThunderBrowserTempDir = "thunder_browser_temp_dir"
 
+	// guangyapan
+	GuangYaPanTempDir = "guangyapan_temp_dir"
+
 	// single
 	Token         = "token"
 	IndexProgress = "index_progress"
@@ -114,6 +117,7 @@ const (
 	SSODefaultDir        = "sso_default_dir"
 	SSODefaultPermission = "sso_default_permission"
 	SSOCompatibilityMode = "sso_compatibility_mode"
+	SSOPostMessageOrigin = "sso_postmessage_origin"
 
 	// ldap
 	LdapLoginEnabled      = "ldap_login_enabled"
@@ -200,6 +204,10 @@ const (
 	TranscodeMaxChunkConcurrency = "transcode_max_chunk_concurrency" // 单个 Job 最多同时运行的 chunk 数（默认2）
 	TranscodeChunkIdleSec        = "transcode_chunk_idle_sec"        // chunk 多久没被访问就 kill ffmpeg 释放资源（默认60秒）
 	TranscodeChunkPrefetch       = "transcode_chunk_prefetch"        // 当前 chunk 转码进度过半时，是否预启动下一个 chunk（默认true）
+
+	// multipart upload (from main)
+	MultipartEnabled   = "multipart_enabled"
+	MultipartChunkSize = "multipart_chunk_size"
 )
 
 const (
@@ -230,4 +238,6 @@ const (
 	PathKey
 	SharingIDKey
 	SkipHookKey
+	DirectUploadContentTypeKey
+	SkipNoOverwriteKey
 )

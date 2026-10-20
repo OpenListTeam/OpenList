@@ -84,6 +84,27 @@ func TestCoversPath(t *testing.T) {
 			applySub: true,
 			want:     false,
 		},
+		{
+			name:     "case-insensitive exact path match",
+			metaPath: "/Folder",
+			reqPath:  "/folder",
+			applySub: false,
+			want:     true,
+		},
+		{
+			name:     "case-insensitive sub path match",
+			metaPath: "/Folder",
+			reqPath:  "/folder/Subfolder",
+			applySub: true,
+			want:     true,
+		},
+		{
+			name:     "case-insensitive sibling prefix does not match",
+			metaPath: "/Folder",
+			reqPath:  "/folder-name",
+			applySub: true,
+			want:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -165,6 +186,17 @@ func TestCanWriteContentIgnoringUserPerms(t *testing.T) {
 			path:   "/other",
 			want:   false,
 			reason: "non-sub path should deny write even with WSub=true",
+		},
+		{
+			name: "case-insensitive match does not broaden write bypass",
+			meta: &model.Meta{
+				Path:  "/Folder",
+				Write: true,
+				WSub:  true,
+			},
+			path:   "/folder/subfolder",
+			want:   false,
+			reason: "case-insensitive matching should only enforce restrictions, not grant write bypass",
 		},
 	}
 
@@ -578,6 +610,23 @@ func TestCanAccessWithReadPermissions(t *testing.T) {
 			password: "",
 			want:     false,
 			reason:   "user not in ReadUsers list should be denied",
+		},
+		{
+			name: "case-insensitive exact path still requires password",
+			user: &model.User{
+				ID:         1,
+				Role:       model.GENERAL,
+				Permission: 0,
+			},
+			meta: &model.Meta{
+				Path:     "/Folder",
+				Password: "secret",
+				PSub:     false,
+			},
+			reqPath:  "/folder",
+			password: "wrong",
+			want:     false,
+			reason:   "changing only path casing must not bypass an exact-path password",
 		},
 	}
 

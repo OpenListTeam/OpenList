@@ -72,6 +72,8 @@ type BaseLoginParam struct {
 	// 请求头参数
 	Lt    string
 	ReqId string
+	// logbox页面地址，作为后续请求的Referer，缺失会被判定为陌生设备
+	Referer string
 
 	// 表单参数
 	ParamId string
@@ -97,8 +99,18 @@ type LoginParam struct {
 
 	// rsa密钥
 	jRsaKey string
+	// 加密字段的前缀，服务端下发（如 {NRP}）
+	rsaPrefix string
+
+	// 设备二次校验时服务端返回的加密手机号
+	SecondAuthMobile string
 
 	BaseLoginParam
+}
+
+// encryptSecret 用登陆时拿到的公钥加密敏感值，格式与userName/epd一致
+func (p *LoginParam) encryptSecret(value string) string {
+	return p.rsaPrefix + RsaEncrypt(p.jRsaKey, value)
 }
 
 // 登陆加密相关
@@ -116,6 +128,35 @@ type LoginResp struct {
 	Msg    string `json:"msg"`
 	Result int    `json:"result"`
 	ToUrl  string `json:"toUrl"`
+	// 设备二次校验时返回的加密手机号
+	Mobile string `json:"mobile"`
+}
+
+// 登陆页配置，新版登陆页的paramId由该接口下发
+// 该接口的result可能是数字也可能是字符串
+type AppConfResp struct {
+	Result any    `json:"result"`
+	Msg    string `json:"msg"`
+	Data   struct {
+		ParamId     string `json:"paramId"`
+		AccountType string `json:"accountType"`
+		ReturnUrl   string `json:"returnUrl"`
+		MailSuffix  string `json:"mailSuffix"`
+	} `json:"data"`
+}
+
+func (r *AppConfResp) Succeeded() bool {
+	switch v := r.Result.(type) {
+	case nil:
+		return true
+	case string:
+		return v == "0" || v == ""
+	case float64:
+		return v == 0
+	case int:
+		return v == 0
+	}
+	return false
 }
 
 // 刷新session返回
@@ -149,6 +190,27 @@ type AppSessionResp struct {
 	RefreshToken string `json:"refreshToken"`
 }
 
+// 刷新token返回，失败时以HTTP 200返回result/msg，需要单独判断
+type RefreshTokenResp struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ExpiresIn    int    `json:"expiresIn"`
+
+	Result int    `json:"result"`
+	Msg    string `json:"msg"`
+}
+
+func (r *RefreshTokenResp) HasError() bool {
+	return r.Result != 0 || r.AccessToken == ""
+}
+
+func (r *RefreshTokenResp) Error() string {
+	if r.Msg != "" {
+		return fmt.Sprintf("refresh token failed, result: %d, msg: %s", r.Result, r.Msg)
+	}
+	return fmt.Sprintf("refresh token failed, result: %d", r.Result)
+}
+
 // 家庭云账户
 type FamilyInfoListResp struct {
 	FamilyInfoResp []FamilyInfoResp `json:"familyInfoResp"`
@@ -166,10 +228,11 @@ type FamilyInfoResp struct {
 /*文件部分*/
 // 文件
 type Cloud189File struct {
-	ID   String `json:"id"`
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Md5  string `json:"md5"`
+	ID       String `json:"id"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Md5      string `json:"md5"`
+	ParentID string `json:"-"` // 由 getFiles 设置，不从 JSON 解析
 
 	LastOpTime Time `json:"lastOpTime"`
 	CreateDate Time `json:"createDate"`
@@ -190,6 +253,10 @@ type Cloud189File struct {
 	// StarLabel   int64  `json:"starLabel"`
 }
 
+func normalizeCloud189Name(name string) string {
+	return strings.ReplaceAll(name, "\\'", "'")
+}
+
 func (c *Cloud189File) CreateTime() time.Time {
 	return time.Time(c.CreateDate)
 }
@@ -205,6 +272,8 @@ func (c *Cloud189File) IsDir() bool        { return false }
 func (c *Cloud189File) GetID() string      { return string(c.ID) }
 func (c *Cloud189File) GetPath() string    { return "" }
 func (c *Cloud189File) Thumb() string      { return c.Icon.SmallUrl }
+
+func (c *Cloud189File) GetDisplayName() string { return normalizeCloud189Name(c.Name) }
 
 // 文件夹
 type Cloud189Folder struct {
@@ -236,6 +305,8 @@ func (c *Cloud189Folder) ModTime() time.Time { return time.Time(c.LastOpTime) }
 func (c *Cloud189Folder) IsDir() bool        { return true }
 func (c *Cloud189Folder) GetID() string      { return string(c.ID) }
 func (c *Cloud189Folder) GetPath() string    { return "" }
+
+func (c *Cloud189Folder) GetDisplayName() string { return normalizeCloud189Name(c.Name) }
 
 type Cloud189FilesResp struct {
 	//ResCode    int    `json:"res_code"`

@@ -26,18 +26,9 @@ func (b *Bleve) Config() searcher.Config {
 }
 
 func (b *Bleve) Search(ctx context.Context, req model.SearchReq) ([]model.SearchNode, int64, error) {
-	var queries []query2.Query
-	query := bleve.NewMatchQuery(req.Keywords)
-	query.SetField("name")
-	queries = append(queries, query)
-	if req.Scope != 0 {
-		isDir := req.Scope == 1
-		isDirQuery := bleve.NewBoolFieldQuery(isDir)
-		queries = append(queries, isDirQuery)
-	}
-	reqQuery := bleve.NewConjunctionQuery(queries...)
+	reqQuery := buildQuery(req)
 	search := bleve.NewSearchRequest(reqQuery)
-	search.SortBy([]string{"name"})
+	search.SortBy([]string{"name", "_id"})
 	search.From = (req.Page - 1) * req.PerPage
 	search.Size = req.PerPage
 	search.Fields = []string{"*"}
@@ -47,14 +38,74 @@ func (b *Bleve) Search(ctx context.Context, req model.SearchReq) ([]model.Search
 		return nil, 0, err
 	}
 	res, err := utils.SliceConvert(searchResults.Hits, func(src *search2.DocumentMatch) (model.SearchNode, error) {
-		return model.SearchNode{
-			Parent: src.Fields["parent"].(string),
-			Name:   src.Fields["name"].(string),
-			IsDir:  src.Fields["is_dir"].(bool),
-			Size:   int64(src.Fields["size"].(float64)),
-		}, nil
+		return searchNodeFromHit(src), nil
 	})
-	return res, int64(searchResults.Total), nil
+	return res, int64(searchResults.Total), err
+}
+
+const searchBatchSize = 1000
+
+func (b *Bleve) SearchFiltered(ctx context.Context, req model.SearchReq, filter searcher.Filter) ([]model.SearchNode, int64, error) {
+	reqQuery := buildQuery(req)
+	from := int64(req.Page-1) * int64(req.PerPage)
+	to := from + int64(req.PerPage)
+	var (
+		result      []model.SearchNode
+		total       int64
+		searchAfter []string
+	)
+	for {
+		search := bleve.NewSearchRequest(reqQuery)
+		search.SortBy([]string{"name", "_id"})
+		search.Size = searchBatchSize
+		search.Fields = []string{"*"}
+		if searchAfter != nil {
+			search.SetSearchAfter(searchAfter)
+		}
+		searchResults, err := b.BIndex.Search(search)
+		if err != nil {
+			log.Errorf("search error: %+v", err)
+			return nil, 0, err
+		}
+		for _, hit := range searchResults.Hits {
+			node := searchNodeFromHit(hit)
+			if !utils.IsSubPath(req.Parent, node.Parent) || filter != nil && !filter(node) {
+				continue
+			}
+			if total >= from && total < to {
+				result = append(result, node)
+			}
+			total++
+		}
+		if len(searchResults.Hits) < searchBatchSize {
+			break
+		}
+		last := searchResults.Hits[len(searchResults.Hits)-1]
+		searchAfter = append(searchAfter[:0], last.Sort...)
+	}
+	return result, total, nil
+}
+
+func buildQuery(req model.SearchReq) query2.Query {
+	var queries []query2.Query
+	query := bleve.NewMatchQuery(req.Keywords)
+	query.SetField("name")
+	queries = append(queries, query)
+	if req.Scope != 0 {
+		isDir := req.Scope == 1
+		isDirQuery := bleve.NewBoolFieldQuery(isDir)
+		queries = append(queries, isDirQuery)
+	}
+	return bleve.NewConjunctionQuery(queries...)
+}
+
+func searchNodeFromHit(src *search2.DocumentMatch) model.SearchNode {
+	return model.SearchNode{
+		Parent: src.Fields["parent"].(string),
+		Name:   src.Fields["name"].(string),
+		IsDir:  src.Fields["is_dir"].(bool),
+		Size:   int64(src.Fields["size"].(float64)),
+	}
 }
 
 func (b *Bleve) Index(ctx context.Context, node model.SearchNode) error {
@@ -103,3 +154,4 @@ func (b *Bleve) Clear(ctx context.Context) error {
 }
 
 var _ searcher.Searcher = (*Bleve)(nil)
+var _ searcher.FilteredSearcher = (*Bleve)(nil)

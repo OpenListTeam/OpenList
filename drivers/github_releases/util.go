@@ -1,8 +1,8 @@
 package github_releases
 
 import (
+	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -49,10 +49,8 @@ func (d *GithubReleases) ParseRepos(text string) ([]MountPoint, error) {
 		}
 
 		points = append(points, MountPoint{
-			Point:    path,
-			Repo:     repo,
-			Release:  nil,
-			Releases: nil,
+			Point: path,
+			Repo:  repo,
 		})
 	}
 	d.points = points
@@ -76,9 +74,79 @@ func GetNextDir(wholePath string, basePath string) string {
 	return ""
 }
 
-// 判断当前目录是否是目标目录的祖先目录
-func IsAncestorDir(parentDir string, targetDir string) bool {
-	absTargetDir, _ := filepath.Abs(targetDir)
-	absParentDir, _ := filepath.Abs(parentDir)
-	return strings.HasPrefix(absTargetDir, absParentDir)
+// getLatestRelease 获取最新 release
+func (d *GithubReleases) getLatestRelease(repo string) (*Release, error) {
+	resp, err := d.GetRequest("https://api.github.com/repos/" + repo + "/releases/latest")
+	if err != nil {
+		return nil, err
+	}
+	release := new(Release)
+	if err := json.Unmarshal(resp.Body(), release); err != nil {
+		return nil, err
+	}
+	return release, nil
+}
+
+// getAllReleases 获取所有 releases（支持自动翻页）
+func (d *GithubReleases) getAllReleases(repo string) ([]Release, error) {
+	perPage := d.Addition.PerPage
+	if perPage < 1 {
+		perPage = 30
+	} else if perPage > 100 {
+		perPage = 100
+	}
+
+	maxPage := d.Addition.MaxPage
+	if maxPage < 0 {
+		maxPage = 0
+	}
+
+	allReleases := make([]Release, 0)
+	page := 1
+
+	for {
+		url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d&page=%d", repo, perPage, page)
+		resp, err := d.GetRequest(url)
+		if err != nil {
+			return nil, err
+		}
+
+		releases := make([]Release, 0)
+		if err := json.Unmarshal(resp.Body(), &releases); err != nil {
+			return nil, err
+		}
+
+		if len(releases) == 0 {
+			break
+		}
+
+		allReleases = append(allReleases, releases...)
+
+		// 达到最大页数限制
+		if maxPage > 0 && page >= maxPage {
+			break
+		}
+
+		// 如果返回数量小于 perPage，说明是最后一页
+		if len(releases) < perPage {
+			break
+		}
+
+		page++
+	}
+
+	return allReleases, nil
+}
+
+// fetchRepoFiles 获取仓库根目录文件列表
+func (d *GithubReleases) fetchRepoFiles(repo string) ([]FileInfo, error) {
+	resp, err := d.GetRequest("https://api.github.com/repos/" + repo + "/contents")
+	if err != nil {
+		return nil, err
+	}
+	files := make([]FileInfo, 0)
+	if err := json.Unmarshal(resp.Body(), &files); err != nil {
+		return nil, err
+	}
+	return files, nil
 }

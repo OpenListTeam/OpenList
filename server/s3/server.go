@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 
-	"github.com/itsHenry35/gofakes3"
+	"github.com/OpenListTeam/gofakes3"
 )
 
 // Make a new S3 Server to serve the remote
@@ -24,5 +24,5 @@ func NewServer(ctx context.Context) (h http.Handler, err error) {
 		gofakes3.WithIntegrityCheck(true), // Check Content-MD5 if supplied
 	)
 
-	return redirectHandler(faker.Server(), authPairs), nil
+	return redirectHandler(rangeStatusHandler(faker.Server()), authPairs), nil
 }

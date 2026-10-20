@@ -90,9 +90,6 @@ func (d *Pan115Share) Link(ctx context.Context, file model.Obj, args model.LinkA
 	if args.Header != nil {
 		ua = args.Header.Get("User-Agent")
 	}
-	if ua == "" {
-		ua = base.UserAgent
-	}
 	downloadInfo, err := d.client.DownloadByShareCodeWithUA(ua, d.ShareCode, d.ReceiveCode, file.GetID())
 	if err != nil {
 		return nil, err

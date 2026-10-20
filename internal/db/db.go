@@ -12,10 +12,8 @@ var db *gorm.DB
 
 func Init(d *gorm.DB) {
 	db = d
-	// 迁移前处理：处理 media_items 的存储语义变更，避免旧数据与新代码不一致
-	// 语义变更：folder_path 现为文件实际父目录（之前为扫描根路径），旧数据需重扫
 	migrateMediaItems()
-	err := AutoMigrate(new(model.Storage), new(model.User), new(model.Meta), new(model.SettingItem), new(model.SearchNode), new(model.TaskItem), new(model.SSHPublicKey), new(model.SharingDB), new(model.MediaItem), new(model.MediaConfig), new(model.MediaScanPath))
+	err := AutoMigrate(new(model.Storage), new(model.User), new(model.Meta), new(model.SettingItem), new(model.SearchNode), new(model.TaskItem), new(model.SSHPublicKey), new(model.SharingDB), new(model.WebDAVProperty), new(model.MediaItem), new(model.MediaConfig), new(model.MediaScanPath))
 	if err != nil {
 		log.Fatalf("failed migrate database: %s", err.Error())
 	}

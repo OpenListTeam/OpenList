@@ -54,7 +54,7 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 			HashInfoStr: obj.GetHash().String(),
 			HashInfo:    obj.GetHash().Export(),
 			Sign:        "",
-			Type:        utils.GetFileType(obj.GetName()),
+			Type:        utils.GetObjType(obj.GetName(), obj.IsDir()),
 			Thumb:       thumb,
 		},
 		RawURL:   url,
@@ -461,7 +461,7 @@ func UpdateSharing(c *gin.Context) {
 	for i, s := range req.Files {
 		s = utils.FixAndCleanPath(s)
 		req.Files[i] = s
-		if !reqUser.IsAdmin() && !strings.HasPrefix(s, user.BasePath) {
+		if !reqUser.IsAdmin() && !utils.IsSubPath(user.BasePath, s) {
 			common.ErrorStrResp(c, fmt.Sprintf("permission denied to share path [%s]", s), 500)
 			return
 		}
@@ -545,7 +545,7 @@ func CreateSharing(c *gin.Context) {
 	for i, s := range req.Files {
 		s = utils.FixAndCleanPath(s)
 		req.Files[i] = s
-		if !reqUser.IsAdmin() && !strings.HasPrefix(s, user.BasePath) {
+		if !reqUser.IsAdmin() && !utils.IsSubPath(user.BasePath, s) {
 			common.ErrorStrResp(c, fmt.Sprintf("permission denied to share path [%s]", s), 500)
 			return
 		}

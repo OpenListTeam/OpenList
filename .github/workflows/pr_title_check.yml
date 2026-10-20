@@ -1,0 +1,34 @@
+name: PR Title Check
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  pr-title-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title for required prefix and comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            if (/^(feat|docs|fix|style|refactor|chore)\(.+?\)!?: /i.test(title)) return;
+            const comment = `⚠️ PR 标题需以 \`feat(): \`, \`docs(): \`, \`fix(): \`, \`style(): \`, \`refactor(): \`, \`chore(): \` 其中之一开头，例如：\`feat(component): 新增功能\`。
+            ⚠️ The PR title must start with \`feat(): \`, \`docs(): \`, \`fix(): \`, \`style(): \`, or \`refactor(): \`, \`chore(): \`. For example: \`feat(component): add new feature\`.
+
+            如果跨多个组件，请使用主要组件作为前缀，并在标题中枚举、描述中说明。
+            If it spans multiple components, use the main component as the prefix and enumerate in the title, describe in the body.
+
+            如果是破坏性变更，请在类型后添加 \`!\`，例如 \`feat(component)!: 破坏性变更\`。
+            For breaking changes, add \`!\` after the type, e.g., \`feat(component)!: breaking change\`.
+
+            `;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });

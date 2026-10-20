@@ -188,6 +188,11 @@ func FsBatchRename(c *gin.Context) {
 		if renameObject.SrcName == "" || renameObject.NewName == "" {
 			continue
 		}
+		err = checkRelativePath(renameObject.SrcName)
+		if err != nil {
+			common.ErrorResp(c, err, 403)
+			return
+		}
 		err = checkRelativePath(renameObject.NewName)
 		if err != nil {
 			common.ErrorResp(c, err, 403)

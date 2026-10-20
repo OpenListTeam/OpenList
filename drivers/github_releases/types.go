@@ -1,76 +1,28 @@
 package github_releases
 
 import (
-	"encoding/json"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/go-resty/resty/v2"
 )
 
+// MountPoint 表示一个仓库挂载点
 type MountPoint struct {
-	Point     string      // 挂载点
-	Repo      string      // 仓库名 owner/repo
-	Release   *Release    // Release 指针 latest
-	Releases  *[]Release  // []Release 指针
-	OtherFile *[]FileInfo // 仓库根目录下的其他文件
+	Point string // 挂载点路径
+	Repo  string // 仓库名 owner/repo
 }
 
-// 请求最新版本
-func (m *MountPoint) RequestRelease(get func(url string) (*resty.Response, error), refresh bool) error {
-	if m.Repo == "" {
+// Release 转为 File 列表
+func releaseToFiles(point string, release *Release) []File {
+	if release == nil {
 		return nil
 	}
-
-	if m.Release == nil || refresh {
-		resp, err := get("https://api.github.com/repos/" + m.Repo + "/releases/latest")
-		if err != nil {
-			m.Release = nil
-			return err
-		}
-		release := new(Release)
-		if err := json.Unmarshal(resp.Body(), release); err != nil {
-			m.Release = nil
-			return err
-		}
-		m.Release = release
-	}
-	return nil
-}
-
-// 请求所有版本
-func (m *MountPoint) RequestReleases(get func(url string) (*resty.Response, error), refresh bool) error {
-	if m.Repo == "" {
-		return nil
-	}
-
-	if m.Releases == nil || refresh {
-		resp, err := get("https://api.github.com/repos/" + m.Repo + "/releases")
-		if err != nil {
-			m.Releases = nil
-			return err
-		}
-		releases := new([]Release)
-		if err := json.Unmarshal(resp.Body(), releases); err != nil {
-			m.Releases = nil
-			return err
-		}
-		m.Releases = releases
-	}
-	return nil
-}
-
-// 获取最新版本
-func (m *MountPoint) GetLatestRelease() []File {
-	if m.Release == nil {
-		return nil
-	}
-	files := make([]File, 0, len(m.Release.Assets))
-	for _, asset := range m.Release.Assets {
+	files := make([]File, 0, len(release.Assets))
+	for _, asset := range release.Assets {
 		files = append(files, File{
-			Path:     path.Join(m.Point, asset.Name),
+			Path:     path.Join(point, asset.Name),
 			FileName: asset.Name,
 			Size:     asset.Size,
 			Type:     "file",
@@ -82,53 +34,43 @@ func (m *MountPoint) GetLatestRelease() []File {
 	return files
 }
 
-// 获取最新版本大小
-func (m *MountPoint) GetLatestSize() int64 {
-	if m.Release == nil {
+// 计算 release 的 asset 总大小
+func releaseSize(release *Release) int64 {
+	if release == nil {
 		return 0
 	}
 	size := int64(0)
-	for _, asset := range m.Release.Assets {
+	for _, asset := range release.Assets {
 		size += asset.Size
 	}
 	return size
 }
 
-// 获取所有版本
-func (m *MountPoint) GetAllVersion() []File {
-	if m.Releases == nil {
-		return nil
-	}
-	files := make([]File, 0)
-	for _, release := range *m.Releases {
-		file := File{
-			Path:     path.Join(m.Point, release.TagName),
+// Releases 列表转为版本目录 File 列表
+func releasesToVersionDirs(point string, releases []Release) []File {
+	files := make([]File, 0, len(releases))
+	for _, release := range releases {
+		files = append(files, File{
+			Path:     path.Join(point, release.TagName),
 			FileName: release.TagName,
-			Size:     m.GetSizeByTagName(release.TagName),
+			Size:     releaseSize(&release),
 			Type:     "dir",
 			UpdateAt: release.PublishedAt,
 			CreateAt: release.CreatedAt,
 			Url:      release.HtmlUrl,
-		}
-		for _, asset := range release.Assets {
-			file.Size += asset.Size
-		}
-		files = append(files, file)
+		})
 	}
 	return files
 }
 
-// 根据版本号获取版本
-func (m *MountPoint) GetReleaseByTagName(tagName string) []File {
-	if m.Releases == nil {
-		return nil
-	}
-	for _, item := range *m.Releases {
+// 根据 tagName 查找 release 的 asset 文件列表
+func releaseAssetsByTag(point, tagName string, releases []Release) []File {
+	for _, item := range releases {
 		if item.TagName == tagName {
-			files := make([]File, 0)
+			files := make([]File, 0, len(item.Assets))
 			for _, asset := range item.Assets {
 				files = append(files, File{
-					Path:     path.Join(m.Point, tagName, asset.Name),
+					Path:     path.Join(point, tagName, asset.Name),
 					FileName: asset.Name,
 					Size:     asset.Size,
 					Type:     "file",
@@ -143,118 +85,74 @@ func (m *MountPoint) GetReleaseByTagName(tagName string) []File {
 	return nil
 }
 
-// 根据版本号获取版本大小
-func (m *MountPoint) GetSizeByTagName(tagName string) int64 {
-	if m.Releases == nil {
-		return 0
-	}
-	for _, item := range *m.Releases {
+// 根据 tagName 计算 asset 总大小
+func releasesSizeByTag(releases []Release, tagName string) int64 {
+	for _, item := range releases {
 		if item.TagName == tagName {
-			size := int64(0)
-			for _, asset := range item.Assets {
-				size += asset.Size
-			}
-			return size
+			return releaseSize(&item)
 		}
 	}
 	return 0
 }
 
-// 获取所有版本大小
-func (m *MountPoint) GetAllVersionSize() int64 {
-	if m.Releases == nil {
-		return 0
-	}
+// 计算所有 releases 的 asset 总大小
+func releasesTotalSize(releases []Release) int64 {
 	size := int64(0)
-	for _, release := range *m.Releases {
-		for _, asset := range release.Assets {
-			size += asset.Size
-		}
+	for _, release := range releases {
+		size += releaseSize(&release)
 	}
 	return size
 }
 
-func (m *MountPoint) GetSourceCode() []File {
-	if m.Release == nil {
+// Source code 文件
+func sourceCodeFiles(point string, release *Release) []File {
+	if release == nil {
 		return nil
 	}
-	files := make([]File, 0)
-
-	// 无法获取文件大小，此处设为 1
-	files = append(files, File{
-		Path:     path.Join(m.Point, "Source code (zip)"),
-		FileName: "Source code (zip)",
-		Size:     1,
-		Type:     "file",
-		UpdateAt: m.Release.CreatedAt,
-		CreateAt: m.Release.CreatedAt,
-		Url:      m.Release.ZipballUrl,
-	})
-	files = append(files, File{
-		Path:     path.Join(m.Point, "Source code (tar.gz)"),
-		FileName: "Source code (tar.gz)",
-		Size:     1,
-		Type:     "file",
-		UpdateAt: m.Release.CreatedAt,
-		CreateAt: m.Release.CreatedAt,
-		Url:      m.Release.TarballUrl,
-	})
-
-	return files
+	return []File{
+		{
+			Path:     path.Join(point, "Source code (zip)"),
+			FileName: "Source code (zip)",
+			Size:     1,
+			Type:     "file",
+			UpdateAt: release.CreatedAt,
+			CreateAt: release.CreatedAt,
+			Url:      release.ZipballUrl,
+		},
+		{
+			Path:     path.Join(point, "Source code (tar.gz)"),
+			FileName: "Source code (tar.gz)",
+			Size:     1,
+			Type:     "file",
+			UpdateAt: release.CreatedAt,
+			CreateAt: release.CreatedAt,
+			Url:      release.TarballUrl,
+		},
+	}
 }
 
-func (m *MountPoint) GetSourceCodeByTagName(tagName string) []File {
-	if m.Releases == nil {
-		return nil
-	}
-	for _, item := range *m.Releases {
+// 根据 tagName 获取 Source Code 文件
+func sourceCodeFilesByTag(point string, releases []Release, tagName string) []File {
+	for _, item := range releases {
 		if item.TagName == tagName {
-			files := make([]File, 0)
-			files = append(files, File{
-				Path:     path.Join(m.Point, "Source code (zip)"),
-				FileName: "Source code (zip)",
-				Size:     1,
-				Type:     "file",
-				UpdateAt: item.CreatedAt,
-				CreateAt: item.CreatedAt,
-				Url:      item.ZipballUrl,
-			})
-			files = append(files, File{
-				Path:     path.Join(m.Point, "Source code (tar.gz)"),
-				FileName: "Source code (tar.gz)",
-				Size:     1,
-				Type:     "file",
-				UpdateAt: item.CreatedAt,
-				CreateAt: item.CreatedAt,
-				Url:      item.TarballUrl,
-			})
-			return files
+			return sourceCodeFiles(point, &item)
 		}
 	}
 	return nil
 }
 
-func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error), refresh bool) ([]File, error) {
-	if m.OtherFile == nil || refresh {
-		resp, err := get("https://api.github.com/repos/" + m.Repo + "/contents")
-		if err != nil {
-			m.OtherFile = nil
-			return nil, err
-		}
-		otherFile := new([]FileInfo)
-		if err := json.Unmarshal(resp.Body(), otherFile); err != nil {
-			m.OtherFile = nil
-			return nil, err
-		}
-		m.OtherFile = otherFile
-	}
-
+// 仓库根目录下的 README/LICENSE 文件
+func otherFiles(point string, fileInfos []FileInfo) []File {
 	files := make([]File, 0)
 	defaultTime := "1970-01-01T00:00:00Z"
-	for _, file := range *m.OtherFile {
-		if strings.HasSuffix(file.Name, ".md") || strings.HasPrefix(file.Name, "LICENSE") {
+	for _, file := range fileInfos {
+		if file.Type == "dir" {
+			continue
+		}
+		name := file.Name
+		if strings.EqualFold(name, "README.md") || strings.HasPrefix(name, "LICENSE") {
 			files = append(files, File{
-				Path:     path.Join(m.Point, file.Name),
+				Path:     path.Join(point, file.Name),
 				FileName: file.Name,
 				Size:     file.Size,
 				Type:     "file",
@@ -264,7 +162,7 @@ func (m *MountPoint) GetOtherFile(get func(url string) (*resty.Response, error),
 			})
 		}
 	}
-	return files, nil
+	return files
 }
 
 type File struct {

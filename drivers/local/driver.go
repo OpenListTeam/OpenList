@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -153,8 +152,7 @@ func (d *Local) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 func (d *Local) FileInfoToObj(ctx context.Context, f fs.FileInfo, reqPath string, fullPath string) model.Obj {
 	thumb := ""
 	if d.Thumbnail {
-		typeName := utils.GetFileType(f.Name())
-		if typeName == conf.IMAGE || typeName == conf.VIDEO {
+		if d.supportsThumbnail(f.Name()) {
 			thumb = common.GetApiUrl(ctx) + stdpath.Join("/d", reqPath, f.Name())
 			thumb = utils.EncodePath(thumb, true)
 			thumb += "?type=thumb&sign=" + sign.Sign(stdpath.Join(reqPath, f.Name()))
@@ -240,7 +238,7 @@ func (d *Local) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		var thumbPath *string
 		err := d.thumbTokenBucket.Do(ctx, func() error {
 			var err error
-			buf, thumbPath, err = d.getThumb(file)
+			buf, thumbPath, err = d.getThumb(ctx, file)
 			return err
 		})
 		if err != nil {

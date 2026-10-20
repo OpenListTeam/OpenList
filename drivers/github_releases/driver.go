@@ -45,134 +45,126 @@ func (d *GithubReleases) List(ctx context.Context, dir model.Obj, args model.Lis
 	for i := range d.points {
 		point := &d.points[i]
 
-		if !d.Addition.ShowAllVersion { // latest
-			err := point.RequestRelease(d.GetRequest, args.Refresh)
+		if !d.Addition.ShowAllVersion {
+			// latest version mode
+			release, err := d.getLatestRelease(point.Repo)
 			if err != nil {
 				log.Warnf("failed to request release for %s: %v", point.Repo, err)
+				continue
+			}
+			if release == nil {
+				continue
 			}
 
-			if point.Point == path { // 与仓库路径相同
-				if point.Release == nil {
-					if err != nil {
-						return nil, fmt.Errorf("failed to get release for %s: %w", point.Repo, err)
-					}
-					return nil, fmt.Errorf("failed to get release for %s: unknown error", point.Repo)
-				}
-				files = append(files, point.GetLatestRelease()...)
+			if point.Point == path {
+				// 当前目录就是仓库挂载点
+				files = append(files, releaseToFiles(point.Point, release)...)
 				if d.Addition.ShowReadme {
-					otherFiles, err := point.GetOtherFile(d.GetRequest, args.Refresh)
-					if err != nil {
-						return nil, fmt.Errorf("failed to get other files for %s: %w", point.Repo, err)
+					other, err := d.fetchRepoFiles(point.Repo)
+					if err == nil {
+						files = append(files, otherFiles(point.Point, other)...)
+					} else {
+						log.Warnf("failed to get other files for %s: %v", point.Repo, err)
 					}
-					files = append(files, otherFiles...)
 				}
 				if d.Addition.ShowSourceCode {
-					files = append(files, point.GetSourceCode()...)
+					files = append(files, sourceCodeFiles(point.Point, release)...)
 				}
-			} else if strings.HasPrefix(point.Point, path) { // 仓库目录的父目录
+			} else if strings.HasPrefix(point.Point, path) {
+				// 仓库目录的父目录，需要聚合显示
 				nextDir := GetNextDir(point.Point, path)
 				if nextDir == "" {
 					continue
-				}
-				if err != nil {
-					return nil, fmt.Errorf("failed to get release for %s: %w", point.Repo, err)
 				}
 
 				hasSameDir := false
 				for index := range files {
 					if files[index].GetName() == nextDir {
 						hasSameDir = true
-						files[index].Size += point.GetLatestSize()
+						files[index].Size += releaseSize(release)
 						break
 					}
 				}
 				if !hasSameDir {
-					var updateAt, createAt string
-					if point.Release != nil {
-						updateAt = point.Release.PublishedAt
-						createAt = point.Release.CreatedAt
-					}
 					files = append(files, File{
 						Path:     stdpath.Join(path, nextDir),
 						FileName: nextDir,
-						Size:     point.GetLatestSize(),
-						UpdateAt: updateAt,
-						CreateAt: createAt,
+						Size:     releaseSize(release),
+						UpdateAt: release.PublishedAt,
+						CreateAt: release.CreatedAt,
 						Type:     "dir",
 						Url:      "",
 					})
 				}
 			}
-		} else { // all version
-			err := point.RequestReleases(d.GetRequest, args.Refresh)
+		} else {
+			// all versions mode
+			releases, err := d.getAllReleases(point.Repo)
 			if err != nil {
 				log.Warnf("failed to request releases for %s: %v", point.Repo, err)
+				continue
+			}
+			if len(releases) == 0 {
+				// no releases but may still have repo files (e.g. README)
+				if point.Point == path && d.Addition.ShowReadme {
+					other, err := d.fetchRepoFiles(point.Repo)
+					if err == nil {
+						files = append(files, otherFiles(point.Point, other)...)
+					} else {
+						log.Warnf("failed to get other files for %s: %v", point.Repo, err)
+					}
+				}
+				continue
 			}
 
-			if point.Point == path { // 与仓库路径相同
-				if point.Releases == nil {
-					if err != nil {
-						return nil, fmt.Errorf("failed to get releases for %s: %w", point.Repo, err)
-					}
-					return nil, fmt.Errorf("failed to get releases for %s: unknown error", point.Repo)
-				}
-				files = append(files, point.GetAllVersion()...)
+			if point.Point == path {
+				// 当前目录就是仓库挂载点
+				files = append(files, releasesToVersionDirs(point.Point, releases)...)
 				if d.Addition.ShowReadme {
-					otherFiles, err := point.GetOtherFile(d.GetRequest, args.Refresh)
-					if err != nil {
-						return nil, fmt.Errorf("failed to get other files for %s: %w", point.Repo, err)
+					other, err := d.fetchRepoFiles(point.Repo)
+					if err == nil {
+						files = append(files, otherFiles(point.Point, other)...)
+					} else {
+						log.Warnf("failed to get other files for %s: %v", point.Repo, err)
 					}
-					files = append(files, otherFiles...)
 				}
-			} else if strings.HasPrefix(point.Point, path) { // 仓库目录的父目录
+			} else if strings.HasPrefix(point.Point, path) {
+				// 仓库目录的父目录
 				nextDir := GetNextDir(point.Point, path)
 				if nextDir == "" {
 					continue
-				}
-				if err != nil {
-					return nil, fmt.Errorf("failed to get releases for %s: %w", point.Repo, err)
 				}
 
 				hasSameDir := false
 				for index := range files {
 					if files[index].GetName() == nextDir {
 						hasSameDir = true
-						files[index].Size += point.GetAllVersionSize()
+						files[index].Size += releasesTotalSize(releases)
 						break
 					}
 				}
 				if !hasSameDir {
-					var updateAt, createAt string
-					if point.Releases != nil && len(*point.Releases) > 0 {
-						updateAt = (*point.Releases)[0].PublishedAt
-						createAt = (*point.Releases)[0].CreatedAt
-					}
 					files = append(files, File{
 						FileName: nextDir,
 						Path:     stdpath.Join(path, nextDir),
-						Size:     point.GetAllVersionSize(),
-						UpdateAt: updateAt,
-						CreateAt: createAt,
+						Size:     releasesTotalSize(releases),
+						UpdateAt: releases[0].PublishedAt,
+						CreateAt: releases[0].CreatedAt,
 						Type:     "dir",
 						Url:      "",
 					})
 				}
-			} else if strings.HasPrefix(path, point.Point) { // 仓库目录的子目录
+			} else if strings.HasPrefix(path, point.Point) {
+				// 仓库目录的子目录（某个版本）
 				tagName := GetNextDir(path, point.Point)
 				if tagName == "" {
 					continue
 				}
-				if point.Releases == nil {
-					if err != nil {
-						return nil, fmt.Errorf("failed to get releases for %s: %w", point.Repo, err)
-					}
-					return nil, fmt.Errorf("failed to get releases for %s: unknown error", point.Repo)
-				}
 
-				files = append(files, point.GetReleaseByTagName(tagName)...)
+				files = append(files, releaseAssetsByTag(point.Point, tagName, releases)...)
 
 				if d.Addition.ShowSourceCode {
-					files = append(files, point.GetSourceCodeByTagName(tagName)...)
+					files = append(files, sourceCodeFilesByTag(point.Point, releases, tagName)...)
 				}
 			}
 		}

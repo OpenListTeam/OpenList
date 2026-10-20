@@ -23,7 +23,7 @@ type options struct {
 
 	pwd                string //de/encrypt password
 	salt               string
-	filenameEncryption string //reference drivers\crypt\meta.go Addtion
+	filenameEncryption string //reference drivers\crypt\meta.go Addition
 	dirnameEncryption  string
 	filenameEncode     string
 	suffix             string
