@@ -531,8 +531,8 @@ BuildReleaseFreeBSD() {
     sed 's/\.0$//')
   
   if [ -z "$freebsd_version" ]; then
-    echo "Failed to get FreeBSD version, falling back to 14.3"
-    freebsd_version="14.3"
+    echo "Failed to get FreeBSD version, falling back to 14.4"
+    freebsd_version="14.4"
   fi
 
   echo "Using FreeBSD version: $freebsd_version"

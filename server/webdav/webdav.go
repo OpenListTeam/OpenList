@@ -355,8 +355,6 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 		return status, err
 	}
 	defer release()
-	// TODO(rost): Support the If-Match, If-None-Match headers? See bradfitz'
-	// comments in http.checkEtag.
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
@@ -394,6 +392,30 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if !common.CanWrite(user, parentMeta, parentPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
+	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
+	exists := err == nil
+	if err != nil && !errs.IsObjectNotFound(err) {
+		if errs.IsNotFoundError(err) {
+			return http.StatusNotFound, err
+		}
+		return http.StatusInternalServerError, err
+	}
+	var modTime time.Time
+	if exists {
+		if fi.IsDir() {
+			return http.StatusMethodNotAllowed, nil
+		}
+		etag, err := findETag(ctx, h.LockSystem, reqPath, fi)
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+		w.Header().Set("Etag", etag)
+		modTime = fi.ModTime()
+	}
+	if done, _ := net.CheckPreconditions(w, r, modTime, exists); done {
+		return 0, nil
+	}
+	w.Header().Del("Etag")
 	fsStream := &stream.FileStream{
 		Obj:      &obj,
 		Reader:   r.Body,
@@ -411,16 +433,21 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if err != nil {
 		return http.StatusMethodNotAllowed, err
 	}
-	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
+	fi, err = fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
-		fi = &obj
+		return http.StatusInternalServerError, err
 	}
 	etag, err := findETag(ctx, h.LockSystem, reqPath, fi)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	w.Header().Set("Etag", etag)
-	return http.StatusCreated, nil
+	if exists {
+		w.WriteHeader(http.StatusNoContent)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
+	return 0, nil
 }
 
 func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status int, err error) {

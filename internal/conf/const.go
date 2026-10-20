@@ -127,6 +127,7 @@ const (
 	SSODefaultDir        = "sso_default_dir"
 	SSODefaultPermission = "sso_default_permission"
 	SSOCompatibilityMode = "sso_compatibility_mode"
+	SSOPostMessageOrigin = "sso_postmessage_origin"
 
 	// ldap
 	LdapLoginEnabled      = "ldap_login_enabled"
@@ -206,4 +207,5 @@ const (
 	PathKey
 	SharingIDKey
 	SkipHookKey
+	DirectUploadContentTypeKey
 )

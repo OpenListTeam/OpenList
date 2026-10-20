@@ -118,21 +118,3 @@ type SharingLinkArgs struct {
 type RangeReaderIF interface {
 	RangeRead(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error)
 }
-
-type RangeReadCloserIF interface {
-	RangeReaderIF
-	utils.ClosersIF
-}
-
-var _ RangeReadCloserIF = (*RangeReadCloser)(nil)
-
-type RangeReadCloser struct {
-	RangeReader RangeReaderIF
-	utils.Closers
-}
-
-func (r *RangeReadCloser) RangeRead(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
-	rc, err := r.RangeReader.RangeRead(ctx, httpRange)
-	r.Add(rc)
-	return rc, err
-}

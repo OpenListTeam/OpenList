@@ -233,7 +233,10 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	if mode == -1 {
 		mode = storage.(driver.LinkCacheModeResolver).ResolveLinkCacheMode(path)
 	}
-	typeKey := args.Type
+	typeKey := "proxy/" + args.Type
+	if args.Redirect {
+		typeKey = "redirect/" + args.Type
+	}
 	if mode&driver.LinkCacheIP != 0 {
 		typeKey += "/" + args.IP
 	}

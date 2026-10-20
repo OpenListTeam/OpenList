@@ -152,6 +152,8 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 
 // GetObject fetchs the object from the filesystem.
 func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string, rangeRequest *gofakes3.ObjectRangeRequest) (s3Obj *gofakes3.Object, err error) {
+	defer func() { err = mapBackendError(err) }()
+
 	bucket, err := getBucketByName(bucketName)
 	if err != nil {
 		return nil, err
@@ -193,7 +195,7 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		return nil, fmt.Errorf("the remote storage driver need to be enhanced to support s3")
 	}
 
-	var rd io.Reader
+	var rd io.ReadCloser
 	if rnge != nil {
 		rd, err = rrf.RangeRead(ctx, http_range.Range(*rnge))
 	} else {
@@ -215,6 +217,7 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 			meta[k] = v
 		}
 	}
+	closers := utils.NewClosers(rd, link)
 
 	return &gofakes3.Object{
 		// Name: gofakes3.URLEncode(objectName),
@@ -223,7 +226,7 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		Metadata: meta,
 		Size:     size,
 		Range:    rnge,
-		Contents: utils.ReadCloser{Reader: rd, Closer: link},
+		Contents: utils.ReadCloser{Reader: rd, Closer: &closers},
 	}, nil
 }
 
