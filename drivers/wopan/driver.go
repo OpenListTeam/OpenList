@@ -3,6 +3,7 @@ package template
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -30,6 +31,9 @@ func (d *Wopan) GetAddition() driver.Additional {
 
 func (d *Wopan) Init(ctx context.Context) error {
 	d.client = wopan.DefaultWithRefreshToken(d.RefreshToken)
+	// SDK 内部只在上传请求里单独设置了 User-Agent，其余 API 请求会落到 resty 的默认 UA(go-resty/xxx)。
+	// 这里在客户端级别统一设置，保证所有发往联通的请求都带浏览器 UA 且彼此一致。
+	d.client.SetUserAgent(wopan.DefaultUA)
 	d.client.SetAccessToken(d.AccessToken)
 	d.client.OnRefreshToken(func(accessToken, refreshToken string) {
 		d.AccessToken = accessToken
@@ -81,7 +85,8 @@ func (d *Wopan) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 			return nil, err
 		}
 		return &model.Link{
-			URL: res.List[0].DownloadUrl,
+			URL:    res.List[0].DownloadUrl,
+			Header: http.Header{"User-Agent": []string{wopan.DefaultUA}},
 		}, nil
 	}
 	return nil, fmt.Errorf("unable to convert file to Object")
