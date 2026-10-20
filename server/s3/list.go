@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/gofakes3"
 	log "github.com/sirupsen/logrus"
 )
@@ -127,9 +128,13 @@ func (b *s3Backend) walkPage(
 		return page.addContent(item), nil
 	}
 
+	// Emit entries in the order their keys have in a flat S3 keyspace. A
+	// directory sorts as if it carried its trailing slash, so "b.txt" comes
+	// before "b/..." as it does in a real bucket. Without this a listing
+	// resumed from a marker could silently skip or repeat keys.
 	dirEntries = slices.Clone(dirEntries)
 	sort.Slice(dirEntries, func(i, j int) bool {
-		return dirEntries[i].GetName() < dirEntries[j].GetName()
+		return listSortKey(dirEntries[i]) < listSortKey(dirEntries[j])
 	})
 
 	for _, entry := range dirEntries {
@@ -143,14 +148,16 @@ func (b *s3Backend) walkPage(
 		}
 
 		if entry.IsDir() {
+			// S3 common prefixes include the delimiter, e.g. "base/20261009T020008/".
+			// Clients such as barman-cloud ignore prefixes without it.
+			subtreePrefix := objectPath + "/"
 			if addPrefix {
-				// response.AddPrefix(gofakes3.URLEncode(objectPath))
-				if !page.addPrefix(objectPath) {
+				// response.AddPrefix(gofakes3.URLEncode(subtreePrefix))
+				if !page.addPrefix(subtreePrefix) {
 					return false, nil
 				}
 				continue
 			}
-			subtreePrefix := objectPath + "/"
 			// A marker beyond this subtree lets us avoid an upstream directory read.
 			if subtreePrefix <= page.marker && !strings.HasPrefix(page.marker, subtreePrefix) {
 				continue
@@ -174,4 +181,13 @@ func (b *s3Backend) walkPage(
 		}
 	}
 	return true, nil
+}
+
+// listSortKey returns the name used to order directory entries so that the
+// emitted keys follow S3 lexicographic order.
+func listSortKey(entry model.Obj) string {
+	if entry.IsDir() {
+		return entry.GetName() + "/"
+	}
+	return entry.GetName()
 }

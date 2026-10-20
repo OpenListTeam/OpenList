@@ -843,6 +843,24 @@ func unicode(str string) string {
 	return textUnquoted
 }
 
+// Client types reported in the X-Yun-Client-Info header. The web client is the
+// default with a 50 GB single file upload limit, while the PC client raises the
+// limit to 500 GB.
+const (
+	yunClientTypeWeb = "9"
+	yunClientTypePC  = "13"
+)
+
+// yunClientInfo returns the X-Yun-Client-Info header value for the configured
+// client_type addition. Anything other than pc falls back to the web client.
+func (d *Yun139) yunClientInfo() string {
+	clientType := yunClientTypeWeb
+	if d.ClientType == "pc" {
+		clientType = yunClientTypePC
+	}
+	return "||" + clientType + "|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||"
+}
+
 func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	req := base.RestyClient.R()
 	randStr := random.String(16)
@@ -878,7 +896,7 @@ func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback
 		"X-Yun-Api-Version":    "v1",
 		"X-Yun-App-Channel":    "10000034",
 		"X-Yun-Channel-Source": "10000034",
-		"X-Yun-Client-Info":    "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
+		"X-Yun-Client-Info":    d.yunClientInfo(),
 		"X-Yun-Module-Type":    "100",
 		"X-Yun-Svc-Type":       "1",
 	})

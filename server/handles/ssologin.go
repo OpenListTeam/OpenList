@@ -122,6 +122,53 @@ func generateSSOBindingToken(c *gin.Context, purpose, ssoID string) (string, err
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(common.SecretKey)
 }
 
+// ssoTargetOrigin returns the origin that is allowed to receive the SSO result
+// via postMessage. It honours the operator-configured sso_postmessage_origin so
+// a frontend served from a different origin than the API can still receive the
+// result; otherwise it falls back to the API origin, or "/" to restrict
+// delivery to same-origin openers when that cannot be resolved.
+func ssoTargetOrigin(c *gin.Context) string {
+	if configured := setting.GetStr(conf.SSOPostMessageOrigin); configured != "" {
+		if u, err := url.Parse(configured); err == nil &&
+			(u.Scheme == "http" || u.Scheme == "https") &&
+			u.Host != "" && u.User == nil &&
+			(u.Path == "" || u.Path == "/") &&
+			u.RawQuery == "" && u.Fragment == "" {
+			return u.Scheme + "://" + u.Host
+		}
+	}
+	u, err := url.Parse(common.GetApiUrl(c))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "/"
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// ssoPostMessage hands the SSO result back to the window that started the login.
+// The target origin is pinned so that an arbitrary page cannot open the SSO
+// endpoint in a popup and read the payload out of the message event.
+func ssoPostMessage(c *gin.Context, payload map[string]string) {
+	data, err := utils.Json.MarshalToString(payload)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	origin, err := utils.Json.MarshalToString(ssoTargetOrigin(c))
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	html := fmt.Sprintf(`<!DOCTYPE html>
+			<head></head>
+			<body>
+			<script>
+			if (window.opener) { window.opener.postMessage(%s, %s) }
+			window.close()
+			</script>
+			</body>`, data, origin)
+	c.Data(200, "text/html; charset=utf-8", []byte(html))
+}
+
 func ssoRedirectUri(c *gin.Context, useCompatibility bool, method string) string {
 	if useCompatibility {
 		return common.GetApiUrl(c) + "/api/auth/" + method
@@ -338,15 +385,7 @@ func OIDCLoginCallback(c *gin.Context) {
 			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+bindingProof)
 			return
 		}
-		html := fmt.Sprintf(`<!DOCTYPE html>
-				<head></head>
-				<body>
-				<script>
-				window.opener.postMessage({"sso_id": "%s"}, "*")
-				window.close()
-				</script>
-				</body>`, bindingProof)
-		c.Data(200, "text/html; charset=utf-8", []byte(html))
+		ssoPostMessage(c, map[string]string{"sso_id": bindingProof})
 		return
 	}
 	if method == "sso_get_token" {
@@ -367,15 +406,7 @@ func OIDCLoginCallback(c *gin.Context) {
 			c.Redirect(302, common.GetApiUrl(c)+"/@login?token="+token)
 			return
 		}
-		html := fmt.Sprintf(`<!DOCTYPE html>
-				<head></head>
-				<body>
-				<script>
-				window.opener.postMessage({"token":"%s"}, "*")
-				window.close()
-				</script>
-				</body>`, token)
-		c.Data(200, "text/html; charset=utf-8", []byte(html))
+		ssoPostMessage(c, map[string]string{"token": token})
 		return
 	}
 }
@@ -516,15 +547,7 @@ func SSOLoginCallback(c *gin.Context) {
 			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+bindingProof)
 			return
 		}
-		html := fmt.Sprintf(`<!DOCTYPE html>
-				<head></head>
-				<body>
-				<script>
-				window.opener.postMessage({"sso_id": "%s"}, "*")
-				window.close()
-				</script>
-				</body>`, bindingProof)
-		c.Data(200, "text/html; charset=utf-8", []byte(html))
+		ssoPostMessage(c, map[string]string{"sso_id": bindingProof})
 		return
 	}
 	username := utils.Json.Get(resp.Body(), usernameField).ToString()
@@ -545,13 +568,5 @@ func SSOLoginCallback(c *gin.Context) {
 		c.Redirect(302, common.GetApiUrl(c)+"/@login?token="+token)
 		return
 	}
-	html := fmt.Sprintf(`<!DOCTYPE html>
-							<head></head>
-							<body>
-							<script>
-							window.opener.postMessage({"token":"%s"}, "*")
-							window.close()
-							</script>
-							</body>`, token)
-	c.Data(200, "text/html; charset=utf-8", []byte(html))
+	ssoPostMessage(c, map[string]string{"token": token})
 }
