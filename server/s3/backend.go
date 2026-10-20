@@ -133,7 +133,7 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 	}
 
 	size := node.GetSize()
-	hash, err := getObjectHash(ctx, fp, node)
+	hash, err := b.getObjectHash(ctx, fp, node)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
-	hash, err := getObjectHash(ctx, fp, node)
+	hash, err := b.getObjectHash(ctx, fp, node)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +357,11 @@ func (b *s3Backend) putStream(
 		return err
 	}
 
-	b.meta.Store(fp, objectMetadata{headers: meta, hash: hash.Sum(nil), etag: etag})
+	sum := hash.Sum(nil)
+	b.meta.Store(fp, objectMetadata{headers: meta, hash: sum, etag: etag})
+	// The content was just hashed on the way in, so record the result now
+	// instead of making the first HEAD of the new object read it again.
+	b.storeCachedHash(fp, sum, size, ti.UnixNano())
 
 	return nil
 }

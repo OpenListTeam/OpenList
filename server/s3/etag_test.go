@@ -15,13 +15,13 @@ import (
 func TestObjectHashFromDriver(t *testing.T) {
 	sum := md5.Sum([]byte("content"))
 	obj := &model.Object{HashInfo: utils.NewHashInfo(utils.MD5, hex.EncodeToString(sum[:]))}
-	hash, err := getObjectHash(context.Background(), "object", obj)
+	hash, err := new(s3Backend).getObjectHash(context.Background(), "object", obj)
 	if err != nil || hex.EncodeToString(hash) != hex.EncodeToString(sum[:]) {
 		t.Fatalf("hash = %x, err = %v", hash, err)
 	}
 	for _, value := range []string{"invalid", "ab"} {
 		obj.HashInfo = utils.NewHashInfo(utils.MD5, value)
-		if _, err := getObjectHash(context.Background(), "object", obj); err == nil {
+		if _, err := new(s3Backend).getObjectHash(context.Background(), "object", obj); err == nil {
 			t.Fatalf("accepted invalid MD5 %q", value)
 		}
 	}

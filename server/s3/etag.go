@@ -35,7 +35,7 @@ func (b *s3Backend) loadMetadata(name string, hash []byte) (map[string]string, s
 // Metadata alone cannot identify content: clients can preserve both file size
 // and modification time when overwriting an object. Use the driver's MD5 when
 // available, otherwise hash the complete content, including for HEAD and ranges.
-func getObjectHash(ctx context.Context, name string, obj model.Obj) ([]byte, error) {
+func (b *s3Backend) getObjectHash(ctx context.Context, name string, obj model.Obj) ([]byte, error) {
 	if value := obj.GetHash().GetHash(utils.MD5); value != "" {
 		hash, err := hex.DecodeString(value)
 		if err != nil || len(hash) != md5.Size {
@@ -43,6 +43,13 @@ func getObjectHash(ctx context.Context, name string, obj model.Obj) ([]byte, err
 		}
 		return hash, nil
 	}
+	// Filesystem-backed storages answer from the cached MD5 without
+	// reading the object again; anything else falls through to the
+	// content hash below.
+	if cached, ok := b.readCachedHash(name); ok {
+		return cached, nil
+	}
+
 	link, file, err := fs.Link(ctx, name, model.LinkArgs{})
 	if err != nil {
 		return nil, err
