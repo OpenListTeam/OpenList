@@ -201,11 +201,26 @@ func ClearMediaScanPathDB(c *gin.Context) {
 
 // ==================== 媒体条目管理（后台） ====================
 
+// clampMediaPage 限制分页参数，避免 page_size 过大或为负导致整表扫描 / 响应体爆炸
+func clampMediaPage(page, pageSize, defaultSize, maxSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = defaultSize
+	}
+	if pageSize > maxSize {
+		pageSize = maxSize
+	}
+	return page, pageSize
+}
+
 // ListMediaItemsAdmin 后台分页查询媒体条目
 func ListMediaItemsAdmin(c *gin.Context) {
 	mediaType := model.MediaType(c.Query("media_type"))
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize = clampMediaPage(page, pageSize, 20, 500)
 	keyword := c.Query("keyword")
 	orderBy := c.DefaultQuery("order_by", "name")
 	orderDir := c.DefaultQuery("order_dir", "asc")
@@ -719,6 +734,7 @@ func PublicListMedia(c *gin.Context) {
 	mediaType := model.MediaType(c.Query("media_type"))
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "40"))
+	page, pageSize = clampMediaPage(page, pageSize, 40, 200)
 	orderBy := c.DefaultQuery("order_by", "name")
 	orderDir := c.DefaultQuery("order_dir", "asc")
 	folderPath := c.Query("folder_path")
@@ -788,6 +804,7 @@ func PublicGetMedia(c *gin.Context) {
 func PublicListAlbums(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "40"))
+	page, pageSize = clampMediaPage(page, pageSize, 40, 200)
 	keyword := c.Query("keyword")
 	scanPathIDStr := c.Query("scan_path_id")
 	var scanPathID uint
@@ -886,12 +903,12 @@ func PublicListScanPaths(c *gin.Context) {
 //   - "media_type" ：单个媒体类型（video/music/image/book）的全部数据
 //   - "scan_path"  ：单个扫描路径下的数据（仅 1 个路径 + 该路径下的条目）
 type MediaExportData struct {
-	Version   int                    `json:"version"`
-	ExportAt  time.Time              `json:"export_at"`
-	Scope     string                 `json:"scope"`
-	MediaType model.MediaType        `json:"media_type,omitempty"`
-	ScanPaths []model.MediaScanPath  `json:"scan_paths"`
-	Items     []model.MediaItem      `json:"items"`
+	Version   int                   `json:"version"`
+	ExportAt  time.Time             `json:"export_at"`
+	Scope     string                `json:"scope"`
+	MediaType model.MediaType       `json:"media_type,omitempty"`
+	ScanPaths []model.MediaScanPath `json:"scan_paths"`
+	Items     []model.MediaItem     `json:"items"`
 }
 
 const mediaExportVersion = 1

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	stdpath "path"
@@ -30,7 +31,14 @@ var coverAllowedHosts = []string{
 }
 
 func hostAllowed(host string) bool {
-	host = strings.ToLower(host)
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".local") {
+		return false
+	}
+	// 显式拒绝 IP 字面量，避免白名单域名被解析/重定向到内网
+	if ip := net.ParseIP(host); ip != nil {
+		return false
+	}
 	for _, h := range coverAllowedHosts {
 		if host == h || strings.HasSuffix(host, "."+h) {
 			return true
@@ -39,16 +47,34 @@ func hostAllowed(host string) bool {
 	return false
 }
 
+// safeCoverURL 校验封面地址的协议与域名（含重定向后的每一跳）
+func safeCoverURL(u *url.URL) error {
+	if u == nil {
+		return fmt.Errorf("empty url")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported scheme")
+	}
+	if !hostAllowed(u.Hostname()) {
+		return fmt.Errorf("host not allowed")
+	}
+	return nil
+}
+
 // PublicMediaProxy 代理外部封面图（TMDB/豆瓣/Discogs），解决客户端直连被墙的问题。
 // 用法：/api/public/media/proxy?url=https%3A%2F%2Fimage.tmdb.org%2F...
 func PublicMediaProxy(c *gin.Context) {
+	if !MediaEnabled() {
+		c.Status(http.StatusNotFound)
+		return
+	}
 	raw := c.Query("url")
 	if raw == "" {
 		c.Status(http.StatusBadRequest)
 		return
 	}
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !hostAllowed(u.Hostname()) {
+	if err != nil || safeCoverURL(u) != nil {
 		c.Status(http.StatusForbidden)
 		return
 	}
@@ -78,8 +104,17 @@ func PublicMediaProxy(c *gin.Context) {
 }
 
 // fetchCover 拉取图片，仅接受 200 且 Content-Type 为 image/*
+// 重定向的每一跳都重新做域名校验，避免白名单域名 302 到内网造成 SSRF。
 func fetchCover(ctx context.Context, raw string) (*http.Response, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("too many redirects")
+			}
+			return safeCoverURL(req.URL)
+		},
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return nil, err
@@ -106,6 +141,10 @@ func thumbnailRoot() string {
 // 缩略图由刮削器写入本地磁盘（非 VFS），因此不能用 /d 读取。
 // 用法：/api/public/media/thumb?path=/imgs/xxx.jpg
 func PublicMediaThumb(c *gin.Context) {
+	if !MediaEnabled() {
+		c.Status(http.StatusNotFound)
+		return
+	}
 	reqPath := strings.TrimPrefix(stdpath.Clean("/"+c.Query("path")), "/")
 	if reqPath == "" || reqPath == "." || strings.Contains(reqPath, "..") {
 		c.Status(http.StatusBadRequest)

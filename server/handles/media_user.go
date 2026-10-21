@@ -36,6 +36,10 @@ func GetMediaUserDataBatch(c *gin.Context) {
 		common.SuccessResp(c, []model.MediaUserData{})
 		return
 	}
+	// 限制批量查询数量，避免超长 IN 子句造成数据库压力
+	if len(ids) > 500 {
+		ids = ids[:500]
+	}
 	list, err := db.ListMediaUserDataByItems(user.ID, ids)
 	if err != nil {
 		common.ErrorResp(c, err, 500)

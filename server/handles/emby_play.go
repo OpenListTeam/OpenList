@@ -14,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -124,7 +125,20 @@ var dataURIPrefix = "data:image/"
 
 // embyImage 返回条目封面
 func embyImage(c *gin.Context, id string, segs []string, allowAnon bool) {
-	user, _ := embyAuth(c)
+	user, ok := embyAuth(c)
+	if !ok {
+		// 匿名访问必须回退到访客身份，而不是 nil（nil 会被当成无限制用户）
+		if !allowAnon {
+			embyUnauthorized(c)
+			return
+		}
+		guest, err := op.GetGuest()
+		if err != nil || guest.Disabled {
+			embyUnauthorized(c)
+			return
+		}
+		user = guest
+	}
 	lib := loadEmbyLibrary(user)
 	item, ok := lib.resolveItem(id)
 	if !ok {
@@ -189,7 +203,7 @@ func serveEmbyCover(c *gin.Context, item *model.MediaItem) {
 			c.Status(404)
 			return
 		}
-		c.Header("Cache-Control", "public, max-age=86400")
+		c.Header("Cache-Control", "private, max-age=86400")
 		c.Data(200, mime, data)
 		return
 	}
