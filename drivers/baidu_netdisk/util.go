@@ -99,19 +99,21 @@ func (d *BaiduNetdisk) request(furl string, method string, callback base.ReqCall
 }
 
 func (d *BaiduNetdisk) requestCtx(ctx context.Context, furl string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	var result []byte
+	var body []byte
 	var waited time.Duration
 	err := retry.Do(func() error {
-		// Respect a shared cooldown started by an earlier 31034, but never let
-		// one call sleep longer than the cooldown budget in total.
-		w, ok, err := d.cooldown.wait(ctx, d.cooldown.budget()-waited)
+		// Wait for the shared rate-limit breaker, but never longer than the
+		// per-call budget in total.
+		p, w, ok, err := d.cooldown.acquire(ctx, d.cooldown.budget()-waited)
+		waited += w
 		if err != nil {
 			return retry.Unrecoverable(err)
 		}
 		if !ok {
 			return retry.Unrecoverable(&apiError{URL: furl, Errno: errnoRateLimited})
 		}
-		waited += w
+		result := outcomeOther
+		defer func() { p.done(result) }()
 		req := base.RestyClient.R().SetContext(ctx)
 		req.SetQueryParam("access_token", d.AccessToken)
 		if callback != nil {
@@ -130,17 +132,18 @@ func (d *BaiduNetdisk) requestCtx(ctx context.Context, furl string, method strin
 		log.Debugf("[baidu_netdisk] req: %s, resp: %s", furl, res.String())
 		apiErr := parseAPIError(furl, res.Body())
 		if apiErr == nil {
-			d.cooldown.success()
-			result = res.Body()
+			result = outcomeSuccess
+			body = res.Body()
 			return nil
 		}
 		errno := apiErr.Errno
 		if apiErr.RateLimited() {
-			if cd, started := d.cooldown.hit(); started {
-				log.Warnf("[baidu_netdisk] hit rate limit (31034), pausing requests for %s", cd.Round(time.Millisecond))
-			}
+			result = outcomeRateLimited
 			return apiErr
 		}
+		// Baidu answered without throttling: as far as the breaker is
+		// concerned this is a success, even if the call itself failed.
+		result = outcomeSuccess
 		if apiErr.NotExist() {
 			// permanent; callers such as Remove decide whether that is fine
 			return retry.Unrecoverable(apiErr)
@@ -157,7 +160,7 @@ func (d *BaiduNetdisk) requestCtx(ctx context.Context, furl string, method strin
 		}
 
 		if errno == 31023 && d.DownloadAPI == "crack_video" {
-			result = res.Body()
+			body = res.Body()
 			return nil
 		}
 
@@ -173,7 +176,7 @@ func (d *BaiduNetdisk) requestCtx(ctx context.Context, furl string, method strin
 			}
 			return retry.BackOffDelay(n, err, config)
 		}))
-	return result, err
+	return body, err
 }
 
 func (d *BaiduNetdisk) get(pathname string, params map[string]string, resp interface{}) ([]byte, error) {

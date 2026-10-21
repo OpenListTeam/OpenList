@@ -10,6 +10,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	log "github.com/sirupsen/logrus"
 )
 
 // Baidu error codes handled specially.
@@ -20,8 +21,8 @@ const (
 	errnoRateLimited = 31034 // hit API frequency control
 	cooldownBase     = 8 * time.Second
 	cooldownMax      = 30 * time.Second
-	// maxCooldownWaitPerCall bounds how long a single API call may sleep in
-	// cooldowns. Past that the call fails with a rate-limit error so callers
+	// maxCooldownWaitPerCall bounds how long a single API call may wait for
+	// the breaker. Past that the call fails with a rate-limit error so callers
 	// (e.g. S3 clients receiving SlowDown) can back off on their own.
 	maxCooldownWaitPerCall = 35 * time.Second
 )
@@ -118,20 +119,40 @@ func asAPIError(err error) (*apiError, bool) {
 	return e, ok
 }
 
-// cooldown is shared by all requests of one driver instance. When Baidu answers
-// 31034 every request pauses until the window passes, instead of each goroutine
-// hammering the API with its own retries. There is no limit while not throttled.
+// outcome of a request made under a permit.
+type outcome int
+
+const (
+	outcomeSuccess outcome = iota
+	outcomeRateLimited
+	outcomeOther // any other error, including ctx cancellation
+)
+
+// cooldown is a small circuit breaker shared by all requests of one driver
+// instance. When Baidu answers 31034 the breaker opens and every request
+// pauses. When the pause ends exactly one request is let through as a probe
+// while the rest keep waiting:
+//   - probe succeeds: the breaker closes and all waiters proceed;
+//   - probe gets 31034: the pause is extended (doubling, capped) and the next
+//     expiry probes again;
+//   - probe fails otherwise or is cancelled: the probe slot passes to the next
+//     waiter.
+//
+// There is no limit while the breaker is closed.
 type cooldown struct {
 	mu      sync.Mutex
-	until   time.Time
-	penalty time.Duration // next window length
+	tripped bool          // breaker open
+	until   time.Time     // end of the current pause
+	penalty time.Duration // length of the next pause
+	probing bool          // a probe is in flight
+	changed chan struct{} // closed and replaced on every state change
+	probes  int           // probes granted (for tests and logs)
 
-	base, max time.Duration // window bounds
-	maxWait   time.Duration // per-call cooldown wait budget
+	base, max time.Duration // pause bounds
+	maxWait   time.Duration // per-call wait budget
 
 	now    func() time.Time
 	jitter func() time.Duration
-	sleep  func(ctx context.Context, d time.Duration) error
 }
 
 func newCooldown() *cooldown {
@@ -140,37 +161,15 @@ func newCooldown() *cooldown {
 		base:    cooldownBase,
 		max:     cooldownMax,
 		maxWait: maxCooldownWaitPerCall,
+		changed: make(chan struct{}),
 		now:     time.Now,
-		sleep: func(ctx context.Context, d time.Duration) error {
-			t := time.NewTimer(d)
-			defer t.Stop()
-			select {
-			case <-t.C:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		},
 	}
-	// up to 1/8 of the base window (1s by default), so instances do not resume in lockstep
+	// up to 1/8 of the base pause (1s by default), so instances do not resume in lockstep
 	c.jitter = func() time.Duration { return time.Duration(rand.Int63n(int64(c.base/8) + 1)) }
 	return c
 }
 
-// remaining is the time left in the current window.
-func (c *cooldown) remaining() time.Duration {
-	if c == nil {
-		return 0
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if d := c.until.Sub(c.now()); d > 0 {
-		return d
-	}
-	return 0
-}
-
-// budget is the per-call cooldown wait limit.
+// budget is the per-call wait limit.
 func (c *cooldown) budget() time.Duration {
 	if c == nil {
 		return 0
@@ -178,35 +177,98 @@ func (c *cooldown) budget() time.Duration {
 	return c.maxWait
 }
 
-// wait blocks until the current window ends. It returns false without waiting
-// if that would exceed budget.
-func (c *cooldown) wait(ctx context.Context, budget time.Duration) (time.Duration, bool, error) {
-	if c == nil {
-		return 0, true, nil
-	}
-	d := c.remaining()
-	if d <= 0 {
-		return 0, true, nil
-	}
-	if d > budget {
-		return 0, false, nil
-	}
-	return d, true, c.sleep(ctx, d)
+// permit is held by one request between acquire and done.
+type permit struct {
+	c     *cooldown
+	probe bool
+	once  sync.Once
 }
 
-// hit records a 31034 and returns the time left in the window and whether this
-// hit opened it. Hits inside an active window (other in-flight requests of the
-// same burst) do not extend it; a hit after the window ended doubles it.
-func (c *cooldown) hit() (time.Duration, bool) {
-	if c == nil {
-		return 0, false
+// done reports the request's outcome. It must be called exactly once per
+// permit; extra calls are ignored. A nil permit is a no-op.
+func (p *permit) done(o outcome) {
+	if p == nil || p.c == nil {
+		return
 	}
+	p.once.Do(func() { p.c.report(p.probe, o) })
+}
+
+// acquire waits until the request may be sent. It returns ok=false without
+// sending once waiting would exceed budget, and ctx's error if ctx ends first.
+// waited is the time spent waiting either way.
+func (c *cooldown) acquire(ctx context.Context, budget time.Duration) (p *permit, waited time.Duration, ok bool, err error) {
+	if c == nil {
+		return nil, 0, true, nil
+	}
+	start := c.now()
+	for {
+		c.mu.Lock()
+		now := c.now()
+		waited = now.Sub(start)
+		if !c.tripped {
+			c.mu.Unlock()
+			return &permit{c: c}, waited, true, nil
+		}
+		wait := c.until.Sub(now) // > 0: pause still running
+		if wait <= 0 && !c.probing {
+			c.probing = true
+			c.probes++
+			c.mu.Unlock()
+			return &permit{c: c, probe: true}, waited, true, nil
+		}
+		ch := c.changed
+		c.mu.Unlock()
+
+		left := budget - waited
+		if left <= 0 || wait > left {
+			return nil, waited, false, nil
+		}
+		if wait <= 0 { // a probe is in flight: wait for its report
+			wait = left
+		}
+		t := time.NewTimer(wait)
+		select {
+		case <-ch:
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return nil, c.now().Sub(start), false, ctx.Err()
+		}
+		t.Stop()
+	}
+}
+
+func (c *cooldown) report(probe bool, o outcome) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
-	if d := c.until.Sub(now); d > 0 {
-		return d, false
+	switch {
+	case probe:
+		c.probing = false
+		switch o {
+		case outcomeSuccess:
+			c.tripped = false
+			c.penalty = c.base
+			log.Infof("[baidu_netdisk] rate limit probe succeeded, resuming requests")
+		case outcomeRateLimited:
+			d := c.pause(now)
+			log.Warnf("[baidu_netdisk] rate limit probe still throttled (31034), pausing requests for %s", d.Round(time.Millisecond))
+		default:
+			log.Debugf("[baidu_netdisk] rate limit probe failed without a verdict, handing over")
+		}
+		c.broadcast()
+	case o == outcomeRateLimited && !c.tripped:
+		c.tripped = true
+		d := c.pause(now)
+		log.Warnf("[baidu_netdisk] hit rate limit (31034), pausing requests for %s", d.Round(time.Millisecond))
+		c.broadcast()
 	}
+	// Other outcomes of non-probe requests, e.g. 31034 for requests sent
+	// before the breaker opened, change nothing.
+}
+
+// pause starts a new pause and escalates the next one. c.mu must be held.
+func (c *cooldown) pause(now time.Time) time.Duration {
 	if c.penalty <= 0 {
 		c.penalty = c.base
 	}
@@ -216,17 +278,10 @@ func (c *cooldown) hit() (time.Duration, bool) {
 	if c.penalty > c.max {
 		c.penalty = c.max
 	}
-	return d, true
+	return d
 }
 
-// success resets the escalation once a request succeeds outside a window.
-func (c *cooldown) success() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.now().Before(c.until) {
-		c.penalty = c.base
-	}
+func (c *cooldown) broadcast() {
+	close(c.changed)
+	c.changed = make(chan struct{})
 }

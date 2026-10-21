@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -68,95 +69,248 @@ func TestParseAPIError(t *testing.T) {
 	}
 }
 
-type fakeClock struct {
-	mu sync.Mutex
-	t  time.Time
-}
-
-func (f *fakeClock) now() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.t }
-func (f *fakeClock) add(d time.Duration) {
-	f.mu.Lock()
-	f.t = f.t.Add(d)
-	f.mu.Unlock()
-}
-
-func newTestCooldown(clk *fakeClock) *cooldown {
+func newTestBreaker(base, max, maxWait time.Duration) *cooldown {
 	c := newCooldown()
-	c.now = clk.now
+	c.base, c.penalty, c.max, c.maxWait = base, base, max, maxWait
 	c.jitter = func() time.Duration { return 0 }
-	c.sleep = func(ctx context.Context, d time.Duration) error { clk.add(d); return ctx.Err() }
 	return c
 }
 
-func TestCooldownEscalatesOncePerWindowAndResets(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1000, 0)}
-	c := newTestCooldown(clk)
+func trip(c *cooldown) { c.report(false, outcomeRateLimited) }
 
-	if d, _ := c.hit(); d != 8*time.Second {
-		t.Fatalf("first hit = %s, want 8s", d)
+func checkNoLeak(t *testing.T, before int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
 	}
-	// a burst of in-flight requests hitting 31034 must not extend or escalate
-	for i := 0; i < 15; i++ {
-		clk.add(100 * time.Millisecond)
-		c.hit()
-	}
-	if r := c.remaining(); r != 8*time.Second-1500*time.Millisecond {
-		t.Fatalf("remaining after burst = %s", r)
-	}
-	clk.add(c.remaining())
-	if d, _ := c.hit(); d != 16*time.Second {
-		t.Fatalf("hit right after window = %s, want 16s", d)
-	}
-	clk.add(16 * time.Second)
-	if d, _ := c.hit(); d != 30*time.Second {
-		t.Fatalf("third hit = %s, want 30s (cap)", d)
-	}
-	clk.add(30 * time.Second)
-	if d, _ := c.hit(); d != 30*time.Second {
-		t.Fatalf("fourth hit = %s, want 30s (cap)", d)
-	}
-	// success inside a window keeps the escalation
-	clk.add(time.Second)
-	c.success()
-	clk.add(29 * time.Second)
-	c.success()
-	if d, _ := c.hit(); d != 8*time.Second {
-		t.Fatalf("hit after success = %s, want reset to 8s", d)
+	if n := runtime.NumGoroutine(); n > before {
+		t.Fatalf("goroutines: %d before, %d after", before, n)
 	}
 }
 
-func TestCooldownWaitBudgetAndContext(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1000, 0)}
-	c := newTestCooldown(clk)
-	if w, ok, err := c.wait(context.Background(), time.Second); w != 0 || !ok || err != nil {
-		t.Fatalf("no window: got %s %v %v", w, ok, err)
-	}
-	c.hit()
-	if _, ok, _ := c.wait(context.Background(), 5*time.Second); ok {
-		t.Fatal("wait beyond budget should refuse")
-	}
-	if w, ok, err := c.wait(context.Background(), 10*time.Second); w != 8*time.Second || !ok || err != nil {
-		t.Fatalf("wait = %s %v %v, want 8s", w, ok, err)
-	}
+// probeScenario starts n waiters on a tripped breaker. Each probe reports the
+// next verdict from verdicts (the last one repeats); non-probe holders report
+// success. It records grants, non-probe requests let through before the
+// successful probe reported (early) and overlapping probes (maxInflight).
+type probeScenario struct {
+	mu          sync.Mutex
+	probeGrants []time.Time
+	probeDone   []time.Time
+	released    time.Time
+	early       int
+	inflight    int
+	maxInflight int
+	granted     int
+}
 
-	real := newCooldown()
-	real.hit()
+func runProbeScenario(t *testing.T, c *cooldown, n int, hold time.Duration, verdicts ...outcome) *probeScenario {
+	t.Helper()
+	sc := &probeScenario{}
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p, _, ok, err := c.acquire(context.Background(), 10*time.Second)
+			if !ok || err != nil {
+				t.Errorf("acquire: ok=%v err=%v", ok, err)
+				return
+			}
+			sc.mu.Lock()
+			sc.granted++
+			if p.probe {
+				sc.probeGrants = append(sc.probeGrants, time.Now())
+				sc.inflight++
+				if sc.inflight > sc.maxInflight {
+					sc.maxInflight = sc.inflight
+				}
+				v := verdicts[min(len(sc.probeGrants)-1, len(verdicts)-1)]
+				sc.mu.Unlock()
+				time.Sleep(hold)
+				sc.mu.Lock()
+				sc.inflight--
+				sc.probeDone = append(sc.probeDone, time.Now())
+				if v == outcomeSuccess {
+					sc.released = time.Now()
+				}
+				sc.mu.Unlock()
+				p.done(v)
+				return
+			}
+			if sc.released.IsZero() {
+				sc.early++
+			}
+			sc.mu.Unlock()
+			p.done(outcomeSuccess)
+		}()
+	}
+	wg.Wait()
+	return sc
+}
+
+func TestBreakerLetsOneProbeThroughThenReleasesAll(t *testing.T) {
+	before := runtime.NumGoroutine()
+	c := newTestBreaker(100*time.Millisecond, time.Second, 10*time.Second)
+	start := time.Now()
+	trip(c)
+	sc := runProbeScenario(t, c, 32, 50*time.Millisecond, outcomeSuccess)
+	if len(sc.probeGrants) != 1 || sc.maxInflight != 1 {
+		t.Fatalf("probes=%d maxInflight=%d, want exactly 1", len(sc.probeGrants), sc.maxInflight)
+	}
+	if sc.early != 0 {
+		t.Fatalf("%d requests went out before the probe succeeded", sc.early)
+	}
+	if sc.granted != 32 {
+		t.Fatalf("granted %d of 32", sc.granted)
+	}
+	if d := sc.probeGrants[0].Sub(start); d < 100*time.Millisecond {
+		t.Fatalf("probe after %s, before the pause ended", d)
+	}
+	if c.tripped || c.penalty != c.base {
+		t.Fatalf("breaker should be closed and reset: tripped=%v penalty=%s", c.tripped, c.penalty)
+	}
+	checkNoLeak(t, before)
+}
+
+func TestBreakerThrottledProbeRearmsPause(t *testing.T) {
+	before := runtime.NumGoroutine()
+	c := newTestBreaker(60*time.Millisecond, time.Second, 10*time.Second)
+	trip(c) // pause 60ms, next 120ms
+	sc := runProbeScenario(t, c, 32, 20*time.Millisecond, outcomeRateLimited, outcomeRateLimited, outcomeSuccess)
+	if len(sc.probeGrants) != 3 || sc.maxInflight != 1 || sc.early != 0 || sc.granted != 32 {
+		t.Fatalf("probes=%d maxInflight=%d early=%d granted=%d", len(sc.probeGrants), sc.maxInflight, sc.early, sc.granted)
+	}
+	for i, want := range []time.Duration{120 * time.Millisecond, 240 * time.Millisecond} {
+		if gap := sc.probeGrants[i+1].Sub(sc.probeDone[i]); gap < want {
+			t.Fatalf("probe %d came %s after the throttled probe, want >= %s", i+2, gap, want)
+		}
+	}
+	checkNoLeak(t, before)
+}
+
+func TestBreakerHandsProbeOverOnFailure(t *testing.T) {
+	before := runtime.NumGoroutine()
+	c := newTestBreaker(50*time.Millisecond, time.Second, 10*time.Second)
+	trip(c)
+	// the first probe fails without a verdict (ctx cancelled / network error)
+	sc := runProbeScenario(t, c, 32, 10*time.Millisecond, outcomeOther, outcomeSuccess)
+	if len(sc.probeGrants) != 2 || sc.maxInflight != 1 || sc.early != 0 || sc.granted != 32 {
+		t.Fatalf("probes=%d maxInflight=%d early=%d granted=%d", len(sc.probeGrants), sc.maxInflight, sc.early, sc.granted)
+	}
+	if gap := sc.probeGrants[1].Sub(sc.probeDone[0]); gap > 30*time.Millisecond {
+		t.Fatalf("probe handed over after %s, want immediately", gap)
+	}
+	checkNoLeak(t, before)
+}
+
+func TestBreakerCancelledProbeHolderHandsOver(t *testing.T) {
+	c := newTestBreaker(20*time.Millisecond, time.Second, 10*time.Second)
+	trip(c)
+	time.Sleep(30 * time.Millisecond)
+	p, _, ok, _ := c.acquire(context.Background(), time.Second)
+	if !ok || !p.probe {
+		t.Fatal("expected to become the probe")
+	}
+	got := make(chan *permit)
+	go func() {
+		q, _, _, _ := c.acquire(context.Background(), time.Second)
+		got <- q
+	}()
+	select {
+	case <-got:
+		t.Fatal("second request must wait while a probe is in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	p.done(outcomeOther) // e.g. the probe's ctx was cancelled
+	p.done(outcomeSuccess)
+	select {
+	case q := <-got:
+		if q == nil || !q.probe {
+			t.Fatal("waiter should take over the probe")
+		}
+		if !c.tripped {
+			t.Fatal("extra done() calls must be ignored")
+		}
+		q.done(outcomeSuccess)
+	case <-time.After(time.Second):
+		t.Fatal("probe slot was not handed over")
+	}
+}
+
+func TestBreakerBudgetAndContext(t *testing.T) {
+	before := runtime.NumGoroutine()
+	c := newTestBreaker(10*time.Second, 30*time.Second, 35*time.Second)
+	if p, _, ok, err := c.acquire(context.Background(), time.Second); !ok || err != nil || p.probe {
+		t.Fatal("closed breaker must let requests through")
+	} else {
+		p.done(outcomeSuccess)
+	}
+	trip(c)
+	start := time.Now()
+	if _, _, ok, err := c.acquire(context.Background(), time.Second); ok || err != nil {
+		t.Fatalf("pause beyond budget: ok=%v err=%v", ok, err)
+	}
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatal("pause beyond budget should fail fast")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	start := time.Now()
-	if _, _, err := real.wait(ctx, time.Minute); !errors.Is(err, context.DeadlineExceeded) {
+	if _, _, _, err := c.acquire(ctx, time.Minute); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want ctx error, got %v", err)
 	}
-	if time.Since(start) > time.Second {
-		t.Fatal("wait ignored context cancellation")
+
+	// a probe that never reports: waiters give up at their budget
+	c2 := newTestBreaker(10*time.Millisecond, time.Second, time.Second)
+	trip(c2)
+	time.Sleep(20 * time.Millisecond)
+	p, _, _, _ := c2.acquire(context.Background(), time.Second)
+	start = time.Now()
+	_, w, ok, err := c2.acquire(context.Background(), 100*time.Millisecond)
+	if ok || err != nil || w < 90*time.Millisecond || time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("waiting on a stuck probe: ok=%v err=%v waited=%s", ok, err, w)
 	}
+	p.done(outcomeSuccess)
 
 	var nilC *cooldown
-	if _, ok, err := nilC.wait(context.Background(), 0); !ok || err != nil {
-		t.Fatal("nil cooldown must be a no-op")
+	if p, _, ok, err := nilC.acquire(context.Background(), 0); !ok || err != nil {
+		t.Fatal("nil breaker must be a no-op")
+	} else {
+		p.done(outcomeRateLimited)
 	}
-	nilC.hit()
-	nilC.success()
+	checkNoLeak(t, before)
+}
+
+func TestBreakerEscalation(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newTestBreaker(8*time.Second, 30*time.Second, 35*time.Second)
+	c.now = func() time.Time { return now }
+	pauseLen := func() time.Duration { return c.until.Sub(now) }
+
+	trip(c)
+	if pauseLen() != 8*time.Second {
+		t.Fatalf("first pause %s", pauseLen())
+	}
+	// stragglers sent before the trip must not extend or escalate
+	trip(c)
+	c.report(false, outcomeSuccess)
+	if pauseLen() != 8*time.Second || c.penalty != 16*time.Second || !c.tripped {
+		t.Fatalf("straggler changed state: pause=%s penalty=%s", pauseLen(), c.penalty)
+	}
+	for _, want := range []time.Duration{16 * time.Second, 30 * time.Second, 30 * time.Second} {
+		c.report(true, outcomeRateLimited)
+		if pauseLen() != want {
+			t.Fatalf("pause %s, want %s", pauseLen(), want)
+		}
+	}
+	c.report(true, outcomeSuccess)
+	if c.tripped || c.penalty != 8*time.Second {
+		t.Fatalf("probe success should close and reset: tripped=%v penalty=%s", c.tripped, c.penalty)
+	}
+	trip(c)
+	if pauseLen() != 8*time.Second {
+		t.Fatalf("pause after reset %s", pauseLen())
+	}
 }
 
 // fakeBaidu answers filemanager calls: 31034 for every request while the
@@ -233,17 +387,17 @@ func TestRemoveRidesOutRateLimitWindow(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	t.Logf("%d deletes, %d calls to baidu, %d throttled, %s", n, f.calls.Load(), f.throttled.Load(), time.Since(start))
+	t.Logf("%d deletes, %d calls to baidu, %d throttled, %d probes, %s", n, f.calls.Load(), f.throttled.Load(), d.cooldown.probes, time.Since(start))
 	if failed.Load() != 0 {
 		t.Fatalf("%d deletes failed", failed.Load())
 	}
 	if f.throttled.Load() == 0 {
 		t.Fatal("test did not exercise the window")
 	}
-	// without the shared cooldown each of the 32 workers keeps retrying on its
-	// own; with it, the burst is paused together
-	if f.throttled.Load() > 3*conc {
-		t.Fatalf("too many requests during the window: %d", f.throttled.Load())
+	// only requests already in flight when the breaker opened, plus one probe
+	// per pause, may reach Baidu during the window
+	if max := int64(conc + d.cooldown.probes); f.throttled.Load() > max {
+		t.Fatalf("throttled requests = %d, want <= %d (in-flight + probes)", f.throttled.Load(), max)
 	}
 }
 
