@@ -50,8 +50,9 @@ func ListMediaConfigs(c *gin.Context) {
 
 // SaveMediaConfigReq 保存配置请求
 type SaveMediaConfigReq struct {
-	MediaType model.MediaType `json:"media_type" binding:"required"`
-	Enabled   bool            `json:"enabled"`
+	MediaType     model.MediaType `json:"media_type" binding:"required"`
+	Enabled       bool            `json:"enabled"`
+	ScraperConfig *string         `json:"scraper_config"`
 }
 
 // SaveMediaConfig 保存媒体库配置
@@ -61,9 +62,15 @@ func SaveMediaConfig(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	cfg := &model.MediaConfig{
-		MediaType: req.MediaType,
-		Enabled:   req.Enabled,
+	// 读取已有配置，避免用零值覆盖 last_scan_at / last_scrape_at
+	cfg, err := db.GetMediaConfig(req.MediaType)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	cfg.Enabled = req.Enabled
+	if req.ScraperConfig != nil {
+		cfg.ScraperConfig = *req.ScraperConfig
 	}
 	if err := db.SaveMediaConfig(cfg); err != nil {
 		common.ErrorResp(c, err, 500)
@@ -477,6 +484,26 @@ func StartMediaScrape(c *gin.Context) {
 	thumbnailMode := setting.GetStr(conf.MediaThumbnailMode, "base64")
 	thumbnailPath := setting.GetStr(conf.MediaThumbnailPath, "/imgs")
 	storeThumbnail := setting.GetBool(conf.MediaStoreThumbnail)
+
+	// 该媒体类型如果单独配置过缩略图，覆盖全局设置
+	if cfg.ScraperConfig != "" {
+		var sc struct {
+			StoreThumbnail string `json:"store_thumbnail"`
+			ThumbnailMode  string `json:"thumbnail_mode"`
+			ThumbnailPath  string `json:"thumbnail_path"`
+		}
+		if json.Unmarshal([]byte(cfg.ScraperConfig), &sc) == nil {
+			if sc.ThumbnailMode != "" {
+				thumbnailMode = sc.ThumbnailMode
+			}
+			if sc.ThumbnailPath != "" {
+				thumbnailPath = sc.ThumbnailPath
+			}
+			if sc.StoreThumbnail != "" {
+				storeThumbnail = sc.StoreThumbnail == "true"
+			}
+		}
+	}
 
 	var preloadedItems []model.MediaItem
 	if req.ItemID > 0 {

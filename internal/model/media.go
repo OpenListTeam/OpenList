@@ -99,6 +99,9 @@ type MediaConfig struct {
 	Enabled      bool       `gorm:"default:false"        json:"enabled"`
 	LastScanAt   *time.Time `json:"last_scan_at"`
 	LastScrapeAt *time.Time `json:"last_scrape_at"`
+	// ScraperConfig 该媒体类型独立的刮削配置（JSON）：
+	// store_thumbnail / thumbnail_mode / thumbnail_path，未设置时回落到全局设置
+	ScraperConfig string `gorm:"type:text" json:"scraper_config"`
 }
 
 // EpisodeInfo 选集信息（文件夹型媒体的单集描述）
