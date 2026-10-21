@@ -3,13 +3,12 @@ package scraper
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/xml"
 	"image"
 	"image/jpeg"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -118,47 +117,28 @@ func (s *BookLocalScraper) ExtractLocalCover(fileName string, filePath string, r
 
 // storeCover 根据 ThumbnailMode 存储封面数据，返回 Cover 字段值
 func (s *BookLocalScraper) storeCover(filePath string, coverData []byte) string {
-	if s.ThumbnailMode == "local" {
-		return s.saveCoverLocal(filePath, coverData)
+	if NormalizeThumbMode(s.ThumbnailMode) == ThumbModeBase64 {
+		return imageDataToBase64Thumb(coverData)
 	}
-	// 默认 base64 模式
-	return imageDataToBase64Thumb(coverData)
+	thumb := resizeCoverBytes(coverData)
+	if len(thumb) == 0 {
+		thumb = coverData
+	}
+	return SaveThumb(context.Background(), s.ThumbnailMode, s.ThumbnailPath, filePath, "image/jpeg", thumb)
 }
 
-// saveCoverLocal 将封面图片保存到本地文件系统，返回可访问的路径
-func (s *BookLocalScraper) saveCoverLocal(filePath string, coverData []byte) string {
-	// 生成缩略图数据
-	img, _, err := image.Decode(bytes.NewReader(coverData))
+// resizeCoverBytes 将封面缩放为 300px 宽，返回 JPEG 字节
+func resizeCoverBytes(data []byte) []byte {
+	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		// 解码失败时直接保存原始数据
-		return s.writeLocalFile(filePath, coverData)
+		return nil
 	}
 	thumb := imaging.Resize(img, 300, 0, imaging.Lanczos)
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 80}); err != nil {
-		return ""
+		return nil
 	}
-	return s.writeLocalFile(filePath, buf.Bytes())
-}
-
-// writeLocalFile 将数据写入本地文件，返回内部访问路径
-func (s *BookLocalScraper) writeLocalFile(filePath string, data []byte) string {
-	safeFileName := strings.ReplaceAll(strings.TrimPrefix(filePath, "/"), "/", "_") + ".jpg"
-	localDir := s.ThumbnailPath
-	if !filepath.IsAbs(localDir) {
-		if wd, err := os.Getwd(); err == nil {
-			localDir = filepath.Join(wd, localDir)
-		}
-	}
-	if err := os.MkdirAll(localDir, 0755); err != nil {
-		return ""
-	}
-	localFilePath := filepath.Join(localDir, safeFileName)
-	if err := os.WriteFile(localFilePath, data, 0644); err != nil {
-		return ""
-	}
-	thumbVFSPath := strings.TrimSuffix(s.ThumbnailPath, "/") + "/" + safeFileName
-	return buildInternalDownloadPath(thumbVFSPath)
+	return buf.Bytes()
 }
 
 // ── EPUB 封面提取 ─────────────────────────────────────────────────────────────

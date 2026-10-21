@@ -2,13 +2,11 @@ package scraper
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -87,65 +85,15 @@ func (s *ImageScraper) ScrapeImage(item *model.MediaItem, reader io.Reader) erro
 	// ── 1. 解析 EXIF ──────────────────────────────────────────────
 	s.parseEXIF(item, bytes.NewReader(data))
 
-	// ── 2. 生成缩略图并存储 ──────────────────────────────────────
-	if s.ThumbnailMode == "local" {
-		// 本地存储模式：将缩略图保存到指定目录，Cover 存储本地路径
-		if localPath := s.saveThumbnailLocal(strings.TrimSuffix(item.FolderPath, "/")+"/"+item.FileName, data); localPath != "" {
-			item.Cover = localPath
-		}
-		// 本地存储失败时 cover 保持为空，不降级为文件路径
-	} else {
-		// Base64 模式（默认）：生成缩略图 Base64 写入 Cover
-		if thumb := s.generateThumbnail(data); thumb != "" {
-			item.Cover = thumb
-		}
-		// 缩略图生成失败时 cover 保持为空，不降级为文件路径
+	// ── 2. 生成缩略图并按配置存储 ────────────────────────────────
+	if thumb := s.generateThumbBytes(data); len(thumb) > 0 {
+		fullPath := strings.TrimSuffix(item.FolderPath, "/") + "/" + item.FileName
+		item.Cover = SaveThumb(context.Background(), s.ThumbnailMode, s.ThumbnailPath, fullPath, "image/jpeg", thumb)
 	}
 
 	now := time.Now()
 	item.ScrapedAt = &now
 	return nil
-}
-
-// saveThumbnailLocal 将缩略图保存到本地文件系统，返回可访问的路径
-// 文件保存在 ThumbnailPath 目录下，文件名为原文件路径的 hash + .jpg
-func (s *ImageScraper) saveThumbnailLocal(filePath string, data []byte) string {
-	// 生成缩略图数据
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return ""
-	}
-	thumb := imaging.Resize(img, 300, 0, imaging.Lanczos)
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 75}); err != nil {
-		return ""
-	}
-
-	// 构建本地存储路径：ThumbnailPath/原文件路径.jpg
-	// 将文件路径中的 / 替换为 _ 避免目录嵌套问题
-	safeFileName := strings.ReplaceAll(strings.TrimPrefix(filePath, "/"), "/", "_") + ".jpg"
-	localDir := s.ThumbnailPath
-	if !filepath.IsAbs(localDir) {
-		// 相对路径转为绝对路径（相对于工作目录）
-		if wd, err := os.Getwd(); err == nil {
-			localDir = filepath.Join(wd, localDir)
-		}
-	}
-
-	// 确保目录存在
-	if err := os.MkdirAll(localDir, 0755); err != nil {
-		return ""
-	}
-
-	localFilePath := filepath.Join(localDir, safeFileName)
-	if err := os.WriteFile(localFilePath, buf.Bytes(), 0644); err != nil {
-		return ""
-	}
-
-	// 返回内部访问路径（通过 /d/ 前缀访问）
-	// 缩略图路径格式：ThumbnailPath/safeFileName
-	thumbVFSPath := strings.TrimSuffix(s.ThumbnailPath, "/") + "/" + safeFileName
-	return buildInternalDownloadPath(thumbVFSPath)
 }
 
 // parseEXIF 从图片数据中解析 EXIF 元数据并写入 item
@@ -223,11 +171,11 @@ func (s *ImageScraper) parseEXIF(item *model.MediaItem, r io.Reader) {
 	}
 }
 
-// generateThumbnail 将图片数据缩放为 300px 宽缩略图，返回 data URI Base64 字符串
-func (s *ImageScraper) generateThumbnail(data []byte) string {
+// generateThumbBytes 将图片数据缩放为 300px 宽缩略图，返回 JPEG 字节
+func (s *ImageScraper) generateThumbBytes(data []byte) []byte {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return ""
+		return nil
 	}
 
 	// 缩放到宽度 300px，高度等比
@@ -235,19 +183,9 @@ func (s *ImageScraper) generateThumbnail(data []byte) string {
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 75}); err != nil {
-		return ""
+		return nil
 	}
-
-	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
-}
-
-// buildInternalDownloadPath 将 VFS 文件路径转为内部代理下载路径
-// 格式：/d/path/to/file（前端通过此路径访问文件内容）
-func buildInternalDownloadPath(filePath string) string {
-	if !strings.HasPrefix(filePath, "/") {
-		filePath = "/" + filePath
-	}
-	return "/d" + filePath
+	return buf.Bytes()
 }
 
 // trimExt 去掉文件名的扩展名

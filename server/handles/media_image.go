@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/media/scraper"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/gin-gonic/gin"
@@ -95,15 +96,10 @@ func fetchCover(ctx context.Context, raw string) (*http.Response, error) {
 	return resp, nil
 }
 
-// thumbnailRoot 返回本地缩略图目录的绝对路径（与刮削写入时保持一致）
+// thumbnailRoot 返回运行目录模式下缩略图的本地根目录（<data>/<thumbnail_path>）
 func thumbnailRoot() string {
-	dir := setting.GetStr(conf.MediaThumbnailPath, "/imgs")
-	if !filepath.IsAbs(dir) {
-		if wd, err := filepath.Abs("."); err == nil {
-			dir = filepath.Join(wd, dir)
-		}
-	}
-	return filepath.Clean(dir)
+	dir := setting.GetStr(conf.MediaThumbnailPath, "imgs")
+	return scraper.RuntimeThumbRoot(dir)
 }
 
 // PublicMediaThumb 读取本地缩略图目录中的文件。

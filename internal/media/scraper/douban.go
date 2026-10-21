@@ -397,10 +397,10 @@ func (s *DoubanScraper) downloadAndStoreCover(filePath, imgURL string) string {
 	if len(data) == 0 {
 		return ""
 	}
-	if s.ThumbnailMode == "local" {
-		// 本地存储模式
+	if NormalizeThumbMode(s.ThumbnailMode) != ThumbModeBase64 {
+		// 运行目录 / 挂载目录模式
 		localScraper := NewBookLocalScraperWithConfig(s.ThumbnailMode, s.ThumbnailPath)
-		return localScraper.saveCoverLocal(filePath, data)
+		return localScraper.storeCover(filePath, data)
 	}
 	// Base64 模式（默认）
 	img, _, err := image.Decode(bytes.NewReader(data))

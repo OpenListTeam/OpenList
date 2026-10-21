@@ -27,6 +27,7 @@ type MediaStatus struct {
 	SubsonicBaseURL  string   `json:"subsonic_base_url"`
 	StrmPath         string   `json:"strm_path"`
 	StrmOnScan       bool     `json:"strm_on_scan"`
+	StrmSameDir      bool     `json:"strm_same_dir"`
 	ThumbPath        string   `json:"thumb_path"`
 	Version          string   `json:"version"`
 	ProxyCover       bool     `json:"proxy_cover"`
@@ -39,6 +40,7 @@ func PublicMediaStatus(c *gin.Context) {
 	apiBase := common.GetApiUrl(c.Request.Context())
 	status.StrmPath = media.DefaultStrmOptions(apiBase).OutputPath
 	status.StrmOnScan = setting.GetBool(conf.MediaStrmOnScan)
+	status.StrmSameDir = setting.GetBool(conf.MediaStrmSameDir)
 	status.ThumbPath = setting.GetStr(conf.MediaThumbnailPath, "/imgs")
 	status.Version = conf.Version
 	status.ProxyCover = setting.GetBool(conf.MediaProxyCover)
@@ -147,7 +149,7 @@ func GenerateMediaStrm(c *gin.Context) {
 	apiRoot := common.GetApiUrl(c.Request.Context())
 	media.SetAPIRoot(apiRoot)
 	opts := media.DefaultStrmOptions(apiRoot)
-	if opts.OutputPath == "" {
+	if !opts.SameDir && opts.OutputPath == "" {
 		common.ErrorStrResp(c, "未配置 STRM 输出目录", 400)
 		return
 	}
@@ -156,7 +158,11 @@ func GenerateMediaStrm(c *gin.Context) {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	common.SuccessResp(c, gin.H{"written": n, "path": opts.OutputPath})
+	outPath := opts.OutputPath
+	if opts.SameDir {
+		outPath = "与媒体文件同目录"
+	}
+	common.SuccessResp(c, gin.H{"written": n, "path": outPath})
 }
 
 // GetMediaStreamURL 返回条目（或其中一集）的签名直链，供本地播放器/外链使用

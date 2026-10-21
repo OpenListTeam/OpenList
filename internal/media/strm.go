@@ -44,13 +44,27 @@ type StrmOptions struct {
 	APIRoot    string // 站点地址前缀，例如 https://example.com
 	Template   string // 内容模板
 	Overwrite  bool   // 是否覆盖已存在文件
-	OutputPath string // 输出目录（VFS 路径）
+	SameDir    bool   // 是否与媒体文件同目录（同名 .strm）
+	OutputPath string // 输出目录（VFS 路径，仅 SameDir=false 时使用）
 }
 
 // StrmTarget 一个待生成的 .strm 目标
 type StrmTarget struct {
-	RelPath string // 相对输出目录的路径
-	RawPath string // 对应媒体文件的 VFS 路径
+	RelPath     string // 相对输出目录的路径
+	RawPath     string // 对应媒体文件的 VFS 路径
+	SameDirPath string // 与媒体文件同目录时的 .strm 路径
+}
+
+// strmSibling 计算与媒体文件同目录、同名的 .strm 路径
+func strmSibling(rawPath string, isDir bool) string {
+	if isDir {
+		return stdpath.Join(rawPath, stdpath.Base(rawPath)+".strm")
+	}
+	ext := stdpath.Ext(rawPath)
+	if ext == "" {
+		return rawPath + ".strm"
+	}
+	return strings.TrimSuffix(rawPath, ext) + ".strm"
 }
 
 // DefaultStrmOptions 从设置中读取 STRM 参数
@@ -59,6 +73,7 @@ func DefaultStrmOptions(apiRoot string) StrmOptions {
 		APIRoot:    strings.TrimSuffix(apiRoot, "/"),
 		Template:   setting.GetStr(conf.MediaStrmTemplate, "{site_url}/d{path}?sign={sign}"),
 		Overwrite:  setting.GetBool(conf.MediaStrmOverwrite),
+		SameDir:    setting.GetBool(conf.MediaStrmSameDir),
 		OutputPath: setting.GetStr(conf.MediaStrmPath, "/strm"),
 	}
 }
@@ -168,10 +183,12 @@ func StrmTargets(item *model.MediaItem) []StrmTarget {
 						num = i + 1
 					}
 					epTitle := sanitizeName(ep.Title)
+					epRaw := stdpath.Join(folder, item.FileName, ep.FileName)
 					out = append(out, StrmTarget{
 						RelPath: stdpath.Join(series, fmt.Sprintf("Season %02d", season),
 							fmt.Sprintf("%s S%02dE%02d - %s.strm", series, season, num, epTitle)),
-						RawPath: stdpath.Join(folder, item.FileName, ep.FileName),
+						RawPath:     epRaw,
+						SameDirPath: strmSibling(epRaw, false),
 					})
 				}
 				return out
@@ -180,19 +197,23 @@ func StrmTargets(item *model.MediaItem) []StrmTarget {
 			if num <= 0 {
 				num = 1
 			}
+			raw := stdpath.Join(folder, item.FileName)
 			return []StrmTarget{{
 				RelPath: stdpath.Join(series, fmt.Sprintf("Season %02d", season),
 					fmt.Sprintf("%s S%02dE%02d.strm", series, season, num)),
-				RawPath: stdpath.Join(folder, item.FileName),
+				RawPath:     raw,
+				SameDirPath: strmSibling(raw, false),
 			}}
 		}
 		name := title
 		if year != "" {
 			name = fmt.Sprintf("%s (%s)", title, year)
 		}
+		raw := stdpath.Join(folder, item.FileName)
 		return []StrmTarget{{
-			RelPath: stdpath.Join(name, name+".strm"),
-			RawPath: stdpath.Join(folder, item.FileName),
+			RelPath:     stdpath.Join(name, name+".strm"),
+			RawPath:     raw,
+			SameDirPath: strmSibling(raw, item.IsFolder),
 		}}
 	case model.MediaTypeMusic:
 		artist := sanitizeName(item.AlbumArtist)
@@ -207,9 +228,11 @@ func StrmTargets(item *model.MediaItem) []StrmTarget {
 		if track <= 0 {
 			track = 1
 		}
+		raw := stdpath.Join(folder, item.FileName)
 		return []StrmTarget{{
-			RelPath: stdpath.Join(artist, album, fmt.Sprintf("%02d - %s.strm", track, title)),
-			RawPath: stdpath.Join(folder, item.FileName),
+			RelPath:     stdpath.Join(artist, album, fmt.Sprintf("%02d - %s.strm", track, title)),
+			RawPath:     raw,
+			SameDirPath: strmSibling(raw, false),
 		}}
 	default:
 		return nil
@@ -218,7 +241,7 @@ func StrmTargets(item *model.MediaItem) []StrmTarget {
 
 // GenerateStrmForItems 为一组条目生成 STRM 文件，返回写入数量
 func GenerateStrmForItems(ctx context.Context, items []model.MediaItem, opts StrmOptions) (int, error) {
-	if opts.OutputPath == "" {
+	if !opts.SameDir && opts.OutputPath == "" {
 		return 0, fmt.Errorf("strm output path is empty")
 	}
 	written := 0
@@ -228,7 +251,13 @@ func GenerateStrmForItems(ctx context.Context, items []model.MediaItem, opts Str
 			continue
 		}
 		for _, target := range StrmTargets(item) {
-			dst := stdpath.Join(strings.TrimSuffix(opts.OutputPath, "/"), target.RelPath)
+			dst := target.SameDirPath
+			if !opts.SameDir {
+				dst = stdpath.Join(strings.TrimSuffix(opts.OutputPath, "/"), target.RelPath)
+			}
+			if dst == "" {
+				continue
+			}
 			if !opts.Overwrite {
 				if _, err := fs.Get(ctx, dst, &fs.GetArgs{NoLog: true}); err == nil {
 					continue
@@ -284,7 +313,7 @@ func TriggerStrmOnScan(mediaType model.MediaType, apiRoot string) {
 		return
 	}
 	opts := DefaultStrmOptions(apiRoot)
-	if opts.OutputPath == "" {
+	if !opts.SameDir && opts.OutputPath == "" {
 		return
 	}
 	go func() {
