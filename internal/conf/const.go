@@ -191,6 +191,7 @@ const (
 	MediaEmbyEnabled         = "media_emby_enabled"           // Emby 兼容 API 开关
 	MediaSubsonicEnabled     = "media_subsonic_enabled"       // OpenSubsonic API 开关
 	MediaSubsonicProxyStream = "media_subsonic_proxy_stream"  // Subsonic 播放是否强制代理（兼容不跟随 302 的客户端）
+	MediaProxyCover           = "media_proxy_cover"           // 是否通过服务端代理外部封面（TMDB/豆瓣等）
 	MediaStrmOnScan          = "media_strm_on_scan"           // 扫描完成后自动生成 STRM
 	MediaStrmPath            = "media_strm_path"              // STRM 输出目录（VFS 路径）
 	MediaStrmOverwrite       = "media_strm_overwrite"         // 生成 STRM 时是否覆盖已存在文件

@@ -133,6 +133,16 @@ func Init(e *gin.Engine) {
 	g.Any("/rest/*path", handles.SubsonicAPI)
 
 	_fs(auth.Group("/fs"))
+	// 媒体库公开 API：与文件浏览一致，允许访客访问（访客仍受自身 base_path/权限限制）
+	mediaPublic := auth.Group("/fs/media", handles.RequireMediaEnabled)
+	mediaPublic.GET("/list", handles.PublicListMedia)
+	mediaPublic.GET("/item/:id", handles.PublicGetMedia)
+	mediaPublic.GET("/albums", handles.PublicListAlbums)
+	mediaPublic.GET("/album", handles.PublicGetAlbum)
+	mediaPublic.GET("/folders", handles.PublicListFolders)
+	mediaPublic.GET("/scan_paths", handles.PublicListScanPaths)
+	mediaPublic.GET("/strm", handles.GetMediaStrm)
+	mediaPublic.GET("/stream_url", handles.GetMediaStreamURL)
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
 	_task(auth.Group("/task", middlewares.AuthNotGuest))
 	_sharing(auth.Group("/share", middlewares.AuthNotGuest))
@@ -261,17 +271,6 @@ func fsAndShare(g *gin.RouterGroup) {
 	a := g.Group("/archive")
 	a.Any("/meta", handles.FsArchiveMetaSplit)
 	a.Any("/list", handles.FsArchiveListSplit)
-
-	// 媒体库公开API（媒体库关闭时整组 404）
-	mediaPublic := g.Group("/media", handles.RequireMediaEnabled)
-	mediaPublic.GET("/list", handles.PublicListMedia)
-	mediaPublic.GET("/item/:id", handles.PublicGetMedia)
-	mediaPublic.GET("/albums", handles.PublicListAlbums)
-	mediaPublic.GET("/album", handles.PublicGetAlbum)
-	mediaPublic.GET("/folders", handles.PublicListFolders)
-	mediaPublic.GET("/scan_paths", handles.PublicListScanPaths)
-	mediaPublic.GET("/strm", handles.GetMediaStrm)
-	mediaPublic.GET("/stream_url", handles.GetMediaStreamURL)
 
 	// 转码 - 用户态：申请播放
 	g.POST("/transcode/play", handles.RequireMediaEnabled, handles.TranscodePlay)

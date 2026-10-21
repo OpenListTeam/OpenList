@@ -277,6 +277,8 @@ func InitialSettings() []model.SettingItem {
 			Help: `开启后提供 OpenSubsonic API（/rest），可供 Symfonium、Feishin、Amperfy 等音乐客户端接入`},
 		{Key: conf.MediaSubsonicProxyStream, Value: "false", Type: conf.TypeBool, Group: model.MEDIA, Flag: model.PRIVATE,
 			Help: `Subsonic 播放默认返回 302 直链；若客户端不跟随重定向，可开启此项改为服务端代理转发（占用服务器带宽）`},
+		{Key: conf.MediaProxyCover, Value: "false", Type: conf.TypeBool, Group: model.MEDIA, Flag: model.PRIVATE,
+			Help: `开启后由服务端代理 TMDB/豆瓣等外部封面图片，适合直连图片域名受限的网络；默认关闭，直接使用原始图片地址`},
 		{Key: conf.MediaStrmOnScan, Value: "false", Type: conf.TypeBool, Group: model.MEDIA, Flag: model.PRIVATE,
 			Help: `扫描完成后自动把媒体条目生成为 .strm 文件并写入下方目录`},
 		{Key: conf.MediaStrmPath, Value: "/strm", Type: conf.TypeString, Group: model.MEDIA, Flag: model.PRIVATE,

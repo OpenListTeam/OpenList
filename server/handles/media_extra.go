@@ -28,6 +28,8 @@ type MediaStatus struct {
 	StrmPath         string   `json:"strm_path"`
 	StrmOnScan       bool     `json:"strm_on_scan"`
 	ThumbPath        string   `json:"thumb_path"`
+	Version          string   `json:"version"`
+	ProxyCover       bool     `json:"proxy_cover"`
 }
 
 // PublicMediaStatus 公开的媒体库状态
@@ -38,6 +40,8 @@ func PublicMediaStatus(c *gin.Context) {
 	status.StrmPath = media.DefaultStrmOptions(apiBase).OutputPath
 	status.StrmOnScan = setting.GetBool(conf.MediaStrmOnScan)
 	status.ThumbPath = setting.GetStr(conf.MediaThumbnailPath, "/imgs")
+	status.Version = conf.Version
+	status.ProxyCover = setting.GetBool(conf.MediaProxyCover)
 	if !status.Enabled {
 		common.SuccessResp(c, status)
 		return
