@@ -38,7 +38,11 @@ func Default() *Manager {
 func newManager() *Manager {
 	reg := NewWorkerRegistry()
 	sch := NewScheduler(reg)
-	cachePath := setting.GetStr(conf.TranscodeCachePath, "data/transcode_cache")
+	cachePath := setting.GetStr(conf.TranscodeCachePath, "data/ctmp")
+	// 兼容旧默认值：统一迁移到 data/ctmp
+	if cachePath == "data/transcode_cache" || cachePath == "./data/transcode_cache" {
+		cachePath = "data/ctmp"
+	}
 	cacheMaxGB := int64(setting.GetInt(conf.TranscodeCacheMaxGB, 20))
 	cache := NewCache(cachePath, cacheMaxGB)
 	_ = cache.Init()

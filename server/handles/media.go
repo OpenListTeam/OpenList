@@ -508,6 +508,9 @@ func StartMediaScrape(c *gin.Context) {
 		}
 	}
 
+	log.Infof("[media] scrape %s: thumbnail mode=%s, path=%s, runtime dir=%s",
+		req.MediaType, thumbnailMode, thumbnailPath, scraper.RuntimeThumbRoot(thumbnailPath))
+
 	var preloadedItems []model.MediaItem
 	if req.ItemID > 0 {
 		item, e := db.GetMediaItemByID(req.ItemID)
