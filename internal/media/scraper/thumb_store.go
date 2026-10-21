@@ -6,6 +6,10 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	stdpath "path"
 	"path/filepath"
@@ -105,4 +109,52 @@ func SaveThumb(ctx context.Context, mode, thumbPath, rawPath, mimeType string, d
 func thumbName(rawPath string) string {
 	sum := sha1.Sum([]byte(rawPath))
 	return hex.EncodeToString(sum[:]) + ".jpg"
+}
+
+// DownloadCoverToStorage 下载远程封面并按缩略图配置保存，失败返回空字符串
+func DownloadCoverToStorage(ctx context.Context, imgURL, rawPath, thumbMode, thumbPath string) string {
+	if imgURL == "" ||
+		!(strings.HasPrefix(imgURL, "http://") || strings.HasPrefix(imgURL, "https://")) {
+		return ""
+	}
+	data, contentType, err := fetchImageBytes(ctx, imgURL)
+	if err != nil {
+		// 部分网络环境无法直连图片域名，回退到公共图片网关
+		if u, parseErr := url.Parse(imgURL); parseErr == nil {
+			gateway := "https://wsrv.nl/?url=" + url.QueryEscape(
+				strings.TrimPrefix(strings.TrimPrefix(u.String(), "https://"), "http://"),
+			)
+			data, contentType, err = fetchImageBytes(ctx, gateway)
+		}
+	}
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	return SaveThumb(ctx, thumbMode, thumbPath, rawPath, contentType, data)
+}
+
+func fetchImageBytes(ctx context.Context, raw string) ([]byte, string, error) {
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; OpenList-Media/1.0)")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		return nil, "", fmt.Errorf("unexpected content type %s", contentType)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	return data, contentType, err
 }

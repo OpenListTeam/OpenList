@@ -481,9 +481,12 @@ func StartMediaScrape(c *gin.Context) {
 	tmdbAPIURL := setting.GetStr(conf.MediaTMDBAPIURL, "https://api.themoviedb.org")
 	discogsToken := setting.GetStr(conf.MediaDiscogsToken)
 	discogsAPIURL := setting.GetStr(conf.MediaDiscogsAPIURL, "https://api.discogs.com")
-	thumbnailMode := setting.GetStr(conf.MediaThumbnailMode, "base64")
+	thumbnailMode := setting.GetStr(conf.MediaThumbnailMode, "runtime")
 	thumbnailPath := setting.GetStr(conf.MediaThumbnailPath, "/imgs")
 	storeThumbnail := setting.GetBool(conf.MediaStoreThumbnail)
+	bookSource := strings.ToLower(setting.GetStr(conf.MediaBookSource, "douban"))
+	googleBooksKey := setting.GetStr(conf.MediaGoogleBooksKey)
+	downloadCover := setting.GetBool(conf.MediaDownloadCover)
 
 	// 该媒体类型如果单独配置过缩略图，覆盖全局设置
 	if cfg.ScraperConfig != "" {
@@ -577,13 +580,27 @@ func StartMediaScrape(c *gin.Context) {
 					s := scraper.NewDiscogsScraper(discogsToken, discogsAPIURL)
 					scrapeErr = s.ScrapeMusic(item)
 				case model.MediaTypeBook:
-					doubanScraper := scraper.NewDoubanScraperWithConfig(
-						thumbnailMode,
-						thumbnailPath,
-					)
-					doubanErr := doubanScraper.ScrapeBook(item)
-					if doubanErr != nil {
-						log.Debugf("豆瓣刮削失败 [%s/%s]: %v，将尝试本地提取封面", item.FolderPath, item.FileName, doubanErr)
+					var bookErr error
+					switch bookSource {
+					case "google":
+						bookErr = scraper.NewGoogleBooksScraper(
+							googleBooksKey,
+							thumbnailMode,
+							thumbnailPath,
+						).ScrapeBook(item)
+					case "openlibrary":
+						bookErr = scraper.NewOpenLibraryScraper(
+							thumbnailMode,
+							thumbnailPath,
+						).ScrapeBook(item)
+					default:
+						bookErr = scraper.NewDoubanScraperWithConfig(
+							thumbnailMode,
+							thumbnailPath,
+						).ScrapeBook(item)
+					}
+					if bookErr != nil {
+						log.Debugf("书籍刮削失败 [%s/%s]: %v，将尝试本地提取封面", item.FolderPath, item.FileName, bookErr)
 					}
 
 					if item.Cover == "" {
@@ -603,8 +620,8 @@ func StartMediaScrape(c *gin.Context) {
 						bookCancel()
 					}
 
-					if doubanErr != nil && item.Cover == "" {
-						scrapeErr = doubanErr
+					if bookErr != nil && item.Cover == "" {
+						scrapeErr = bookErr
 					}
 				case model.MediaTypeImage:
 					imgCtx, imgCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -620,6 +637,20 @@ func StartMediaScrape(c *gin.Context) {
 						_ = imgReader.Close()
 					}
 					imgCancel()
+				}
+
+				// 远程封面按需下载到本地存储（或 base64），避免直接保存图片链接
+				if downloadCover && strings.HasPrefix(item.Cover, "http") {
+					rawPath := strings.TrimSuffix(item.FolderPath, "/") + "/" + item.FileName
+					if cover := scraper.DownloadCoverToStorage(
+						context.Background(),
+						item.Cover,
+						rawPath,
+						thumbnailMode,
+						thumbnailPath,
+					); cover != "" {
+						item.Cover = cover
+					}
 				}
 
 				if scrapeErr != nil {

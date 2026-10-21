@@ -185,6 +185,9 @@ const (
 	MediaThumbnailPath    = "media_thumbnail_path"
 	MediaStoreThumbnail   = "media_store_thumbnail"
 	MediaScrapeConcurrency = "media_scrape_concurrency"
+	MediaBookSource        = "media_book_source"        // 书籍刮削源：douban/google/openlibrary
+	MediaGoogleBooksKey    = "media_google_books_key"   // Google Books API Key（可选）
+	MediaDownloadCover     = "media_download_cover"     // 是否把远程封面下载到本地存储
 
 	// media library master switch & protocol switches
 	MediaEnabled             = "media_enabled"                // 媒体库总开关（PUBLIC，前端据此显示/隐藏）
