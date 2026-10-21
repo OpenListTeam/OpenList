@@ -152,6 +152,53 @@ func GenerateMediaStrm(c *gin.Context) {
 	common.SuccessResp(c, gin.H{"written": n, "path": opts.OutputPath})
 }
 
+// GetMediaStreamURL 返回条目（或其中一集）的签名直链，供本地播放器/外链使用
+func GetMediaStreamURL(c *gin.Context) {
+	// 直接按路径取签名链接（用于选集等场景）
+	if rawPath := c.Query("path"); rawPath != "" {
+		if !CanUserAccessPath(mediaUser(c), rawPath) {
+			common.ErrorStrResp(c, "资源不存在", 404)
+			return
+		}
+		common.SuccessResp(c, gin.H{
+			"url":     SignedStreamURL(c, rawPath),
+			"path":    rawPath,
+			"name":    stdpath.Base(rawPath),
+			"proxied": SignedProxyURL(c, rawPath),
+		})
+		return
+	}
+	id, err := strconv.ParseUint(c.Query("id"), 10, 64)
+	if err != nil {
+		common.ErrorStrResp(c, "无效的ID", 400)
+		return
+	}
+	item, err := db.GetMediaItemByID(uint(id))
+	if err != nil || !CanUserAccessItem(mediaUser(c), item) {
+		common.ErrorStrResp(c, "资源不存在", 404)
+		return
+	}
+	episodeIndex, _ := strconv.Atoi(c.DefaultQuery("episode", "0"))
+	rawPath := MediaItemFilePath(item)
+	if episodeIndex > 0 {
+		var eps []model.EpisodeInfo
+		if err := json.Unmarshal([]byte(item.Episodes), &eps); err == nil {
+			for i := range eps {
+				if eps[i].Index == episodeIndex || i+1 == episodeIndex {
+					rawPath = MediaEpisodeFilePath(item, &eps[i])
+					break
+				}
+			}
+		}
+	}
+	common.SuccessResp(c, gin.H{
+		"url":     SignedStreamURL(c, rawPath),
+		"path":    rawPath,
+		"name":    stdpath.Base(rawPath),
+		"proxied": SignedProxyURL(c, rawPath),
+	})
+}
+
 // GetMediaStrm 动态生成单个条目的 .strm 内容（详情页下载）
 func GetMediaStrm(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Query("id"), 10, 64)
