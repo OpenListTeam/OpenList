@@ -31,7 +31,8 @@ type MediaStatus struct {
 
 // PublicMediaStatus 公开的媒体库状态
 func PublicMediaStatus(c *gin.Context) {
-	status := MediaStatus{Enabled: MediaEnabled()}
+	// Types 必须是非 nil 切片：前端会直接调用 .includes()，nil 序列化成 null 会抛异常
+	status := MediaStatus{Enabled: MediaEnabled(), Types: []string{}}
 	if !status.Enabled {
 		common.SuccessResp(c, status)
 		return
