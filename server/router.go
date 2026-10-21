@@ -110,6 +110,9 @@ func Init(e *gin.Engine) {
 	public := api.Group("/public")
 	public.Any("/settings", handles.PublicSettings)
 	public.GET("/media_status", handles.PublicMediaStatus)
+	// 封面代理与本地缩略图（媒体库页面使用，免鉴权）
+	public.GET("/media/proxy", handles.PublicMediaProxy)
+	public.GET("/media/thumb", handles.PublicMediaThumb)
 	public.Any("/offline_download_tools", handles.OfflineDownloadTools)
 	public.Any("/archive_extensions", handles.ArchiveExtensions)
 	public.Any("/init_status", handles.InitStatus)

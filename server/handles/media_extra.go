@@ -27,12 +27,17 @@ type MediaStatus struct {
 	SubsonicBaseURL  string   `json:"subsonic_base_url"`
 	StrmPath         string   `json:"strm_path"`
 	StrmOnScan       bool     `json:"strm_on_scan"`
+	ThumbPath        string   `json:"thumb_path"`
 }
 
 // PublicMediaStatus 公开的媒体库状态
 func PublicMediaStatus(c *gin.Context) {
 	// Types 必须是非 nil 切片：前端会直接调用 .includes()，nil 序列化成 null 会抛异常
 	status := MediaStatus{Enabled: MediaEnabled(), Types: []string{}}
+	apiBase := common.GetApiUrl(c.Request.Context())
+	status.StrmPath = media.DefaultStrmOptions(apiBase).OutputPath
+	status.StrmOnScan = setting.GetBool(conf.MediaStrmOnScan)
+	status.ThumbPath = setting.GetStr(conf.MediaThumbnailPath, "/imgs")
 	if !status.Enabled {
 		common.SuccessResp(c, status)
 		return
@@ -42,11 +47,8 @@ func PublicMediaStatus(c *gin.Context) {
 	}
 	status.EmbyEnabled = MediaEmbyEnabled()
 	status.SubsonicEnabled = MediaSubsonicEnabled()
-	apiBase := common.GetApiUrl(c.Request.Context())
 	status.EmbyBaseURL = strings.TrimSuffix(apiBase, "/") + "/emby"
 	status.SubsonicBaseURL = strings.TrimSuffix(apiBase, "/") + "/rest"
-	status.StrmPath = media.DefaultStrmOptions(apiBase).OutputPath
-	status.StrmOnScan = setting.GetBool(conf.MediaStrmOnScan)
 	common.SuccessResp(c, status)
 }
 
