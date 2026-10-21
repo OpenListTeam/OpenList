@@ -62,7 +62,7 @@ type subsonicResponse struct {
 	ScanStatus             *subsonicScanStatus   `json:"scanStatus,omitempty" xml:"scanStatus,omitempty"`
 	User                   *subsonicUser         `json:"user,omitempty" xml:"user,omitempty"`
 	Users                  *subsonicUsers        `json:"users,omitempty" xml:"users,omitempty"`
-	OpenSubsonicExtensions *subsonicExtensions  `json:"openSubsonicExtensions,omitempty" xml:"openSubsonicExtensions,omitempty"`
+	OpenSubsonicExtensions *subsonicExtensions   `json:"openSubsonicExtensions,omitempty" xml:"openSubsonicExtensions,omitempty"`
 	NowPlaying             *subsonicNowPlaying   `json:"nowPlaying,omitempty" xml:"nowPlaying,omitempty"`
 	PlayQueue              *subsonicPlayQueue    `json:"playQueue,omitempty" xml:"playQueue,omitempty"`
 	ArtistInfo2            *subsonicArtistInfo   `json:"artistInfo2,omitempty" xml:"artistInfo2,omitempty"`
@@ -92,17 +92,17 @@ type subsonicIndex struct {
 }
 
 type subsonicIndexes struct {
-	LastModified int64           `json:"lastModified" xml:"lastModified,attr"`
-	IgnoredArticles string       `json:"ignoredArticles" xml:"ignoredArticles,attr"`
-	Index        []subsonicIndex `json:"index" xml:"index"`
+	LastModified    int64           `json:"lastModified" xml:"lastModified,attr"`
+	IgnoredArticles string          `json:"ignoredArticles" xml:"ignoredArticles,attr"`
+	Index           []subsonicIndex `json:"index" xml:"index"`
 }
 
 type subsonicArtist struct {
-	Id         string           `json:"id" xml:"id,attr"`
-	Name       string           `json:"name" xml:"name,attr"`
-	AlbumCount int              `json:"albumCount,omitempty" xml:"albumCount,attr,omitempty"`
-	CoverArt   string           `json:"coverArt,omitempty" xml:"coverArt,attr,omitempty"`
-	Album      []subsonicAlbum  `json:"album" xml:"album"`
+	Id         string          `json:"id" xml:"id,attr"`
+	Name       string          `json:"name" xml:"name,attr"`
+	AlbumCount int             `json:"albumCount,omitempty" xml:"albumCount,attr,omitempty"`
+	CoverArt   string          `json:"coverArt,omitempty" xml:"coverArt,attr,omitempty"`
+	Album      []subsonicAlbum `json:"album" xml:"album"`
 }
 
 type subsonicArtists struct {
@@ -116,16 +116,16 @@ type subsonicIndex2 struct {
 }
 
 type subsonicAlbum struct {
-	Id        string           `json:"id" xml:"id,attr"`
-	Name      string           `json:"name" xml:"name,attr"`
-	Artist    string           `json:"artist,omitempty" xml:"artist,attr,omitempty"`
-	ArtistId  string           `json:"artistId,omitempty" xml:"artistId,attr,omitempty"`
-	CoverArt  string           `json:"coverArt,omitempty" xml:"coverArt,attr,omitempty"`
-	SongCount int              `json:"songCount" xml:"songCount,attr"`
-	Duration  int              `json:"duration" xml:"duration,attr"`
-	Created   string           `json:"created" xml:"created,attr"`
-	Year      int              `json:"year,omitempty" xml:"year,attr,omitempty"`
-	Song      []subsonicChild  `json:"song" xml:"song"`
+	Id        string          `json:"id" xml:"id,attr"`
+	Name      string          `json:"name" xml:"name,attr"`
+	Artist    string          `json:"artist,omitempty" xml:"artist,attr,omitempty"`
+	ArtistId  string          `json:"artistId,omitempty" xml:"artistId,attr,omitempty"`
+	CoverArt  string          `json:"coverArt,omitempty" xml:"coverArt,attr,omitempty"`
+	SongCount int             `json:"songCount" xml:"songCount,attr"`
+	Duration  int             `json:"duration" xml:"duration,attr"`
+	Created   string          `json:"created" xml:"created,attr"`
+	Year      int             `json:"year,omitempty" xml:"year,attr,omitempty"`
+	Song      []subsonicChild `json:"song" xml:"song"`
 }
 
 type subsonicChild struct {
@@ -161,11 +161,11 @@ type subsonicAlbumList struct {
 }
 
 type subsonicSearchResult struct {
-	Offset  int             `json:"offset" xml:"offset,attr"`
-	Total   int             `json:"total" xml:"total,attr"`
-	Artist  []subsonicArtist `json:"artist" xml:"artist"`
-	Album   []subsonicAlbum  `json:"album" xml:"album"`
-	Song    []subsonicChild  `json:"song" xml:"song"`
+	Offset int              `json:"offset" xml:"offset,attr"`
+	Total  int              `json:"total" xml:"total,attr"`
+	Artist []subsonicArtist `json:"artist" xml:"artist"`
+	Album  []subsonicAlbum  `json:"album" xml:"album"`
+	Song   []subsonicChild  `json:"song" xml:"song"`
 }
 
 type subsonicSongs struct {
@@ -173,11 +173,11 @@ type subsonicSongs struct {
 }
 
 type subsonicDirectory struct {
-	Id       string          `json:"id" xml:"id,attr"`
-	Parent   string          `json:"parent,omitempty" xml:"parent,attr,omitempty"`
-	Name     string          `json:"name" xml:"name,attr"`
-	Starred  string          `json:"starred,omitempty" xml:"starred,attr,omitempty"`
-	Child    []subsonicChild `json:"child" xml:"child"`
+	Id      string          `json:"id" xml:"id,attr"`
+	Parent  string          `json:"parent,omitempty" xml:"parent,attr,omitempty"`
+	Name    string          `json:"name" xml:"name,attr"`
+	Starred string          `json:"starred,omitempty" xml:"starred,attr,omitempty"`
+	Child   []subsonicChild `json:"child" xml:"child"`
 }
 
 type subsonicPlaylists struct {
@@ -207,10 +207,10 @@ type subsonicLyricsList struct {
 }
 
 type subsonicStructuredLyrics struct {
-	DisplayArtist string `json:"displayArtist,omitempty" xml:"displayArtist,attr,omitempty"`
-	DisplayTitle  string `json:"displayTitle,omitempty" xml:"displayTitle,attr,omitempty"`
-	Lang          string `json:"lang" xml:"lang,attr"`
-	Synced        bool   `json:"synced" xml:"synced,attr"`
+	DisplayArtist string              `json:"displayArtist,omitempty" xml:"displayArtist,attr,omitempty"`
+	DisplayTitle  string              `json:"displayTitle,omitempty" xml:"displayTitle,attr,omitempty"`
+	Lang          string              `json:"lang" xml:"lang,attr"`
+	Synced        bool                `json:"synced" xml:"synced,attr"`
 	Line          []subsonicLyricLine `json:"line" xml:"line"`
 }
 
@@ -241,14 +241,14 @@ type subsonicScanStatus struct {
 }
 
 type subsonicUser struct {
-	Username            string `json:"username" xml:"username,attr"`
-	Email               string `json:"email,omitempty" xml:"email,attr,omitempty"`
-	ScrobblingEnabled   bool   `json:"scrobblingEnabled" xml:"scrobblingEnabled,attr"`
-	AdminRole           bool   `json:"adminRole" xml:"adminRole,attr"`
-	DownloadRole        bool   `json:"downloadRole" xml:"downloadRole,attr"`
-	PlaylistRole        bool   `json:"playlistRole" xml:"playlistRole,attr"`
-	StreamRole          bool   `json:"streamRole" xml:"streamRole,attr"`
-	CoverArtRole        bool   `json:"coverArtRole" xml:"coverArtRole,attr"`
+	Username          string `json:"username" xml:"username,attr"`
+	Email             string `json:"email,omitempty" xml:"email,attr,omitempty"`
+	ScrobblingEnabled bool   `json:"scrobblingEnabled" xml:"scrobblingEnabled,attr"`
+	AdminRole         bool   `json:"adminRole" xml:"adminRole,attr"`
+	DownloadRole      bool   `json:"downloadRole" xml:"downloadRole,attr"`
+	PlaylistRole      bool   `json:"playlistRole" xml:"playlistRole,attr"`
+	StreamRole        bool   `json:"streamRole" xml:"streamRole,attr"`
+	CoverArtRole      bool   `json:"coverArtRole" xml:"coverArtRole,attr"`
 }
 
 type subsonicUsers struct {
@@ -256,8 +256,8 @@ type subsonicUsers struct {
 }
 
 type subsonicExtension struct {
-	Name     string  `json:"name" xml:"name,attr"`
-	Versions []int   `json:"versions" xml:"versions"`
+	Name     string `json:"name" xml:"name,attr"`
+	Versions []int  `json:"versions" xml:"versions"`
 }
 
 type subsonicExtensions struct {
@@ -269,15 +269,15 @@ type subsonicNowPlaying struct {
 }
 
 type subsonicPlayQueue struct {
-	Current   string          `json:"current,omitempty" xml:"current,attr,omitempty"`
-	Position  int64           `json:"position,omitempty" xml:"position,attr,omitempty"`
-	Username  string          `json:"username,omitempty" xml:"username,attr,omitempty"`
-	Changed   string          `json:"changed,omitempty" xml:"changed,attr,omitempty"`
-	Entry     []subsonicChild `json:"entry" xml:"entry"`
+	Current  string          `json:"current,omitempty" xml:"current,attr,omitempty"`
+	Position int64           `json:"position,omitempty" xml:"position,attr,omitempty"`
+	Username string          `json:"username,omitempty" xml:"username,attr,omitempty"`
+	Changed  string          `json:"changed,omitempty" xml:"changed,attr,omitempty"`
+	Entry    []subsonicChild `json:"entry" xml:"entry"`
 }
 
 type subsonicArtistInfo struct {
-	Biography   string `json:"biography,omitempty" xml:"biography,omitempty"`
+	Biography     string `json:"biography,omitempty" xml:"biography,omitempty"`
 	MusicBrainzId string `json:"musicBrainzId,omitempty" xml:"musicBrainzId,omitempty"`
 }
 
@@ -291,7 +291,7 @@ type subsonicBookmarks struct {
 
 // ==================== 分发 ====================
 
-// SubsonicAPI OpenSubsonic API 入口（/rest/*）
+// SubsonicAPI OpenSubsonic API 入口（/@rest/*）
 func SubsonicAPI(c *gin.Context) {
 	if !MediaSubsonicEnabled() {
 		c.AbortWithStatus(404)

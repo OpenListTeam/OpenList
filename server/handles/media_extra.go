@@ -19,18 +19,18 @@ import (
 
 // MediaStatus 媒体库状态（前端据此决定是否渲染媒体库入口/侧栏）
 type MediaStatus struct {
-	Enabled          bool     `json:"enabled"`
-	Types            []string `json:"types"`
-	EmbyEnabled      bool     `json:"emby_enabled"`
-	SubsonicEnabled  bool     `json:"subsonic_enabled"`
-	EmbyBaseURL      string   `json:"emby_base_url"`
-	SubsonicBaseURL  string   `json:"subsonic_base_url"`
-	StrmPath         string   `json:"strm_path"`
-	StrmOnScan       bool     `json:"strm_on_scan"`
-	StrmSameDir      bool     `json:"strm_same_dir"`
-	ThumbPath        string   `json:"thumb_path"`
-	Version          string   `json:"version"`
-	ProxyCover       bool     `json:"proxy_cover"`
+	Enabled         bool     `json:"enabled"`
+	Types           []string `json:"types"`
+	EmbyEnabled     bool     `json:"emby_enabled"`
+	SubsonicEnabled bool     `json:"subsonic_enabled"`
+	EmbyBaseURL     string   `json:"emby_base_url"`
+	SubsonicBaseURL string   `json:"subsonic_base_url"`
+	StrmPath        string   `json:"strm_path"`
+	StrmOnScan      bool     `json:"strm_on_scan"`
+	StrmSameDir     bool     `json:"strm_same_dir"`
+	ThumbPath       string   `json:"thumb_path"`
+	Version         string   `json:"version"`
+	ProxyCover      bool     `json:"proxy_cover"`
 }
 
 // PublicMediaStatus 公开的媒体库状态
@@ -53,8 +53,8 @@ func PublicMediaStatus(c *gin.Context) {
 	}
 	status.EmbyEnabled = MediaEmbyEnabled()
 	status.SubsonicEnabled = MediaSubsonicEnabled()
-	status.EmbyBaseURL = strings.TrimSuffix(apiBase, "/") + "/emby"
-	status.SubsonicBaseURL = strings.TrimSuffix(apiBase, "/") + "/rest"
+	status.EmbyBaseURL = strings.TrimSuffix(apiBase, "/") + "/@emby"
+	status.SubsonicBaseURL = strings.TrimSuffix(apiBase, "/") + "/@rest"
 	common.SuccessResp(c, status)
 }
 

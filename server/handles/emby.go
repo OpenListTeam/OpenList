@@ -102,18 +102,18 @@ type embyQueryResult struct {
 }
 
 type embyUserDto struct {
-	Name                   string
-	ServerId               string
-	Id                     string
-	HasPassword            bool
-	HasConfiguredPassword  bool
-	Configuration          map[string]any
-	Policy                 map[string]any
-	PrimaryImageTag        string
-	LastLoginDate          string
-	LastActivityDate       string
-	IsAdministrator        bool
-	IsDisabled             bool
+	Name                  string
+	ServerId              string
+	Id                    string
+	HasPassword           bool
+	HasConfiguredPassword bool
+	Configuration         map[string]any
+	Policy                map[string]any
+	PrimaryImageTag       string
+	LastLoginDate         string
+	LastActivityDate      string
+	IsAdministrator       bool
+	IsDisabled            bool
 }
 
 type embyAuthResult struct {
@@ -226,9 +226,9 @@ func embyAuth(c *gin.Context) (*model.User, bool) {
 
 func embyUserDtoOf(u *model.User) *embyUserDto {
 	policy := map[string]any{
-		"IsAdministrator": u.IsAdmin(),
+		"IsAdministrator":  u.IsAdmin(),
 		"EnableAllFolders": true,
-		"EnabledFolders":  []string{},
+		"EnabledFolders":   []string{},
 	}
 	return &embyUserDto{
 		Name:                  u.Username,
@@ -245,7 +245,7 @@ func embyUserDtoOf(u *model.User) *embyUserDto {
 
 // ==================== 请求分发 ====================
 
-// EmbyAPI Emby 兼容 API 入口，兼容 /emby 与 /mediabrowser 前缀，路径大小写不敏感
+// EmbyAPI Emby 兼容 API 入口，兼容 /@emby 与 /@mediabrowser 前缀，路径大小写不敏感
 func EmbyAPI(c *gin.Context) {
 	if !MediaEmbyEnabled() {
 		c.AbortWithStatus(404)

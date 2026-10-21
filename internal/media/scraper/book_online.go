@@ -71,7 +71,8 @@ func (s *GoogleBooksScraper) ScrapeBook(item *model.MediaItem) error {
 	if query == "" {
 		return fmt.Errorf("empty query")
 	}
-	api := "https://www.googleapis.com/books/v1/volumes?maxResults=1&printType=books&q=" + url.QueryEscape(query)
+	api := "https://www.googleapis.com/books/v1/volumes?maxResults=1&printType=books&langRestrict=" +
+		url.QueryEscape(ScrapeLanguagePrimary()) + "&q=" + url.QueryEscape(query)
 	if s.APIKey != "" {
 		api += "&key=" + url.QueryEscape(s.APIKey)
 	}

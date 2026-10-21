@@ -127,10 +127,11 @@ func Init(e *gin.Engine) {
 	transcodeWorker.POST("/job/finish", handles.WorkerJobFinish)
 
 	// Emby 兼容 API（自带鉴权与开关判断，路径大小写由 handler 归一化）
-	g.Any("/emby/*path", handles.EmbyAPI)
-	g.Any("/mediabrowser/*path", handles.EmbyAPI)
+	// 使用 @ 前缀，避免与用户自己创建的 /emby、/rest 目录冲突
+	g.Any("/@emby/*path", handles.EmbyAPI)
+	g.Any("/@mediabrowser/*path", handles.EmbyAPI)
 	// OpenSubsonic API（自带鉴权与开关判断）
-	g.Any("/rest/*path", handles.SubsonicAPI)
+	g.Any("/@rest/*path", handles.SubsonicAPI)
 
 	_fs(auth.Group("/fs"))
 	// 媒体库公开 API：与文件浏览一致，允许访客访问（访客仍受自身 base_path/权限限制）

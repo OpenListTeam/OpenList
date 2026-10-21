@@ -277,7 +277,7 @@ func parseVideoFileName(fileName string) parsedVideoTitle {
 	foundYear := false
 	foundChinese := false // 一旦出现中文片段，后面的非中文片段都不再加入英文标题
 
-// pureNoise 判断字符串经过噪声词清洗后是否为空（即整体都是噪声词）
+	// pureNoise 判断字符串经过噪声词清洗后是否为空（即整体都是噪声词）
 	// 用于过滤掉"双语字幕"、"国英音轨" 这种纯噪声片段，避免被当成中文标题
 	pureNoise := func(s string) bool {
 		cleaned := noiseTokenRegexp.ReplaceAllString(s, "")
@@ -414,8 +414,8 @@ func dedupStrings(in []string) []string {
 func stripTrailingNoise(s string) string {
 	cleaned := noiseTokenRegexp.ReplaceAllString(s, " ")
 	// 剖除「-人人影视」「.YYeTs」这种跟在中文后面的字幕组名
-	cleaned = regexp.MustCompile(`[\s\-・]*` +
-		`(?:人人影视制作|人人影视|人人字幕|YYeTs|YYETs|FRDS|飞鸟影视|飞鸟影院|风行网|深影|远鉴|字幕组|压制组)[s]?` +
+	cleaned = regexp.MustCompile(`[\s\-・]*`+
+		`(?:人人影视制作|人人影视|人人字幕|YYeTs|YYETs|FRDS|飞鸟影视|飞鸟影院|风行网|深影|远鉴|字幕组|压制组)[s]?`+
 		`(?:、|。|\.|,)?\s*$`).ReplaceAllString(cleaned, " ")
 	// 剖除末尾的 (1)（重复文件标记）、V2、v3 这类版本后缀
 	cleaned = regexp.MustCompile(`(?i)\s*[\(（]\s*\d+\s*[\)）]\s*$`).ReplaceAllString(cleaned, " ")
@@ -1356,9 +1356,9 @@ func (s *TMDBScraper) ScrapeVideo(item *model.MediaItem) error {
 		mediaType = "movie"
 	}
 
-	// 获取详情
-	detailURL := fmt.Sprintf("%s/%s/%d?api_key=%s&language=zh-CN&append_to_response=credits",
-		s.BaseURL, mediaType, first.ID, s.APIKey)
+	// 获取详情（语言跟随「首选刮削语言」设置）
+	detailURL := fmt.Sprintf("%s/%s/%d?api_key=%s&language=%s&append_to_response=credits",
+		s.BaseURL, mediaType, first.ID, s.APIKey, url.QueryEscape(ScrapeLanguage()))
 	log.Debugf("[TMDB] 详情请求: %s", maskAPIKey(detailURL))
 
 	detailResp, err := s.client.Get(detailURL)

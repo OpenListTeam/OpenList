@@ -1,4 +1,4 @@
-﻿package handles
+package handles
 
 import (
 	"encoding/base64"
@@ -82,9 +82,9 @@ func embyPlaybackInfo(c *gin.Context, lib *embyLibrary, id string) {
 		return
 	}
 	api := common_ApiBase(c)
-	streamURL := fmt.Sprintf("%s/emby/Videos/%s/stream?Static=true", api, id)
+	streamURL := fmt.Sprintf("%s/@emby/Videos/%s/stream?Static=true", api, id)
 	if target.Item.MediaType == model.MediaTypeMusic {
-		streamURL = fmt.Sprintf("%s/emby/Audio/%s/stream?Static=true", api, id)
+		streamURL = fmt.Sprintf("%s/@emby/Audio/%s/stream?Static=true", api, id)
 	}
 	source := embyMediaSource{
 		Protocol:             "Http",
