@@ -143,6 +143,13 @@ func Init(e *gin.Engine) {
 	mediaPublic.GET("/scan_paths", handles.PublicListScanPaths)
 	mediaPublic.GET("/strm", handles.GetMediaStrm)
 	mediaPublic.GET("/stream_url", handles.GetMediaStreamURL)
+	// 播放进度与收藏（与 Emby / Subsonic 共用同一份用户数据）
+	mediaPublic.GET("/userdata", handles.GetMediaUserDataBatch)
+	mediaPublic.GET("/progress", handles.GetMediaProgress)
+	mediaPublic.POST("/progress", handles.SaveMediaProgress)
+	mediaPublic.POST("/favorite", handles.SetMediaFavorite)
+	mediaPublic.GET("/favorites", handles.ListMediaFavoritesAPI)
+	mediaPublic.GET("/resume", handles.ListMediaResumeAPI)
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
 	_task(auth.Group("/task", middlewares.AuthNotGuest))
 	_sharing(auth.Group("/share", middlewares.AuthNotGuest))
