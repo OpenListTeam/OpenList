@@ -271,6 +271,13 @@ func EmbyAPI(c *gin.Context) {
 	case len(lower) == 2 && lower[0] == "system" && lower[1] == "ping":
 		c.String(200, "Emby Server")
 		return
+	// 添加服务器 / 登录流程必须在鉴权前放行，否则客户端只会看到 Unauthorized
+	case len(lower) == 2 && lower[0] == "users" && lower[1] == "public":
+		embyPublicUsers(c)
+		return
+	case len(lower) == 2 && lower[0] == "users" && lower[1] == "authenticatebyname":
+		embyAuthenticateByName(c)
+		return
 	case len(lower) == 3 && lower[0] == "items" && strings.EqualFold(lower[2], "images"):
 		embyImage(c, segs[1], segs, true)
 		return
@@ -287,12 +294,8 @@ func EmbyAPI(c *gin.Context) {
 		embySystemInfo(c)
 	case len(lower) == 2 && lower[0] == "system" && lower[1] == "endpoint":
 		c.JSON(200, gin.H{"IsLocal": true, "IsInNetwork": true})
-	case len(lower) == 2 && lower[0] == "users" && lower[1] == "authenticatebyname":
-		embyAuthenticateByName(c)
 	case len(lower) == 1 && lower[0] == "users" && method == "GET":
 		embyListUsers(c, user)
-	case len(lower) == 2 && lower[0] == "users" && lower[1] == "public":
-		embyPublicUsers(c)
 	case len(lower) == 2 && lower[0] == "users" && lower[1] == "query":
 		embyQueryUsers(c)
 	case len(lower) == 2 && lower[0] == "users" && method == "GET":
