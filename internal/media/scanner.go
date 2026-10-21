@@ -145,6 +145,9 @@ func ScanMedia(cfg *model.MediaConfig) {
 		now := time.Now()
 		cfg.LastScanAt = &now
 		_ = db.SaveMediaConfig(cfg)
+
+		// 按需生成 STRM
+		TriggerStrmOnScan(cfg.MediaType, GetAPIRoot())
 	}()
 }
 
@@ -604,12 +607,8 @@ func buildMediaItemFromVFS(ctx context.Context, vfsPath string, sp *model.MediaS
 // episodeNumRe 匹配文件名开头的数字序号，支持 "1、" "2." "3-" "4 " 等分隔符
 var episodeNumRe = regexp.MustCompile(`^(\d+)[、.\-\s_]+(.*)`)
 
-// EpisodeInfo 选集信息
-type EpisodeInfo struct {
-	FileName string `json:"file_name"` // 原始文件名（含扩展名）
-	Index    int    `json:"index"`     // 序号，默认0，文件名开头有数字则取该数字
-	Title    string `json:"title"`     // 选集标题（去掉序号后的文件名，不含扩展名）
-}
+// EpisodeInfo 选集信息（定义在 model 包中，供协议层复用）
+type EpisodeInfo = model.EpisodeInfo
 
 // buildEpisodesFromFolder 扫描文件夹内的媒体文件，构建选集信息 JSON 字符串
 func buildEpisodesFromFolder(ctx context.Context, folderPath string, mediaType model.MediaType) (string, error) {

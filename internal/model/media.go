@@ -101,6 +101,13 @@ type MediaConfig struct {
 	LastScrapeAt *time.Time `json:"last_scrape_at"`
 }
 
+// EpisodeInfo 选集信息（文件夹型媒体的单集描述）
+type EpisodeInfo struct {
+	FileName string `json:"file_name"` // 原始文件名（含扩展名）
+	Index    int    `json:"index"`     // 序号，默认0，文件名开头有数字则取该数字
+	Title    string `json:"title"`     // 选集标题（去掉序号后的文件名，不含扩展名）
+}
+
 // MediaScanProgress 扫描进度（内存中维护，不持久化）
 type MediaScanProgress struct {
 	MediaType  MediaType `json:"media_type"`

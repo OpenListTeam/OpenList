@@ -673,12 +673,14 @@ func PublicListMedia(c *gin.Context) {
 	}
 
 	hidden := false
+	user := mediaUser(c)
 	q := db.MediaItemQuery{
 		MediaType:  mediaType,
 		ScanPathID: scanPathID,
 		FolderPath: folderPath,
 		TypeTag:    typeTag,
 		ContentTag: contentTag,
+		PathPrefix: userPathPrefix(user),
 		Hidden:     &hidden,
 		Keyword:    keyword,
 		OrderBy:    orderBy,
@@ -691,7 +693,14 @@ func PublicListMedia(c *gin.Context) {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	common.SuccessResp(c, common.PageResp{Content: items, Total: total})
+	// 元信息(meta) 级别的读权限无法下推到 SQL，这里对当前页做二次过滤
+	filtered := make([]model.MediaItem, 0, len(items))
+	for i := range items {
+		if CanUserAccessItem(user, &items[i]) {
+			filtered = append(filtered, items[i])
+		}
+	}
+	common.SuccessResp(c, common.PageResp{Content: filtered, Total: total})
 }
 
 // PublicGetMedia 公开获取媒体详情
@@ -707,7 +716,7 @@ func PublicGetMedia(c *gin.Context) {
 		common.ErrorResp(c, err, 404)
 		return
 	}
-	if item.Hidden {
+	if item.Hidden || !CanUserAccessItem(mediaUser(c), item) {
 		common.ErrorStrResp(c, "资源不存在", 404)
 		return
 	}
@@ -731,6 +740,7 @@ func PublicListAlbums(c *gin.Context) {
 	q := db.MediaItemQuery{
 		MediaType:  model.MediaTypeMusic,
 		ScanPathID: scanPathID,
+		PathPrefix: userPathPrefix(mediaUser(c)),
 		Hidden:     &hidden,
 		Keyword:    keyword,
 		Page:       page,
@@ -757,7 +767,14 @@ func PublicGetAlbum(c *gin.Context) {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	common.SuccessResp(c, tracks)
+	user := mediaUser(c)
+	filtered := make([]model.MediaItem, 0, len(tracks))
+	for i := range tracks {
+		if CanUserAccessItem(user, &tracks[i]) {
+			filtered = append(filtered, tracks[i])
+		}
+	}
+	common.SuccessResp(c, filtered)
 }
 
 // PublicListFolders 公开文件夹列表（目录浏览模式）
@@ -772,7 +789,14 @@ func PublicListFolders(c *gin.Context) {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	common.SuccessResp(c, paths)
+	user := mediaUser(c)
+	filtered := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if CanUserAccessPath(user, p) {
+			filtered = append(filtered, p)
+		}
+	}
+	common.SuccessResp(c, filtered)
 }
 
 // PublicListScanPaths 公开获取扫描路径列表（前端筛选用）
@@ -783,7 +807,14 @@ func PublicListScanPaths(c *gin.Context) {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	common.SuccessResp(c, paths)
+	user := mediaUser(c)
+	filtered := make([]model.MediaScanPath, 0, len(paths))
+	for _, p := range paths {
+		if CanUserAccessPath(user, p.Path) {
+			filtered = append(filtered, p)
+		}
+	}
+	common.SuccessResp(c, filtered)
 }
 
 // ==================== 导入 / 导出 ====================

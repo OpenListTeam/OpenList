@@ -176,6 +176,16 @@ const (
 	MediaStoreThumbnail   = "media_store_thumbnail"
 	MediaScrapeConcurrency = "media_scrape_concurrency"
 
+	// media library master switch & protocol switches
+	MediaEnabled             = "media_enabled"                // 媒体库总开关（PUBLIC，前端据此显示/隐藏）
+	MediaEmbyEnabled         = "media_emby_enabled"           // Emby 兼容 API 开关
+	MediaSubsonicEnabled     = "media_subsonic_enabled"       // OpenSubsonic API 开关
+	MediaSubsonicProxyStream = "media_subsonic_proxy_stream"  // Subsonic 播放是否强制代理（兼容不跟随 302 的客户端）
+	MediaStrmOnScan          = "media_strm_on_scan"           // 扫描完成后自动生成 STRM
+	MediaStrmPath            = "media_strm_path"              // STRM 输出目录（VFS 路径）
+	MediaStrmOverwrite       = "media_strm_overwrite"         // 生成 STRM 时是否覆盖已存在文件
+	MediaStrmTemplate        = "media_strm_template"          // STRM 内容模板
+
 	// transcode (云端/本地 FFmpeg 转码)
 	TranscodeEnabled            = "transcode_enabled"              // 总开关，默认关
 	TranscodeMinSizeGB          = "transcode_min_size_gb"          // 文件大于多少 GB 才转码

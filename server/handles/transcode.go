@@ -44,6 +44,10 @@ func TranscodePlay(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	if !CanUserAccessPath(mediaUser(c), req.Path) {
+		common.ErrorStrResp(c, "path is not accessible", 403)
+		return
+	}
 	obj, err := fs.Get(c.Request.Context(), req.Path, &fs.GetArgs{NoLog: true})
 	if err != nil {
 		common.ErrorResp(c, err, 500)

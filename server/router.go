@@ -105,6 +105,7 @@ func Init(e *gin.Engine) {
 	// no need auth
 	public := api.Group("/public")
 	public.Any("/settings", handles.PublicSettings)
+	public.GET("/media_status", handles.PublicMediaStatus)
 	public.Any("/offline_download_tools", handles.OfflineDownloadTools)
 	public.Any("/archive_extensions", handles.ArchiveExtensions)
 	public.Any("/init_status", handles.InitStatus)
@@ -117,6 +118,12 @@ func Init(e *gin.Engine) {
 	transcodeWorker.POST("/claim", handles.WorkerClaim)
 	transcodeWorker.PUT("/segment", handles.WorkerSegmentUpload)
 	transcodeWorker.POST("/job/finish", handles.WorkerJobFinish)
+
+	// Emby 兼容 API（自带鉴权与开关判断，路径大小写由 handler 归一化）
+	g.Any("/emby/*path", handles.EmbyAPI)
+	g.Any("/mediabrowser/*path", handles.EmbyAPI)
+	// OpenSubsonic API（自带鉴权与开关判断）
+	g.Any("/rest/*path", handles.SubsonicAPI)
 
 	_fs(auth.Group("/fs"))
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
@@ -227,6 +234,12 @@ func admin(g *gin.RouterGroup) {
 	// 导入 / 导出
 	mediaAdmin.GET("/export", handles.ExportMediaDB)
 	mediaAdmin.POST("/import", handles.ImportMediaDB)
+	// 媒体应用密钥（Subsonic/Emby/MoviePilot 等无交互客户端）
+	mediaAdmin.GET("/appkey/list", handles.ListMediaAppKeys)
+	mediaAdmin.POST("/appkey/create", handles.CreateMediaAppKey)
+	mediaAdmin.POST("/appkey/delete", handles.DeleteMediaAppKey)
+	// STRM 批量生成
+	mediaAdmin.POST("/strm/generate", handles.GenerateMediaStrm)
 
 	// 转码管理
 	transcodeAdmin := g.Group("/transcode")
@@ -242,17 +255,18 @@ func fsAndShare(g *gin.RouterGroup) {
 	a.Any("/meta", handles.FsArchiveMetaSplit)
 	a.Any("/list", handles.FsArchiveListSplit)
 
-	// 媒体库公开API
-	mediaPublic := g.Group("/media")
+	// 媒体库公开API（媒体库关闭时整组 404）
+	mediaPublic := g.Group("/media", handles.RequireMediaEnabled)
 	mediaPublic.GET("/list", handles.PublicListMedia)
 	mediaPublic.GET("/item/:id", handles.PublicGetMedia)
 	mediaPublic.GET("/albums", handles.PublicListAlbums)
 	mediaPublic.GET("/album", handles.PublicGetAlbum)
 	mediaPublic.GET("/folders", handles.PublicListFolders)
 	mediaPublic.GET("/scan_paths", handles.PublicListScanPaths)
+	mediaPublic.GET("/strm", handles.GetMediaStrm)
 
 	// 转码 - 用户态：申请播放
-	g.POST("/transcode/play", handles.TranscodePlay)
+	g.POST("/transcode/play", handles.RequireMediaEnabled, handles.TranscodePlay)
 }
 
 func _fs(g *gin.RouterGroup) {

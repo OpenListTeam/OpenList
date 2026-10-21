@@ -79,6 +79,14 @@ func DeleteMediaScanPath(id uint) error {
 
 // ==================== MediaItem ====================
 
+// escapeLike 转义 LIKE 通配符，避免路径中的 % _ 影响前缀匹配
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "%", `\%`)
+	s = strings.ReplaceAll(s, "_", `\_`)
+	return s
+}
+
 // MediaItemQuery 媒体条目查询参数
 type MediaItemQuery struct {
 	MediaType  model.MediaType
@@ -86,6 +94,7 @@ type MediaItemQuery struct {
 	FolderPath string // 按文件夹路径筛选
 	TypeTag    string // 按类型标签筛选（电影、电视剧等）
 	ContentTag string // 按内容标签筛选（喜剧、惊悚等）
+	PathPrefix string // 按文件夹路径前缀筛选（用于用户 base_path 隔离）
 	Hidden     *bool
 	Keyword    string
 	OrderBy    string // "name", "date", "size"
@@ -105,6 +114,10 @@ func ListMediaItems(q MediaItemQuery) ([]model.MediaItem, int64, error) {
 	}
 	if q.FolderPath != "" {
 		tx = tx.Where("folder_path = ?", q.FolderPath)
+	}
+	if q.PathPrefix != "" {
+		prefix := strings.TrimSuffix(q.PathPrefix, "/") + "/"
+		tx = tx.Where(`folder_path LIKE ? ESCAPE '\'`, escapeLike(prefix)+"%")
 	}
 	if q.Hidden != nil {
 		tx = tx.Where("hidden = ?", *q.Hidden)
