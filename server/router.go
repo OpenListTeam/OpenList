@@ -81,6 +81,10 @@ func Init(e *gin.Engine) {
 	api.POST("/auth/login/ldap", handles.LoginLdap)
 	auth.GET("/me", handles.CurrentUser)
 	auth.POST("/me/update", handles.UpdateCurrent)
+	// 媒体应用密钥（每个登录用户都可以为自己的客户端签发密钥）
+	auth.GET("/me/appkey/list", handles.ListMediaAppKeys)
+	auth.POST("/me/appkey/create", handles.CreateMediaAppKey)
+	auth.POST("/me/appkey/delete", handles.DeleteMediaAppKey)
 	auth.GET("/me/sshkey/list", handles.ListMyPublicKey)
 	auth.POST("/me/sshkey/add", handles.AddMyPublicKey)
 	auth.POST("/me/sshkey/delete", handles.DeleteMyPublicKey)
@@ -264,6 +268,7 @@ func fsAndShare(g *gin.RouterGroup) {
 	mediaPublic.GET("/folders", handles.PublicListFolders)
 	mediaPublic.GET("/scan_paths", handles.PublicListScanPaths)
 	mediaPublic.GET("/strm", handles.GetMediaStrm)
+	mediaPublic.GET("/stream_url", handles.GetMediaStreamURL)
 
 	// 转码 - 用户态：申请播放
 	g.POST("/transcode/play", handles.RequireMediaEnabled, handles.TranscodePlay)
