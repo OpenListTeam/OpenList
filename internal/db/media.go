@@ -224,6 +224,8 @@ func CreateOrUpdateMediaItem(item *model.MediaItem) error {
 		item.ISBN = existing.ISBN
 		item.ExternalID = existing.ExternalID
 	}
+	// 扫描不覆盖用户手动隐藏的状态
+	item.Hidden = existing.Hidden
 	return db.Unscoped().Save(item).Error
 }
 

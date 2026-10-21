@@ -61,7 +61,12 @@ func ParseID3v2(r io.Reader) (*MusicTag, error) {
 		if pos+4 > len(data) {
 			return tag, nil
 		}
-		extSize := int(binary.BigEndian.Uint32(data[pos : pos+4]))
+		var extSize int
+		if version == 4 {
+			extSize = syncsafeToInt(data[pos : pos+4])
+		} else {
+			extSize = int(binary.BigEndian.Uint32(data[pos : pos+4]))
+		}
 		pos += extSize
 	}
 
@@ -72,7 +77,14 @@ func ParseID3v2(r io.Reader) (*MusicTag, error) {
 			break // 填充区域，结束
 		}
 
-		frameSize := int(binary.BigEndian.Uint32(data[pos+4 : pos+8]))
+		// ID3v2.4 帧大小使用 syncsafe integer（与标签头一致），
+		// ID3v2.3 使用普通 32 位大端整数。
+		var frameSize int
+		if version == 4 {
+			frameSize = syncsafeToInt(data[pos+4 : pos+8])
+		} else {
+			frameSize = int(binary.BigEndian.Uint32(data[pos+4 : pos+8]))
+		}
 		pos += 10 // 跳过帧头（4+4+2）
 
 		if frameSize <= 0 || pos+frameSize > len(data) {
