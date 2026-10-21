@@ -95,9 +95,24 @@ func (d *BaiduNetdisk) _refreshToken() error {
 }
 
 func (d *BaiduNetdisk) request(furl string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	return d.requestCtx(context.Background(), furl, method, callback, resp)
+}
+
+func (d *BaiduNetdisk) requestCtx(ctx context.Context, furl string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	var result []byte
+	var waited time.Duration
 	err := retry.Do(func() error {
-		req := base.RestyClient.R()
+		// Respect a shared cooldown started by an earlier 31034, but never let
+		// one call sleep longer than the cooldown budget in total.
+		w, ok, err := d.cooldown.wait(ctx, d.cooldown.budget()-waited)
+		if err != nil {
+			return retry.Unrecoverable(err)
+		}
+		if !ok {
+			return retry.Unrecoverable(&apiError{URL: furl, Errno: errnoRateLimited})
+		}
+		waited += w
+		req := base.RestyClient.R().SetContext(ctx)
 		req.SetQueryParam("access_token", d.AccessToken)
 		if callback != nil {
 			callback(req)
@@ -107,33 +122,57 @@ func (d *BaiduNetdisk) request(furl string, method string, callback base.ReqCall
 		}
 		res, err := req.Execute(method, furl)
 		if err != nil {
+			if ctx.Err() != nil {
+				return retry.Unrecoverable(ctx.Err())
+			}
 			return err
 		}
 		log.Debugf("[baidu_netdisk] req: %s, resp: %s", furl, res.String())
-		errno := utils.Json.Get(res.Body(), "errno").ToInt()
-		if errno != 0 {
-			if utils.SliceContains([]int{111, -6, 20016, 20017}, errno) {
-				log.Info("[baidu_netdisk] refreshing baidu_netdisk token.")
-				err2 := d.refreshToken()
-				if err2 != nil {
-					return retry.Unrecoverable(err2)
-				}
-			}
-
-			if errno == 31023 && d.DownloadAPI == "crack_video" {
-				result = res.Body()
-				return nil
-			}
-
-			return fmt.Errorf("req: [%s] ,errno: %d, refer to https://pan.baidu.com/union/doc/", furl, errno)
+		apiErr := parseAPIError(furl, res.Body())
+		if apiErr == nil {
+			d.cooldown.success()
+			result = res.Body()
+			return nil
 		}
-		result = res.Body()
-		return nil
+		errno := apiErr.Errno
+		if apiErr.RateLimited() {
+			if cd, started := d.cooldown.hit(); started {
+				log.Warnf("[baidu_netdisk] hit rate limit (31034), pausing requests for %s", cd.Round(time.Millisecond))
+			}
+			return apiErr
+		}
+		if apiErr.NotExist() {
+			// permanent; callers such as Remove decide whether that is fine
+			return retry.Unrecoverable(apiErr)
+		}
+		// NOTE: per the filemanager docs 111 means "an async task is running",
+		// but it has always been treated as token expiry here; kept unchanged.
+		// 20016/20017 are additional token-refresh errnos from upstream (#3232).
+		if utils.SliceContains([]int{111, -6, 20016, 20017}, errno) {
+			log.Info("[baidu_netdisk] refreshing baidu_netdisk token.")
+			err2 := d.refreshToken()
+			if err2 != nil {
+				return retry.Unrecoverable(err2)
+			}
+		}
+
+		if errno == 31023 && d.DownloadAPI == "crack_video" {
+			result = res.Body()
+			return nil
+		}
+
+		return apiErr
 	},
+		retry.Context(ctx),
 		retry.LastErrorOnly(true),
 		retry.Attempts(3),
 		retry.Delay(time.Second),
-		retry.DelayType(retry.BackOffDelay))
+		retry.DelayType(func(n uint, err error, config *retry.Config) time.Duration {
+			if e, ok := asAPIError(err); ok && e.RateLimited() {
+				return 0 // the shared cooldown provides the delay
+			}
+			return retry.BackOffDelay(n, err, config)
+		}))
 	return result, err
 }
 
@@ -144,7 +183,11 @@ func (d *BaiduNetdisk) get(pathname string, params map[string]string, resp inter
 }
 
 func (d *BaiduNetdisk) postForm(pathname string, params map[string]string, form map[string]string, resp interface{}) ([]byte, error) {
-	return d.request("https://pan.baidu.com/rest/2.0"+pathname, http.MethodPost, func(req *resty.Request) {
+	return d.postFormCtx(context.Background(), pathname, params, form, resp)
+}
+
+func (d *BaiduNetdisk) postFormCtx(ctx context.Context, pathname string, params map[string]string, form map[string]string, resp interface{}) ([]byte, error) {
+	return d.requestCtx(ctx, "https://pan.baidu.com/rest/2.0"+pathname, http.MethodPost, func(req *resty.Request) {
 		req.SetQueryParams(params)
 		req.SetFormData(form)
 	}, resp)
@@ -276,13 +319,13 @@ func (d *BaiduNetdisk) linkCrackVideo(file model.Obj, _ model.LinkArgs) (*model.
 	}, nil
 }
 
-func (d *BaiduNetdisk) manage(opera string, filelist any) ([]byte, error) {
+func (d *BaiduNetdisk) manage(ctx context.Context, opera string, filelist any) ([]byte, error) {
 	params := map[string]string{
 		"method": "filemanager",
 		"opera":  opera,
 	}
 	marshal, _ := utils.Json.MarshalToString(filelist)
-	return d.postForm("/xpan/file", params, map[string]string{
+	return d.postFormCtx(ctx, "/xpan/file", params, map[string]string{
 		"async":    "0",
 		"filelist": marshal,
 		"ondup":    "fail",
