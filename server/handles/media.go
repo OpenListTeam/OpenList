@@ -12,6 +12,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/media/scraper"
@@ -373,6 +374,7 @@ func DeleteInvalidMedia(c *gin.Context) {
 	defer cancel()
 
 	var invalidIDs []uint
+	var skipped int
 	for i := range items {
 		it := &items[i]
 		// 拼接文件 / 文件夹的完整 VFS 路径
@@ -383,7 +385,14 @@ func DeleteInvalidMedia(c *gin.Context) {
 			continue
 		}
 		if _, gerr := fs.Get(ctx, fullPath, &fs.GetArgs{NoLog: true}); gerr != nil {
-			invalidIDs = append(invalidIDs, it.ID)
+			// 只有「确认不存在」才算失效条目；驱动故障、超时、鉴权失败等可能是临时问题，
+			// 一律跳过（保留记录），否则一次网络抖动就会把有效的媒体记录硬删除。
+			if errs.IsObjectNotFound(gerr) {
+				invalidIDs = append(invalidIDs, it.ID)
+				continue
+			}
+			skipped++
+			log.Warnf("跳过无法确认状态的媒体条目 %s（%s）: %v", fullPath, it.FileName, gerr)
 		}
 	}
 
@@ -393,10 +402,11 @@ func DeleteInvalidMedia(c *gin.Context) {
 			return
 		}
 	}
-	log.Infof("删除已失效媒体条目：检测 %d 条，删除 %d 条 (media_type=%q)", len(items), len(invalidIDs), mediaType)
+	log.Infof("删除已失效媒体条目：检测 %d 条，删除 %d 条，跳过 %d 条 (media_type=%q)", len(items), len(invalidIDs), skipped, mediaType)
 	common.SuccessResp(c, gin.H{
 		"checked": len(items),
 		"deleted": len(invalidIDs),
+		"skipped": skipped,
 	})
 }
 
