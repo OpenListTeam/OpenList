@@ -146,7 +146,7 @@ func respondTranscodeJob(c *gin.Context, apiURL string, job *transcode.Job) {
 	if len(job.Profiles) > 0 {
 		profileName = job.Profiles[0].Name
 	}
-	masterURL := fmt.Sprintf("%s/tc/%s/%s/master.m3u8", apiURL, job.ID, job.CallbackToken)
+	masterURL := fmt.Sprintf("%s/tc/%s/%s/master.m3u8", apiURL, job.ID, job.PlayToken)
 	common.SuccessResp(c, gin.H{
 		"transcode":  true,
 		"job_id":     job.ID,
@@ -221,7 +221,7 @@ func TCMaster(c *gin.Context) {
 		c.String(http.StatusNotFound, "job not found")
 		return
 	}
-	if job.CallbackToken != token {
+	if !tokenMatches(job.PlayToken, token) {
 		c.String(http.StatusForbidden, "bad token")
 		return
 	}
@@ -251,7 +251,7 @@ func TCPlaylist(c *gin.Context) {
 		c.String(http.StatusNotFound, "job not found")
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(job.CallbackToken), []byte(token)) != 1 {
+	if !tokenMatches(job.PlayToken, token) {
 		c.String(http.StatusForbidden, "bad token")
 		return
 	}
@@ -309,7 +309,7 @@ func TCSegment(c *gin.Context) {
 		c.String(http.StatusNotFound, "job not found")
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(job.CallbackToken), []byte(token)) != 1 {
+	if !tokenMatches(job.PlayToken, token) {
 		c.String(http.StatusForbidden, "bad token")
 		return
 	}
@@ -461,6 +461,11 @@ func WorkerSegmentUpload(c *gin.Context) {
 		common.ErrorStrResp(c, "invalid profile", 400)
 		return
 	}
+	// 只接受任务声明过的档位，避免持有 callback_token 的一方往任意档位目录写数据
+	if !jobHasProfile(job, profile) {
+		common.ErrorStrResp(c, "profile not declared for this job", 400)
+		return
+	}
 	defer c.Request.Body.Close()
 	_, err := transcode.Default().Cache.PutSegment(jobID, profile, seq, dur, c.Request.Body, isFinal)
 	if err != nil {
@@ -493,8 +498,7 @@ func WorkerJobFinish(c *gin.Context) {
 		return
 	}
 	auth := c.GetHeader("Authorization")
-	expect := "Bearer " + job.CallbackToken
-	if auth != expect {
+	if !tokenMatches("Bearer "+job.CallbackToken, auth) {
 		common.ErrorStrResp(c, "unauthorized", 401)
 		return
 	}
@@ -526,6 +530,27 @@ func CancelTranscodeJob(c *gin.Context) {
 	}
 	transcode.Default().Scheduler.Cancel(req.JobID)
 	common.SuccessResp(c)
+}
+
+// jobHasProfile 判断 profile 是否属于任务声明的输出档位
+func jobHasProfile(job *transcode.Job, profile string) bool {
+	if job == nil {
+		return false
+	}
+	for _, p := range job.Profiles {
+		if p.Name == profile {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenMatches 恒定时间比较凭据，避免按字节比较造成的时序侧信道
+func tokenMatches(expected, got string) bool {
+	if expected == "" || got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(got)) == 1
 }
 
 func checkWorkerSecret(c *gin.Context) bool {

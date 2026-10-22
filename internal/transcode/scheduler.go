@@ -123,6 +123,10 @@ func (s *Scheduler) enqueueLocked(j *Job) *Job {
 	if j.CallbackToken == "" {
 		j.CallbackToken = "tk_" + uuid.NewString()
 	}
+	// 播放凭据与 Worker 回写凭据分离：播放端只能读，不能上传切片或结束任务
+	if j.PlayToken == "" {
+		j.PlayToken = "pt_" + uuid.NewString()
+	}
 	if j.readyCh == nil {
 		j.readyCh = make(chan struct{})
 	}
@@ -338,7 +342,8 @@ func (s *Scheduler) ListJobs() []*Job {
 // 让 worker 能再次领取并跑转码。用于"播放端重新请求时按需重启转码"的场景。
 //
 // 设计点：
-//  1. 复用原 jobID 和 callback_token，前端持有的 master.m3u8 中的 URL 不需要变更
+//  1. 复用原 jobID 和两套 token（播放用 PlayToken / Worker 回写用 CallbackToken），
+//     前端持有的 master.m3u8 中的 URL 不需要变更
 //  2. 重置 readyCh / Status / WorkerID 等运行时字段，但保留 Path / SourceURL / Profiles / Probe
 //  3. 重新加入 pending 队列并唤醒等待的 worker
 //

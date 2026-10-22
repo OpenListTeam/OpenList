@@ -81,8 +81,12 @@ type Job struct {
 	Probe         SourceProbe  `json:"probe"`
 	Profiles      []Profile    `json:"profiles"`
 	Output        OutputSpec   `json:"output"`
-	CallbackToken string       `json:"callback_token"` // Worker 回吐切片用
-	Deadline      int64        `json:"deadline"`       // unix 秒
+	CallbackToken string       `json:"callback_token"` // Worker 回吐切片用（同时具备写权限，绝不外泄给播放端）
+	// PlayToken 播放凭据：只用于 master/variant playlist 与切片下发，
+	// 与 Worker 回写凭据（CallbackToken）分离，避免播放器拿到可写权限。
+	// json:"-" 保证下发给 Worker 的任务描述里不会包含它。
+	PlayToken string `json:"-"`
+	Deadline  int64  `json:"deadline"` // unix 秒
 
 	// OwnerID 发起转码的用户 ID，仅服务端用于去重与配额，不下发给 Worker
 	OwnerID uint `json:"-"`
