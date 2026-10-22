@@ -44,8 +44,79 @@ func (s *Scheduler) SetOnCancel(fn func(jobID string)) {
 	s.mu.Unlock()
 }
 
-// Submit 提交一个任务并返回（带 ID + token）
+// 提交配额。转码是 CPU/磁盘密集型操作，必须限制单用户并发与全局排队长度，
+// 否则任何能访问播放接口的用户都能无限堆积任务（每个任务还会触发 30s 的 ffprobe）。
+const (
+	// MaxPendingJobs 全局排队（未被 worker 领取）任务上限
+	MaxPendingJobs = 200
+	// MaxActiveJobsPerUser 单用户同时存在的未结束任务上限
+	MaxActiveJobsPerUser = 3
+)
+
+var (
+	// ErrQueueFull 全局队列已满
+	ErrQueueFull = errors.New("transcode queue is full, try again later")
+	// ErrUserQuota 单用户并发任务已达上限
+	ErrUserQuota = errors.New("too many active transcode jobs for this user")
+)
+
+// isActiveStatus 任务是否仍占用资源（未结束）
+func isActiveStatus(st JobStatus) bool {
+	return st == JobPending || st == JobRunning || st == JobReady
+}
+
+// FindReusable 查找同一用户对同一路径、仍在进行中的任务，用于去重复用。
+func (s *Scheduler) FindReusable(ownerID uint, path string) (*Job, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.findReusableLocked(ownerID, path)
+}
+
+func (s *Scheduler) findReusableLocked(ownerID uint, path string) (*Job, bool) {
+	for _, j := range s.jobs {
+		if j.OwnerID == ownerID && j.Path == path && isActiveStatus(j.GetStatus()) {
+			return j, true
+		}
+	}
+	return nil, false
+}
+
+// SubmitLimited 带去重与配额的提交：
+//  1. 同一用户对同一路径已有进行中的任务时直接复用，不重复入队；
+//  2. 全局排队过长或用户任务过多时拒绝。
+//
+// 返回 (job, reused, err)。
+func (s *Scheduler) SubmitLimited(j *Job) (*Job, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if exist, ok := s.findReusableLocked(j.OwnerID, j.Path); ok {
+		return exist, true, nil
+	}
+	if len(s.pending) >= MaxPendingJobs {
+		return nil, false, ErrQueueFull
+	}
+	active := 0
+	for _, x := range s.jobs {
+		if x.OwnerID == j.OwnerID && isActiveStatus(x.GetStatus()) {
+			active++
+		}
+	}
+	if active >= MaxActiveJobsPerUser {
+		return nil, false, ErrUserQuota
+	}
+	// 检查与入队在同一把锁内完成，避免并发请求同时越过配额
+	return s.enqueueLocked(j), false, nil
+}
+
+// Submit 提交一个任务并返回（带 ID + token）。不做配额限制，仅供内部流程（如重新激活）使用。
 func (s *Scheduler) Submit(j *Job) *Job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.enqueueLocked(j)
+}
+
+// enqueueLocked 补全任务字段并入队，调用方必须已持有 s.mu。
+func (s *Scheduler) enqueueLocked(j *Job) *Job {
 	if j.ID == "" {
 		j.ID = "job_" + uuid.NewString()
 	}
@@ -60,7 +131,6 @@ func (s *Scheduler) Submit(j *Job) *Job {
 	}
 	j.Status = JobPending
 
-	s.mu.Lock()
 	s.jobs[j.ID] = j
 	s.pending = append(s.pending, j)
 	// 唤醒等待的 worker
@@ -68,7 +138,6 @@ func (s *Scheduler) Submit(j *Job) *Job {
 		close(ch)
 	}
 	s.waiters = nil
-	s.mu.Unlock()
 	return j
 }
 

@@ -5,7 +5,12 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/media/imgmime"
 )
+
+// maxEmbeddedPictureBytes 内嵌封面图片最大字节数，防止畸形文件触发超大内存分配
+const maxEmbeddedPictureBytes = 16 << 20
 
 // MusicTag 音频文件标签信息
 type MusicTag struct {
@@ -342,14 +347,16 @@ func parseAPICFrame(data []byte) ([]byte, string) {
 		return nil, ""
 	}
 
-	// 标准化 MIME 类型
-	if mimeType == "" || mimeType == "image/" {
-		mimeType = "image/jpeg" // 默认
-	}
-
 	imgData := make([]byte, len(data)-pos)
 	copy(imgData, data[pos:])
-	return imgData, mimeType
+	// 声明的 MIME 来自被扫描文件本身，不可信（可能是 image/svg+xml）。
+	// 只按魔数判定并限定为四种栅格格式，无法识别则丢弃封面。
+	_ = mimeType
+	safe := imgmime.Sniff(imgData)
+	if safe == "" {
+		return nil, ""
+	}
+	return imgData, safe
 }
 
 // syncsafeToInt 将 syncsafe integer 转换为普通整数
@@ -579,17 +586,19 @@ func parseFLACPictureBlock(data []byte) ([]byte, string) {
 	}
 	dataLen := int(binary.BigEndian.Uint32(data[pos : pos+4]))
 	pos += 4
-	if pos+dataLen > len(data) {
+	if dataLen <= 0 || dataLen > maxEmbeddedPictureBytes || pos+dataLen > len(data) {
 		return nil, ""
-	}
-
-	if mimeType == "" {
-		mimeType = "image/jpeg"
 	}
 
 	imgData := make([]byte, dataLen)
 	copy(imgData, data[pos:pos+dataLen])
-	return imgData, mimeType
+	// 同 parseAPICFrame：不信任声明的 MIME，只按魔数判定
+	_ = mimeType
+	safe := imgmime.Sniff(imgData)
+	if safe == "" {
+		return nil, ""
+	}
+	return imgData, safe
 }
 
 // parseVorbisCommentData 解析 Vorbis Comment 数据块

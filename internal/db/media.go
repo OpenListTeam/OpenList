@@ -2,8 +2,10 @@ package db
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"gorm.io/gorm"
@@ -193,6 +195,14 @@ func GetMediaItemByFolderPath(folderPath string) (*model.MediaItem, error) {
 // 否则唯一索引 idx_media_folder_file_album 会与软删除行冲突，
 // 导致新建条目时报 UNIQUE constraint failed。
 func CreateOrUpdateMediaItem(item *model.MediaItem) error {
+	// 复合唯一索引三列在 MySQL 下限定为 191 字符（见 model.MediaItem）。
+	// 超长值在严格模式下会写入失败、非严格模式下会被静默截断并造成不同文件撞同一条目，
+	// 因此显式拒绝，由调用方记录告警并跳过。
+	if utf8.RuneCountInString(item.FolderPath) > model.MediaIndexColumnMax ||
+		utf8.RuneCountInString(item.FileName) > model.MediaIndexColumnMax ||
+		utf8.RuneCountInString(item.AlbumName) > model.MediaIndexColumnMax {
+		return fmt.Errorf("media item path/name exceeds %d characters, skipped", model.MediaIndexColumnMax)
+	}
 	var existing model.MediaItem
 	result := db.Unscoped().Where("folder_path = ? AND file_name = ? AND album_name = ?", item.FolderPath, item.FileName, item.AlbumName).First(&existing)
 	if result.Error == gorm.ErrRecordNotFound {

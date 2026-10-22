@@ -455,6 +455,16 @@ func (s *workerState) uploadSegment(job Job, profile string, seq int, dur float6
 
 // ---- ffmpeg args（与 master 端 local_runner 保持一致）----
 
+// protocolWhitelistFor 与 internal/transcode.ProtocolWhitelistFor 保持一致：
+// 远程输入只放行 HTTP(S) 及其传输层，本地路径只放行 file。
+func protocolWhitelistFor(source string) string {
+	s := strings.ToLower(strings.TrimSpace(source))
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return "file,http,https,tcp,tls,crypto"
+	}
+	return "file"
+}
+
 func buildFFmpegArgs(job Job, profile Profile, segPattern, playlist string) []string {
 	hw := strings.ToLower(profile.HWAccel)
 	args := []string{"-y", "-loglevel", "warning"}
@@ -472,6 +482,9 @@ func buildFFmpegArgs(job Job, profile Profile, segPattern, playlist string) []st
 	case "auto":
 		args = append(args, "-hwaccel", "auto")
 	}
+	// 限制 ffmpeg 可用协议：Master 下发的 source_url 不应被解释成 concat:/subfile: 等特殊协议。
+	// -protocol_whitelist 是输入选项，必须位于 -i 之前。
+	args = append(args, "-protocol_whitelist", protocolWhitelistFor(job.SourceURL))
 	args = append(args, "-i", job.SourceURL)
 	args = append(args, "-c:v", pickEncoder(profile.VideoCodec, hw))
 	if profile.VideoBitrate != "" {

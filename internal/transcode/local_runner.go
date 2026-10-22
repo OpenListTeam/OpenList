@@ -554,7 +554,8 @@ func buildFFmpegArgsCommon(job *Job, profile Profile, segDur int, startTime, dur
 		args = append(args, "-ss", fmt.Sprintf("%.3f", startTime))
 	}
 
-	// 输入
+	// 输入：先限定协议白名单（输入选项，必须在 -i 之前），再指定输入
+	args = append(args, "-protocol_whitelist", ProtocolWhitelistFor(job.SourceURL))
 	args = append(args, "-i", job.SourceURL)
 
 	// 【chunk 模式】限定时长（output side 更精确）
@@ -714,9 +715,13 @@ func truncate(s string, n int) string {
 
 // ProbeSource 调用 ffprobe 探测源文件
 func ProbeSource(url string) (SourceProbe, error) {
+	if !ValidSourceInput(url) {
+		return SourceProbe{}, fmt.Errorf("unsupported probe source")
+	}
 	probePath := setting.GetStr(conf.TranscodeFFprobePath, "ffprobe")
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", ProtocolWhitelistFor(url),
 		"-show_entries", "format=duration,size,bit_rate:stream=codec_type,codec_name,bit_rate,width,height",
 		"-of", "json",
 		url,

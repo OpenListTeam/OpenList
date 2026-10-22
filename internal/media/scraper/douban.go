@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"io"
 	"net/http"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/disintegration/imaging"
+	"github.com/OpenListTeam/OpenList/v4/internal/media/imgmime"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"golang.org/x/net/html"
 )
@@ -23,6 +24,9 @@ const (
 	doubanSearchURL = "https://www.douban.com/search"
 	doubanBookCat   = "1001"
 	doubanBase      = "https://book.douban.com/"
+
+	// maxCoverDownloadBytes 单张远端封面最大读取字节数
+	maxCoverDownloadBytes int64 = 16 << 20
 )
 
 var (
@@ -403,8 +407,11 @@ func (s *DoubanScraper) downloadAndStoreCover(filePath, imgURL string) string {
 		return localScraper.storeCover(filePath, data)
 	}
 	// Base64 模式（默认）
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := decodeBounded(data)
 	if err != nil {
+		if errors.Is(err, ErrTooLarge) {
+			return ""
+		}
 		return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 	}
 	thumb := imaging.Resize(img, 300, 0, imaging.Lanczos)
@@ -422,8 +429,11 @@ func (s *DoubanScraper) downloadCoverAsBase64(imgURL string) string {
 	if len(data) == 0 {
 		return ""
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := decodeBounded(data)
 	if err != nil {
+		if errors.Is(err, ErrTooLarge) {
+			return ""
+		}
 		return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 	}
 	thumb := imaging.Resize(img, 300, 0, imaging.Lanczos)
@@ -451,13 +461,15 @@ func (s *DoubanScraper) downloadImage(imgURL string) ([]byte, string) {
 	if resp.StatusCode != 200 {
 		return nil, ""
 	}
-	data, err := io.ReadAll(resp.Body)
+	// 远端图片大小不可信，限制读取上限
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxCoverDownloadBytes))
 	if err != nil || len(data) == 0 {
 		return nil, ""
 	}
-	mimeType := resp.Header.Get("Content-Type")
+	// 不信任远端 Content-Type：只接受魔数可识别的栅格图片，防止 SVG/HTML 被当作封面
+	mimeType := imgmime.Sniff(data)
 	if mimeType == "" {
-		mimeType = "image/jpeg"
+		return nil, ""
 	}
 	return data, mimeType
 }

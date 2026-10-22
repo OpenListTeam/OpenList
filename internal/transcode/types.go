@@ -84,6 +84,9 @@ type Job struct {
 	CallbackToken string       `json:"callback_token"` // Worker 回吐切片用
 	Deadline      int64        `json:"deadline"`       // unix 秒
 
+	// OwnerID 发起转码的用户 ID，仅服务端用于去重与配额，不下发给 Worker
+	OwnerID uint `json:"-"`
+
 	// 运行时
 	Status       JobStatus `json:"status"`
 	WorkerID     string    `json:"worker_id"`

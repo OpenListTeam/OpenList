@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/media/imgmime"
 	"github.com/OpenListTeam/OpenList/v4/internal/media/scraper"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -79,8 +79,9 @@ func PublicMediaProxy(c *gin.Context) {
 		return
 	}
 	resp, err := fetchCover(c.Request.Context(), u.String())
-	if err != nil {
-		// 直连失败时回退到公共图片网关（部分网络环境下 TMDB 图片域名不可达）
+	if err != nil && setting.GetBool(conf.MediaCoverGateway) {
+		// 直连失败时回退到公共图片网关（部分网络环境下 TMDB 图片域名不可达）。
+		// 这会把封面 URL 交给第三方 wsrv.nl，因此默认关闭，需管理员显式开启。
 		gateway := "https://wsrv.nl/?url=" + url.QueryEscape(strings.TrimPrefix(strings.TrimPrefix(u.String(), "https://"), "http://"))
 		resp, err = fetchCover(c.Request.Context(), gateway)
 	}
@@ -90,17 +91,28 @@ func PublicMediaProxy(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
-	ct := resp.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "image/jpeg"
+	// 不信任上游 Content-Type：读取有限字节后按魔数判定，只输出四种栅格图片，
+	// 避免 image/svg+xml 等可执行脚本的类型以本站源被浏览器渲染。
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil || len(data) == 0 {
+		c.Status(http.StatusBadGateway)
+		return
 	}
-	if !strings.HasPrefix(ct, "image/") {
+	ct := imgmime.Sniff(data)
+	if ct == "" {
 		c.Status(http.StatusUnsupportedMediaType)
 		return
 	}
-	c.Header("Content-Type", ct)
+	setSafeImageHeaders(c)
 	c.Header("Cache-Control", "public, max-age=604800")
-	_, _ = io.Copy(c.Writer, io.LimitReader(resp.Body, 8<<20))
+	c.Data(http.StatusOK, ct, data)
+}
+
+// setSafeImageHeaders 为用户可影响内容的图片响应加上防 XSS 头。
+func setSafeImageHeaders(c *gin.Context) {
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Disposition", `inline; filename="cover"`)
+	c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
 }
 
 // fetchCover 拉取图片，仅接受 200 且 Content-Type 为 image/*
@@ -146,7 +158,9 @@ func PublicMediaThumb(c *gin.Context) {
 		return
 	}
 	reqPath := strings.TrimPrefix(stdpath.Clean("/"+c.Query("path")), "/")
-	if reqPath == "" || reqPath == "." || strings.Contains(reqPath, "..") {
+	// stdpath.Clean 已消解 ../ 段；这里不能再用 Contains("..") 粗暴过滤，会误杀 a..b.jpg 这类合法文件名。
+	// 越界由下方 filepath.Rel 校验兜底。
+	if reqPath == "" || reqPath == "." {
 		c.Status(http.StatusBadRequest)
 		return
 	}
@@ -161,14 +175,26 @@ func PublicMediaThumb(c *gin.Context) {
 	root := thumbnailRoot()
 	full := filepath.Join(root, filepath.FromSlash(reqPath))
 	rel, err := filepath.Rel(root, full)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		c.Status(http.StatusForbidden)
 		return
 	}
-	ct := mime.TypeByExtension(filepath.Ext(full))
-	if ct == "" {
+	// 只按扩展名白名单输出栅格图片，拒绝 svg / html 等可执行类型
+	var ct string
+	switch strings.ToLower(filepath.Ext(full)) {
+	case ".jpg", ".jpeg":
 		ct = "image/jpeg"
+	case ".png":
+		ct = "image/png"
+	case ".gif":
+		ct = "image/gif"
+	case ".webp":
+		ct = "image/webp"
+	default:
+		c.Status(http.StatusUnsupportedMediaType)
+		return
 	}
+	setSafeImageHeaders(c)
 	c.Header("Content-Type", ct)
 	c.Header("Cache-Control", "public, max-age=604800")
 	c.File(full)

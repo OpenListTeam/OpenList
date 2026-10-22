@@ -1,6 +1,7 @@
 package handles
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -44,7 +45,14 @@ func TranscodePlay(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if !CanUserAccessPath(mediaUser(c), req.Path) {
+	// 该路由挂在 Auth(true)（允许被禁用的访客通过）之下，必须在这里自行拒绝，
+	// 否则关闭访客后匿名请求仍能触发 ffprobe/ffmpeg 并占用转码缓存。
+	user := mediaUser(c)
+	if user == nil || (user.IsGuest() && user.Disabled) {
+		common.ErrorStrResp(c, "Guest user is disabled, login please", 401)
+		return
+	}
+	if !CanUserAccessPath(user, req.Path) {
 		common.ErrorStrResp(c, "path is not accessible", 403)
 		return
 	}
@@ -72,25 +80,40 @@ func TranscodePlay(c *gin.Context) {
 	mgr := transcode.Default()
 	mgr.Start()
 
+	// apiURL 仅用于返回给浏览器的 master_url（需要跟随请求 Host 才能被客户端访问）。
+	apiURL := common.GetApiUrlFromRequest(c.Request)
+
+	// 同一用户重复请求同一文件：直接复用进行中的任务，避免重复 ffprobe 与重复转码。
+	if exist, ok := mgr.Scheduler.FindReusable(user.ID, req.Path); ok {
+		respondTranscodeJob(c, apiURL, exist)
+		return
+	}
+
 	// 【内存优化】优先尝试解析为本地文件路径，让 ffmpeg 直接读取本地文件，
 	// 完全绕过 HTTP /d 代理路径——避免 net.Downloader 给每个 range 请求分配
 	// 高达 MaxBufferLimit (默认系统内存 5%) 的大缓冲。这是降低 Go 进程内存
 	// 占用最有效的方法。如果不是本地驱动则退回到 HTTP 签名 URL。
-	apiURL := common.GetApiUrlFromRequest(c.Request)
 	var sourceURL string
 	if localFile, ok := resolveLocalFilePath(req.Path); ok {
 		// ffmpeg 接受本地路径作为输入，无需 file:// 前缀
 		sourceURL = localFile
 		fmt.Printf("[transcode] using local file path for ffmpeg: %s\n", localFile)
 	} else {
-		// 远程驱动：构造签名 HTTP URL
+		// 远程驱动：构造签名 HTTP URL。
+		// 这个 URL 会被服务端 ffmpeg 直接访问，绝不能使用 Host / X-Forwarded-Host：
+		// 未配置 site_url 时攻击者可借此让服务器去拉取任意地址（SSRF）。
 		signedPath := sign.Sign(req.Path)
-		sourceURL = fmt.Sprintf("%s/d%s?sign=%s", apiURL, encodePath(req.Path), signedPath)
+		sourceURL = fmt.Sprintf("%s/d%s?sign=%s", trustedInternalBaseURL(), encodePath(req.Path), signedPath)
+	}
+	if !transcode.ValidSourceInput(sourceURL) {
+		common.ErrorStrResp(c, "unsupported transcode source", 400)
+		return
 	}
 
 	// 创建 Job
 	job := transcode.NewJob()
 	job.Path = req.Path
+	job.OwnerID = user.ID
 	job.SourceURL = sourceURL
 	// 【关键】探测视频总时长（异步会让首响应变慢，但只有一次，必须等待）
 	// 总时长用于生成完整的 playlist，避免 HLS.js 时长显示错误和拖动跳跃问题
@@ -108,14 +131,27 @@ func TranscodePlay(c *gin.Context) {
 	job.Output = transcode.BuildOutputSpec()
 	timeoutMin := setting.GetInt(conf.TranscodeJobTimeoutMin, 120)
 	job.Deadline = time.Now().Add(time.Duration(timeoutMin) * time.Minute).Unix()
-	mgr.Scheduler.Submit(job)
+	submitted, _, err := mgr.Scheduler.SubmitLimited(job)
+	if err != nil {
+		// 队列已满 / 用户配额超限：返回 429，前端可降级为直链播放
+		common.ErrorResp(c, err, 429)
+		return
+	}
+	respondTranscodeJob(c, apiURL, submitted)
+}
 
+// respondTranscodeJob 返回转码任务的播放信息
+func respondTranscodeJob(c *gin.Context, apiURL string, job *transcode.Job) {
+	profileName := ""
+	if len(job.Profiles) > 0 {
+		profileName = job.Profiles[0].Name
+	}
 	masterURL := fmt.Sprintf("%s/tc/%s/%s/master.m3u8", apiURL, job.ID, job.CallbackToken)
 	common.SuccessResp(c, gin.H{
 		"transcode":  true,
 		"job_id":     job.ID,
 		"master_url": masterURL,
-		"profile":    profile.Name,
+		"profile":    profileName,
 	})
 }
 
@@ -126,6 +162,19 @@ func encodePath(p string) string {
 		parts[i] = url.PathEscape(s)
 	}
 	return strings.Join(parts, "/")
+}
+
+// trustedInternalBaseURL 返回供服务端 ffmpeg 访问本站 /d 接口的可信基址，不读取任何请求头。
+// 优先使用管理员配置的 site_url；未配置时回环到本机实际监听的 HTTP 端口。
+// 两者都不可用（例如仅监听 Unix socket）时返回空串，调用方应拒绝转码。
+func trustedInternalBaseURL() string {
+	if site := strings.TrimSuffix(conf.Conf.SiteURL, "/"); strings.HasPrefix(site, "http") {
+		return site
+	}
+	if p := conf.Conf.Scheme.HttpPort; p > 0 {
+		return fmt.Sprintf("http://127.0.0.1:%d", p)
+	}
+	return ""
 }
 
 // resolveLocalFilePath 尝试把 OpenList 路径解析为宿主机文件系统的实际路径。
@@ -202,8 +251,12 @@ func TCPlaylist(c *gin.Context) {
 		c.String(http.StatusNotFound, "job not found")
 		return
 	}
-	if job.CallbackToken != token {
+	if subtle.ConstantTimeCompare([]byte(job.CallbackToken), []byte(token)) != 1 {
 		c.String(http.StatusForbidden, "bad token")
+		return
+	}
+	if !transcode.ValidProfileName(profile) {
+		c.String(http.StatusBadRequest, "bad profile")
 		return
 	}
 	// 【关键】如果 job 之前因 idle 被 cancel，这里重新激活：复用 jobID/token 重新入队
@@ -256,8 +309,12 @@ func TCSegment(c *gin.Context) {
 		c.String(http.StatusNotFound, "job not found")
 		return
 	}
-	if job.CallbackToken != token {
+	if subtle.ConstantTimeCompare([]byte(job.CallbackToken), []byte(token)) != 1 {
 		c.String(http.StatusForbidden, "bad token")
+		return
+	}
+	if !transcode.ValidProfileName(profile) {
+		c.String(http.StatusBadRequest, "bad profile")
 		return
 	}
 	// 【关键】job 之前因 idle 被 cancel 时，复用同一 jobID/token 重新入队启动转码。
@@ -392,17 +449,29 @@ func WorkerSegmentUpload(c *gin.Context) {
 		common.ErrorStrResp(c, "job not found", 404)
 		return
 	}
-	// 校验 callback_token (Bearer)
+	// 校验 callback_token (Bearer)，使用恒定时间比较避免时序侧信道
 	auth := c.GetHeader("Authorization")
 	expect := "Bearer " + job.CallbackToken
-	if auth != expect {
+	if subtle.ConstantTimeCompare([]byte(auth), []byte(expect)) != 1 {
 		common.ErrorStrResp(c, "unauthorized", 401)
+		return
+	}
+	// profile 会被拼进缓存目录路径，必须是白名单字符，防止 ../ 路径穿越
+	if !transcode.ValidProfileName(profile) {
+		common.ErrorStrResp(c, "invalid profile", 400)
 		return
 	}
 	defer c.Request.Body.Close()
 	_, err := transcode.Default().Cache.PutSegment(jobID, profile, seq, dur, c.Request.Body, isFinal)
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		switch err {
+		case transcode.ErrInvalidProfile, transcode.ErrInvalidJobID, transcode.ErrInvalidSegment:
+			common.ErrorResp(c, err, 400)
+		case transcode.ErrSegmentTooLarge:
+			common.ErrorResp(c, err, 413)
+		default:
+			common.ErrorResp(c, err, 500)
+		}
 		return
 	}
 	if seq == 0 {

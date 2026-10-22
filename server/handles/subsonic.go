@@ -12,10 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -466,8 +468,21 @@ func subIntParam(c *gin.Context, key string, def int) int {
 	return n
 }
 
-// subAuth 支持 apiKey / u+p / u+t+s 三种方式
+// subAuth 支持 apiKey / u+t+s / u+p（默认关闭）认证，并对失败次数做 IP 限流
 func subAuth(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
+	if mediaAuthLocked(c) {
+		return nil, nil, false
+	}
+	u, k, ok := subAuthInner(c)
+	if ok {
+		mediaAuthSucceeded(c)
+	} else {
+		mediaAuthFailed(c)
+	}
+	return u, k, ok
+}
+
+func subAuthInner(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
 	if key := subParam(c, "apiKey"); key != "" {
 		if u, k, ok := subAuthByAppKey(key); ok {
 			return u, k, true
@@ -508,7 +523,9 @@ func subAuth(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
 				p = string(raw)
 			}
 		}
-		if user.OtpSecret == "" && user.ValidateRawPassword(p) == nil {
+		// 使用主账号密码认证会把登录密码暴露给第三方客户端，必须由管理员显式开启
+		if setting.GetBool(conf.MediaSubsonicAllowPwd) && user.OtpSecret == "" &&
+			user.ValidateRawPassword(p) == nil {
 			return user, nil, true
 		}
 		if u, k, ok := subAuthByAppKey(p); ok && u.ID == user.ID {

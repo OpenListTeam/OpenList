@@ -34,6 +34,9 @@ type MediaScanPath struct {
 	LastScanAt  *time.Time `json:"last_scan_at"`                            // 最后扫描时间
 }
 
+// MediaIndexColumnMax 复合唯一索引列（folder_path / file_name / album_name）的最大字符数
+const MediaIndexColumnMax = 191
+
 // MediaItem 媒体条目（统一表，通过 media_type 区分类型，便于后期扩展新类型）
 type MediaItem struct {
 	gorm.Model
@@ -45,7 +48,10 @@ type MediaItem struct {
 	// 基础信息
 	MediaType  MediaType `gorm:"index;not null"          json:"media_type"`
 	ScanPathID uint      `gorm:"index"                   json:"scan_path_id"` // 关联的扫描路径ID
-	FileName   string    `gorm:"uniqueIndex:idx_media_folder_file_album" json:"file_name"`
+	// 三个字段共同组成复合唯一索引。MySQL 对「有索引且未指定长度」的 string 会生成 longtext，
+	// 而 TEXT 列不能直接建索引（AutoMigrate 会失败）；因此必须显式限定 size。
+	// utf8mb4 下 InnoDB 索引总长上限 3072 字节：191*3*4 = 2292，留足余量。
+	FileName   string    `gorm:"size:191;uniqueIndex:idx_media_folder_file_album" json:"file_name"`
 	FileSize   int64     `json:"file_size"`
 	MimeType   string    `json:"mime_type"`
 	Hidden     bool      `gorm:"default:false"           json:"hidden"`
@@ -65,7 +71,7 @@ type MediaItem struct {
 	ExternalID string `json:"external_id"` // TMDB ID / Discogs ID / 豆瓣ID
 
 	// 音乐专属字段
-	AlbumName   string `gorm:"uniqueIndex:idx_media_folder_file_album" json:"album_name"` // 所属专辑名
+	AlbumName   string `gorm:"size:191;uniqueIndex:idx_media_folder_file_album" json:"album_name"` // 所属专辑名
 	AlbumArtist string `json:"album_artist"` // 专辑艺术家
 	TrackNumber int    `json:"track_number"` // 曲目编号
 	Duration    int    `json:"duration"`     // 时长（秒）
@@ -82,7 +88,7 @@ type MediaItem struct {
 
 	// 目录合并模式
 	IsFolder   bool   `gorm:"default:false"                                    json:"is_folder"`   // 是否为文件夹模式条目
-	FolderPath string `gorm:"index;uniqueIndex:idx_media_folder_file_album"     json:"folder_path"` // 扫描根路径（恒定为扫描路径，与file_name+album_name组合唯一）
+	FolderPath string `gorm:"size:191;index;uniqueIndex:idx_media_folder_file_album" json:"folder_path"` // 扫描根路径（恒定为扫描路径，与file_name+album_name组合唯一）
 	Episodes   string `gorm:"type:text"                                         json:"episodes"`    // 选集信息，JSON数组，格式：[{file_name,index,title},...]
 
 	ScrapedAt *time.Time `json:"scraped_at"`

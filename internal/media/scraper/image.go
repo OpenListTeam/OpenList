@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"io"
 	"strings"
@@ -74,7 +73,7 @@ func (s *ImageScraper) ScrapeImage(item *model.MediaItem, reader io.Reader) erro
 	}
 
 	// 将流读入内存（EXIF 解析和图像解码都需要完整数据）
-	data, err := io.ReadAll(reader)
+	data, err := readAllLimited(reader, MaxImageFileBytes)
 	if err != nil || len(data) == 0 {
 		// 读取失败时 cover 保持为空
 		now := time.Now()
@@ -173,7 +172,7 @@ func (s *ImageScraper) parseEXIF(item *model.MediaItem, r io.Reader) {
 
 // generateThumbBytes 将图片数据缩放为 300px 宽缩略图，返回 JPEG 字节
 func (s *ImageScraper) generateThumbBytes(data []byte) []byte {
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := decodeBounded(data)
 	if err != nil {
 		return nil
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,8 +58,54 @@ func (c *Cache) Init() error {
 	return os.MkdirAll(c.rootDir, 0o755)
 }
 
+const (
+	// MaxSegmentBytes 单个切片允许写入的最大字节数，防止 callback_token 持有者打满磁盘
+	MaxSegmentBytes int64 = 32 << 20
+	// maxSegmentSeq 切片序号上限（按 2 秒/片约 6 天），拒绝负数与异常大值
+	maxSegmentSeq = 200000
+)
+
+var (
+	profileNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+	jobIDRe       = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+	// ErrInvalidProfile profile 名称不合法（可能是路径穿越尝试）
+	ErrInvalidProfile = errors.New("invalid profile name")
+	// ErrInvalidJobID job id 不合法
+	ErrInvalidJobID = errors.New("invalid job id")
+	// ErrInvalidSegment 切片序号越界
+	ErrInvalidSegment = errors.New("invalid segment seq")
+	// ErrSegmentTooLarge 切片超过大小上限
+	ErrSegmentTooLarge = errors.New("segment too large")
+)
+
+// ValidProfileName 判断 profile 是否为安全的目录名（与 BuildProfile 产出的 source/1080p/720p 对齐）。
+func ValidProfileName(profile string) bool {
+	return profileNameRe.MatchString(profile)
+}
+
+// safeJoin 在 rootDir 下拼接子路径，并保证结果不会越出 rootDir。
+func (c *Cache) safeJoin(jobID, profile string) (string, error) {
+	if !jobIDRe.MatchString(jobID) {
+		return "", ErrInvalidJobID
+	}
+	if !ValidProfileName(profile) {
+		return "", ErrInvalidProfile
+	}
+	full := filepath.Join(c.rootDir, jobID, profile)
+	rel, err := filepath.Rel(c.rootDir, full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", ErrInvalidProfile
+	}
+	return full, nil
+}
+
 // getOrCreate 获取或创建 (job, profile) 的 cache
 func (c *Cache) getOrCreate(jobID, profile string) (*JobCache, error) {
+	baseDir, err := c.safeJoin(jobID, profile)
+	if err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	pmap, ok := c.jobs[jobID]
@@ -71,7 +118,7 @@ func (c *Cache) getOrCreate(jobID, profile string) (*JobCache, error) {
 		jc = &JobCache{
 			JobID:    jobID,
 			Profile:  profile,
-			BaseDir:  filepath.Join(c.rootDir, jobID, profile),
+			BaseDir:  baseDir,
 			segments: make(map[int]*SegmentInfo),
 			waiters:  make(map[int][]chan struct{}),
 		}
@@ -85,6 +132,9 @@ func (c *Cache) getOrCreate(jobID, profile string) (*JobCache, error) {
 
 // PutSegment 写入一个切片，并通知所有等待者
 func (c *Cache) PutSegment(jobID, profile string, seq int, duration float64, body io.Reader, isFinal bool) (*SegmentInfo, error) {
+	if seq < 0 || seq > maxSegmentSeq {
+		return nil, ErrInvalidSegment
+	}
 	jc, err := c.getOrCreate(jobID, profile)
 	if err != nil {
 		return nil, err
@@ -96,7 +146,11 @@ func (c *Cache) PutSegment(jobID, profile string, seq int, duration float64, bod
 	if err != nil {
 		return nil, err
 	}
-	n, err := io.Copy(f, body)
+	// 多读 1 字节用于判断是否超限
+	n, err := io.Copy(f, io.LimitReader(body, MaxSegmentBytes+1))
+	if err == nil && n > MaxSegmentBytes {
+		err = ErrSegmentTooLarge
+	}
 	cerr := f.Close()
 	if err != nil {
 		os.Remove(tmpPath)
@@ -390,7 +444,8 @@ func (c *Cache) EnforceLRU() error {
 	var items []item
 	var total int64
 	for _, e := range entries {
-		if !e.IsDir() {
+		// 只管理本模块创建的 job 目录，避免误删缓存根目录下的其它内容
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "job_") {
 			continue
 		}
 		full := filepath.Join(c.rootDir, e.Name())

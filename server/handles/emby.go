@@ -393,8 +393,13 @@ func embyAuthenticateByName(c *gin.Context) {
 		embyUnauthorized(c)
 		return
 	}
+	if mediaAuthLocked(c) {
+		c.JSON(429, gin.H{"Error": model.TooManyAttempts})
+		return
+	}
 	user, err := op.GetUserByName(req.Username)
 	if err != nil || user.Disabled || user.IsGuest() {
+		mediaAuthFailed(c)
 		embyUnauthorized(c)
 		return
 	}
@@ -404,9 +409,11 @@ func embyAuthenticateByName(c *gin.Context) {
 		return
 	}
 	if err := user.ValidateRawPassword(req.Pw); err != nil {
+		mediaAuthFailed(c)
 		embyUnauthorized(c)
 		return
 	}
+	mediaAuthSucceeded(c)
 	authHeader := embyParseAuthHeader(c.GetHeader("X-Emby-Authorization"))
 	token, err := media.NewDeviceToken()
 	if err != nil {
@@ -430,20 +437,10 @@ func embyAuthenticateByName(c *gin.Context) {
 	})
 }
 
+// embyPublicUsers 匿名可访问，因此不能泄露任何账号信息。
+// Emby 客户端在 AuthenticateByName 之前并不依赖该列表（可手输用户名登录），返回空数组即可。
 func embyPublicUsers(c *gin.Context) {
-	users, _, err := op.GetUsers(1, -1)
-	if err != nil {
-		c.JSON(500, gin.H{"Error": err.Error()})
-		return
-	}
-	out := make([]*embyUserDto, 0, len(users))
-	for i := range users {
-		if users[i].Disabled || users[i].IsGuest() {
-			continue
-		}
-		out = append(out, embyUserDtoOf(&users[i]))
-	}
-	c.JSON(200, out)
+	c.JSON(200, []*embyUserDto{})
 }
 
 func embyListUsers(c *gin.Context, current *model.User) {

@@ -6,13 +6,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/xml"
-	"image"
+	"errors"
 	"image/jpeg"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/disintegration/imaging"
+	"github.com/OpenListTeam/OpenList/v4/internal/media/imgmime"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
@@ -68,7 +69,7 @@ func (s *BookLocalScraper) ScrapeBookLocal(item *model.MediaItem, reader io.Read
 
 	// 从文件流提取封面，提取失败则 cover 保持为空
 	if reader != nil {
-		data, err := io.ReadAll(reader)
+		data, err := readAllLimited(reader, MaxBookFileBytes)
 		if err == nil && len(data) > 0 {
 			var coverData []byte
 			switch ext {
@@ -98,7 +99,7 @@ func (s *BookLocalScraper) ExtractLocalCover(fileName string, filePath string, r
 		return ""
 	}
 	ext := strings.ToLower(getFileExt(fileName))
-	data, err := io.ReadAll(reader)
+	data, err := readAllLimited(reader, MaxBookFileBytes)
 	if err != nil || len(data) == 0 {
 		return ""
 	}
@@ -129,7 +130,7 @@ func (s *BookLocalScraper) storeCover(filePath string, coverData []byte) string 
 
 // resizeCoverBytes 将封面缩放为 300px 宽，返回 JPEG 字节
 func resizeCoverBytes(data []byte) []byte {
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := decodeBounded(data)
 	if err != nil {
 		return nil
 	}
@@ -259,7 +260,7 @@ func extractEpubCoverData(data []byte) []byte {
 	for _, name := range candidates {
 		if f, ok := fileMap[name]; ok {
 			if rc, err := f.Open(); err == nil {
-				imgData, readErr := io.ReadAll(rc)
+				imgData, readErr := readAllLimited(rc, MaxEmbeddedEntryBytes)
 				rc.Close()
 				if readErr == nil && len(imgData) > 0 {
 					return imgData
@@ -316,10 +317,16 @@ func extractPDFCoverBase64(data []byte) string {
 
 // imageDataToBase64Thumb 将图片字节解码并缩放为 300px 宽缩略图，返回 data URI base64
 func imageDataToBase64Thumb(data []byte) string {
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := decodeBounded(data)
 	if err != nil {
-		// 解码失败时直接 base64 原始数据（可能是 PNG 等）
-		mimeType := detectImageMime(data)
+		// 超限图片不做任何保留；解码失败但魔数是合法栅格格式时，原样 base64（可能是解码器不支持的变体）
+		if errors.Is(err, ErrTooLarge) {
+			return ""
+		}
+		mimeType := imgmime.Sniff(data)
+		if mimeType == "" {
+			return ""
+		}
 		return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 	}
 	thumb := imaging.Resize(img, 300, 0, imaging.Lanczos)

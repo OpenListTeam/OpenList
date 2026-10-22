@@ -244,6 +244,11 @@ func GenerateStrmForItems(ctx context.Context, items []model.MediaItem, opts Str
 	if !opts.SameDir && opts.OutputPath == "" {
 		return 0, fmt.Errorf("strm output path is empty")
 	}
+	// 归一输出根目录，后续用它校验每个目标文件都在根目录之内
+	outRoot := ""
+	if !opts.SameDir {
+		outRoot = stdpath.Clean("/" + strings.TrimSpace(opts.OutputPath))
+	}
 	written := 0
 	for i := range items {
 		item := &items[i]
@@ -253,7 +258,11 @@ func GenerateStrmForItems(ctx context.Context, items []model.MediaItem, opts Str
 		for _, target := range StrmTargets(item) {
 			dst := target.SameDirPath
 			if !opts.SameDir {
-				dst = stdpath.Join(strings.TrimSuffix(opts.OutputPath, "/"), target.RelPath)
+				dst = stdpath.Join(outRoot, target.RelPath)
+				// RelPath 含刮削得到的艺术家/专辑名等外部数据，必须保证不会借 ../ 逃出输出目录
+				if dst != outRoot && !strings.HasPrefix(dst, strings.TrimSuffix(outRoot, "/")+"/") {
+					continue
+				}
 			}
 			if dst == "" {
 				continue

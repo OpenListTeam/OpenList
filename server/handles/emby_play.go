@@ -13,6 +13,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
+	"github.com/OpenListTeam/OpenList/v4/internal/media/imgmime"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -197,12 +198,21 @@ func serveEmbyCover(c *gin.Context, item *model.MediaItem) {
 			c.Status(404)
 			return
 		}
-		mime := strings.TrimPrefix(cover[:idx], "data:")
 		data, err := base64.StdEncoding.DecodeString(cover[idx+8:])
 		if err != nil {
 			c.Status(404)
 			return
 		}
+		// 数据库里的 data URI 声明的 MIME 不可信（历史数据可能来自内嵌标签/远端响应），
+		// 响应头只使用按魔数嗅探出的四种栅格类型，SVG/HTML 一律拒绝。
+		mime := imgmime.Sniff(data)
+		if mime == "" {
+			c.Status(404)
+			return
+		}
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Content-Disposition", `inline; filename="cover"`)
+		c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
 		c.Header("Cache-Control", "private, max-age=86400")
 		c.Data(200, mime, data)
 		return

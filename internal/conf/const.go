@@ -195,7 +195,9 @@ const (
 	MediaEmbyEnabled         = "media_emby_enabled"          // Emby 兼容 API 开关
 	MediaSubsonicEnabled     = "media_subsonic_enabled"      // OpenSubsonic API 开关
 	MediaSubsonicProxyStream = "media_subsonic_proxy_stream" // Subsonic 播放是否强制代理（兼容不跟随 302 的客户端）
+	MediaSubsonicAllowPwd    = "media_subsonic_allow_password_auth" // Subsonic 是否允许 u+p 使用 OpenList 登录密码认证（默认关闭）
 	MediaProxyCover          = "media_proxy_cover"           // 是否通过服务端代理外部封面（TMDB/豆瓣等）
+	MediaCoverGateway        = "media_cover_gateway"         // 封面代理直连失败时是否回退第三方图片网关（wsrv.nl，默认关闭）
 	MediaStrmOnScan          = "media_strm_on_scan"          // 扫描完成后自动生成 STRM
 	MediaStrmSameDir         = "media_strm_same_dir"         // STRM 是否与媒体文件同目录（同名 .strm）
 	MediaStrmPath            = "media_strm_path"             // STRM 输出目录（VFS 路径，仅在指定目录模式下使用）

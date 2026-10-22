@@ -58,9 +58,12 @@ func mediaUser(c *gin.Context) *model.User {
 
 // CanUserAccessPath 判断用户是否有权访问指定 VFS 路径
 // 规则与文件浏览保持一致：base_path 前缀 + 元信息(meta) 读权限 + 隐藏文件规则。
+//
+// user 为 nil 一律拒绝（fail-closed）：所有调用点都应经过 Auth / embyAuth 拿到用户，
+// 缺失用户说明鉴权链路出了问题，不能默认放行；被禁用的访客同样拒绝。
 func CanUserAccessPath(user *model.User, reqPath string) bool {
-	if user == nil {
-		return true
+	if user == nil || (user.IsGuest() && user.Disabled) {
+		return false
 	}
 	reqPath = utils.FixAndCleanPath(reqPath)
 	base := utils.FixAndCleanPath(user.BasePath)
