@@ -110,6 +110,29 @@ func (s *Scheduler) SubmitLimited(j *Job) (*Job, bool, error) {
 	return s.enqueueLocked(j), false, nil
 }
 
+// Capacity 只读预检：在启动 ffprobe 这类昂贵操作之前先看配额是否已满。
+//
+// 真正的配额判定仍由 SubmitLimited 在同一把锁内完成；这里的目的有两个：
+//  1. 不让用户先等一次最长 30s 的 ffprobe 才收到 429；
+//  2. 把「并发请求同时通过配额判定」这个窗口内的探测数量压下来。
+func (s *Scheduler) Capacity(ownerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pending) >= MaxPendingJobs {
+		return ErrQueueFull
+	}
+	active := 0
+	for _, x := range s.jobs {
+		if x.OwnerID == ownerID && isActiveStatus(x.GetStatus()) {
+			active++
+		}
+	}
+	if active >= MaxActiveJobsPerUser {
+		return ErrUserQuota
+	}
+	return nil
+}
+
 // Submit 提交一个任务并返回（带 ID + token）。不做配额限制，仅供内部流程（如重新激活）使用。
 func (s *Scheduler) Submit(j *Job) *Job {
 	s.mu.Lock()

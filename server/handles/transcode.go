@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -22,6 +23,49 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
+
+// 探测阶段的独立并发上限。
+//
+// 转码配额（每用户 3 个活跃任务）只约束「入队」，而配额判定发生在探测之后：
+// 并发请求可能同时通过配额预检、各起一个最长 30s 的 ffprobe。这里给探测单独
+// 设一道闸，保证这段窗口内的进程数有界。每用户上限取任务配额值，正常并发播放
+// 不会被误伤（用户有 3 个任务时预检已经先拒绝了）。
+const (
+	maxConcurrentProbes = 8
+	maxProbesPerUser    = transcode.MaxActiveJobsPerUser
+)
+
+type probeLimiter struct {
+	mu     sync.Mutex
+	active int
+	users  map[string]int
+}
+
+var probeSlots = &probeLimiter{users: make(map[string]int)}
+
+func (p *probeLimiter) acquire(owner string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.active >= maxConcurrentProbes || p.users[owner] >= maxProbesPerUser {
+		return false
+	}
+	p.active++
+	p.users[owner]++
+	return true
+}
+
+func (p *probeLimiter) release(owner string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.active > 0 {
+		p.active--
+	}
+	if n := p.users[owner]; n <= 1 {
+		delete(p.users, owner)
+	} else {
+		p.users[owner] = n - 1
+	}
+}
 
 // ============================================================
 // 播放端：/api/transcode/play  发起或复用一个转码任务
@@ -134,9 +178,23 @@ func TranscodePlay(c *gin.Context) {
 	job.Path = req.Path
 	job.OwnerID = ownerID
 	job.SourceURL = sourceURL
+	// 配额预检：ProbeSource 会起一个最长 30s 的 ffprobe 子进程，
+	// 不能等探测完才告诉用户「已有 3 个活跃任务」。最终判定仍由 SubmitLimited 原子完成。
+	if err := mgr.Scheduler.Capacity(ownerID); err != nil {
+		common.ErrorResp(c, err, 429)
+		return
+	}
+	if !probeSlots.acquire(ownerID) {
+		common.ErrorStrResp(c, "too many concurrent transcode requests", 429)
+		return
+	}
 	// 【关键】探测视频总时长（异步会让首响应变慢，但只有一次，必须等待）
 	// 总时长用于生成完整的 playlist，避免 HLS.js 时长显示错误和拖动跳跃问题
-	probe, perr := transcode.ProbeSource(sourceURL)
+	probe, perr := func() (transcode.SourceProbe, error) {
+		// 用 defer 释放：探测内部 panic 时也不能把槽位永久占住
+		defer probeSlots.release(ownerID)
+		return transcode.ProbeSource(sourceURL)
+	}()
 	if perr != nil {
 		// 探测失败不阻塞流程，但记录日志；后续 playlist 会缺少总时长信息
 		fmt.Printf("[transcode] probe source failed: %v\n", perr)

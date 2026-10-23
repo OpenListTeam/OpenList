@@ -204,6 +204,13 @@ func GetMediaStreamURL(c *gin.Context) {
 			}
 		}
 	}
+	// 选集是目录里的另一个文件，必须对最终文件再校验一次：
+	// 目录可见不代表其中每个文件都可见（例如 meta 隐藏规则单独禁止某个文件），
+	// 而签名之后的下载链路只验签名，不会重新执行用户的隐藏规则。
+	if !CanUserAccessPath(mediaUser(c), rawPath) {
+		common.ErrorStrResp(c, "资源不存在", 404)
+		return
+	}
 	common.SuccessResp(c, gin.H{
 		"url":     SignedStreamURL(c, rawPath),
 		"path":    rawPath,
@@ -251,6 +258,11 @@ func GetMediaStrm(c *gin.Context) {
 		} else {
 			filename = strings.TrimSuffix(item.FileName, stdpath.Ext(item.FileName)) + ".strm"
 		}
+	}
+	// 与 GetMediaStreamURL 同理：选集解析出来的是另一个文件，需要按最终路径再校验一次
+	if !CanUserAccessPath(mediaUser(c), rawPath) {
+		common.ErrorStrResp(c, "资源不存在", 404)
+		return
 	}
 	if filename == "" {
 		filename = "media.strm"

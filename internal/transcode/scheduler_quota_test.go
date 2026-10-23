@@ -64,6 +64,28 @@ func TestSubmitLimitedPerUserQuota(t *testing.T) {
 	}
 }
 
+// Capacity 的判定必须与 SubmitLimited 一致：handler 靠它在启动 ffprobe 前预检配额。
+func TestCapacityMatchesSubmitLimitedQuota(t *testing.T) {
+	s := newTestScheduler()
+	if err := s.Capacity("cap-user"); err != nil {
+		t.Fatalf("empty scheduler should have capacity: %v", err)
+	}
+	for i := 0; i < MaxActiveJobsPerUser; i++ {
+		j := NewJob()
+		j.OwnerID, j.Path = "cap-user", fmt.Sprintf("/cap%d.mkv", i)
+		if _, _, err := s.SubmitLimited(j); err != nil {
+			t.Fatalf("submit %d: %v", i, err)
+		}
+	}
+	if err := s.Capacity("cap-user"); !errors.Is(err, ErrUserQuota) {
+		t.Fatalf("want ErrUserQuota, got %v", err)
+	}
+	// 其他用户不受影响
+	if err := s.Capacity("cap-other"); err != nil {
+		t.Fatalf("other user should have capacity: %v", err)
+	}
+}
+
 func TestSubmitLimitedQueueCap(t *testing.T) {
 	s := newTestScheduler()
 	for i := 0; i < MaxPendingJobs; i++ {
