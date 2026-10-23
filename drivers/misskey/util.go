@@ -245,6 +245,7 @@ func mFile2Object(file MFile) *model.ObjThumbURL {
 			Ctime:    ctime,
 			IsFolder: false,
 			Size:     file.Size,
+			HashInfo: utils.NewHashInfo(utils.MD5, file.MD5),
 		},
 		Thumbnail: model.Thumbnail{
 			Thumbnail: file.ThumbnailURL,
