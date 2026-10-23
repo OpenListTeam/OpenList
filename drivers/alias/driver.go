@@ -259,24 +259,16 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 				_ = link.Close()
 				continue
 			}
-			l := &model.Link{
-				URL:           link.URL,
-				Header:        link.Header,
-				RangeReader:   link.RangeReader,
-				Concurrency:   link.Concurrency,
-				PartSize:      link.PartSize,
-				ContentLength: link.ContentLength,
-			}
 			if d.DownloadConcurrency > 0 {
-				l.Concurrency = d.DownloadConcurrency
+				link.Concurrency = d.DownloadConcurrency
 			}
 			if d.DownloadPartSize > 0 {
-				l.PartSize = d.DownloadPartSize * utils.KB
+				link.PartSize = d.DownloadPartSize * utils.KB
 			}
-			if l.ContentLength == 0 {
-				l.ContentLength = fi.GetSize()
+			if link.ContentLength == 0 {
+				link.ContentLength = fi.GetSize()
 			}
-			rr, err := stream.GetRangeReaderFromLink(l.ContentLength, l)
+			rr, err := stream.GetRangeReaderFromLink(link.ContentLength, link)
 			if err != nil {
 				_ = link.Close()
 				continue
@@ -327,20 +319,19 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	if err != nil {
 		return nil, err
 	}
-	resultLink := link.Clone() // 复制一份，避免修改到原始link
 	if args.Redirect {
-		return resultLink, nil
+		return link, nil
 	}
 	if d.DownloadConcurrency > 0 {
-		resultLink.Concurrency = d.DownloadConcurrency
+		link.Concurrency = d.DownloadConcurrency
 	}
 	if d.DownloadPartSize > 0 {
-		resultLink.PartSize = d.DownloadPartSize * utils.KB
+		link.PartSize = d.DownloadPartSize * utils.KB
 	}
-	if resultLink.ContentLength == 0 {
-		resultLink.ContentLength = fi.GetSize()
+	if link.ContentLength == 0 {
+		link.ContentLength = fi.GetSize()
 	}
-	return resultLink, nil
+	return link, nil
 }
 
 func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
@@ -511,7 +502,7 @@ func (d *Alias) Extract(ctx context.Context, obj model.Obj, args model.ArchiveIn
 				sign.SignArchive(reqPath)),
 		}, nil
 	}
-	return link.Clone(), nil
+	return link, nil
 }
 
 func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) error {
