@@ -320,7 +320,7 @@ func imageDataToBase64Thumb(data []byte) string {
 	img, err := decodeBounded(data)
 	if err != nil {
 		// 超限图片不做任何保留；解码失败但魔数是合法栅格格式时，原样 base64（可能是解码器不支持的变体）
-		if errors.Is(err, ErrTooLarge) {
+		if errors.Is(err, ErrTooLarge) || len(data) > MaxRawCoverFallbackBytes {
 			return ""
 		}
 		mimeType := imgmime.Sniff(data)

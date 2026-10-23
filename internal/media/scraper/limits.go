@@ -16,12 +16,21 @@ const (
 	MaxBookFileBytes int64 = 128 << 20
 	// MaxEmbeddedEntryBytes epub(zip) 内单个封面条目的最大解压字节数，防止 zip 炸弹
 	MaxEmbeddedEntryBytes int64 = 16 << 20
-	// MaxImagePixels 解码前允许的最大像素总量（约 8000x8000）
-	MaxImagePixels = 64_000_000
+	// MaxImagePixels 解码前允许的最大像素总量（约 5657x5657）。
+	// 解码后按 RGBA 计算约 128MB，默认 5 路并发刮削最坏约 640MB；
+	// 原来的 64MP 单张就要 256MB，并发时会接近 1.3GB。
+	MaxImagePixels int64 = 32_000_000
+	// MaxRawCoverFallbackBytes 解码失败时退回「原始字节 base64 写库」的上限。
+	// 超过就直接放弃封面——否则单条记录可能写入 16MB 以上的 base64。
+	MaxRawCoverFallbackBytes = 512 << 10
 )
 
 // ErrTooLarge 内容超过读取上限
 var ErrTooLarge = errors.New("scraper: content exceeds size limit")
+
+// decodeSem 限制同时解码的图片数：解码阶段的内存峰值 ≈ 像素数 × 4，
+// 只靠单张上限无法约束多路并发叠加后的总量。
+var decodeSem = make(chan struct{}, 12)
 
 // readAllLimited 最多读取 max 字节；超过上限返回 ErrTooLarge（不会继续读取剩余内容）。
 func readAllLimited(r io.Reader, max int64) ([]byte, error) {
@@ -41,9 +50,13 @@ func decodeBounded(data []byte) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > MaxImagePixels {
+	// 用 int64 相乘：32 位平台上 int 溢出会让超限图片绕过检查
+	if cfg.Width <= 0 || cfg.Height <= 0 ||
+		int64(cfg.Width)*int64(cfg.Height) > MaxImagePixels {
 		return nil, ErrTooLarge
 	}
+	decodeSem <- struct{}{}
+	defer func() { <-decodeSem }()
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
 }

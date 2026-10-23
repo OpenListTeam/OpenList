@@ -476,10 +476,24 @@ func subAuth(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
 	u, k, ok := subAuthInner(c)
 	if ok {
 		mediaAuthSucceeded(c)
-	} else {
+	} else if subHasCredential(c) {
+		// 只有「确实带了凭据但校验失败」才计数。
+		// 完全裸请求（部分客户端启动时会先发一次不带参数的探测）如果也计失败，
+		// 而 mediaAuthLocked 每次被拒都会刷新锁定时长，客户端会把自己的 IP 永久锁住。
 		mediaAuthFailed(c)
 	}
 	return u, k, ok
+}
+
+// subHasCredential 判断请求是否真的携带了认证凭据
+func subHasCredential(c *gin.Context) bool {
+	if subParam(c, "apiKey") != "" {
+		return true
+	}
+	if subParam(c, "u") == "" {
+		return false
+	}
+	return subParam(c, "t") != "" || subParam(c, "p") != ""
 }
 
 func subAuthInner(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {

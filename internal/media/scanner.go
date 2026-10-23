@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
 	stdpath "path"
@@ -52,6 +53,9 @@ type ScanProgress struct {
 	Running bool
 	Total   int
 	Done    int
+	// Skipped 入库被跳过的条目数（典型原因：目录/文件名超过唯一索引列长度上限）。
+	// 以前只在日志里打一条 Warn，用户完全看不到漏扫了多少条。
+	Skipped int
 	Message string
 	Error   string
 }
@@ -95,6 +99,7 @@ func ScanMedia(cfg *model.MediaConfig) {
 	p.Running = true
 	p.Total = 0
 	p.Done = 0
+	p.Skipped = 0
 	p.Error = ""
 	p.Message = "正在扫描..."
 	p.mu.Unlock()
@@ -139,7 +144,13 @@ func ScanMedia(cfg *model.MediaConfig) {
 		}
 
 		p.mu.Lock()
-		p.Message = "扫描完成"
+		if p.Skipped > 0 {
+			// 让管理端能直接看到「有 N 条因为路径过长没入库」
+			p.Message = fmt.Sprintf("扫描完成（跳过 %d 条）", p.Skipped)
+			log.Warnf("media scan skipped %d items (path/name too long for unique index)", p.Skipped)
+		} else {
+			p.Message = "扫描完成"
+		}
 		p.mu.Unlock()
 		// 更新媒体库最后扫描时间
 		now := time.Now()
@@ -165,6 +176,7 @@ func ScanMediaPath(sp *model.MediaScanPath) {
 	p.Running = true
 	p.Total = 0
 	p.Done = 0
+	p.Skipped = 0
 	p.Error = ""
 	p.Message = "正在扫描路径: " + sp.Name
 	p.mu.Unlock()
@@ -184,7 +196,12 @@ func ScanMediaPath(sp *model.MediaScanPath) {
 			log.Errorf("media scan error [%s] path[%s]: %v", sp.MediaType, sp.Path, err)
 		} else {
 			p.mu.Lock()
-			p.Message = "扫描完成"
+			if p.Skipped > 0 {
+				p.Message = fmt.Sprintf("扫描完成（跳过 %d 条）", p.Skipped)
+				log.Warnf("media scan skipped %d items (path/name too long for unique index)", p.Skipped)
+			} else {
+				p.Message = "扫描完成"
+			}
 			p.mu.Unlock()
 			now := time.Now()
 			sp.LastScanAt = &now
@@ -254,6 +271,9 @@ func doScanPath(sp *model.MediaScanPath, p *ScanProgress) error {
 
 		if err := db.CreateOrUpdateMediaItem(item); err != nil {
 			log.Warnf("save media item error [%s]: %v", target, err)
+			p.mu.Lock()
+			p.Skipped++
+			p.mu.Unlock()
 		}
 		p.mu.Lock()
 		p.Done++
@@ -477,6 +497,9 @@ func doScanMusicByAlbum(ctx context.Context, targets []string, sp *model.MediaSc
 
 			if err := db.CreateOrUpdateMediaItem(item); err != nil {
 				log.Warnf("save music item error [%s]: %v", target, err)
+				p.mu.Lock()
+				p.Skipped++
+				p.mu.Unlock()
 			}
 		}
 

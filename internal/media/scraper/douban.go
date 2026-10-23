@@ -409,7 +409,8 @@ func (s *DoubanScraper) downloadAndStoreCover(filePath, imgURL string) string {
 	// Base64 模式（默认）
 	img, err := decodeBounded(data)
 	if err != nil {
-		if errors.Is(err, ErrTooLarge) {
+		// 解码失败时退回原始字节；超过阈值直接放弃，避免十几 MB 的图被 base64 写进 cover 列
+		if errors.Is(err, ErrTooLarge) || len(data) > MaxRawCoverFallbackBytes {
 			return ""
 		}
 		return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
@@ -431,7 +432,8 @@ func (s *DoubanScraper) downloadCoverAsBase64(imgURL string) string {
 	}
 	img, err := decodeBounded(data)
 	if err != nil {
-		if errors.Is(err, ErrTooLarge) {
+		// 解码失败时退回原始字节；超过阈值直接放弃，避免十几 MB 的图被 base64 写进 cover 列
+		if errors.Is(err, ErrTooLarge) || len(data) > MaxRawCoverFallbackBytes {
 			return ""
 		}
 		return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
