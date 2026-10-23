@@ -349,7 +349,8 @@ func (s *Scheduler) ListJobs() []*Job {
 //  2. 重置 readyCh / Status / WorkerID 等运行时字段，但保留 Path / SourceURL / Profiles / Probe
 //  3. 重新加入 pending 队列并唤醒等待的 worker
 //
-// 返回被激活的 Job；job 不存在返回 ErrJobNotFound，配额不足返回 ErrUserQuota。
+// 返回被激活的 Job；job 不存在返回 ErrJobNotFound，单用户配额不足返回 ErrUserQuota，
+// 全局排队已满返回 ErrQueueFull。
 func (s *Scheduler) Reactivate(jobID string) (*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -360,6 +361,12 @@ func (s *Scheduler) Reactivate(jobID string) (*Job, error) {
 	// 已经活跃：无需重新入队
 	if isActiveStatus(j.GetStatus()) {
 		return j, nil
+	}
+
+	// 重新激活同样受全局排队上限约束：否则可以靠「先让任务 idle 取消、再批量激活」
+	// 把 pending 队列顶到 MaxPendingJobs 之外。
+	if len(s.pending) >= MaxPendingJobs {
+		return nil, ErrQueueFull
 	}
 
 	// 重新激活同样占用配额。否则持有 PlayToken 的用户可以先让任务因 idle 被取消，

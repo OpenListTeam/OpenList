@@ -30,7 +30,10 @@ var ErrTooLarge = errors.New("scraper: content exceeds size limit")
 
 // decodeSem 限制同时解码的图片数：解码阶段的内存峰值 ≈ 像素数 × 4，
 // 只靠单张上限无法约束多路并发叠加后的总量。
-var decodeSem = make(chan struct{}, 12)
+// 容量必须小于默认刮削并发（5），否则信号量等于不起作用：
+// 每路最坏 32MP × 4B ≈ 128MB，12 路就是 1.5GB。
+// 解码是 CPU 密集型操作，并发超过核数也不会更快，取 3 兼顾内存与吞吐。
+var decodeSem = make(chan struct{}, 3)
 
 // readAllLimited 最多读取 max 字节；超过上限返回 ErrTooLarge（不会继续读取剩余内容）。
 func readAllLimited(r io.Reader, max int64) ([]byte, error) {

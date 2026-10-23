@@ -146,6 +146,36 @@ func TestReactivateHonorsUserQuota(t *testing.T) {
 	}
 }
 
+// 重新激活同样不能突破全局排队上限：否则可以先让任务闲置取消，再批量激活把队列顶爆。
+func TestReactivateHonorsQueueLimit(t *testing.T) {
+	s := newTestScheduler()
+
+	// 先造一个随后被取消的任务（Cancel 会把它从 pending 中移除）
+	idle := NewJob()
+	idle.OwnerID, idle.Path = "q1", "/idle.mkv"
+	sub, _, err := s.SubmitLimited(idle)
+	if err != nil {
+		t.Fatalf("submit idle: %v", err)
+	}
+	s.Cancel(sub.ID)
+
+	// 用不同用户把全局队列填满（避开单用户配额）
+	for i := 0; i < MaxPendingJobs; i++ {
+		j := NewJob()
+		j.OwnerID, j.Path = fmt.Sprintf("q%d", i+2), fmt.Sprintf("/q%d.mkv", i)
+		if _, _, err := s.SubmitLimited(j); err != nil {
+			t.Fatalf("fill %d: %v", i, err)
+		}
+	}
+
+	if _, rerr := s.Reactivate(sub.ID); !errors.Is(rerr, ErrQueueFull) {
+		t.Fatalf("want ErrQueueFull, got %v", rerr)
+	}
+	if st := sub.GetStatus(); st != JobCancelled {
+		t.Fatalf("status=%v, want cancelled (must not be requeued)", st)
+	}
+}
+
 func TestValidSourceInput(t *testing.T) {
 	ok := []string{
 		"/data/movies/a.mkv",

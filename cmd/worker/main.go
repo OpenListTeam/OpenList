@@ -460,7 +460,9 @@ func (s *workerState) uploadSegment(job Job, profile string, seq int, dur float6
 func protocolWhitelistFor(source string) string {
 	s := strings.ToLower(strings.TrimSpace(source))
 	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
-		return "file,http,https,tcp,tls,crypto"
+		// 与 master 的 protocolWhitelistRemote 保持一致：HTTP 源用不到 file/crypto，
+		// 留着等于给被构造过的播放列表留一条读本地文件的通道。
+		return "http,https,tcp,tls"
 	}
 	return "file"
 }
