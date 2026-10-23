@@ -2,6 +2,7 @@ package handles
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -83,8 +84,15 @@ func TranscodePlay(c *gin.Context) {
 	// apiURL 仅用于返回给浏览器的 master_url（需要跟随请求 Host 才能被客户端访问）。
 	apiURL := common.GetApiUrlFromRequest(c.Request)
 
+	// 配额键：普通用户按 ID，访客按 IP——访客共用一个账号，
+	// 否则一个匿名访客就能占满全部匿名转码配额。
+	ownerID := "user:" + strconv.FormatUint(uint64(user.ID), 10)
+	if user.IsGuest() {
+		ownerID = "guest:" + c.ClientIP()
+	}
+
 	// 同一用户重复请求同一文件：直接复用进行中的任务，避免重复 ffprobe 与重复转码。
-	if exist, ok := mgr.Scheduler.FindReusable(user.ID, req.Path); ok {
+	if exist, ok := mgr.Scheduler.FindReusable(ownerID, req.Path); ok {
 		respondTranscodeJob(c, apiURL, exist)
 		return
 	}
@@ -102,8 +110,19 @@ func TranscodePlay(c *gin.Context) {
 		// 远程驱动：构造签名 HTTP URL。
 		// 这个 URL 会被服务端 ffmpeg 直接访问，绝不能使用 Host / X-Forwarded-Host：
 		// 未配置 site_url 时攻击者可借此让服务器去拉取任意地址（SSRF）。
+		base := trustedInternalBaseURL()
+		if base == "" {
+			// 仅 HTTPS 监听且未配置 site_url 时无可用基址；
+			// 若继续拼出 "/d/..." 会被当成绝对本地路径，ffmpeg 只会报文件不存在。
+			common.ErrorStrResp(
+				c,
+				"transcode needs site_url (or an HTTP port) to fetch the source",
+				503,
+			)
+			return
+		}
 		signedPath := sign.Sign(req.Path)
-		sourceURL = fmt.Sprintf("%s/d%s?sign=%s", trustedInternalBaseURL(), encodePath(req.Path), signedPath)
+		sourceURL = fmt.Sprintf("%s/d%s?sign=%s", base, encodePath(req.Path), signedPath)
 	}
 	if !transcode.ValidSourceInput(sourceURL) {
 		common.ErrorStrResp(c, "unsupported transcode source", 400)
@@ -113,7 +132,7 @@ func TranscodePlay(c *gin.Context) {
 	// 创建 Job
 	job := transcode.NewJob()
 	job.Path = req.Path
-	job.OwnerID = user.ID
+	job.OwnerID = ownerID
 	job.SourceURL = sourceURL
 	// 【关键】探测视频总时长（异步会让首响应变慢，但只有一次，必须等待）
 	// 总时长用于生成完整的 playlist，避免 HLS.js 时长显示错误和拖动跳跃问题
@@ -262,8 +281,11 @@ func TCPlaylist(c *gin.Context) {
 	// 【关键】如果 job 之前因 idle 被 cancel，这里重新激活：复用 jobID/token 重新入队
 	// 让 worker 再次启动 ffmpeg 转码，避免播放器看到 404 后无法恢复
 	if st := job.GetStatus(); st == transcode.JobCancelled || st == transcode.JobFinished || st == transcode.JobFailed {
-		if _, ok := mgr.Scheduler.Reactivate(jobID); ok {
+		if _, rerr := mgr.Scheduler.Reactivate(jobID); rerr == nil {
 			fmt.Printf("[transcode] reactivate job %s on playlist request (was %s)\n", jobID, st)
+		} else if errors.Is(rerr, transcode.ErrUserQuota) {
+			c.String(http.StatusTooManyRequests, "too many active transcode jobs")
+			return
 		}
 	}
 	job.Touch()
@@ -320,8 +342,11 @@ func TCSegment(c *gin.Context) {
 	// 【关键】job 之前因 idle 被 cancel 时，复用同一 jobID/token 重新入队启动转码。
 	// 这样浏览器持有的旧 master.m3u8 + 切片 URL 仍然有效，暂停再继续也不会 404。
 	if st := job.GetStatus(); st == transcode.JobCancelled || st == transcode.JobFinished || st == transcode.JobFailed {
-		if _, ok := mgr.Scheduler.Reactivate(jobID); ok {
+		if _, rerr := mgr.Scheduler.Reactivate(jobID); rerr == nil {
 			fmt.Printf("[transcode] reactivate job %s on segment request (was %s)\n", jobID, st)
+		} else if errors.Is(rerr, transcode.ErrUserQuota) {
+			c.String(http.StatusTooManyRequests, "too many active transcode jobs")
+			return
 		}
 	}
 	// seg-N.ts

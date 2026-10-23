@@ -58,6 +58,8 @@ var (
 	ErrQueueFull = errors.New("transcode queue is full, try again later")
 	// ErrUserQuota 单用户并发任务已达上限
 	ErrUserQuota = errors.New("too many active transcode jobs for this user")
+	// ErrJobNotFound 任务不存在或已被清理
+	ErrJobNotFound = errors.New("transcode job not found")
 )
 
 // isActiveStatus 任务是否仍占用资源（未结束）
@@ -66,13 +68,13 @@ func isActiveStatus(st JobStatus) bool {
 }
 
 // FindReusable 查找同一用户对同一路径、仍在进行中的任务，用于去重复用。
-func (s *Scheduler) FindReusable(ownerID uint, path string) (*Job, bool) {
+func (s *Scheduler) FindReusable(ownerID string, path string) (*Job, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.findReusableLocked(ownerID, path)
 }
 
-func (s *Scheduler) findReusableLocked(ownerID uint, path string) (*Job, bool) {
+func (s *Scheduler) findReusableLocked(ownerID string, path string) (*Job, bool) {
 	for _, j := range s.jobs {
 		if j.OwnerID == ownerID && j.Path == path && isActiveStatus(j.GetStatus()) {
 			return j, true
@@ -347,21 +349,39 @@ func (s *Scheduler) ListJobs() []*Job {
 //  2. 重置 readyCh / Status / WorkerID 等运行时字段，但保留 Path / SourceURL / Profiles / Probe
 //  3. 重新加入 pending 队列并唤醒等待的 worker
 //
-// 返回被激活的 Job；如果 job 不存在返回 nil 和 false。
-func (s *Scheduler) Reactivate(jobID string) (*Job, bool) {
+// 返回被激活的 Job；job 不存在返回 ErrJobNotFound，配额不足返回 ErrUserQuota。
+func (s *Scheduler) Reactivate(jobID string) (*Job, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	j, ok := s.jobs[jobID]
 	if !ok {
-		s.mu.Unlock()
-		return nil, false
+		return nil, ErrJobNotFound
 	}
+	// 已经活跃：无需重新入队
+	if isActiveStatus(j.GetStatus()) {
+		return j, nil
+	}
+
+	// 重新激活同样占用配额。否则持有 PlayToken 的用户可以先让任务因 idle 被取消，
+	// 再统一请求 playlist / seg-N.ts 把它们一起重新激活，绕过 SubmitLimited 的单用户上限。
+	active := 0
+	for _, x := range s.jobs {
+		if x == j {
+			continue
+		}
+		if x.OwnerID == j.OwnerID && isActiveStatus(x.GetStatus()) {
+			active++
+		}
+	}
+	if active >= MaxActiveJobsPerUser {
+		return nil, ErrUserQuota
+	}
+
 	j.mu.Lock()
-	// 只有终止态才需要重新激活；Running/Ready 直接返回即可
-	switch j.Status {
-	case JobPending, JobRunning, JobReady:
+	// 期间可能已被其它请求激活
+	if isActiveStatus(j.Status) {
 		j.mu.Unlock()
-		s.mu.Unlock()
-		return j, true
+		return j, nil
 	}
 	// 重置运行时状态
 	j.Status = JobPending
@@ -390,8 +410,7 @@ func (s *Scheduler) Reactivate(jobID string) (*Job, bool) {
 		close(ch)
 	}
 	s.waiters = nil
-	s.mu.Unlock()
-	return j, true
+	return j, nil
 }
 
 // PurgeBefore 删除 finishedAt 早于某时刻的任务，避免 jobs map 无限增长

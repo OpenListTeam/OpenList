@@ -14,14 +14,14 @@ func newTestScheduler() *Scheduler {
 func TestSubmitLimitedReusesSameUserPath(t *testing.T) {
 	s := newTestScheduler()
 	a := NewJob()
-	a.OwnerID, a.Path = 1, "/movie.mkv"
+	a.OwnerID, a.Path = "u1", "/movie.mkv"
 	first, reused, err := s.SubmitLimited(a)
 	if err != nil || reused {
 		t.Fatalf("first submit: reused=%v err=%v", reused, err)
 	}
 
 	b := NewJob()
-	b.OwnerID, b.Path = 1, "/movie.mkv"
+	b.OwnerID, b.Path = "u1", "/movie.mkv"
 	second, reused, err := s.SubmitLimited(b)
 	if err != nil || !reused {
 		t.Fatalf("second submit should reuse: reused=%v err=%v", reused, err)
@@ -35,7 +35,7 @@ func TestSubmitLimitedReusesSameUserPath(t *testing.T) {
 
 	// 其他用户不应复用别人的任务（callback_token 属于发起者）
 	c := NewJob()
-	c.OwnerID, c.Path = 2, "/movie.mkv"
+	c.OwnerID, c.Path = "u2", "/movie.mkv"
 	third, reused, err := s.SubmitLimited(c)
 	if err != nil || reused || third.ID == first.ID {
 		t.Fatalf("other user must get own job: reused=%v err=%v", reused, err)
@@ -46,19 +46,19 @@ func TestSubmitLimitedPerUserQuota(t *testing.T) {
 	s := newTestScheduler()
 	for i := 0; i < MaxActiveJobsPerUser; i++ {
 		j := NewJob()
-		j.OwnerID, j.Path = 7, fmt.Sprintf("/f%d.mkv", i)
+		j.OwnerID, j.Path = "u7", fmt.Sprintf("/f%d.mkv", i)
 		if _, _, err := s.SubmitLimited(j); err != nil {
 			t.Fatalf("submit %d: %v", i, err)
 		}
 	}
 	over := NewJob()
-	over.OwnerID, over.Path = 7, "/over.mkv"
+	over.OwnerID, over.Path = "u7", "/over.mkv"
 	if _, _, err := s.SubmitLimited(over); !errors.Is(err, ErrUserQuota) {
 		t.Fatalf("want ErrUserQuota, got %v", err)
 	}
 	// 其它用户不受影响
 	other := NewJob()
-	other.OwnerID, other.Path = 8, "/other.mkv"
+	other.OwnerID, other.Path = "u8", "/other.mkv"
 	if _, _, err := s.SubmitLimited(other); err != nil {
 		t.Fatalf("other user blocked: %v", err)
 	}
@@ -69,13 +69,13 @@ func TestSubmitLimitedQueueCap(t *testing.T) {
 	for i := 0; i < MaxPendingJobs; i++ {
 		j := NewJob()
 		// 每个任务不同用户，避免触发单用户上限
-		j.OwnerID, j.Path = uint(1000+i), "/x.mkv"
+		j.OwnerID, j.Path = fmt.Sprintf("u%d", 1000+i), "/x.mkv"
 		if _, _, err := s.SubmitLimited(j); err != nil {
 			t.Fatalf("submit %d: %v", i, err)
 		}
 	}
 	j := NewJob()
-	j.OwnerID, j.Path = 99999, "/y.mkv"
+	j.OwnerID, j.Path = "u99999", "/y.mkv"
 	if _, _, err := s.SubmitLimited(j); !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("want ErrQueueFull, got %v", err)
 	}
@@ -91,7 +91,7 @@ func TestSubmitLimitedConcurrentQuota(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			j := NewJob()
-			j.OwnerID, j.Path = 5, fmt.Sprintf("/p%d.mkv", i)
+			j.OwnerID, j.Path = "u5", fmt.Sprintf("/p%d.mkv", i)
 			if _, _, err := s.SubmitLimited(j); err == nil {
 				mu.Lock()
 				accepted++
@@ -105,6 +105,47 @@ func TestSubmitLimitedConcurrentQuota(t *testing.T) {
 	}
 }
 
+// 重新激活（播放端请求 playlist / 切片时触发）也必须占配额，
+// 否则可以先让任务闲置被取消，再统一激活来绕过单用户上限。
+func TestReactivateHonorsUserQuota(t *testing.T) {
+	s := newTestScheduler()
+	for i := 0; i < MaxActiveJobsPerUser; i++ {
+		j := NewJob()
+		j.OwnerID, j.Path = "u9", fmt.Sprintf("/r%d.mkv", i)
+		if _, _, err := s.SubmitLimited(j); err != nil {
+			t.Fatalf("submit %d: %v", i, err)
+		}
+	}
+
+	// 构造一个"该用户此前创建、随后因闲置被取消"的任务
+	idle := NewJob()
+	idle.OwnerID, idle.Path = "u10", "/idle.mkv"
+	sub, _, err := s.SubmitLimited(idle)
+	if err != nil {
+		t.Fatalf("submit idle: %v", err)
+	}
+	sub.OwnerID = "u9"
+	s.Cancel(sub.ID)
+
+	if _, rerr := s.Reactivate(sub.ID); !errors.Is(rerr, ErrUserQuota) {
+		t.Fatalf("want ErrUserQuota, got %v", rerr)
+	}
+
+	// 释放一个活跃任务后应能重新激活
+	for _, j := range s.ListJobs() {
+		if j.Path != "/idle.mkv" && j.OwnerID == "u9" {
+			s.Cancel(j.ID)
+			break
+		}
+	}
+	if _, rerr := s.Reactivate(sub.ID); rerr != nil {
+		t.Fatalf("reactivate after freeing quota: %v", rerr)
+	}
+	if st := sub.GetStatus(); st != JobPending {
+		t.Fatalf("status=%v, want pending", st)
+	}
+}
+
 func TestValidSourceInput(t *testing.T) {
 	ok := []string{
 		"/data/movies/a.mkv",
@@ -112,6 +153,10 @@ func TestValidSourceInput(t *testing.T) {
 		"https://example.com/d/a.mkv",
 		`C:\media\a.mkv`,
 		"C:/media/a.mkv",
+		// 文件名里的冒号很常见，不能被当成协议前缀
+		"/mnt/media/Star Wars: Episode IV.mkv",
+		"/data/Spider-Man: Homecoming (2017).mkv",
+		`D:\Movies\Star Wars: IV.mkv`,
 	}
 	for _, s := range ok {
 		if !ValidSourceInput(s) {
@@ -138,7 +183,9 @@ func TestProtocolWhitelistFor(t *testing.T) {
 	if got := ProtocolWhitelistFor("HTTPS://x/y"); got == "file" || got == "" {
 		t.Errorf("remote = %q", got)
 	}
-	for _, banned := range []string{"concat", "subfile", "data", "pipe", "rtmp", "ftp"} {
+	// 远程输入不应包含 file / crypto：HTTP 源用不到，留着等于给构造过的播放列表
+	// 留了一条读本地文件的通道
+	for _, banned := range []string{"concat", "subfile", "data", "pipe", "rtmp", "ftp", "file", "crypto"} {
 		if contains := func(s string) bool {
 			for _, p := range splitComma(s) {
 				if p == banned {

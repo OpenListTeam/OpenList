@@ -9,8 +9,9 @@ import "strings"
 const (
 	// protocolWhitelistLocal 本地文件输入只允许 file 协议
 	protocolWhitelistLocal = "file"
-	// protocolWhitelistRemote 远程输入允许 HTTP(S) 及其底层传输；仍然禁止 concat/subfile/data 等
-	protocolWhitelistRemote = "file,http,https,tcp,tls,crypto"
+	// protocolWhitelistRemote 远程输入允许 HTTP(S) 及其底层传输；禁止 concat/subfile/data/pipe，
+	// 同时去掉 file 与 crypto：HTTP 源用不到它们，留着等于给被构造的播放列表留了读本地文件的通道。
+	protocolWhitelistRemote = "http,https,tcp,tls"
 )
 
 // ProtocolWhitelistFor 根据输入地址返回应传给 ffmpeg/ffprobe 的 -protocol_whitelist 值。
@@ -34,16 +35,22 @@ func ValidSourceInput(source string) bool {
 	if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
 		return true
 	}
-	// 其它带 scheme 的形式（如 concat:、subfile:、data:、pipe:、rtmp://）一律拒绝。
-	// Windows 盘符路径（C:\ 或 C:/）不是 scheme，需要放行。
-	if idx := strings.Index(s, ":"); idx > 1 {
+	// 本地输入只接受绝对路径。
+	// 不能按「冒号位置」判 scheme：文件名里带冒号非常常见
+	// （/mnt/media/Star Wars: Episode IV.mkv），那样会被误判成协议前缀。
+	// concat:/subfile:/data: 这些前缀都不是绝对路径，且还会被 -protocol_whitelist 挡住。
+	// 注意不能用 filepath.IsAbs：它是平台相关的，Windows 上会拒绝 "/data/a.mkv"
+	// 这类 VFS 绝对路径（OpenList 的路径始终是正斜杠开头）。
+	return strings.HasPrefix(s, "/") || isWindowsDrivePath(s)
+}
+
+// isWindowsDrivePath 判断 C:\ 或 C:/ 形式的盘符绝对路径。
+// 跨平台使用：在 Linux 上构建时会话也可能处理 Windows 风格路径。
+func isWindowsDrivePath(s string) bool {
+	if len(s) < 3 || s[1] != ':' {
 		return false
 	}
-	if idx := strings.Index(s, ":"); idx == 1 {
-		// 单字母 + 冒号：必须是盘符路径
-		if len(s) < 3 || (s[2] != '\\' && s[2] != '/') {
-			return false
-		}
-	}
-	return true
+	c := s[0]
+	isLetter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+	return isLetter && (s[2] == '\\' || s[2] == '/')
 }

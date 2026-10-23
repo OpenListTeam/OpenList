@@ -88,8 +88,10 @@ type Job struct {
 	PlayToken string `json:"-"`
 	Deadline  int64  `json:"deadline"` // unix 秒
 
-	// OwnerID 发起转码的用户 ID，仅服务端用于去重与配额，不下发给 Worker
-	OwnerID uint `json:"-"`
+	// OwnerID 发起转码者的配额键，仅服务端用于去重与配额，不下发给 Worker。
+	// 用字符串而不是用户 ID：访客共用一个账号，需要按 "guest:<clientIP>" 拆分配额，
+	// 否则单个匿名访客就能占满所有匿名转码配额。
+	OwnerID string `json:"-"`
 
 	// 运行时
 	Status       JobStatus `json:"status"`
