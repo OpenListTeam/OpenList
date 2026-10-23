@@ -250,28 +250,6 @@ func SetThunder(c *gin.Context) {
 	common.SuccessResp(c, "ok")
 }
 
-type SetThunderXReq struct {
-	TempDir string `json:"temp_dir" form:"temp_dir"`
-}
-
-func SetThunderX(c *gin.Context) {
-	var req SetThunderXReq
-	if err := c.ShouldBind(&req); err != nil {
-		common.ErrorResp(c, err, 400)
-		return
-	}
-	if !validateOfflineDownloadStorage(c, req.TempDir, "ThunderX") {
-		return
-	}
-	items := []model.SettingItem{
-		{Key: conf.ThunderXTempDir, Value: req.TempDir, Type: conf.TypeString, Group: model.OFFLINE_DOWNLOAD, Flag: model.PRIVATE},
-	}
-	if _, ok := saveAndInitOfflineDownloadTool(c, "ThunderX", items); !ok {
-		return
-	}
-	common.SuccessResp(c, "ok")
-}
-
 type SetThunderBrowserReq struct {
 	TempDir string `json:"temp_dir" form:"temp_dir"`
 }

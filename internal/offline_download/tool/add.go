@@ -16,7 +16,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
-	"github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -92,7 +91,7 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 				if fallbackTool != nil {
 					args.Tool = fallbackName
 				} else {
-					return nil, fmt.Errorf("ed2k protocol is not supported by %s. Please configure and use Thunder/ThunderX/ThunderBrowser for ed2k links", args.Tool)
+					return nil, fmt.Errorf("ed2k protocol is not supported by %s. Please configure and use Thunder/ThunderBrowser for ed2k links", args.Tool)
 				}
 			}
 		}
@@ -160,12 +159,6 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 			tempDir = args.DstDirPath
 		default:
 			tempDir = filepath.Join(setting.GetStr(conf.ThunderBrowserTempDir), uid)
-		}
-	case "ThunderX":
-		if _, ok := storage.(*thunderx.ThunderX); ok {
-			tempDir = args.DstDirPath
-		} else {
-			tempDir = filepath.Join(setting.GetStr(conf.ThunderXTempDir), uid)
 		}
 	case "GuangYaPan":
 		if _, ok := storage.(*guangyapan.GuangYaPan); ok {
@@ -248,8 +241,6 @@ func NativeToolName(storage driver.Driver) string {
 		return "PikPak"
 	case *thunder.Thunder:
 		return "Thunder"
-	case *thunderx.ThunderX:
-		return "ThunderX"
 	case *thunder_browser.ThunderBrowser, *thunder_browser.ThunderBrowserExpert:
 		return "ThunderBrowser"
 	default:
@@ -258,10 +249,10 @@ func NativeToolName(storage driver.Driver) string {
 }
 
 // ed2kCapableTools 支持 ed2k 协议的工具列表
-var ed2kCapableTools = []string{"115 Cloud", "115 Open", "Thunder", "ThunderX", "ThunderBrowser"}
+var ed2kCapableTools = []string{"115 Cloud", "115 Open", "Thunder", "ThunderBrowser"}
 
 // ed2kFallbackTools 是当前可用于自动接管 ed2k 任务的工具列表。
-var ed2kFallbackTools = []string{"Thunder", "ThunderX", "ThunderBrowser"}
+var ed2kFallbackTools = []string{"Thunder", "ThunderBrowser"}
 
 // isEd2kCapableTool 检查工具是否支持 ed2k 协议
 func isEd2kCapableTool(toolName string) bool {
