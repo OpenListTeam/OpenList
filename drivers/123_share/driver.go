@@ -165,4 +165,10 @@ func (d *Pan123Share) APIRateLimit(ctx context.Context, api string) error {
 	return limiter.Wait(ctx)
 }
 
+func (d *Pan123Share) UpdateShareLink(ctx context.Context, shareId, sharePwd string) error {
+	d.ShareKey = shareId
+	d.SharePwd = sharePwd
+	return nil
+}
+
 var _ driver.Driver = (*Pan123Share)(nil)

@@ -126,4 +126,10 @@ func (d *AliyundriveShare) Other(ctx context.Context, args model.OtherArgs) (int
 	return resp, nil
 }
 
+func (d *AliyundriveShare) UpdateShareLink(ctx context.Context, shareId, sharePwd string) error {
+	d.ShareId = shareId
+	d.SharePwd = sharePwd
+	return nil
+}
+
 var _ driver.Driver = (*AliyundriveShare)(nil)

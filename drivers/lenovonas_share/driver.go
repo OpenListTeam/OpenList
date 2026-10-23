@@ -163,4 +163,10 @@ func (d *LenovoNasShare) Put(ctx context.Context, dstDir model.Obj, stream model
 	return nil, errs.NotImplement
 }
 
+func (d *LenovoNasShare) UpdateShareLink(ctx context.Context, shareId, sharePwd string) error {
+	d.ShareId = shareId
+	d.SharePwd = sharePwd
+	return nil
+}
+
 var _ driver.Driver = (*LenovoNasShare)(nil)

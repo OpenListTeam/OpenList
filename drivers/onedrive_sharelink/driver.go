@@ -801,3 +801,7 @@ func (d *OnedriveSharelink) getValidHeaders(ctx context.Context) (http.Header, e
 	}
 	return h, nil
 }
+
+func (d *OnedriveSharelink) UpdateShareLink(ctx context.Context, shareId, sharePwd string) error {
+	return errs.NotImplement
+}

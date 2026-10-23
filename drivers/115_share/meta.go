@@ -20,6 +20,7 @@ var config = driver.Config{
 	Name:        "115 Share",
 	DefaultRoot: "0",
 	NoUpload:    true,
+	IsShare:     true,
 }
 
 func init() {

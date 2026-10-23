@@ -54,6 +54,7 @@ type FsListResp struct {
 	Write              bool      `json:"write"`
 	WriteContentBypass bool      `json:"write_content_bypass"`
 	Provider           string    `json:"provider"`
+	IsShare            bool      `json:"is_share"`
 	DirectUploadTools  []string  `json:"direct_upload_tools,omitempty"`
 }
 
@@ -102,17 +103,20 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		Refresh:            req.Refresh,
 		WithStorageDetails: !user.IsGuest() && !setting.GetBool(conf.HideStorageDetails),
 	})
+
+	storage, storageErr := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	isShare := storageErr == nil && storage.Config().IsShare
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		common.ErrorWithDataResp(c, err, 500, FsListResp{
+			IsShare: isShare,
+		})
 		return
 	}
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
 	var directUploadTools []string
-	if canWriteContentAtPath {
-		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
-			directUploadTools = op.GetDirectUploadTools(storage)
-		}
+	if storageErr == nil && canWriteContentAtPath {
+		directUploadTools = op.GetDirectUploadTools(storage)
 	}
 	common.SuccessResp(c, FsListResp{
 		Content:            toObjsResp(objs, reqPath, isEncrypt(meta, reqPath)),
@@ -122,6 +126,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		Write:              common.CanWrite(user, meta, reqPath),
 		WriteContentBypass: common.CanWriteContentBypassUserPerms(meta, reqPath),
 		Provider:           provider,
+		IsShare:            isShare,
 		DirectUploadTools:  directUploadTools,
 	})
 }

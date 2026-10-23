@@ -202,6 +202,11 @@ type WithDetails interface {
 	GetDetails(ctx context.Context) (*model.StorageDetails, error)
 }
 
+type ShareLinkUpdater interface {
+	// UpdateShareLink writes the given share id and its access code into the driver addition.
+	UpdateShareLink(ctx context.Context, shareId, sharePwd string) error
+}
+
 type Reference interface {
 	InitReference(storage Driver) error
 }

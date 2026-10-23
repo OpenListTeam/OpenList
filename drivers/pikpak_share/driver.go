@@ -127,4 +127,11 @@ func (d *PikPakShare) Link(ctx context.Context, file model.Obj, args model.LinkA
 	}, nil
 }
 
+func (d *PikPakShare) UpdateShareLink(ctx context.Context, shareId, sharePwd string) error {
+	d.ShareId = shareId
+	d.SharePwd = sharePwd
+	d.PassCodeToken = ""
+	return nil
+}
+
 var _ driver.Driver = (*PikPakShare)(nil)

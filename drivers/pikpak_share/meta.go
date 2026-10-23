@@ -18,6 +18,7 @@ var config = driver.Config{
 	Name:      "PikPakShare",
 	LocalSort: true,
 	NoUpload:  true,
+	IsShare:   true,
 }
 
 func init() {

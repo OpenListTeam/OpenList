@@ -26,6 +26,8 @@ type Config struct {
 	OnlyIndices bool `json:"only_indices"`
 	// prefer proxy download even if direct link is available
 	PreferProxy bool `json:"prefer_proxy"`
+	// e.g. 115_share driver
+	IsShare bool `json:"is_share"`
 }
 type LinkCacheMode int8
 

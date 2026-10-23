@@ -16,6 +16,7 @@ var config = driver.Config{
 	LocalSort:   true,
 	NoUpload:    true,
 	DefaultRoot: "/",
+	IsShare:     true,
 }
 
 func init() {

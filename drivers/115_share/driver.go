@@ -32,7 +32,6 @@ func (d *Pan115Share) Init(ctx context.Context) error {
 	if d.LimitRate > 0 {
 		d.limiter = rate.NewLimiter(rate.Limit(d.LimitRate), 1)
 	}
-
 	return d.login()
 }
 
@@ -124,6 +123,12 @@ func (d *Pan115Share) Remove(ctx context.Context, obj model.Obj) error {
 
 func (d *Pan115Share) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	return errs.NotSupport
+}
+
+func (d *Pan115Share) UpdateShareLink(ctx context.Context, shareId, sharePwd string) error {
+	d.ShareCode = shareId
+	d.ReceiveCode = sharePwd
+	return nil
 }
 
 var _ driver.Driver = (*Pan115Share)(nil)
