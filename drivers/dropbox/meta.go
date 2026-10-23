@@ -2,7 +2,6 @@ package dropbox
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -21,11 +20,9 @@ var config = driver.Config{
 	NoOverwriteUpload: true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Dropbox{
-			base:        "https://api.dropboxapi.com",
-			contentBase: "https://content.dropboxapi.com",
-		}
-	})
+func New() driver.Driver {
+	return &Dropbox{
+		base:        "https://api.dropboxapi.com",
+		contentBase: "https://content.dropboxapi.com",
+	}
 }

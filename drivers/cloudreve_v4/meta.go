@@ -2,7 +2,6 @@ package cloudreve_v4
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -31,8 +30,6 @@ var config = driver.Config{
 	NoOverwriteUpload: true,
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &CloudreveV4{}
-	})
+func New() driver.Driver {
+	return &CloudreveV4{}
 }

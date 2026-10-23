@@ -2,7 +2,6 @@ package terabox
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -19,8 +18,6 @@ var config = driver.Config{
 	DefaultRoot: "/",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Terabox{}
-	})
+func New() driver.Driver {
+	return &Terabox{}
 }

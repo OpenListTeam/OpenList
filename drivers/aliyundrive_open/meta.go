@@ -2,7 +2,6 @@ package aliyundrive_open
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -31,8 +30,6 @@ var config = driver.Config{
 }
 var API_URL = "https://openapi.alipan.com"
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &AliyundriveOpen{}
-	})
+func New() driver.Driver {
+	return &AliyundriveOpen{}
 }

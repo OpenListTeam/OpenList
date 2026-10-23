@@ -2,7 +2,6 @@ package doubao
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -22,12 +21,10 @@ var config = driver.Config{
 	DefaultRoot: "0",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Doubao{
-			Addition: Addition{
-				LimitRate: 2,
-			},
-		}
-	})
+func New() driver.Driver {
+	return &Doubao{
+		Addition: Addition{
+			LimitRate: 2,
+		},
+	}
 }
