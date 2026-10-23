@@ -5,6 +5,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ==================== MediaAppKey ====================
@@ -182,4 +183,41 @@ func DeleteEmbyDevice(userID uint, deviceID string) error {
 
 func TouchEmbyDevice(id uint) {
 	_ = db.Model(&model.EmbyDevice{}).Where("id = ?", id).Update("last_seen_at", time.Now()).Error
+}
+
+// ==================== MediaAnnotation ====================
+
+// ListMediaAnnotations 列出某用户对某个条目的全部批注
+func ListMediaAnnotations(userID, itemID uint) ([]model.MediaAnnotation, error) {
+	list := []model.MediaAnnotation{}
+	err := db.Where("user_id = ? AND item_id = ?", userID, itemID).
+		Order("id asc").Find(&list).Error
+	return list, err
+}
+
+// SyncMediaAnnotations 增量保存批注：upserts 覆盖同一 remote_id 的记录，deletes 按 remote_id 删除。
+// 放在一个事务里，避免多设备同时保存时出现半新半旧的状态。
+func SyncMediaAnnotations(userID, itemID uint, upserts []model.MediaAnnotation, deletes []string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		for i := range upserts {
+			row := upserts[i]
+			row.ID = 0
+			row.UserID, row.ItemID = userID, itemID
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{
+					{Name: "user_id"}, {Name: "item_id"}, {Name: "remote_id"},
+				},
+				DoUpdates: clause.AssignmentColumns([]string{"anchor", "updated_at"}),
+			}).Create(&row).Error; err != nil {
+				return err
+			}
+		}
+		if len(deletes) > 0 {
+			if err := tx.Where("user_id = ? AND item_id = ? AND remote_id IN ?", userID, itemID, deletes).
+				Delete(&model.MediaAnnotation{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

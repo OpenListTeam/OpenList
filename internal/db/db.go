@@ -22,7 +22,7 @@ func Init(d *gorm.DB) {
 	if err := migrateMediaItems(); err != nil {
 		log.Fatalf("failed migrate media_items: %s (如果旧数据无法原地迁移，请先备份数据库，再设置 %s=1 重建媒体表)", err.Error(), MediaMigrateWipeEnv)
 	}
-	err := AutoMigrate(new(model.Storage), new(model.User), new(model.Meta), new(model.SettingItem), new(model.SearchNode), new(model.TaskItem), new(model.SSHPublicKey), new(model.SharingDB), new(model.WebDAVProperty), new(model.MediaItem), new(model.MediaConfig), new(model.MediaScanPath), new(model.MediaAppKey), new(model.MediaUserData), new(model.MediaPlaylist), new(model.MediaPlaylistItem), new(model.EmbyDevice))
+	err := AutoMigrate(new(model.Storage), new(model.User), new(model.Meta), new(model.SettingItem), new(model.SearchNode), new(model.TaskItem), new(model.SSHPublicKey), new(model.SharingDB), new(model.WebDAVProperty), new(model.MediaItem), new(model.MediaConfig), new(model.MediaScanPath), new(model.MediaAppKey), new(model.MediaUserData), new(model.MediaPlaylist), new(model.MediaPlaylistItem), new(model.EmbyDevice), new(model.MediaAnnotation))
 	if err != nil {
 		// 典型场景：未确认清库时，旧 media_items 数据违反新建的唯一索引。
 		// 这里把解决办法直接写进日志，避免用户只看到一句 failed migrate database。

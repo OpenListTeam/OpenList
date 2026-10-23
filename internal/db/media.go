@@ -245,19 +245,52 @@ func UpdateMediaItem(item *model.MediaItem) error {
 	return db.Unscoped().Save(item).Error
 }
 
-// DeleteMediaItem 硬删除媒体条目（真正从数据库删除）
+// DeleteMediaItem 硬删除媒体条目（真正从数据库删除），并清理该条目的批注
 func DeleteMediaItem(id uint) error {
-	return db.Unscoped().Delete(&model.MediaItem{}, id).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Delete(&model.MediaItem{}, id).Error; err != nil {
+			return err
+		}
+		return tx.Where("item_id = ?", id).Delete(&model.MediaAnnotation{}).Error
+	})
 }
 
-// ClearMediaItems 硬删除指定类型的所有媒体条目（真正从数据库删除）
+// ClearMediaItems 硬删除指定类型的所有媒体条目（真正从数据库删除），并清理对应批注
 func ClearMediaItems(mediaType model.MediaType) error {
-	return db.Unscoped().Where("media_type = ?", mediaType).Delete(&model.MediaItem{}).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		ids := []uint{}
+		if err := tx.Unscoped().Model(&model.MediaItem{}).
+			Where("media_type = ?", mediaType).Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Where("media_type = ?", mediaType).
+			Delete(&model.MediaItem{}).Error; err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		return tx.Where("item_id IN ?", ids).Delete(&model.MediaAnnotation{}).Error
+	})
 }
 
-// ClearMediaItemsByScanPath 硬删除指定扫描路径的所有媒体条目
+// ClearMediaItemsByScanPath 硬删除指定扫描路径的所有媒体条目，并清理对应批注
 func ClearMediaItemsByScanPath(scanPathID uint) error {
-	return db.Unscoped().Where("scan_path_id = ?", scanPathID).Delete(&model.MediaItem{}).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		ids := []uint{}
+		if err := tx.Unscoped().Model(&model.MediaItem{}).
+			Where("scan_path_id = ?", scanPathID).Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Where("scan_path_id = ?", scanPathID).
+			Delete(&model.MediaItem{}).Error; err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		return tx.Where("item_id IN ?", ids).Delete(&model.MediaAnnotation{}).Error
+	})
 }
 
 // ClearMediaScrapedData 清空指定类型的所有刮削数据（保留扫描出的文件记录本身）
@@ -302,12 +335,17 @@ func ListAllValidMediaItemsForCheck(mediaType model.MediaType) ([]model.MediaIte
 	return items, err
 }
 
-// DeleteMediaItemsByIDs 按ID列表硬删除媒体条目
+// DeleteMediaItemsByIDs 按ID列表硬删除媒体条目，并清理对应批注
 func DeleteMediaItemsByIDs(ids []uint) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return db.Unscoped().Where("id IN ?", ids).Delete(&model.MediaItem{}).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Where("id IN ?", ids).Delete(&model.MediaItem{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("item_id IN ?", ids).Delete(&model.MediaAnnotation{}).Error
+	})
 }
 
 // ListAlbums 列出所有专辑（音乐专用）

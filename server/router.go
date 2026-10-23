@@ -151,6 +151,9 @@ func Init(e *gin.Engine) {
 	mediaPublic.POST("/favorite", handles.SetMediaFavorite)
 	mediaPublic.GET("/favorites", handles.ListMediaFavoritesAPI)
 	mediaPublic.GET("/resume", handles.ListMediaResumeAPI)
+	// 阅读器批注（登录用户私有数据；访客只读返回空列表，写入直接 403）
+	mediaPublic.GET("/annotations", handles.ListMediaAnnotationsAPI)
+	mediaPublic.POST("/annotations", handles.SyncMediaAnnotationsAPI)
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
 	_task(auth.Group("/task", middlewares.AuthNotGuest))
 	_sharing(auth.Group("/share", middlewares.AuthNotGuest))

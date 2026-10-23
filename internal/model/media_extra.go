@@ -58,6 +58,23 @@ type MediaPlaylistItem struct {
 	Order      int  `gorm:"column:sort_order"             json:"order"`
 }
 
+// MediaAnnotation 用户在 PDF 阅读器里添加的批注。
+//
+// 只存查看器原生的批注对象（Anchor，JSON）：页码、rect/quadPoints、颜色、
+// 文字、绘制点集都在里面，拆成独立列会出现两份可能不一致的数据。
+// 重新打开时原样回灌给 PDF 引擎，因此这里不重复建模。
+type MediaAnnotation struct {
+	ID        uint      `gorm:"primarykey"                    json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	UserID uint `gorm:"uniqueIndex:idx_media_annotation_key;not null"       json:"-"`
+	ItemID uint `gorm:"uniqueIndex:idx_media_annotation_key;not null;index" json:"item_id"`
+	// RemoteID 是查看器分配的批注 id：多设备打开同一份 PDF 时靠它做去重与更新
+	RemoteID string `gorm:"uniqueIndex:idx_media_annotation_key;size:128;not null" json:"remote_id"`
+	Anchor   string `gorm:"type:text;not null"                                json:"anchor"`
+}
+
 // EmbyDevice Emby 客户端会话（由 AuthenticateByName 签发）
 type EmbyDevice struct {
 	ID        uint      `gorm:"primarykey"             json:"id"`
