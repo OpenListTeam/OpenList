@@ -16,6 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/media/imgmime"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -167,8 +168,16 @@ func embyImage(c *gin.Context, id string, segs []string, allowAnon bool) {
 	if user, ok := embyAuth(c); ok {
 		lib = loadEmbyLibrary(user)
 	} else if allowAnon {
-		// Emby 客户端的封面 URL 不带 token，图片必须允许匿名访问
-		lib = loadEmbyLibraryAll()
+		// Emby 客户端的封面 URL 不带 token，只能允许匿名访问；
+		// 但必须按访客身份做权限过滤，否则等于把整个媒体库（含 hidden、
+		// base_path 之外、meta 受保护的条目）的封面暴露给未登录用户。
+		// 访客被禁用时直接拒绝，不能退化成「全库可见」。
+		guest, err := op.GetGuest()
+		if err != nil || guest.Disabled {
+			embyUnauthorized(c)
+			return
+		}
+		lib = loadEmbyLibrary(guest)
 	} else {
 		embyUnauthorized(c)
 		return

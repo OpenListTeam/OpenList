@@ -26,24 +26,6 @@ type embyLibrary struct {
 	ids map[string]string
 }
 
-// loadEmbyLibraryAll 加载全部媒体，不做用户权限过滤。
-// 仅用于封面图片这类匿名可访问的资源。
-func loadEmbyLibraryAll() *embyLibrary {
-	l := &embyLibrary{userData: map[[2]uint]*model.MediaUserData{}, ids: map[string]string{}}
-	if MediaTypeEnabled(model.MediaTypeVideo) {
-		if items, err := db.ListAllMediaItems(model.MediaTypeVideo); err == nil {
-			l.videos = items
-		}
-	}
-	if MediaTypeEnabled(model.MediaTypeMusic) {
-		if items, err := db.ListAllMediaItems(model.MediaTypeMusic); err == nil {
-			l.music = items
-		}
-	}
-	l.registerIDs()
-	return l
-}
-
 func loadEmbyLibrary(user *model.User) *embyLibrary {
 	l := &embyLibrary{
 		user:     user,

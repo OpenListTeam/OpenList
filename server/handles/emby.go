@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"hash/fnv"
+	"net"
 	"net/http"
 	stdpath "path"
 	"regexp"
@@ -634,7 +635,10 @@ func EmbyAPI(c *gin.Context) {
 		embySystemInfo(c)
 		return
 	case len(lower) == 2 && lower[0] == "system" && lower[1] == "endpoint":
-		c.JSON(200, gin.H{"IsLocal": true, "IsInNetwork": true})
+		// 按实际来源判断，不要固定返回 true：硬编码「内网直连」会让客户端
+		// 误以为可直连并跳过中转，也是对匿名访问者宣称内网可达。
+		local := embyIsLocalRequest(c)
+		c.JSON(200, gin.H{"IsLocal": local, "IsInNetwork": local})
 		return
 	case len(lower) == 2 && lower[0] == "localization" && lower[1] == "options":
 		c.JSON(200, []any{})
@@ -798,10 +802,12 @@ func EmbyAPI(c *gin.Context) {
 }
 
 func embyUnauthorized(c *gin.Context) {
-	// 记录客户端实际请求，便于排查"连接后被判未认证"的兼容问题
-	utils.Log.Warnf("emby unauthorized: %s %s client=%q device=%q token=%v",
-		c.Request.Method, c.Request.URL.RequestURI(), c.ClientIP(),
-		c.GetHeader("X-Emby-Authorization"), embyRequestToken(c) != "")
+	// 记录客户端实际请求，便于排查"连接后被判未认证"的兼容问题。
+	// 只能记 Path 不能记 RequestURI：query 里可能带 Pw/Password/api_key，
+	// 而 X-Emby-Authorization 里是可直接使用的设备令牌，都不能落到日志里。
+	utils.Log.Warnf("emby unauthorized: %s %s client=%q ua=%q hasToken=%v",
+		c.Request.Method, c.Request.URL.Path, c.ClientIP(),
+		c.GetHeader("User-Agent"), embyRequestToken(c) != "")
 	c.JSON(401, gin.H{"Error": "Unauthorized", "ResponseStatus": gin.H{"ErrorCode": "Unauthorized"}})
 }
 
@@ -911,8 +917,10 @@ func embySystemInfo(c *gin.Context) {
 		"EncoderLocation":          "System",
 		"SystemArchitecture":       "X64",
 		"SystemUpdateLevel":        "Release",
-		"HttpServerPortNumber":     conf.Conf.Scheme.HttpPort,
-		"HttpsPortNumber":          0,
+		// 不返回真实监听端口：这个端点匿名可访问，客户端本来就是从已知端口连进来的，
+		// 回了真实端口只是白给一份端口探测信息。
+		"HttpServerPortNumber": 0,
+		"HttpsPortNumber":      0,
 		"ProgramDataPath":          "",
 		"ItemsByNamePath":          "",
 		"CachePath":                "",
@@ -920,6 +928,15 @@ func embySystemInfo(c *gin.Context) {
 		"InternalMetadataPath":     "",
 		"TranscodingTempPath":      "",
 	})
+}
+
+// embyIsLocalRequest 判断请求是否来自本机 / 内网，用于 /System/Endpoint。
+func embyIsLocalRequest(c *gin.Context) bool {
+	ip := net.ParseIP(c.ClientIP())
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
 }
 
 // embyReadAuthBody 读取登录凭据，兼容 JSON / 表单 / query 三种提交方式

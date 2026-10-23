@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/go-cache"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,17 +24,20 @@ func mediaAuthLocked(c *gin.Context) bool {
 	return ok && count >= model.DefaultMaxAuthRetries
 }
 
-// mediaAuthFailed 记录一次认证失败
-func mediaAuthFailed(c *gin.Context) {
-	key := mediaAuthKey(c)
+// bumpMediaAuthCount 增加一次失败计数。
+// 计数必须带 TTL：key 里包含 IP / 用户名（后者来自请求参数，可被随意伪造），
+// 不带过期时间会让缓存随请求无限增长；固定窗口也让锁定到期后计数自动归零。
+// 达到上限后请求会被 mediaAuthLocked / mediaAuthLockedFor 拦截，不会再走到这里，
+// 因此锁定窗口不会被持续刷新。
+func bumpMediaAuthCount(key string) {
 	count, _ := model.LoginCache.Get(key)
 	count++
-	model.LoginCache.Set(key, count)
-	if count >= model.DefaultMaxAuthRetries {
-		// 达到上限时设定锁定窗口；锁定期间请求会被 mediaAuthLocked 直接拦截，
-		// 不会再走到这里，因此过期时间不会被续期
-		model.LoginCache.Expire(key, model.DefaultLockDuration)
-	}
+	model.LoginCache.Set(key, count, cache.WithEx[int](model.DefaultLockDuration))
+}
+
+// mediaAuthFailed 记录一次认证失败（IP 维度）
+func mediaAuthFailed(c *gin.Context) {
+	bumpMediaAuthCount(mediaAuthKey(c))
 }
 
 // mediaAuthSucceeded 认证成功后清除失败计数
@@ -64,19 +68,13 @@ func mediaAuthLockedFor(c *gin.Context, username string) bool {
 	return ok && count >= model.DefaultMaxAuthRetries
 }
 
-// bumpMediaAuthUser 给用户名维度记一次失败（达到上限时设定锁定窗口，不续期）
+// bumpMediaAuthUser 给用户名维度记一次失败
 func bumpMediaAuthUser(username string) {
 	name := strings.TrimSpace(username)
 	if name == "" {
 		return
 	}
-	key := mediaAuthUserKey(name)
-	count, _ := model.LoginCache.Get(key)
-	count++
-	model.LoginCache.Set(key, count)
-	if count >= model.DefaultMaxAuthRetries {
-		model.LoginCache.Expire(key, model.DefaultLockDuration)
-	}
+	bumpMediaAuthCount(mediaAuthUserKey(name))
 }
 
 // mediaAuthFailedFor 记录一次认证失败：同时计入 IP 与用户名两个维度。
