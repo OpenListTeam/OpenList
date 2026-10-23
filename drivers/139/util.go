@@ -173,7 +173,7 @@ func (d *Yun139) request(url string, method string, callback base.ReqCallback, r
 	if d.isFamily() {
 		svcType = "2"
 	}
-	req.SetHeaders(map[string]string{
+	headers := map[string]string{
 		"Accept":         "application/json, text/plain, */*",
 		"CMS-DEVICE":     "default",
 		"Authorization":  "Basic " + d.getAuthorization(),
@@ -185,14 +185,16 @@ func (d *Yun139) request(url string, method string, callback base.ReqCallback, r
 		"mcloud-version":         "7.14.0",
 		"Origin":                 "https://yun.139.com",
 		"Referer":                "https://yun.139.com/w/",
-		"x-DeviceInfo":           "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||",
-		"x-huawei-channelSrc":    "10000034",
+		"x-DeviceInfo":           d.deviceInfo(),
+		"x-huawei-channelSrc":    d.yunChannel(),
 		"x-inner-ntwk":           "2",
 		"x-m4c-caller":           "PC",
 		"x-m4c-src":              "10002",
 		"x-SvcType":              svcType,
 		"Inner-Hcy-Router-Https": "1",
-	})
+	}
+	d.applyAppHeaders(headers)
+	req.SetHeaders(headers)
 
 	var e BaseResp
 	req.SetResult(&e)
@@ -248,7 +250,7 @@ func (d *Yun139) requestRoute(data interface{}, resp interface{}) ([]byte, error
 	if d.isFamily() {
 		svcType = "2"
 	}
-	req.SetHeaders(map[string]string{
+	headers := map[string]string{
 		"Accept":         "application/json, text/plain, */*",
 		"CMS-DEVICE":     "default",
 		"Authorization":  "Basic " + d.getAuthorization(),
@@ -260,14 +262,16 @@ func (d *Yun139) requestRoute(data interface{}, resp interface{}) ([]byte, error
 		"mcloud-version":         "7.14.0",
 		"Origin":                 "https://yun.139.com",
 		"Referer":                "https://yun.139.com/w/",
-		"x-DeviceInfo":           "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||",
-		"x-huawei-channelSrc":    "10000034",
+		"x-DeviceInfo":           d.deviceInfo(),
+		"x-huawei-channelSrc":    d.yunChannel(),
 		"x-inner-ntwk":           "2",
 		"x-m4c-caller":           "PC",
 		"x-m4c-src":              "10002",
 		"x-SvcType":              svcType,
 		"Inner-Hcy-Router-Https": "1",
-	})
+	}
+	d.applyAppHeaders(headers)
+	req.SetHeaders(headers)
 
 	var e BaseResp
 	req.SetResult(&e)
@@ -843,22 +847,99 @@ func unicode(str string) string {
 	return textUnquoted
 }
 
-// Client types reported in the X-Yun-Client-Info header. The web client is the
-// default with a 50 GB single file upload limit, while the PC client raises the
-// limit to 500 GB.
+// Client identity reported to the 139 APIs. The web client is the default with a
+// 50 GB single file upload limit and the PC client raises the limit to 500 GB.
+// The mobile App does not use the web style client info at all: it reports its
+// own Android protocol stack, which is emulated here because App-only features
+// (for example uploading images while the disk is full) are bound to it.
 const (
 	yunClientTypeWeb = "9"
 	yunClientTypePC  = "13"
+
+	yunWebChannel = "10000034"
+
+	// Android App protocol stack values.
+	yunAppChannel    = "10000023"
+	yunAppVersion    = "13.9.0"
+	yunAppModel      = "22041216C"
+	yunAppOS         = "android 14"
+	yunAppResolution = "1080X2360"
+	yunAppMAC        = "02-00-00-00-00-00"
+	yunAppUserAgent  = "okhttp/4.12.0"
 )
 
-// yunClientInfo returns the X-Yun-Client-Info header value for the configured
-// client_type addition. Anything other than pc falls back to the web client.
-func (d *Yun139) yunClientInfo() string {
-	clientType := yunClientTypeWeb
+// isAppClient reports whether the storage emulates the mobile App.
+func (d *Yun139) isAppClient() bool {
+	return d.ClientType == "app"
+}
+
+// clientTypeID returns the client type number used by the web style client info
+// headers. Anything other than pc falls back to the web client.
+func (d *Yun139) clientTypeID() string {
 	if d.ClientType == "pc" {
-		clientType = yunClientTypePC
+		return yunClientTypePC
 	}
-	return "||" + clientType + "|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||"
+	return yunClientTypeWeb
+}
+
+// appDeviceID returns a stable 32 character device id derived from the account,
+// so that every request looks like it comes from the same phone.
+func (d *Yun139) appDeviceID() string {
+	account := d.getAccount()
+	if account == "" {
+		account = "139yun"
+	}
+	return strings.ToUpper(utils.GetMD5EncodeStr(account))
+}
+
+// appClientInfo returns the client info string sent by the Android App, e.g.
+// 1|127.0.0.1|1|13.9.0|Xiaomi|22041216C|<device id>|02-00-00-00-00-00|android 14|1080X2360|zh||||032|0|
+func (d *Yun139) appClientInfo() string {
+	return fmt.Sprintf("1|127.0.0.1|1|%s|Xiaomi|%s|%s|%s|%s|%s|zh||||032|0|",
+		yunAppVersion, yunAppModel, d.appDeviceID(), yunAppMAC, yunAppOS, yunAppResolution)
+}
+
+// deviceInfo returns the x-DeviceInfo header value for the configured
+// client_type addition. The App reports its own Android client info instead of
+// the web style device info.
+func (d *Yun139) deviceInfo() string {
+	if d.isAppClient() {
+		return d.appClientInfo()
+	}
+	return "||" + d.clientTypeID() + "|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||"
+}
+
+// yunClientInfo returns the X-Yun-Client-Info header value for the configured
+// client_type addition.
+func (d *Yun139) yunClientInfo() string {
+	if d.isAppClient() {
+		return d.appClientInfo()
+	}
+	return d.deviceInfo() + "dW5kZWZpbmVk||"
+}
+
+// yunChannel returns the channel source reported by the emulated client.
+func (d *Yun139) yunChannel() string {
+	if d.isAppClient() {
+		return yunAppChannel
+	}
+	return yunWebChannel
+}
+
+// applyAppHeaders applies the App only header tweaks: the App uses its own
+// Android HTTP stack with its own protocol headers and does not send the web
+// Caller header.
+func (d *Yun139) applyAppHeaders(headers map[string]string) {
+	if !d.isAppClient() {
+		return
+	}
+	headers["User-Agent"] = yunAppUserAgent
+	headers["Accept-Language"] = "zh-CN"
+	headers["Content-Type"] = "application/json; charset=UTF-8"
+	headers["x-yun-url-type"] = "1"
+	headers["x-yun-op-type"] = "1"
+	headers["x-yun-sub-op-type"] = "100"
+	delete(headers, "Caller")
 }
 
 func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
@@ -877,7 +958,7 @@ func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback
 	if d.isFamily() {
 		svcType = "2"
 	}
-	req.SetHeaders(map[string]string{
+	headers := map[string]string{
 		"Accept":               "application/json, text/plain, */*",
 		"Authorization":        "Basic " + d.getAuthorization(),
 		"Caller":               "web",
@@ -887,19 +968,21 @@ func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback
 		"Mcloud-Route":         "001",
 		"Mcloud-Sign":          fmt.Sprintf("%s,%s,%s", ts, randStr, sign),
 		"Mcloud-Version":       "7.14.0",
-		"x-DeviceInfo":         "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||",
-		"x-huawei-channelSrc":  "10000034",
+		"x-DeviceInfo":         d.deviceInfo(),
+		"x-huawei-channelSrc":  d.yunChannel(),
 		"x-inner-ntwk":         "2",
 		"x-m4c-caller":         "PC",
 		"x-m4c-src":            "10002",
 		"x-SvcType":            svcType,
 		"X-Yun-Api-Version":    "v1",
-		"X-Yun-App-Channel":    "10000034",
-		"X-Yun-Channel-Source": "10000034",
+		"X-Yun-App-Channel":    d.yunChannel(),
+		"X-Yun-Channel-Source": d.yunChannel(),
 		"X-Yun-Client-Info":    d.yunClientInfo(),
 		"X-Yun-Module-Type":    "100",
 		"X-Yun-Svc-Type":       "1",
-	})
+	}
+	d.applyAppHeaders(headers)
+	req.SetHeaders(headers)
 
 	var e BaseResp
 	req.SetResult(&e)
