@@ -1,6 +1,8 @@
 package handles
 
 import (
+	"strings"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/gin-gonic/gin"
 )
@@ -37,4 +39,56 @@ func mediaAuthFailed(c *gin.Context) {
 // mediaAuthSucceeded 认证成功后清除失败计数
 func mediaAuthSucceeded(c *gin.Context) {
 	model.LoginCache.Del(mediaAuthKey(c))
+}
+
+// ==================== 用户名维度 ====================
+// 只按 IP 计数是可以被绕过的：gin 默认信任所有代理（仓库里没有设置
+// SetTrustedProxies），客户端自带 X-Forwarded-For 就能改写 c.ClientIP()，
+// 轮换这个头即可无限次尝试。因此再按用户名记一份失败次数：它与 IP 无关，
+// 即使 IP 被伪造，对同一账号的爆破依然会被锁住。
+// （代理信任范围属于项目层面的问题，主干 /api/auth/login 现状相同。）
+
+func mediaAuthUserKey(username string) string {
+	return "media:user:" + strings.ToLower(strings.TrimSpace(username))
+}
+
+// mediaAuthLockedFor 本次请求是否应被限流：IP 或用户名任一维度达到上限即拒绝。
+func mediaAuthLockedFor(c *gin.Context, username string) bool {
+	if mediaAuthLocked(c) {
+		return true
+	}
+	if strings.TrimSpace(username) == "" {
+		return false
+	}
+	count, ok := model.LoginCache.Get(mediaAuthUserKey(username))
+	return ok && count >= model.DefaultMaxAuthRetries
+}
+
+// bumpMediaAuthUser 给用户名维度记一次失败（达到上限时设定锁定窗口，不续期）
+func bumpMediaAuthUser(username string) {
+	name := strings.TrimSpace(username)
+	if name == "" {
+		return
+	}
+	key := mediaAuthUserKey(name)
+	count, _ := model.LoginCache.Get(key)
+	count++
+	model.LoginCache.Set(key, count)
+	if count >= model.DefaultMaxAuthRetries {
+		model.LoginCache.Expire(key, model.DefaultLockDuration)
+	}
+}
+
+// mediaAuthFailedFor 记录一次认证失败：同时计入 IP 与用户名两个维度。
+func mediaAuthFailedFor(c *gin.Context, username string) {
+	mediaAuthFailed(c)
+	bumpMediaAuthUser(username)
+}
+
+// mediaAuthSucceededFor 认证成功后清除 IP 与用户名两个维度的计数。
+func mediaAuthSucceededFor(c *gin.Context, username string) {
+	mediaAuthSucceeded(c)
+	if name := strings.TrimSpace(username); name != "" {
+		model.LoginCache.Del(mediaAuthUserKey(name))
+	}
 }

@@ -324,7 +324,8 @@ func SubsonicAPI(c *gin.Context) {
 
 	user, _, ok := subAuth(c)
 	if !ok {
-		if mediaAuthLocked(c) {
+		// 锁定判定同样要看用户名维度，否则被锁的账号只会收到「密码错误」
+		if mediaAuthLockedFor(c, subParam(c, "u")) {
 			subError(c, 40, "Too many failed attempts, please try again later")
 			return
 		}
@@ -475,18 +476,20 @@ func subIntParam(c *gin.Context, key string, def int) int {
 	return n
 }
 
-// subAuth 支持 apiKey / u+t+s / u+p（默认关闭）认证，并对失败次数做 IP 限流
+// subAuth 支持 apiKey / u+t+s / u+p（默认关闭）认证，并对失败次数做 IP + 用户名双维度限流
 func subAuth(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
-	if mediaAuthLocked(c) {
+	username := strings.TrimSpace(subParam(c, "u"))
+	if mediaAuthLockedFor(c, username) {
 		return nil, nil, false
 	}
 	u, k, ok := subAuthInner(c)
 	if ok {
-		mediaAuthSucceeded(c)
+		// 用真实用户名清除计数：apiKey 认证时 u 参数是空的
+		mediaAuthSucceededFor(c, u.Username)
 	} else if subHasCredential(c) {
 		// 只有「确实带了凭据但校验失败」才计数；
 		// 完全裸请求（部分客户端启动时会先发一次不带参数的探测）不计入失败次数。
-		mediaAuthFailed(c)
+		mediaAuthFailedFor(c, username)
 	}
 	return u, k, ok
 }

@@ -957,18 +957,19 @@ func embyReadAuthBody(c *gin.Context) (username, pw string) {
 
 // embyAuthenticateByName 标准登录接口 POST /Users/AuthenticateByName
 func embyAuthenticateByName(c *gin.Context) {
-	if mediaAuthLocked(c) {
+	username, pw := embyReadAuthBody(c)
+	// 除 IP 外还要检查用户名维度：IP 可被 X-Forwarded-For 伪造
+	if mediaAuthLockedFor(c, username) {
 		c.JSON(429, gin.H{"Error": model.TooManyAttempts})
 		return
 	}
-	username, pw := embyReadAuthBody(c)
 	if username == "" || pw == "" {
 		embyUnauthorized(c)
 		return
 	}
 	user, err := op.GetUserByName(username)
 	if err != nil || user.Disabled || user.IsGuest() {
-		mediaAuthFailed(c)
+		mediaAuthFailedFor(c, username)
 		embyUnauthorized(c)
 		return
 	}
@@ -992,6 +993,11 @@ func embyAuthenticateByID(c *gin.Context, idStr string) {
 		embyUnauthorized(c)
 		return
 	}
+	// 按 id 登录同样要受用户名维度的锁定约束，否则可以换 id 绕过按用户名的计数
+	if mediaAuthLockedFor(c, user.Username) {
+		c.JSON(429, gin.H{"Error": model.TooManyAttempts})
+		return
+	}
 	_, pw := embyReadAuthBody(c)
 	if pw == "" {
 		embyUnauthorized(c)
@@ -1008,20 +1014,20 @@ func embyCompleteAuth(c *gin.Context, user *model.User, pw string) {
 	case keyOK && keyUser.ID == user.ID:
 		// 应用密钥认证通过，2FA 账号也允许（密钥本身即第二因素）
 	case keyOK:
-		mediaAuthFailed(c)
+		mediaAuthFailedFor(c, user.Username)
 		embyUnauthorized(c)
 		return
 	case user.OtpSecret != "":
 		// 2FA 账号不允许用登录密码通过 Emby 认证
-		mediaAuthFailed(c)
+		mediaAuthFailedFor(c, user.Username)
 		c.JSON(403, gin.H{"Error": "Accounts with two-factor authentication must use an app key"})
 		return
 	case user.ValidateRawPassword(pw) != nil:
-		mediaAuthFailed(c)
+		mediaAuthFailedFor(c, user.Username)
 		embyUnauthorized(c)
 		return
 	}
-	mediaAuthSucceeded(c)
+	mediaAuthSucceededFor(c, user.Username)
 	authHeader := embyParseAuthHeader(c.GetHeader("X-Emby-Authorization"))
 	token, err := media.NewDeviceToken()
 	if err != nil {
