@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -20,8 +21,8 @@ import (
 
 type ManifestIcon struct {
 	Src   string `json:"src"`
-	Sizes string `json:"sizes"`
-	Type  string `json:"type"`
+	Sizes string `json:"sizes,omitempty"`
+	Type  string `json:"type,omitempty"`
 }
 
 type Manifest struct {
@@ -131,6 +132,19 @@ func UpdateIndex() {
 	utils.Log.Debug("Index.html update completed")
 }
 
+func manifestIcon(src string) ManifestIcon {
+	icon := ManifestIcon{Src: src, Sizes: "any"}
+	u, err := url.Parse(src)
+	if err != nil {
+		return icon
+	}
+	mimeType := utils.GetMimeType(u.Path)
+	if strings.HasPrefix(mimeType, "image/") {
+		icon.Type = mimeType
+	}
+	return icon
+}
+
 func ManifestJSON(c *gin.Context) {
 	// Get site configuration to ensure consistent base path handling
 	siteConfig := getSiteConfig()
@@ -156,13 +170,7 @@ func ManifestJSON(c *gin.Context) {
 		Scope:    scope,
 		StartURL: startURL,
 		Name:     siteTitle,
-		Icons: []ManifestIcon{
-			{
-				Src:   logoUrl,
-				Sizes: "512x512",
-				Type:  "image/png",
-			},
-		},
+		Icons:    []ManifestIcon{manifestIcon(logoUrl)},
 	}
 
 	c.Header("Content-Type", "application/json")

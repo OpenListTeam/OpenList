@@ -2,7 +2,7 @@ module github.com/OpenListTeam/OpenList/v4
 
 go 1.26.0
 
-toolchain go1.27.1
+toolchain go1.27.3
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
@@ -10,7 +10,7 @@ require (
 	github.com/KarpelesLab/reflink v1.0.2
 	github.com/KirCute/zip v1.0.1
 	github.com/OpenListTeam/go-cache v0.1.0
-	github.com/OpenListTeam/gofakes3 v0.8.2-0.20260911142347-cd3c030a83b4
+	github.com/OpenListTeam/gofakes3 v0.8.2
 	github.com/OpenListTeam/sftpd-openlist v1.0.1
 	github.com/OpenListTeam/tache v0.2.2
 	github.com/OpenListTeam/times v0.1.0
