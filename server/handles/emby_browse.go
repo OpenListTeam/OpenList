@@ -22,10 +22,34 @@ type embyLibrary struct {
 	music  []model.MediaItem
 
 	userData map[[2]uint]*model.MediaUserData
+	// ids 保存 GUID -> 内部可读 ID 的映射，客户端只会回传 GUID
+	ids map[string]string
+}
+
+// loadEmbyLibraryAll 加载全部媒体，不做用户权限过滤。
+// 仅用于封面图片这类匿名可访问的资源。
+func loadEmbyLibraryAll() *embyLibrary {
+	l := &embyLibrary{userData: map[[2]uint]*model.MediaUserData{}, ids: map[string]string{}}
+	if MediaTypeEnabled(model.MediaTypeVideo) {
+		if items, err := db.ListAllMediaItems(model.MediaTypeVideo); err == nil {
+			l.videos = items
+		}
+	}
+	if MediaTypeEnabled(model.MediaTypeMusic) {
+		if items, err := db.ListAllMediaItems(model.MediaTypeMusic); err == nil {
+			l.music = items
+		}
+	}
+	l.registerIDs()
+	return l
 }
 
 func loadEmbyLibrary(user *model.User) *embyLibrary {
-	l := &embyLibrary{user: user, userData: map[[2]uint]*model.MediaUserData{}}
+	l := &embyLibrary{
+		user:     user,
+		userData: map[[2]uint]*model.MediaUserData{},
+		ids:      map[string]string{},
+	}
 	if MediaTypeEnabled(model.MediaTypeVideo) {
 		items, err := db.ListAllMediaItems(model.MediaTypeVideo)
 		if err == nil {
@@ -61,7 +85,62 @@ func loadEmbyLibrary(user *model.User) *embyLibrary {
 			}
 		}
 	}
+	l.registerIDs()
 	return l
+}
+
+// guid 返回内部 ID 对应的对外数字 ID，并登记反查映射。
+// 名称保留 guid 是为了少改调用点，实际输出的是纯数字（Emby Item Id 规范）。
+func (l *embyLibrary) guid(orig string) string {
+	g := embyNumericID(orig)
+	if l.ids != nil {
+		l.ids[g] = orig
+		// 兼容旧版本缓存下来的 GUID 形式 ID：客户端没清缓存时仍能解析，
+		// 否则会一直拿旧 ID 请求并得到 {"Error":"Not Found"}
+		l.ids[embyGUID(orig)] = orig
+	}
+	return g
+}
+
+// origID 把客户端回传的数字 ID 还原为内部 ID；已是内部 ID 时原样返回
+func (l *embyLibrary) origID(id string) string {
+	id = strings.TrimSpace(id)
+	if l.ids != nil {
+		if orig, ok := l.ids[id]; ok {
+			return orig
+		}
+	}
+	return id
+}
+
+// registerIDs 预先登记全部条目的对外 ID，保证任意请求都能反查出内部 ID
+func (l *embyLibrary) registerIDs() {
+	register := func(orig string) {
+		l.ids[embyNumericID(orig)] = orig
+		l.ids[embyGUID(orig)] = orig
+	}
+	register("root")
+	register("lib-movie")
+	register("lib-tv")
+	register("lib-music")
+	for i := range l.videos {
+		register(fmt.Sprintf("mv-%d", l.videos[i].ID))
+	}
+	for _, s := range l.seriesList() {
+		register("sr-" + s.Key)
+		for _, season := range l.seasonList(s) {
+			register(fmt.Sprintf("sn-%s-%d", s.Key, season))
+		}
+		for _, ep := range l.episodesOf(s.Key, 0) {
+			register(ep.ID)
+		}
+	}
+	for i := range l.music {
+		it := &l.music[i]
+		register(fmt.Sprintf("so-%d", it.ID))
+		register("al-" + albumKeyOf(it))
+		register("ar-" + artistKeyOf(it))
+	}
 }
 
 func (l *embyLibrary) userDataOf(itemID uint, episodeIndex int) *embyUserData {
@@ -89,6 +168,13 @@ type embySeries struct {
 	Cover    string
 }
 
+// isEmbySeriesItem 判断视频条目是否属于剧集。
+// 电视剧按目录扫描（IsFolder=true，带 Episodes 选集），或被刮削为 tv；
+// 其余单文件视频一律按电影处理。仅看 video_type 会把目录型剧集误判为电影。
+func isEmbySeriesItem(it *model.MediaItem) bool {
+	return it.IsFolder || it.VideoType == "tv"
+}
+
 func seriesKeyOf(item *model.MediaItem) string {
 	name := item.ScrapedName
 	if name == "" {
@@ -113,7 +199,7 @@ func (l *embyLibrary) seriesList() []*embySeries {
 	var order []string
 	for i := range l.videos {
 		it := &l.videos[i]
-		if it.VideoType != "tv" {
+		if !isEmbySeriesItem(it) {
 			continue
 		}
 		key := seriesKeyOf(it)
@@ -177,7 +263,7 @@ func (l *embyLibrary) episodesOf(seriesKey string, season int) []*embyEpisode {
 	var out []*embyEpisode
 	for i := range l.videos {
 		it := &l.videos[i]
-		if it.VideoType != "tv" || seriesKeyOf(it) != seriesKey {
+		if !isEmbySeriesItem(it) || seriesKeyOf(it) != seriesKey {
 			continue
 		}
 		s := it.Season
@@ -352,7 +438,8 @@ func (l *embyLibrary) movieItem(it *model.MediaItem) *embyItem {
 		Name:            name,
 		SortName:        name,
 		ServerId:        embyServerID(),
-		Id:              fmt.Sprintf("mv-%d", it.ID),
+		Id:              l.guid(fmt.Sprintf("mv-%d", it.ID)),
+		ParentId:        l.guid("lib-movie"),
 		Type:            "Movie",
 		MediaType:       "Video",
 		IsFolder:        false,
@@ -383,7 +470,8 @@ func (l *embyLibrary) seriesItem(s *embySeries) *embyItem {
 		Name:         s.Name,
 		SortName:     s.Name,
 		ServerId:     embyServerID(),
-		Id:           "sr-" + s.Key,
+		Id:           l.guid("sr-" + s.Key),
+		ParentId:     l.guid("lib-tv"),
 		Type:         "Series",
 		IsFolder:     true,
 		ProductionYear: s.Year,
@@ -441,15 +529,15 @@ func (l *embyLibrary) seasonItem(s *embySeries, season int) *embyItem {
 			unplayed++
 		}
 	}
-	return &embyItem{
+	e := &embyItem{
 		Name:         fmt.Sprintf("Season %d", season),
 		SortName:     fmt.Sprintf("Season %02d", season),
 		ServerId:     embyServerID(),
-		Id:           fmt.Sprintf("sn-%s-%d", s.Key, season),
+		Id:           l.guid(fmt.Sprintf("sn-%s-%d", s.Key, season)),
 		Type:         "Season",
 		IsFolder:     true,
-		ParentId:     "sr-" + s.Key,
-		SeriesId:     "sr-" + s.Key,
+		ParentId:     l.guid("sr-" + s.Key),
+		SeriesId:     l.guid("sr-" + s.Key),
 		SeriesName:   s.Name,
 		IndexNumber:  season,
 		ChildCount:   len(eps),
@@ -457,6 +545,12 @@ func (l *embyLibrary) seasonItem(s *embySeries, season int) *embyItem {
 		ImageTags:    map[string]string{},
 		UserData:     &embyUserData{UnplayedItemCount: unplayed},
 	}
+	if len(s.Items) > 0 {
+		if tag := embyImageTag(&s.Items[0]); tag != "" {
+			e.ImageTags["Primary"] = tag
+		}
+	}
+	return e
 }
 
 func (l *embyLibrary) episodeItem(ep *embyEpisode) *embyItem {
@@ -474,14 +568,14 @@ func (l *embyLibrary) episodeItem(ep *embyEpisode) *embyItem {
 		Name:              title,
 		SortName:          fmt.Sprintf("%02d-%03d", ep.Season, ep.Index),
 		ServerId:          embyServerID(),
-		Id:                ep.ID,
+		Id:                l.guid(ep.ID),
 		Type:              "Episode",
 		MediaType:         "Video",
 		IsFolder:          false,
-		ParentId:          seasonID,
-		SeriesId:          seriesID,
+		ParentId:          l.guid(seasonID),
+		SeriesId:          l.guid(seriesID),
 		SeriesName:        ep.SeriesName,
-		SeasonId:          seasonID,
+		SeasonId:          l.guid(seasonID),
 		SeasonName:        fmt.Sprintf("Season %d", ep.Season),
 		IndexNumber:       ep.Index,
 		ParentIndexNumber: ep.Season,
@@ -506,11 +600,12 @@ func (l *embyLibrary) albumItem(al *embyAlbum) *embyItem {
 		Name:           al.Name,
 		SortName:       al.Name,
 		ServerId:       embyServerID(),
-		Id:             "al-" + al.Key,
+		Id:             l.guid("al-" + al.Key),
+		ParentId:       l.guid("lib-music"),
 		Type:           "MusicAlbum",
 		IsFolder:       true,
 		AlbumArtist:    al.Artist,
-		AlbumArtists:   []embyNameID{{Name: al.Artist, Id: "ar-" + artistKeyOf(&al.Items[0])}},
+		AlbumArtists:   []embyNameID{{Name: al.Artist, Id: l.guid("ar-" + artistKeyOf(&al.Items[0]))}},
 		ProductionYear: al.Year,
 		ChildCount:     len(al.Items),
 		DateCreated:    embyTimeStr(al.Items[0].CreatedAt),
@@ -540,17 +635,17 @@ func (l *embyLibrary) songItem(it *model.MediaItem) *embyItem {
 		Name:              name,
 		SortName:          name,
 		ServerId:          embyServerID(),
-		Id:                fmt.Sprintf("so-%d", it.ID),
+		Id:                l.guid(fmt.Sprintf("so-%d", it.ID)),
 		Type:              "Audio",
 		MediaType:         "Audio",
 		IsFolder:          false,
-		ParentId:          "al-" + albumKey,
+		ParentId:          l.guid("al-" + albumKey),
 		Album:             albumName,
-		AlbumId:           "al-" + albumKey,
+		AlbumId:           l.guid("al-" + albumKey),
 		AlbumArtist:       artist,
-		AlbumArtists:      []embyNameID{{Name: artist, Id: "ar-" + artistKey}},
+		AlbumArtists:      []embyNameID{{Name: artist, Id: l.guid("ar-" + artistKey)}},
 		Artists:           []string{artist},
-		ArtistItems:       []embyNameID{{Name: artist, Id: "ar-" + artistKey}},
+		ArtistItems:       []embyNameID{{Name: artist, Id: l.guid("ar-" + artistKey)}},
 		IndexNumber:       it.TrackNumber,
 		RunTimeTicks:      embyTicks(it.Duration),
 		Path:              MediaItemFilePath(it),
@@ -569,6 +664,7 @@ func (l *embyLibrary) songItem(it *model.MediaItem) *embyItem {
 }
 
 func (l *embyLibrary) songByID(id string) (*model.MediaItem, bool) {
+	id = l.origID(id)
 	n, err := strconv.ParseUint(strings.TrimPrefix(id, "so-"), 10, 64)
 	if err != nil {
 		return nil, false
@@ -588,26 +684,41 @@ func (l *embyLibrary) songByID(id string) (*model.MediaItem, bool) {
 // ==================== 视图 / 列表 ====================
 
 func (l *embyLibrary) viewItems() []*embyItem {
+	movieCount, seriesCount := 0, 0
+	for i := range l.videos {
+		if isEmbySeriesItem(&l.videos[i]) {
+			continue
+		}
+		movieCount++
+	}
+	seriesCount = len(l.seriesList())
+	albumCount := len(l.albums())
+
 	var out []*embyItem
 	if MediaTypeEnabled(model.MediaTypeVideo) {
 		out = append(out, &embyItem{
 			Name: "Movies", SortName: "Movies", ServerId: embyServerID(),
-			Id: "lib-movie", Type: "CollectionFolder", IsFolder: true,
-			CollectionType: "movies", LocationType: "FileSystem",
+			Id: l.guid("lib-movie"), ParentId: l.guid("root"), Type: "CollectionFolder", IsFolder: true,
+			CollectionType: "movies", ViewType: "movies", LocationType: "FileSystem",
+			ChildCount: movieCount, RecursiveItemCount: movieCount,
+			// 只声明客户端能正常处理的子视图，避免生成 OpenList 没有实现的 tab
+			Subviews: []string{"movies"},
 			ImageTags: map[string]string{}, UserData: &embyUserData{},
 		})
 		out = append(out, &embyItem{
 			Name: "TV Shows", SortName: "TV Shows", ServerId: embyServerID(),
-			Id: "lib-tv", Type: "CollectionFolder", IsFolder: true,
-			CollectionType: "tvshows", LocationType: "FileSystem",
+			Id: l.guid("lib-tv"), ParentId: l.guid("root"), Type: "CollectionFolder", IsFolder: true,
+			CollectionType: "tvshows", ViewType: "tvshows", LocationType: "FileSystem",
+			ChildCount: seriesCount, RecursiveItemCount: seriesCount,
 			ImageTags: map[string]string{}, UserData: &embyUserData{},
 		})
 	}
 	if MediaTypeEnabled(model.MediaTypeMusic) {
 		out = append(out, &embyItem{
 			Name: "Music", SortName: "Music", ServerId: embyServerID(),
-			Id: "lib-music", Type: "CollectionFolder", IsFolder: true,
-			CollectionType: "music", LocationType: "FileSystem",
+			Id: l.guid("lib-music"), ParentId: l.guid("root"), Type: "CollectionFolder", IsFolder: true,
+			CollectionType: "music", ViewType: "music", LocationType: "FileSystem",
+			ChildCount: albumCount, RecursiveItemCount: albumCount,
 			ImageTags: map[string]string{}, UserData: &embyUserData{},
 		})
 	}
@@ -616,27 +727,78 @@ func (l *embyLibrary) viewItems() []*embyItem {
 
 func embyViews(c *gin.Context, user *model.User) {
 	lib := loadEmbyLibrary(user)
-	c.JSON(200, gin.H{"Items": lib.viewItems(), "TotalRecordCount": len(lib.viewItems())})
+	items := lib.viewItems()
+	c.JSON(200, gin.H{"Items": items, "TotalRecordCount": len(items), "StartIndex": 0})
+}
+
+// embyHomeSections 返回服务端首页分区配置（Emby 4.10+ 客户端直接使用）。
+// ListOptions.fields 必须存在：客户端会无条件调用 fields.includes()。
+func embyHomeSections() []gin.H {
+	return []gin.H{
+		{
+			"Id":              "userviews",
+			"SectionType":     "userviews",
+			"Name":            "Media",
+			"CollectionType":  "",
+			"ViewType":        "cards",
+			"ScrollDirection": "Horizontal",
+			"LimitItems":      false,
+			"ListOptions": gin.H{
+				"fields":                    []string{},
+				"shape":                     "auto",
+				"context":                   "home",
+				"preferThumb":               false,
+				"preferSeriesImage":         false,
+				"showChildCountIndicator":   false,
+				"image":                     nil,
+				"sideFooter":                nil,
+				"smallSideFooter":           nil,
+				"showCurrentProgramImage":   false,
+				"showAirDateTime":           false,
+				"showAirEndTime":            false,
+				"defaultShape":              nil,
+				"action":                    nil,
+				"multiSelect":               false,
+				"albumFirst":                false,
+				"lines":                     1,
+				"focusTransformTitleAdjust": true,
+				"contextMenu":               true,
+				"hoverMenu":                 true,
+				"hoverPlayButton":           false,
+			},
+			"QueryOptions": gin.H{},
+		},
+	}
+}
+
+// embySectionItems 返回首页某个分区的条目
+func embySectionItems(user *model.User, sectionID string) gin.H {
+	if sectionID == "userviews" {
+		lib := loadEmbyLibrary(user)
+		items := lib.viewItems()
+		return gin.H{"Items": items, "TotalRecordCount": len(items), "StartIndex": 0}
+	}
+	return gin.H{"Items": []any{}, "TotalRecordCount": 0, "StartIndex": 0}
 }
 
 func (l *embyLibrary) rootItem() *embyItem {
 	return &embyItem{
 		Name: "Media", SortName: "Media", ServerId: embyServerID(),
-		Id: "root", Type: "CollectionFolder", IsFolder: true,
+		Id: l.guid("root"), Type: "CollectionFolder", IsFolder: true,
 		LocationType: "FileSystem", ImageTags: map[string]string{}, UserData: &embyUserData{},
 	}
 }
 
 // childrenOf 返回指定父级下的子项
 func (l *embyLibrary) childrenOf(parentID string) []*embyItem {
-	parentID = strings.TrimSpace(parentID)
+	parentID = l.origID(parentID)
 	switch {
 	case parentID == "" || parentID == "root":
 		return l.viewItems()
 	case parentID == "lib-movie":
 		var out []*embyItem
 		for i := range l.videos {
-			if l.videos[i].VideoType != "tv" {
+			if !isEmbySeriesItem(&l.videos[i]) {
 				out = append(out, l.movieItem(&l.videos[i]))
 			}
 		}
@@ -709,7 +871,7 @@ func (l *embyLibrary) childrenOf(parentID string) []*embyItem {
 func (l *embyLibrary) allItems() []*embyItem {
 	var out []*embyItem
 	for i := range l.videos {
-		if l.videos[i].VideoType == "tv" {
+		if isEmbySeriesItem(&l.videos[i]) {
 			continue
 		}
 		out = append(out, l.movieItem(&l.videos[i]))
@@ -723,18 +885,106 @@ func (l *embyLibrary) allItems() []*embyItem {
 	return out
 }
 
+// embySplitCSV 解析 Emby 的逗号分隔参数，同时兼容 | 分隔
+func embySplitCSV(v string) []string {
+	var out []string
+	for _, p := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == '|' }) {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func embyInList(list []string, v string) bool {
+	for _, s := range list {
+		if strings.EqualFold(s, v) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterEmbyItems 实现 /Items 查询的通用过滤，覆盖 openemby_tv / Theater / Tsukimi 实际会发送的参数：
+// IncludeItemTypes、ExcludeItemTypes、MediaTypes、Ids、IsFolder、SearchTerm、NameStartsWith、Filters
+// allItemsFor 按请求的 IncludeItemTypes 只构造需要的类型。
+// 客户端无 ParentId 的递归查询（如 Type=Episode / MusicAlbum）必须能返回对应类型，
+// 且不应把其他媒体类型混进来。
+func (l *embyLibrary) allItemsFor(include []string) []*embyItem {
+	if len(include) == 0 {
+		return l.allItems()
+	}
+	want := func(t string) bool { return embyInList(include, t) }
+	var out []*embyItem
+	if want("Movie") {
+		for i := range l.videos {
+			if !isEmbySeriesItem(&l.videos[i]) {
+				out = append(out, l.movieItem(&l.videos[i]))
+			}
+		}
+	}
+	if want("Series") || want("Season") || want("Episode") {
+		for _, s := range l.seriesList() {
+			if want("Series") {
+				out = append(out, l.seriesItem(s))
+			}
+			if want("Season") {
+				for _, season := range l.seasonList(s) {
+					out = append(out, l.seasonItem(s, season))
+				}
+			}
+			if want("Episode") {
+				for _, ep := range l.episodesOf(s.Key, 0) {
+					out = append(out, l.episodeItem(ep))
+				}
+			}
+		}
+	}
+	if want("Audio") {
+		for i := range l.music {
+			out = append(out, l.songItem(&l.music[i]))
+		}
+	}
+	if want("MusicAlbum") {
+		for _, a := range l.albums() {
+			out = append(out, l.albumItem(a))
+		}
+	}
+	return out
+}
+
 func filterEmbyItems(items []*embyItem, c *gin.Context) []*embyItem {
-	types := strings.ToLower(c.Query("IncludeItemTypes"))
+	include := embySplitCSV(c.Query("IncludeItemTypes"))
+	exclude := embySplitCSV(c.Query("ExcludeItemTypes"))
+	mediaTypes := embySplitCSV(c.Query("MediaTypes"))
 	searchTerm := strings.ToLower(strings.TrimSpace(c.Query("SearchTerm")))
+	namePrefix := strings.ToLower(strings.TrimSpace(c.Query("NameStartsWith")))
 	filters := strings.ToLower(c.Query("Filters"))
 	isFolder := c.Query("IsFolder")
+	idSet := map[string]bool{}
+	for _, id := range embySplitCSV(c.Query("Ids")) {
+		idSet[strings.ToLower(id)] = true
+	}
 
 	var out []*embyItem
 	for _, it := range items {
-		if types != "" && !embyTypeMatches(it.Type, types) {
+		if len(include) > 0 && !embyInList(include, it.Type) {
 			continue
 		}
-		if searchTerm != "" && !strings.Contains(strings.ToLower(it.Name), searchTerm) {
+		if len(exclude) > 0 && embyInList(exclude, it.Type) {
+			continue
+		}
+		if len(mediaTypes) > 0 && !embyInList(mediaTypes, it.MediaType) {
+			continue
+		}
+		if len(idSet) > 0 && !idSet[strings.ToLower(it.Id)] {
+			continue
+		}
+		lname := strings.ToLower(it.Name)
+		if searchTerm != "" && !strings.Contains(lname, searchTerm) {
+			continue
+		}
+		if namePrefix != "" && !strings.HasPrefix(lname, namePrefix) {
 			continue
 		}
 		if isFolder != "" {
@@ -748,13 +998,12 @@ func filterEmbyItems(items []*embyItem, c *gin.Context) []*embyItem {
 				continue
 			}
 		}
-		if strings.Contains(filters, "isplayed") {
-			if it.UserData == nil || !it.UserData.Played {
-				continue
-			}
-		}
 		if strings.Contains(filters, "isunplayed") {
 			if it.UserData != nil && it.UserData.Played {
+				continue
+			}
+		} else if strings.Contains(filters, "isplayed") {
+			if it.UserData == nil || !it.UserData.Played {
 				continue
 			}
 		}
@@ -764,47 +1013,70 @@ func filterEmbyItems(items []*embyItem, c *gin.Context) []*embyItem {
 }
 
 func embyTypeMatches(itemType, wanted string) bool {
-	for _, t := range strings.Split(wanted, ",") {
-		if strings.EqualFold(strings.TrimSpace(t), itemType) {
-			return true
-		}
-	}
-	return false
+	return embyInList(embySplitCSV(wanted), itemType)
 }
 
+// sortEmbyItems 支持多个排序键（SortBy=SeriesSortName,ParentIndexNumber,IndexNumber,SortName）
 func sortEmbyItems(items []*embyItem, sortBy, order string) {
 	if sortBy == "" {
 		return
 	}
+	keys := embySplitCSV(sortBy)
 	desc := strings.EqualFold(order, "Descending")
-	switch strings.ToLower(strings.Split(sortBy, ",")[0]) {
-	case "sortname", "name":
-		sort.SliceStable(items, func(i, j int) bool {
-			if desc {
-				return items[i].SortName > items[j].SortName
-			}
-			return items[i].SortName < items[j].SortName
-		})
-	case "datecreated":
-		sort.SliceStable(items, func(i, j int) bool {
-			if desc {
-				return items[i].DateCreated > items[j].DateCreated
-			}
-			return items[i].DateCreated < items[j].DateCreated
-		})
-	case "productionyear":
-		sort.SliceStable(items, func(i, j int) bool {
-			if desc {
-				return items[i].ProductionYear > items[j].ProductionYear
-			}
-			return items[i].ProductionYear < items[j].ProductionYear
-		})
-	case "random":
+	if len(keys) > 0 && strings.EqualFold(keys[0], "random") {
 		for i := len(items) - 1; i > 0; i-- {
 			j := int(timeNowUnixNano() % int64(i+1))
 			items[i], items[j] = items[j], items[i]
 		}
+		return
 	}
+	cmp := func(a, b *embyItem, key string) int {
+		switch strings.ToLower(key) {
+		case "sortname", "name", "seriessortname":
+			la, lb := strings.ToLower(a.SortName), strings.ToLower(b.SortName)
+			if strings.EqualFold(key, "seriessortname") {
+				la, lb = strings.ToLower(a.SeriesName), strings.ToLower(b.SeriesName)
+			}
+			switch {
+			case la < lb:
+				return -1
+			case la > lb:
+				return 1
+			}
+		case "datecreated", "dateplayed":
+			switch {
+			case a.DateCreated < b.DateCreated:
+				return -1
+			case a.DateCreated > b.DateCreated:
+				return 1
+			}
+		case "productionyear":
+			return a.ProductionYear - b.ProductionYear
+		case "parentindexnumber":
+			return a.ParentIndexNumber - b.ParentIndexNumber
+		case "indexnumber":
+			return a.IndexNumber - b.IndexNumber
+		case "communityrating":
+			switch {
+			case a.CommunityRating < b.CommunityRating:
+				return -1
+			case a.CommunityRating > b.CommunityRating:
+				return 1
+			}
+		}
+		return 0
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		for _, k := range keys {
+			if r := cmp(items[i], items[j], k); r != 0 {
+				if desc {
+					return r > 0
+				}
+				return r < 0
+			}
+		}
+		return false
+	})
 }
 
 func embyPaginate(items []*embyItem, start, limit int) []*embyItem {
@@ -826,10 +1098,28 @@ func timeNowUnixNano() int64 {
 
 // embyUserScoped 处理 /Users/{uid}/... 下的条目相关请求
 func embyUserScoped(c *gin.Context, user *model.User, segs, lower []string, method string) {
+	// 服务端首页分区（Emby 4.10+ 客户端）
+	if len(lower) >= 3 && lower[2] == "homesections" {
+		if method == "GET" && len(lower) == 3 {
+			c.JSON(200, embyHomeSections())
+		} else {
+			c.Status(204)
+		}
+		return
+	}
+	// 首页分区条目：/Users/{uid}/Sections/{sectionId}/Items
+	if len(lower) == 5 && lower[2] == "sections" && lower[4] == "items" {
+		c.JSON(200, embySectionItems(user, lower[3]))
+		return
+	}
 	// /users/{uid}/items...
 	if len(lower) >= 3 && lower[2] == "items" {
 		lib := loadEmbyLibrary(user)
 		switch {
+		case len(lower) == 3 && (method == "GET" || method == "POST"):
+			// /Users/{uid}/Items?ParentId=...&Recursive=...&IncludeItemTypes=...
+			// 必须按查询条件返回真实数据；Playlist/BoxSet 等无对应类型会被过滤为空
+			embyItemList(c, lib, c.Query("ParentId"))
 		case len(lower) == 4 && lower[3] == "root":
 			c.JSON(200, lib.rootItem())
 		case len(lower) == 4 && lower[3] == "latest":
@@ -847,8 +1137,21 @@ func embyUserScoped(c *gin.Context, user *model.User, segs, lower []string, meth
 			embyUpdateUserData(c, user, segs[3])
 		case len(lower) == 4:
 			embyItemList(c, lib, segs[3])
+		case len(lower) == 5 && embyAuxItem(c, lower[4]):
 		default:
 			embyNotFound(c)
+		}
+		return
+	}
+	if len(lower) == 3 && embyAuxItem(c, lower[2]) {
+		return
+	}
+	// /users/{uid}/settings：客户端保存/读取首页与播放设置
+	if len(lower) == 3 && lower[2] == "settings" {
+		if method == "GET" {
+			c.JSON(200, gin.H{"HomeSections": []any{}})
+		} else {
+			c.Status(204)
 		}
 		return
 	}
@@ -896,9 +1199,15 @@ func embyItemsScoped(c *gin.Context, user *model.User, segs, lower []string, met
 	case len(lower) == 3 && lower[2] == "playbackinfo":
 		embyPlaybackInfo(c, lib, segs[1])
 	case len(lower) == 3 && lower[2] == "refresh" && method == "POST":
-		embyRefreshItem(c, segs[1])
+		embyRefreshItem(c, lib.origID(segs[1]))
+	// 歌词：/Items/{id}/{mediaSourceId}/Subtitles/{index}/Stream.js
+	case len(lower) >= 4 && lower[3] == "subtitles":
+		embySubtitleStream(c, user, segs[1])
+	case len(lower) >= 3 && lower[2] == "subtitles":
+		embySubtitleStream(c, user, segs[1])
 	case len(lower) >= 3 && lower[2] == "images":
 		embyImage(c, segs[1], segs, true)
+	case len(lower) == 3 && embyAuxItem(c, lower[2]):
 	default:
 		embyNotFound(c)
 	}
@@ -910,11 +1219,29 @@ func embyGetItem(c *gin.Context, lib *embyLibrary, id string) {
 		embyNotFound(c)
 		return
 	}
+	// 有歌词的歌曲在详情里也带上媒体源：客户端歌词面板读取
+	// item.MediaSources[0].DefaultSubtitleStreamIndex 来定位歌词轨
+	if item.Type == "Audio" {
+		if song, ok := lib.songByID(lib.origID(id)); ok && song.Lyrics != "" {
+			idx := 1
+			item.MediaSources = []embyMediaSource{{
+				Protocol: "Http", Id: item.Id, ItemId: item.Id, Type: "Default",
+				SupportsDirectPlay: true, SupportsDirectStream: true,
+				MediaStreams: []embyMediaStream{
+					{Type: "Audio", Index: 0, IsDefault: true},
+					embyLyricsMediaStream(idx),
+				},
+				MediaAttachments: []any{}, Formats: []string{},
+				RequiredHttpHeaders:        map[string]string{},
+				DefaultSubtitleStreamIndex: &idx,
+			}}
+		}
+	}
 	c.JSON(200, item)
 }
 
 func (l *embyLibrary) resolveItem(id string) (*embyItem, bool) {
-	id = strings.TrimSpace(id)
+	id = l.origID(id)
 	switch {
 	case strings.HasPrefix(id, "mv-"):
 		n, err := strconv.ParseUint(strings.TrimPrefix(id, "mv-"), 10, 64)
@@ -952,9 +1279,28 @@ func (l *embyLibrary) resolveItem(id string) (*embyItem, bool) {
 		if ep := l.findEpisode(id); ep != nil {
 			return l.episodeItem(ep), true
 		}
+	case strings.HasPrefix(id, "ar-"):
+		key := strings.TrimPrefix(id, "ar-")
+		for i := range l.music {
+			if artistKeyOf(&l.music[i]) != key {
+				continue
+			}
+			name := albumArtistOf(&l.music[i])
+			e := &embyItem{
+				Name: name, SortName: name, ServerId: embyServerID(),
+				Id: l.guid("ar-" + key), ParentId: l.guid("lib-music"),
+				Type: "MusicArtist", IsFolder: true,
+				ImageTags: map[string]string{}, UserData: &embyUserData{},
+				LocationType: "FileSystem",
+			}
+			if tag := embyImageTag(&l.music[i]); tag != "" {
+				e.ImageTags["Primary"] = tag
+			}
+			return e, true
+		}
 	case strings.HasPrefix(id, "lib-") || id == "root":
 		for _, v := range l.viewItems() {
-			if strings.EqualFold(v.Id, id) {
+			if strings.EqualFold(v.Id, l.guid(id)) {
 				return v, true
 			}
 		}
@@ -965,10 +1311,39 @@ func (l *embyLibrary) resolveItem(id string) (*embyItem, bool) {
 	return nil, false
 }
 
+// descendantsOf 递归展开 parentID 下的全部后代条目。
+// 递归必须以 ParentId 为范围：此前直接返回全库条目，导致电影/剧集/音乐库互相串内容。
+func (l *embyLibrary) descendantsOf(parentID string) []*embyItem {
+	var out []*embyItem
+	var walk func(id string, depth int)
+	walk = func(id string, depth int) {
+		if depth > 6 {
+			return
+		}
+		for _, ch := range l.childrenOf(id) {
+			out = append(out, ch)
+			if ch.IsFolder {
+				walk(ch.Id, depth+1)
+			}
+		}
+	}
+	walk(parentID, 0)
+	return out
+}
+
 func embyItemList(c *gin.Context, lib *embyLibrary, parentID string) {
-	items := lib.childrenOf(parentID)
+	if q := strings.TrimSpace(c.Query("ParentId")); q != "" {
+		parentID = q
+	}
+	var items []*embyItem
 	if embyBoolQuery(c, "Recursive") {
-		items = lib.allItems()
+		if lib.origID(parentID) == "" || lib.origID(parentID) == "root" {
+			items = lib.allItemsFor(embySplitCSV(c.Query("IncludeItemTypes")))
+		} else {
+			items = lib.descendantsOf(parentID)
+		}
+	} else {
+		items = lib.childrenOf(parentID)
 	}
 	items = filterEmbyItems(items, c)
 	sortEmbyItems(items, c.Query("SortBy"), c.Query("SortOrder"))
@@ -987,11 +1362,19 @@ func embyChildren(c *gin.Context, lib *embyLibrary, parentID string) {
 }
 
 func embyLatest(c *gin.Context, lib *embyLibrary) {
+	// 客户端按媒体库分别请求"最近添加"：带 ParentId 时只返回该库内容，避免电影/电视剧/音乐互相串
+	if pid := lib.origID(c.Query("ParentId")); pid == "lib-movie" || pid == "lib-tv" || pid == "lib-music" {
+		items := filterEmbyItems(lib.childrenOf(pid), c)
+		sort.SliceStable(items, func(i, j int) bool { return items[i].DateCreated > items[j].DateCreated })
+		_, limit := embyPaging(c)
+		c.JSON(200, embyPaginate(items, 0, limit))
+		return
+	}
 	var items []*embyItem
 	if MediaTypeEnabled(model.MediaTypeVideo) {
 		var movies []model.MediaItem
 		for i := range lib.videos {
-			if lib.videos[i].VideoType != "tv" {
+			if !isEmbySeriesItem(&lib.videos[i]) {
 				movies = append(movies, lib.videos[i])
 			}
 		}
@@ -1047,7 +1430,7 @@ func embyItemCounts(c *gin.Context, user *model.User) {
 	lib := loadEmbyLibrary(user)
 	movies, series, episodes, songs, albums := 0, 0, 0, 0, 0
 	for i := range lib.videos {
-		if lib.videos[i].VideoType == "tv" {
+		if isEmbySeriesItem(&lib.videos[i]) {
 			continue
 		}
 		movies++
@@ -1071,15 +1454,21 @@ func embyItemCounts(c *gin.Context, user *model.User) {
 
 func embyShows(c *gin.Context, user *model.User, segs, lower []string, method string) {
 	lib := loadEmbyLibrary(user)
-	if len(lower) == 3 && lower[1] == "nextup" {
+	// /Shows/NextUp 只有两段路径
+	if len(lower) == 2 && lower[1] == "nextup" {
 		embyNextUp(c, lib)
 		return
 	}
-	if len(lower) < 3 {
+	// /Shows/{id} 返回剧集详情
+	if len(lower) == 2 {
+		if item, ok := lib.resolveItem(segs[1]); ok {
+			c.JSON(200, item)
+			return
+		}
 		embyNotFound(c)
 		return
 	}
-	seriesID := segs[1]
+	seriesID := lib.origID(segs[1])
 	key := strings.TrimPrefix(seriesID, "sr-")
 	s := lib.seriesByKey(key)
 	if s == nil {
@@ -1092,14 +1481,20 @@ func embyShows(c *gin.Context, user *model.User, segs, lower []string, method st
 		for _, season := range lib.seasonList(s) {
 			items = append(items, lib.seasonItem(s, season))
 		}
-		c.JSON(200, gin.H{"Items": items, "TotalRecordCount": len(items)})
+		c.JSON(200, gin.H{"Items": items, "TotalRecordCount": len(items), "StartIndex": 0})
 	case "episodes":
 		season := embyIntQuery(c, "Season")
+		// 客户端也会传 SeasonId（GUID）按季过滤
+		if sid := lib.origID(c.Query("SeasonId")); strings.HasPrefix(sid, "sn-") {
+			if idx := strings.LastIndex(sid, "-"); idx > 0 {
+				season, _ = strconv.Atoi(sid[idx+1:])
+			}
+		}
 		var items []*embyItem
 		for _, ep := range lib.episodesOf(key, season) {
 			items = append(items, lib.episodeItem(ep))
 		}
-		c.JSON(200, gin.H{"Items": items, "TotalRecordCount": len(items)})
+		c.JSON(200, gin.H{"Items": items, "TotalRecordCount": len(items), "StartIndex": 0})
 	default:
 		embyNotFound(c)
 	}
@@ -1107,7 +1502,7 @@ func embyShows(c *gin.Context, user *model.User, segs, lower []string, method st
 
 func embyNextUp(c *gin.Context, lib *embyLibrary) {
 	var items []*embyItem
-	seriesFilter := strings.TrimPrefix(c.Query("SeriesId"), "sr-")
+	seriesFilter := strings.TrimPrefix(lib.origID(c.Query("SeriesId")), "sr-")
 	for _, s := range lib.seriesList() {
 		if seriesFilter != "" && s.Key != seriesFilter {
 			continue
@@ -1174,7 +1569,7 @@ func embyArtists(c *gin.Context, user *model.User, albumOnly bool) {
 		name := albumArtistOf(it)
 		e := &embyItem{
 			Name: name, SortName: name, ServerId: embyServerID(),
-			Id: "ar-" + key, Type: "MusicArtist", IsFolder: true,
+			Id: lib.guid("ar-" + key), ParentId: lib.guid("lib-music"), Type: "MusicArtist", IsFolder: true,
 			ImageTags: map[string]string{}, UserData: &embyUserData{},
 			LocationType: "FileSystem",
 		}

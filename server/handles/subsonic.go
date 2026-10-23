@@ -1,7 +1,6 @@
 package handles
 
 import (
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
@@ -300,6 +299,10 @@ func SubsonicAPI(c *gin.Context) {
 		return
 	}
 	name := strings.Trim(c.Param("path"), "/")
+	// 兼容接入地址已带 /@rest、客户端又自动追加 /rest 的情况
+	if first, rest, found := strings.Cut(name, "/"); found && strings.EqualFold(first, "rest") {
+		name = rest
+	}
 	name = strings.TrimSuffix(name, ".view")
 	name = strings.ToLower(name)
 	if name == "" {
@@ -321,7 +324,11 @@ func SubsonicAPI(c *gin.Context) {
 
 	user, _, ok := subAuth(c)
 	if !ok {
-		subError(c, 40, "Wrong username or password")
+		if mediaAuthLocked(c) {
+			subError(c, 40, "Too many failed attempts, please try again later")
+			return
+		}
+		subError(c, 40, "Wrong username or password; use an app key as the password or enable password auth")
 		return
 	}
 
@@ -477,9 +484,8 @@ func subAuth(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
 	if ok {
 		mediaAuthSucceeded(c)
 	} else if subHasCredential(c) {
-		// 只有「确实带了凭据但校验失败」才计数。
-		// 完全裸请求（部分客户端启动时会先发一次不带参数的探测）如果也计失败，
-		// 而 mediaAuthLocked 每次被拒都会刷新锁定时长，客户端会把自己的 IP 永久锁住。
+		// 只有「确实带了凭据但校验失败」才计数；
+		// 完全裸请求（部分客户端启动时会先发一次不带参数的探测）不计入失败次数。
 		mediaAuthFailed(c)
 	}
 	return u, k, ok
@@ -487,99 +493,92 @@ func subAuth(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
 
 // subHasCredential 判断请求是否真的携带了认证凭据
 func subHasCredential(c *gin.Context) bool {
-	if subParam(c, "apiKey") != "" {
-		return true
-	}
-	if subParam(c, "u") == "" {
-		return false
-	}
-	return subParam(c, "t") != "" || subParam(c, "p") != ""
+	return subParam(c, "apiKey") != "" || subParam(c, "u") != "" ||
+		subParam(c, "t") != "" || subParam(c, "p") != ""
 }
 
 func subAuthInner(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
-	if key := subParam(c, "apiKey"); key != "" {
+	// OpenSubsonic apiKey 扩展：直接把应用密钥放在 apiKey 参数里
+	if key := strings.TrimSpace(subParam(c, "apiKey")); key != "" {
 		if u, k, ok := subAuthByAppKey(key); ok {
 			return u, k, true
 		}
 		return nil, nil, false
 	}
-	username := subParam(c, "u")
+	username := strings.TrimSpace(subParam(c, "u"))
+	password := decodeSubsonicPassword(subParam(c, "p"))
+	// 用户名留空、只填了应用密钥（部分客户端只允许填一个"密码"字段）
 	if username == "" {
+		if password != "" {
+			if u, k, ok := subAuthByAppKey(password); ok {
+				return u, k, true
+			}
+		}
 		return nil, nil, false
 	}
 	user, err := op.GetUserByName(username)
 	if err != nil || user.Disabled || user.IsGuest() {
 		return nil, nil, false
 	}
-	// t+s：用应用密钥的明文做 md5(密码+salt) 校验
+	// t+s：用应用密钥的明文做 md5(密码+salt) 校验（Subsonic token 认证）
 	if salt := subParam(c, "s"); salt != "" {
-		token := subParam(c, "t")
-		if token == "" {
-			return nil, nil, false
-		}
-		keys, _ := db.ListMediaAppKeys(user.ID)
-		for i := range keys {
-			plain, err := media.DecryptAppKey(keys[i].Secret)
-			if err != nil {
-				continue
+		if token := subParam(c, "t"); token != "" {
+			keys, _ := db.ListMediaAppKeys(user.ID)
+			for i := range keys {
+				plain, err := media.DecryptAppKey(keys[i].Secret)
+				if err != nil {
+					continue
+				}
+				if media.MatchSubsonicToken(plain, salt, token) {
+					db.TouchMediaAppKey(keys[i].ID)
+					return user, &keys[i], true
+				}
 			}
-			if media.MatchSubsonicToken(plain, salt, token) {
-				db.TouchMediaAppKey(keys[i].ID)
-				return user, &keys[i], true
-			}
+			// 不直接返回：个别客户端会同时带上 p，继续按明文校验
 		}
-		return nil, nil, false
 	}
 	// p：OpenList 密码或应用密钥明文
-	if p := subParam(c, "p"); p != "" {
-		if strings.HasPrefix(p, "enc:") {
-			if raw, err := hex.DecodeString(strings.TrimPrefix(p, "enc:")); err == nil {
-				p = string(raw)
-			}
-		}
+	if password != "" {
 		// 使用主账号密码认证会把登录密码暴露给第三方客户端，必须由管理员显式开启
 		if setting.GetBool(conf.MediaSubsonicAllowPwd) && user.OtpSecret == "" &&
-			user.ValidateRawPassword(p) == nil {
+			user.ValidateRawPassword(password) == nil {
 			return user, nil, true
 		}
-		if u, k, ok := subAuthByAppKey(p); ok && u.ID == user.ID {
+		if u, k, ok := subAuthByAppKey(password); ok && u.ID == user.ID {
 			return u, k, true
 		}
 	}
 	return nil, nil, false
 }
 
+// decodeSubsonicPassword 解析 p 参数，兼容 Subsonic 的 enc:<hex> 编码
+func decodeSubsonicPassword(p string) string {
+	p = strings.TrimSpace(p)
+	if strings.HasPrefix(p, "enc:") {
+		if raw, err := hex.DecodeString(strings.TrimPrefix(p, "enc:")); err == nil {
+			return string(raw)
+		}
+	}
+	return p
+}
+
 func subAuthByAppKey(key string) (*model.User, *model.MediaAppKey, bool) {
-	if !strings.HasPrefix(key, "olmp_") {
-		return nil, nil, false
+	return LookUpAppKeyUser(key)
+}
+
+// subsonicServerVersion 返回给 Subsonic 客户端的服务器版本（仅用于展示）
+func subsonicServerVersion() string {
+	if conf.Version == "" {
+		return "OpenList"
 	}
-	keys, err := db.ListMediaAppKeysByPrefix(media.AppKeyPrefix(key))
-	if err != nil {
-		return nil, nil, false
-	}
-	for i := range keys {
-		plain, err := media.DecryptAppKey(keys[i].Secret)
-		if err != nil {
-			continue
-		}
-		if subtle.ConstantTimeCompare([]byte(plain), []byte(key)) != 1 {
-			continue
-		}
-		user, err := op.GetUserById(keys[i].UserID)
-		if err != nil || user.Disabled {
-			return nil, nil, false
-		}
-		db.TouchMediaAppKey(keys[i].ID)
-		return user, &keys[i], true
-	}
-	return nil, nil, false
+	return conf.Version
 }
 
 func subRespond(c *gin.Context, resp *subsonicResponse) {
 	resp.Status = "ok"
 	resp.Version = subsonicAPIVersion
 	resp.Type = "OpenList"
-	resp.ServerVersion = embyVersion()
+	resp.ServerVersion = subsonicServerVersion()
 	resp.OpenSubsonic = true
 	format := strings.ToLower(subParam(c, "f"))
 	switch format {
@@ -590,7 +589,7 @@ func subRespond(c *gin.Context, resp *subsonicResponse) {
 		if !validJsonpCallback(callback) {
 			c.JSON(200, gin.H{"subsonic-response": &subsonicResponse{
 				Status: "failed", Version: subsonicAPIVersion, Type: "OpenList",
-				ServerVersion: embyVersion(), OpenSubsonic: true,
+				ServerVersion: subsonicServerVersion(), OpenSubsonic: true,
 				Error: &subsonicError{Code: 0, Message: "invalid callback parameter"},
 			}})
 			return
@@ -608,7 +607,7 @@ func subError(c *gin.Context, code int, message string) {
 		Status:        "failed",
 		Version:       subsonicAPIVersion,
 		Type:          "OpenList",
-		ServerVersion: embyVersion(),
+		ServerVersion: subsonicServerVersion(),
 		OpenSubsonic:  true,
 		Error:         &subsonicError{Code: code, Message: message},
 	}

@@ -1,6 +1,7 @@
 package handles
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/url"
 	stdpath "path"
@@ -9,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -155,6 +157,35 @@ func MediaTypeEnabledList() []model.MediaType {
 		}
 	}
 	return enabled
+}
+
+// LookUpAppKeyUser 按明文应用密钥查找对应用户与密钥记录。
+// Emby 与 Subsonic 的所有密钥认证都走这里，避免两套实现产生行为差异。
+func LookUpAppKeyUser(key string) (*model.User, *model.MediaAppKey, bool) {
+	key = strings.TrimSpace(key)
+	if !strings.HasPrefix(key, "olmp_") {
+		return nil, nil, false
+	}
+	keys, err := db.ListMediaAppKeysByPrefix(media.AppKeyPrefix(key))
+	if err != nil {
+		return nil, nil, false
+	}
+	for i := range keys {
+		plain, err := media.DecryptAppKey(keys[i].Secret)
+		if err != nil {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(plain), []byte(key)) != 1 {
+			continue
+		}
+		user, err := op.GetUserById(keys[i].UserID)
+		if err != nil || user.Disabled || user.IsGuest() {
+			return nil, nil, false
+		}
+		db.TouchMediaAppKey(keys[i].ID)
+		return user, &keys[i], true
+	}
+	return nil, nil, false
 }
 
 // SignedStreamURL 构造带签名的 /d 直链（绝对地址，供 Emby/Subsonic/STRM 使用）

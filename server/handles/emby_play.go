@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	stdpath "path"
 	"regexp"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/media/imgmime"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -34,6 +34,7 @@ type embyPlayTarget struct {
 }
 
 func (l *embyLibrary) playTarget(id string) (*embyPlayTarget, bool) {
+	id = l.origID(id)
 	switch {
 	case strings.HasPrefix(id, "mv-"):
 		n, err := strconv.ParseUint(strings.TrimPrefix(id, "mv-"), 10, 64)
@@ -84,23 +85,59 @@ func embyPlaybackInfo(c *gin.Context, lib *embyLibrary, id string) {
 		return
 	}
 	api := common_ApiBase(c)
-	streamURL := fmt.Sprintf("%s/@emby/Videos/%s/stream?Static=true", api, id)
-	if target.Item.MediaType == model.MediaTypeMusic {
-		streamURL = fmt.Sprintf("%s/@emby/Audio/%s/stream?Static=true", api, id)
+	isAudio := target.Item.MediaType == model.MediaTypeMusic
+	kind, streamType := "Videos", "Video"
+	if isAudio {
+		kind, streamType = "Audio", "Audio"
+	}
+	// 流地址必须自带 api_key：播放器取流时不会再附加请求头，
+	// 缺失会得到 401，客户端表现为"Playback of this content is currently restricted"
+	q := url.Values{}
+	q.Set("Static", "true")
+	q.Set("MediaSourceId", id)
+	if tok := embyRequestToken(c); tok != "" {
+		q.Set("api_key", tok)
+	}
+	streamURL := fmt.Sprintf("%s/@emby/%s/%s/stream.%s?%s", api, kind, id, target.Container, q.Encode())
+	if target.Container == "" {
+		streamURL = fmt.Sprintf("%s/@emby/%s/%s/stream?%s", api, kind, id, q.Encode())
+	}
+	// 必须是 Http：客户端看到 File 会当成"服务器本地文件"，
+	// 转而调用原生 LocalItemRepository 解析本地路径，必然失败（Playback Error）
+	streams := []embyMediaStream{{Type: streamType, Index: 0, IsDefault: true}}
+	var subtitleIndex *int
+	if isAudio && target.Item.Lyrics != "" {
+		// 歌词以"外挂字幕轨"的形式提供给客户端（Emby Theater 的歌词面板
+		// 只遍历 Subtitle 流，并请求 Subtitles/{index}/Stream.js）
+		lyricsIndex := len(streams)
+		streams = append(streams, embyLyricsMediaStream(lyricsIndex))
+		subtitleIndex = &lyricsIndex
 	}
 	source := embyMediaSource{
-		Protocol:             "Http",
-		Id:                   id,
-		Path:                 target.RawPath,
-		Type:                 "Default",
-		Container:            target.Container,
-		Name:                 target.Name,
-		Size:                 target.Size,
-		RunTimeTicks:         embyTicks(target.Duration),
-		SupportsDirectPlay:   true,
-		SupportsDirectStream: true,
-		SupportsTranscoding:  false,
-		DirectStreamUrl:      streamURL,
+		Protocol:                   "Http",
+		Id:                         id,
+		ItemId:                     id,
+		// Emby Theater 在本地播放时会把 Path 直接交给 mpv；
+		// 填文件系统路径会让 mpv 去开本机不存在的文件（一直转圈/Playback Error），
+		// 这里填可播放的 HTTP 流地址。
+		Path:                       streamURL,
+		Type:                       "Default",
+		Container:                  target.Container,
+		Name:                       target.Name,
+		Size:                       target.Size,
+		ETag:                       embyHash(fmt.Sprintf("%s|%d", target.RawPath, target.Size)),
+		RunTimeTicks:               embyTicks(target.Duration),
+		SupportsDirectPlay:         true,
+		SupportsDirectStream:       true,
+		SupportsTranscoding:        false,
+		SupportsProbing:            false,
+		MediaStreams:               streams,
+		MediaAttachments:           []any{},
+		Formats:                    []string{},
+		RequiredHttpHeaders:        map[string]string{},
+		DirectStreamUrl:            streamURL,
+		AddApiKeyToDirectStreamUrl: false,
+		DefaultSubtitleStreamIndex: subtitleIndex,
 	}
 	c.JSON(200, gin.H{
 		"MediaSources":  []embyMediaSource{source},
@@ -126,27 +163,19 @@ var dataURIPrefix = "data:image/"
 
 // embyImage 返回条目封面
 func embyImage(c *gin.Context, id string, segs []string, allowAnon bool) {
-	user, ok := embyAuth(c)
-	if !ok {
-		// 匿名访问必须回退到访客身份，而不是 nil（nil 会被当成无限制用户）
-		if !allowAnon {
-			embyUnauthorized(c)
-			return
-		}
-		guest, err := op.GetGuest()
-		if err != nil || guest.Disabled {
-			embyUnauthorized(c)
-			return
-		}
-		user = guest
-	}
-	lib := loadEmbyLibrary(user)
-	item, ok := lib.resolveItem(id)
-	if !ok {
-		embyNotFound(c)
+	var lib *embyLibrary
+	if user, ok := embyAuth(c); ok {
+		lib = loadEmbyLibrary(user)
+	} else if allowAnon {
+		// Emby 客户端的封面 URL 不带 token，图片必须允许匿名访问
+		lib = loadEmbyLibraryAll()
+	} else {
+		embyUnauthorized(c)
 		return
 	}
-	_ = item
+	// 客户端回传的是 GUID，这里先还原成内部 ID 再做前缀判断。
+	// 注意不能先走 resolveItem：匿名库的 user 为 nil，剧集条目会被权限校验判为不可见。
+	id = lib.origID(id)
 	var mediaItem *model.MediaItem
 	switch {
 	case strings.HasPrefix(id, "mv-"):
@@ -159,12 +188,21 @@ func embyImage(c *gin.Context, id string, segs []string, allowAnon bool) {
 	case strings.HasPrefix(id, "so-"):
 		mediaItem, _ = lib.songByID(id)
 	case strings.HasPrefix(id, "ep-"):
-		if ep := lib.findEpisode(id); ep != nil {
-			mediaItem = ep.Item
+		// 图片 URL 不带 token，匿名库的 user 为 nil；
+		// findEpisode 会做用户权限校验并直接失败，这里只按库内条目定位封面来源
+		if it, ok := lib.episodeSourceItem(id); ok {
+			mediaItem = it
 		}
 	case strings.HasPrefix(id, "sr-"):
 		if s := lib.seriesByKey(strings.TrimPrefix(id, "sr-")); s != nil && len(s.Items) > 0 {
 			mediaItem = &s.Items[0]
+		}
+	case strings.HasPrefix(id, "sn-"):
+		rest := strings.TrimPrefix(id, "sn-")
+		if idx := strings.LastIndex(rest, "-"); idx > 0 {
+			if s := lib.seriesByKey(rest[:idx]); s != nil && len(s.Items) > 0 {
+				mediaItem = &s.Items[0]
+			}
 		}
 	case strings.HasPrefix(id, "al-"):
 		if al := lib.albumByKey(strings.TrimPrefix(id, "al-")); al != nil && len(al.Items) > 0 {
@@ -184,6 +222,25 @@ func embyImage(c *gin.Context, id string, segs []string, allowAnon bool) {
 		return
 	}
 	serveEmbyCover(c, mediaItem)
+}
+
+// episodeSourceItem 按 ep-<itemID>-<num> 在库内定位剧集所属条目，不做权限校验。
+// 仅用于封面这类匿名可访问的资源，播放与条目详情仍走 findEpisode 的权限校验。
+func (l *embyLibrary) episodeSourceItem(id string) (*model.MediaItem, bool) {
+	parts := strings.Split(strings.TrimPrefix(id, "ep-"), "-")
+	if len(parts) != 2 {
+		return nil, false
+	}
+	n, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return nil, false
+	}
+	for i := range l.videos {
+		if l.videos[i].ID == uint(n) {
+			return &l.videos[i], true
+		}
+	}
+	return nil, false
 }
 
 func serveEmbyCover(c *gin.Context, item *model.MediaItem) {
@@ -264,6 +321,69 @@ func embyLyrics(c *gin.Context, user *model.User, id string) {
 	}
 	lines := parseLrc(item.Lyrics)
 	c.JSON(200, gin.H{"Lyrics": lines, "IsSynced": len(lines) > 0})
+}
+
+// embyLyricsMediaStream 构造歌词字幕轨（Emby 用外挂字幕承载歌词）。
+func embyLyricsMediaStream(index int) embyMediaStream {
+	return embyMediaStream{
+		Type:                   "Subtitle",
+		Index:                  index,
+		Codec:                  "lrc",
+		Language:               "und",
+		DisplayTitle:           "Lyrics",
+		IsExternal:             true,
+		IsTextSubtitleStream:   true,
+		SupportsExternalStream: true,
+		DeliveryMethod:         "External",
+		DeliveryUrl:            "",
+	}
+}
+
+// embyLyricsTrackEvents 把 LRC 转成客户端歌词面板使用的 TrackEvent 列表。
+// 客户端按 StartPositionTicks 与当前播放位置比较（1ms = 10000 ticks）。
+// 没有时间轴的纯文本歌词会按行均分到歌曲时长，至少能顺序展示。
+func embyLyricsTrackEvents(content string, durationSec int) []gin.H {
+	lines := parseLrc(content)
+	if len(lines) == 0 {
+		texts := make([]string, 0, 32)
+		for _, l := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+			if t := strings.TrimSpace(l); t != "" {
+				texts = append(texts, t)
+			}
+		}
+		if len(texts) > 0 {
+			total := int64(durationSec) * 1000
+			if total <= 0 {
+				total = int64(len(texts)) * 5000
+			}
+			step := total / int64(len(texts))
+			for i, t := range texts {
+				lines = append(lines, gin.H{"Text": t, "Start": int64(i) * step})
+			}
+		}
+	}
+	events := make([]gin.H, 0, len(lines))
+	for _, l := range lines {
+		ms, _ := l["Start"].(int64)
+		events = append(events, gin.H{
+			"StartPositionTicks": ms * 10000,
+			"Text":               l["Text"],
+		})
+	}
+	return events
+}
+
+// embySubtitleStream 处理 /Items/{id}/{mediaSourceId}/Subtitles/{index}/Stream.js
+// Emby Theater 用它拉取歌词行（JSON 形式的 TrackEvents）
+func embySubtitleStream(c *gin.Context, user *model.User, id string) {
+	lib := loadEmbyLibrary(user)
+	item, ok := lib.songByID(lib.origID(id))
+	if !ok || item.Lyrics == "" {
+		c.JSON(200, gin.H{"TrackEvents": []any{}})
+		return
+	}
+	events := embyLyricsTrackEvents(item.Lyrics, item.Duration)
+	c.JSON(200, gin.H{"TrackEvents": events, "TotalRecordCount": len(events)})
 }
 
 // ==================== 播放会话 / 用户状态 ====================
@@ -364,6 +484,7 @@ func applyProgress(user *model.User, target *embyPlayTarget, position int64, pla
 
 func embySetPlayed(c *gin.Context, user *model.User, id string, played bool) {
 	lib := loadEmbyLibrary(user)
+	id = lib.origID(id)
 	target, ok := lib.playTarget(id)
 	if !ok {
 		// 剧集/季整体标记

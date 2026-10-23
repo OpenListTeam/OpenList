@@ -14,20 +14,24 @@ func mediaAuthKey(c *gin.Context) string {
 }
 
 // mediaAuthLocked 当前 IP 是否已达到失败上限（需要拒绝认证尝试）
+// 注意：这里绝不能刷新过期时间。客户端（尤其是 Subsonic）会持续轮询重试，
+// 每次被拒都续期会把 IP 永久锁死，连之后正确的密钥也无法登录。
 func mediaAuthLocked(c *gin.Context) bool {
 	count, ok := model.LoginCache.Get(mediaAuthKey(c))
-	if ok && count >= model.DefaultMaxAuthRetries {
-		model.LoginCache.Expire(mediaAuthKey(c), model.DefaultLockDuration)
-		return true
-	}
-	return false
+	return ok && count >= model.DefaultMaxAuthRetries
 }
 
 // mediaAuthFailed 记录一次认证失败
 func mediaAuthFailed(c *gin.Context) {
 	key := mediaAuthKey(c)
 	count, _ := model.LoginCache.Get(key)
-	model.LoginCache.Set(key, count+1)
+	count++
+	model.LoginCache.Set(key, count)
+	if count >= model.DefaultMaxAuthRetries {
+		// 达到上限时设定锁定窗口；锁定期间请求会被 mediaAuthLocked 直接拦截，
+		// 不会再走到这里，因此过期时间不会被续期
+		model.LoginCache.Expire(key, model.DefaultLockDuration)
+	}
 }
 
 // mediaAuthSucceeded 认证成功后清除失败计数
