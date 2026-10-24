@@ -17,6 +17,7 @@ var config = driver.Config{
 	Name:      "LenovoNasShare",
 	LocalSort: true,
 	NoUpload:  true,
+	IsShare:   true,
 }
 
 func init() {

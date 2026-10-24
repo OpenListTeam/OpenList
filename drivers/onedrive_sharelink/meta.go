@@ -27,6 +27,7 @@ var config = driver.Config{
 	Name:        "Onedrive Sharelink",
 	LocalSort:   true,
 	DefaultRoot: "/",
+	IsShare:     true,
 }
 
 func init() {

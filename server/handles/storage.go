@@ -13,6 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -117,6 +118,27 @@ func UpdateStorage(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 	} else {
 		common.SuccessResp(c)
+	}
+}
+
+type UpdateShareLinkReq struct {
+	Path     string `json:"path" form:"path" binding:"required"`
+	ShareID  string `json:"sid" form:"sid" binding:"required"`
+	SharePwd string `json:"pwd" form:"pwd"`
+}
+
+func UpdateShareStorage(c *gin.Context) {
+	var req UpdateShareLinkReq
+	if err := c.ShouldBind(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	if mountPath, err := op.UpdateShareStorage(c.Request.Context(), req.Path, req.ShareID, req.SharePwd); err != nil {
+		common.ErrorResp(c, err, 500, true)
+	} else {
+		common.SuccessResp(c, gin.H{
+			"mount_path": utils.GetActualMountPath(mountPath),
+		})
 	}
 }
 

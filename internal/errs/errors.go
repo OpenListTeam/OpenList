@@ -27,6 +27,8 @@ var (
 	WrongShareCode  = errors.New("wrong share code")
 	InvalidSharing  = errors.New("invalid sharing")
 	SharingNotFound = errors.New("sharing not found")
+
+	InvalidShareLink = errors.New("invalid share link")
 )
 
 // NewErr wrap constant error with an extra message

@@ -179,4 +179,10 @@ func (d *OpenListShare) Extract(ctx context.Context, obj model.Obj, args model.A
 	return &model.Link{URL: u}, nil
 }
 
+func (d *OpenListShare) UpdateShareLink(ctx context.Context, shareId, sharePwd string) error {
+	d.ShareId = shareId
+	d.Pwd = sharePwd
+	return nil
+}
+
 var _ driver.Driver = (*OpenListShare)(nil)

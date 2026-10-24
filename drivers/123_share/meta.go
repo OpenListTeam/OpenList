@@ -20,6 +20,7 @@ var config = driver.Config{
 	NoUpload:    true,
 	DefaultRoot: "0",
 	PreferProxy: true,
+	IsShare:     true,
 }
 
 func init() {

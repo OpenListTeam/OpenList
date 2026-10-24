@@ -259,6 +259,45 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 	return err
 }
 
+// UpdateShareStorage replaces the netdisk share mounted by the storage that serves
+// the given path. The driver writes the share id and its access code into its
+// addition, then the updated addition is saved and the storage is re-initialized
+// so that the new share takes effect.
+// sharePwd is empty when the share has no access code.
+// It returns the mount path of the storage that was updated.
+func UpdateShareStorage(ctx context.Context, path, shareId, sharePwd string) (string, error) {
+	shareId = strings.TrimSpace(shareId)
+	if shareId == "" {
+		return "", errs.NewErr(errs.InvalidShareLink, "share id is empty")
+	}
+	storageDriver, _, err := GetStorageAndActualPath(utils.FixAndCleanPath(path))
+	if err != nil {
+		return "", errors.WithMessage(err, "failed get storage")
+	}
+	d, ok := storageDriver.(driver.ShareLinkUpdater)
+	if !ok {
+		return "", errors.Errorf("driver [%s] does not support updating the share link", storageDriver.Config().Name)
+	}
+	if err := d.UpdateShareLink(ctx, shareId, strings.TrimSpace(sharePwd)); err != nil {
+		return "", err
+	}
+	// the driver has written the new share into its addition, so persist it and
+	// then drop and re-initialize the storage to apply the new share
+	addition, err := utils.Json.MarshalToString(storageDriver.GetAddition())
+	if err != nil {
+		return "", errors.Wrap(err, "error while marshal addition")
+	}
+	storage := storageDriver.GetStorage()
+	storage.Addition = addition
+	if err := UpdateStorage(ctx, *storage); err != nil {
+		return "", err
+	}
+	// everything cached for the previous share is stale now
+	Cache.DeleteDirectoryTree(storageDriver, "/")
+	Cache.InvalidateStorageDetails(storageDriver)
+	return storage.MountPath, nil
+}
+
 func DeleteStorageById(ctx context.Context, id uint) error {
 	storage, err := db.GetStorageById(id)
 	if err != nil {

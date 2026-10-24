@@ -176,4 +176,8 @@ func (d *DoubaoShare) ArchiveDecompress(ctx context.Context, srcObj, dstDir mode
 //	return nil, errs.NotSupport
 //}
 
+func (d *DoubaoShare) UpdateShareLink(ctx context.Context, shareId, sharePwd string) error {
+	return errs.NotImplement
+}
+
 var _ driver.Driver = (*DoubaoShare)(nil)

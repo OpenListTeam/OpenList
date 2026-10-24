@@ -190,6 +190,7 @@ func admin(g *gin.RouterGroup) {
 	storage.GET("/get", handles.GetStorage)
 	storage.POST("/create", handles.CreateStorage)
 	storage.POST("/update", handles.UpdateStorage)
+	storage.POST("/update_sharelink", handles.UpdateShareStorage)
 	storage.POST("/delete", handles.DeleteStorage)
 	storage.POST("/enable", handles.EnableStorage)
 	storage.POST("/disable", handles.DisableStorage)
