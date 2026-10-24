@@ -210,7 +210,9 @@ func PutURL(ctx context.Context, path, dstName, urlStr string) error {
 
 func GetDirectUploadInfo(ctx context.Context, tool, path, dstName string, fileSize int64, overwrite bool) (any, error) {
 	info, err := getDirectUploadInfo(ctx, tool, path, dstName, fileSize, overwrite)
-	if err != nil {
+	// NotImplement is an expected answer: the storage simply has no direct
+	// upload path for this policy, so do not flood the log with it
+	if err != nil && !errors.Is(err, errs.NotImplement) {
 		log.Errorf("failed get %s direct upload info for %s(%d bytes): %+v", path, dstName, fileSize, err)
 	}
 	return info, err

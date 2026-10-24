@@ -336,6 +336,7 @@ func _fs(g *gin.RouterGroup) {
 	seed.POST("/update_channels", handles.UpdateSeedChannels)
 	// Direct upload (client-side upload to storage)
 	g.POST("/get_direct_upload_info", handles.FsGetDirectUploadInfo)
+	g.POST("/complete_direct_upload", handles.FsCompleteDirectUpload)
 }
 
 func _task(g *gin.RouterGroup) {
