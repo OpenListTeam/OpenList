@@ -17,9 +17,9 @@ import (
 )
 
 // MySQL rejects indexes on TEXT columns without a key prefix length
-// (Error 1170), see #3258. Make sure the MySQL migrator emits TEXT columns
-// with prefixed index parts and that the prefixes fit the InnoDB key limit.
-func TestWebDAVPropertyMySQLIndexHasPrefixLength(t *testing.T) {
+// (Error 1170), see #3258. The unique index must therefore use the fixed-size
+// hash column rather than a prefix of the full WebDAV property key.
+func TestWebDAVPropertyMySQLIndexUsesKeyHash(t *testing.T) {
 	conn, err := sql.Open("mysql", "user:pass@tcp(127.0.0.1:1)/db")
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +41,9 @@ func TestWebDAVPropertyMySQLIndexHasPrefixLength(t *testing.T) {
 			t.Fatalf("%s column type = %q, want text", name, got)
 		}
 	}
+	if got := strings.ToLower(d.Dialector.DataTypeOf(s.LookUpField("KeyHash"))); got != "varchar(64)" {
+		t.Fatalf("KeyHash column type = %q, want varchar(64)", got)
+	}
 
 	idx := s.LookIndex("idx_webdav_property")
 	if idx == nil || idx.Class != "UNIQUE" {
@@ -48,21 +51,8 @@ func TestWebDAVPropertyMySQLIndexHasPrefixLength(t *testing.T) {
 	}
 	stmt := &gorm.Statement{DB: d, Schema: s}
 	opts := d.Migrator().(migrator.BuildIndexOptionsInterface).BuildIndexOptions(idx.Fields, stmt)
-	var parts []string
-	totalBytes := 0
-	for i, opt := range opts {
-		parts = append(parts, opt.(clause.Expr).SQL)
-		if idx.Fields[i].Length <= 0 {
-			t.Fatalf("index field %s has no prefix length", idx.Fields[i].DBName)
-		}
-		totalBytes += idx.Fields[i].Length * 4 // utf8mb4
-	}
-	want := "`path`(512),`namespace`(128),`name`(128)"
-	if got := strings.Join(parts, ","); got != want {
-		t.Fatalf("index parts = %s, want %s", got, want)
-	}
-	if totalBytes > 3072 {
-		t.Fatalf("index key is %d bytes, exceeds InnoDB limit 3072", totalBytes)
+	if len(opts) != 1 || opts[0].(clause.Expr).SQL != "`key_hash`" {
+		t.Fatalf("index parts = %v, want `key_hash`", opts)
 	}
 }
 
@@ -94,6 +84,9 @@ func TestWebDAVPropertyLongPathSQLite(t *testing.T) {
 	if got.Path != long {
 		t.Fatalf("path truncated: len %d, want %d", len(got.Path), len(long))
 	}
+	if got.KeyHash != model.HashWebDAVPropertyKey(long, "DAV:", "displayname") {
+		t.Fatalf("key hash = %q, want hash of complete property key", got.KeyHash)
+	}
 	dup := model.WebDAVProperty{Path: long, Namespace: "DAV:", Name: "displayname"}
 	if err := d.Create(&dup).Error; err == nil {
 		t.Fatal("duplicate (path, namespace, name) was accepted")
@@ -101,5 +94,42 @@ func TestWebDAVPropertyLongPathSQLite(t *testing.T) {
 	other := model.WebDAVProperty{Path: long + "2", Namespace: "DAV:", Name: "displayname"}
 	if err := d.Create(&other).Error; err != nil {
 		t.Fatal(fmt.Errorf("distinct path rejected: %w", err))
+	}
+}
+
+func TestMigrateWebDAVPropertiesBackfillsKeyHash(t *testing.T) {
+	d := openTestDB(t, "ol_")
+	db = d
+	if err := d.Exec(`CREATE TABLE ol_web_dav_properties (
+		id integer primary key autoincrement,
+		path text,
+		namespace text,
+		name text,
+		lang text,
+		inner_xml blob,
+		UNIQUE (path, namespace, name)
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	path := "/" + strings.Repeat("目录/", 400) + "file.txt"
+	if err := d.Exec("INSERT INTO ol_web_dav_properties (path, namespace, name) VALUES (?, ?, ?)", path, "DAV:", "displayname").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateWebDAVProperties(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AutoMigrate(&model.WebDAVProperty{}); err != nil {
+		t.Fatal(err)
+	}
+	var got model.WebDAVProperty
+	if err := d.Where("path = ?", path).First(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.KeyHash != model.HashWebDAVPropertyKey(path, "DAV:", "displayname") {
+		t.Fatalf("migrated key hash = %q, want hash of complete property key", got.KeyHash)
+	}
+	if !d.Migrator().HasIndex("ol_web_dav_properties", "idx_webdav_property") {
+		t.Fatal("idx_webdav_property not recreated")
 	}
 }
