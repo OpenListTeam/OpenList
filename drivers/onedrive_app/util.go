@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	stdpath "path"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -40,16 +42,79 @@ var onedriveHostMap = map[string]Host{
 	},
 }
 
+// NormalizeSiteID converts any accepted SharePoint site identifier into the form
+// expected by the /sites/{site-id} segment.
+//
+// Accepted inputs:
+//
+//	contoso.sharepoint.com,<siteGuid>,<webGuid>
+//	contoso.sharepoint.com:/sites/<name> [/sites/<name>:]
+//	https://contoso.sharepoint.com/sites/<name>
+//	https://contoso.sharepoint.com            (site collection root)
+//
+// The path form must keep its trailing colon, otherwise Graph rejects the URL.
+// A path-form identifier still has to be resolved to the comma form before it can
+// be followed by /drive; see resolveSiteID.
+func NormalizeSiteID(siteID string) string {
+	siteID = strings.TrimSpace(siteID)
+	if siteID == "" {
+		return ""
+	}
+	if strings.HasPrefix(siteID, "https://") || strings.HasPrefix(siteID, "http://") {
+		if u, err := url.Parse(siteID); err == nil && u.Host != "" {
+			siteID = u.Host + ":" + strings.TrimSuffix(u.Path, "/")
+		}
+	}
+	if strings.Contains(siteID, ":/") {
+		siteID = strings.TrimSuffix(siteID, "/")
+		if !strings.HasSuffix(siteID, ":") {
+			siteID += ":"
+		}
+	}
+	return siteID
+}
+
+// resolveSiteID turns a site path identifier into the opaque comma-separated site
+// id, since Graph only accepts /sites/{path}:/ as a terminal segment — it cannot be
+// followed by /drive. Already-resolved ids are left untouched.
+func (d *OnedriveAPP) resolveSiteID() error {
+	siteID := NormalizeSiteID(d.SiteID)
+	if strings.Contains(siteID, ",") {
+		d.SiteID = siteID
+		return nil
+	}
+	host := onedriveHostMap[d.Region]
+	var resp struct {
+		Id string `json:"id"`
+	}
+	_, err := d.Request(fmt.Sprintf("%s/v1.0/sites/%s?$select=id", host.Api, siteID), http.MethodGet, nil, &resp)
+	if err != nil {
+		return err
+	}
+	if resp.Id == "" {
+		return fmt.Errorf("failed to resolve sharepoint site %q", d.SiteID)
+	}
+	d.SiteID = resp.Id
+	op.MustSaveDriverStorage(d)
+	return nil
+}
+
 func (d *OnedriveAPP) GetMetaUrl(auth bool, path string) string {
 	host := onedriveHostMap[d.Region]
 	path = utils.EncodePath(path, true)
 	if auth {
 		return host.Oauth
 	}
-	if path == "/" || path == "\\" {
-		return fmt.Sprintf("%s/v1.0/users/%s/drive/root", host.Api, d.Email)
+	var base string
+	if d.IsSharepoint {
+		base = fmt.Sprintf("%s/v1.0/sites/%s/drive/root", host.Api, NormalizeSiteID(d.SiteID))
+	} else {
+		base = fmt.Sprintf("%s/v1.0/users/%s/drive/root", host.Api, d.Email)
 	}
-	return fmt.Sprintf("%s/v1.0/users/%s/drive/root:%s:", host.Api, d.Email, path)
+	if path == "/" || path == "\\" {
+		return base
+	}
+	return base + ":" + path + ":"
 }
 
 func (d *OnedriveAPP) accessToken() error {
@@ -213,7 +278,12 @@ func (d *OnedriveAPP) upBig(ctx context.Context, dstDir model.Obj, stream model.
 
 func (d *OnedriveAPP) getDrive(ctx context.Context) (*DriveResp, error) {
 	host, _ := onedriveHostMap[d.Region]
-	api := fmt.Sprintf("%s/v1.0/users/%s/drive", host.Api, d.Email)
+	var api string
+	if d.IsSharepoint {
+		api = fmt.Sprintf("%s/v1.0/sites/%s/drive", host.Api, NormalizeSiteID(d.SiteID))
+	} else {
+		api = fmt.Sprintf("%s/v1.0/users/%s/drive", host.Api, d.Email)
+	}
 	var resp DriveResp
 	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
 		req.SetContext(ctx)
