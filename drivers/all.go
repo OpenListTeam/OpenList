@@ -78,7 +78,6 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/terabox"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/thunder"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
-	_ "github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/url_tree"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/uss"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/virtual"

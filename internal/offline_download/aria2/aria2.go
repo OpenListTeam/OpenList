@@ -64,7 +64,7 @@ func (a *Aria2) IsReady() bool {
 func (a *Aria2) AddURL(args *tool.AddUrlArgs) (string, error) {
 	// aria2 不支持 ed2k 协议，提前检测并返回明确错误
 	if strings.HasPrefix(strings.ToLower(args.Url), "ed2k://") {
-		return "", fmt.Errorf("aria2 does not support ed2k protocol. Please use Thunder/ThunderX/ThunderBrowser tool for ed2k links")
+		return "", fmt.Errorf("aria2 does not support ed2k protocol. Please use Thunder/ThunderBrowser tool for ed2k links")
 	}
 	options := map[string]interface{}{
 		"dir": args.TempDir,

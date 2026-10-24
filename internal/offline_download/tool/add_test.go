@@ -11,7 +11,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/pikpak"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder"
 	"github.com/OpenListTeam/OpenList/v4/drivers/thunder_browser"
-	"github.com/OpenListTeam/OpenList/v4/drivers/thunderx"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 )
 
@@ -23,7 +22,6 @@ func TestIsEd2kCapableTool(t *testing.T) {
 		{name: "115 Cloud", want: true},
 		{name: "115 Open", want: true},
 		{name: "Thunder", want: true},
-		{name: "ThunderX", want: true},
 		{name: "ThunderBrowser", want: true},
 		{name: "aria2", want: false},
 		{name: "SimpleHttp", want: false},
@@ -71,7 +69,6 @@ func TestNativeToolName(t *testing.T) {
 		{name: "GuangYaPan", storage: &guangyapan.GuangYaPan{}, want: "GuangYaPan"},
 		{name: "PikPak", storage: &pikpak.PikPak{}, want: "PikPak"},
 		{name: "Thunder", storage: &thunder.Thunder{}, want: "Thunder"},
-		{name: "ThunderX", storage: &thunderx.ThunderX{}, want: "ThunderX"},
 		{name: "ThunderBrowser", storage: &thunder_browser.ThunderBrowser{}, want: "ThunderBrowser"},
 		{name: "other", storage: nil, want: ""},
 	}
