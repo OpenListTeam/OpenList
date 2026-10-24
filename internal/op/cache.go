@@ -41,7 +41,9 @@ func (cm *CacheManager) DeleteDirectoryTree(storage driver.Driver, dirPath strin
 	if storage.Config().NoCache {
 		return
 	}
-	cm.deleteDirectoryTree(Key(storage, dirPath))
+	key := Key(storage, dirPath)
+	cm.deleteDirectoryTree(key)
+	clearPendingTree(key)
 }
 func (cm *CacheManager) deleteDirectoryTree(key string) {
 	if dirCache, exists := cm.dirCache.Pop(key); exists {
@@ -151,6 +153,7 @@ func (cm *CacheManager) ClearAll() {
 	cm.userCache.Clear()
 	cm.settingCache.Clear()
 	cm.detailCache.Clear()
+	clearAllPending()
 }
 
 type directoryCache struct {

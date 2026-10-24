@@ -82,6 +82,8 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 
 		if !storage.Config().NoCache {
+			// keep objects written through OpenList that a lagging List does not return yet
+			files = mergePending(key, files)
 			if len(files) > 0 {
 				log.Debugf("set cache: %s => %+v", key, files)
 
@@ -169,7 +171,8 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 
 	// try get from cache first
 	dir, name := stdpath.Split(path)
-	dirCache, dirCacheExists := Cache.dirCache.Get(Key(storage, dir))
+	dirKey := Key(storage, dir)
+	dirCache, dirCacheExists := Cache.dirCache.Get(dirKey)
 	refreshList := false
 	excludeTemp := utils.IsBool(excludeTempObj...)
 	if dirCacheExists {
@@ -193,6 +196,13 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 		}
 		if !errs.IsNotImplementError(err) && !errs.IsNotSupportError(err) {
 			return nil, errors.WithMessage(err, "failed to get obj")
+		}
+	}
+
+	// an object written through OpenList that the cached listing does not contain (yet)
+	if !refreshList {
+		if obj, ok := getPending(dirKey, name); ok && !(excludeTemp && model.ObjHasMask(obj, model.Temp)) {
+			return obj, nil
 		}
 	}
 
@@ -428,20 +438,22 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 		Cache.linkCache.DeleteKey(stdpath.Join(dstKey, srcRawObj.GetName()))
 	}
 	if !storage.Config().NoCache {
+		if srcRawObj.IsDir() {
+			clearPendingTree(stdpath.Join(srcKey, srcRawObj.GetName()))
+		}
+		delPending(srcKey, srcRawObj.GetName())
 		if cache, exist := Cache.dirCache.Get(srcKey); exist {
 			if srcRawObj.IsDir() {
 				Cache.deleteDirectoryTree(stdpath.Join(srcKey, srcRawObj.GetName()))
 			}
 			cache.RemoveObject(srcRawObj.GetName())
 		}
-		if cache, exist := Cache.dirCache.Get(dstKey); exist {
-			if newObj == nil {
-				newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
-			} else {
-				newObj = wrapObjName(storage, newObj)
-			}
-			cache.UpdateObject(srcRawObj.GetName(), newObj)
+		if newObj == nil {
+			newObj = &model.ObjWrapMask{Obj: srcRawObj, Mask: model.Temp}
+		} else {
+			newObj = wrapObjName(storage, newObj)
 		}
+		putPending(dstKey, newObj)
 	}
 
 	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
@@ -492,14 +504,19 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstName))
 	}
 	if !storage.Config().NoCache {
+		if srcRawObj.IsDir() {
+			clearPendingTree(stdpath.Join(dirKey, oldName))
+		}
+		delPending(dirKey, oldName)
+		if newObj == nil {
+			newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
+		}
+		newObj = wrapObjName(storage, newObj)
+		addPending(dirKey, newObj)
 		if cache, exist := Cache.dirCache.Get(dirKey); exist {
 			if srcRawObj.IsDir() {
 				Cache.deleteDirectoryTree(stdpath.Join(dirKey, oldName))
 			}
-			if newObj == nil {
-				newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
-			}
-			newObj = wrapObjName(storage, newObj)
 			cache.UpdateObject(oldName, newObj)
 		}
 	}
@@ -608,6 +625,13 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 		err = s.Remove(ctx, model.UnwrapObjName(rawObj))
 		if err == nil {
 			Cache.removeDirectoryObject(storage, dirPath, rawObj)
+			if !storage.Config().NoCache {
+				dirKey := Key(storage, dirPath)
+				if rawObj.IsDir() {
+					clearPendingTree(stdpath.Join(dirKey, rawObj.GetName()))
+				}
+				delPending(dirKey, rawObj.GetName())
+			}
 		}
 	default:
 		return errs.NotImplement
@@ -687,19 +711,17 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
 		if !storage.Config().NoCache {
-			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				if newObj == nil {
-					newObj = &model.Object{
-						Name:     file.GetName(),
-						Size:     file.GetSize(),
-						Modified: file.ModTime(),
-						Ctime:    file.CreateTime(),
-						Mask:     model.Temp,
-					}
+			if newObj == nil {
+				newObj = &model.Object{
+					Name:     file.GetName(),
+					Size:     file.GetSize(),
+					Modified: file.ModTime(),
+					Ctime:    file.CreateTime(),
+					Mask:     model.Temp,
 				}
-				newObj = wrapObjName(storage, newObj)
-				cache.UpdateObject(newObj.GetName(), newObj)
 			}
+			newObj = wrapObjName(storage, newObj)
+			putPending(Key(storage, dstDirPath), newObj)
 		}
 
 		if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
@@ -755,19 +777,17 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	if err == nil {
 		Cache.linkCache.DeleteKey(Key(storage, dstPath))
 		if !storage.Config().NoCache {
-			if cache, exist := Cache.dirCache.Get(Key(storage, dstDirPath)); exist {
-				if newObj == nil {
-					t := time.Now()
-					newObj = &model.Object{
-						Name:     dstName,
-						Modified: t,
-						Ctime:    t,
-						Mask:     model.Temp,
-					}
+			if newObj == nil {
+				t := time.Now()
+				newObj = &model.Object{
+					Name:     dstName,
+					Modified: t,
+					Ctime:    t,
+					Mask:     model.Temp,
 				}
-				newObj = wrapObjName(storage, newObj)
-				cache.UpdateObject(newObj.GetName(), newObj)
 			}
+			newObj = wrapObjName(storage, newObj)
+			putPending(Key(storage, dstDirPath), newObj)
 
 			if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
 				go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
