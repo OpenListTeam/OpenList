@@ -23,7 +23,7 @@ type MediaScanPath struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index"                json:"-"`
 
-	MediaType    MediaType  `gorm:"index;not null"       json:"media_type"`    // 所属媒体类型
+	MediaType    MediaType  `gorm:"size:32;index;not null" json:"media_type"`  // 所属媒体类型
 	Name         string     `json:"name"`                                      // 路径名称（用于前端筛选显示）
 	Path         string     `gorm:"not null"             json:"path"`          // VFS 扫描路径
 	PathMerge    bool       `gorm:"default:false"        json:"path_merge"`    // 路径合并模式（子文件夹作为一个条目）
@@ -45,7 +45,7 @@ type MediaItem struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index"                json:"-"`
 	// 基础信息
-	MediaType  MediaType `gorm:"index;not null"          json:"media_type"`
+	MediaType  MediaType `gorm:"size:32;index;not null"  json:"media_type"`
 	ScanPathID uint      `gorm:"index"                   json:"scan_path_id"` // 关联的扫描路径ID
 	// 三个字段共同组成复合唯一索引。MySQL 对「有索引且未指定长度」的 string 会生成 longtext，
 	// 而 TEXT 列不能直接建索引（AutoMigrate 会失败）；因此必须显式限定 size。
@@ -95,14 +95,16 @@ type MediaItem struct {
 
 // MediaConfig 媒体库配置（每种类型一条记录）
 type MediaConfig struct {
-	ID           uint           `gorm:"primarykey"           json:"id"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index"                json:"-"`
-	MediaType    MediaType      `gorm:"uniqueIndex;not null" json:"media_type"`
-	Enabled      bool           `gorm:"default:false"        json:"enabled"`
-	LastScanAt   *time.Time     `json:"last_scan_at"`
-	LastScrapeAt *time.Time     `json:"last_scrape_at"`
+	ID        uint           `gorm:"primarykey"           json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index"                json:"-"`
+	// 媒体类型只允许使用 MediaType 定义的短枚举值；显式长度使 MySQL 生成
+	// varchar 而不是无法建立索引的 longtext，满足该字段的唯一约束。
+	MediaType    MediaType  `gorm:"size:32;uniqueIndex;not null" json:"media_type"`
+	Enabled      bool       `gorm:"default:false"        json:"enabled"`
+	LastScanAt   *time.Time `json:"last_scan_at"`
+	LastScrapeAt *time.Time `json:"last_scrape_at"`
 	// ScraperConfig 该媒体类型独立的刮削配置（JSON）：
 	// store_thumbnail / thumbnail_mode / thumbnail_path，未设置时回落到全局设置
 	ScraperConfig string `gorm:"type:text" json:"scraper_config"`

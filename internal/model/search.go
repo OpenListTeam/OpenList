@@ -21,7 +21,9 @@ type SearchReq struct {
 }
 
 type SearchNode struct {
-	Parent string `json:"parent" gorm:"index"`
+	// 路径索引使用 utf8mb4 下可稳定建立的 191 字符前缀；路径字段协议沿用
+	// 现有数据库模型，避免 MySQL 将索引列推导为 longtext。
+	Parent string `json:"parent" gorm:"size:191;index"`
 	Name   string `json:"name"`
 	IsDir  bool   `json:"is_dir"`
 	Size   int64  `json:"size"`
