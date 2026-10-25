@@ -2,11 +2,15 @@ package db
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"strconv"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/pkg/errors"
+	"gorm.io/gorm"
 )
 
 func GetUserByRole(role int) (*model.User, error) {
@@ -99,4 +103,73 @@ func RemoveAuthn(u *model.User, id string) error {
 		return err
 	}
 	return UpdateAuthn(u.ID, string(res))
+}
+
+// migrateUserRoles normalizes the legacy `role` values that AList left behind.
+//
+// AList v3.46.0 and later model the user role as a list of ints and serialize it
+// into a text column, e.g. `"[1]"` or `"[2]"`. OpenList has always used a single
+// int, so a legacy row is no longer equal to the value we query with:
+// `WHERE role = 2` never matches the text `[2]`. GetAdmin and GetGuest therefore
+// both report ErrRecordNotFound, which means the administrator loses the admin
+// panel and initGuest tries to insert a second `guest` row, hits the unique index
+// on username and kills the process on startup.
+func migrateUserRoles() error {
+	stmt := &gorm.Statement{DB: db}
+	if err := stmt.Parse(&model.User{}); err != nil {
+		return err
+	}
+	table := stmt.Schema.Table
+	var rows []struct {
+		ID   uint
+		Role string
+	}
+	// Scanning into string keeps this portable: text and blob columns on SQLite,
+	// TEXT on MySQL, and both TEXT and integer columns on PostgreSQL all convert.
+	if err := db.Table(table).Select(columnName("id") + ", " + columnName("role")).Find(&rows).Error; err != nil {
+		return errors.WithMessage(err, "failed to read user roles")
+	}
+	migrated := 0
+	for _, row := range rows {
+		role, ok := convertLegacyRole(row.Role)
+		if !ok {
+			continue
+		}
+		if err := db.Table(table).Where(columnName("id")+" = ?", row.ID).Update(columnName("role"), role).Error; err != nil {
+			return errors.WithMessagef(err, "failed to migrate role of user %d", row.ID)
+		}
+		migrated++
+	}
+	if migrated > 0 {
+		utils.Log.Infof("[migrate user role] converted %d legacy AList role value(s)", migrated)
+	}
+	return nil
+}
+
+// convertLegacyRole turns an AList style role into the single OpenList role.
+// The second return value reports whether the value actually needs rewriting.
+func convertLegacyRole(raw string) (int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	if _, err := strconv.Atoi(raw); err == nil {
+		// Already stored in the current single-int form.
+		return 0, false
+	}
+	var roles []int
+	if err := json.Unmarshal([]byte(raw), &roles); err != nil {
+		// Unknown format, leave it alone rather than guessing.
+		return 0, false
+	}
+	// AList allowed several roles per user, OpenList keeps only one, so pick the
+	// most privileged one present.
+	for _, want := range []int{model.ADMIN, model.GUEST} {
+		for _, role := range roles {
+			if role == want {
+				return want, true
+			}
+		}
+	}
+	return model.GENERAL, true
 }

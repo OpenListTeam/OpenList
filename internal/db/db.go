@@ -35,6 +35,11 @@ func Init(d *gorm.DB) {
 			MediaMigrateWipeEnv,
 		)
 	}
+	// Must run after AutoMigrate: the role column is rebuilt with its current
+	// type, while legacy rows keep their old text value.
+	if err := migrateUserRoles(); err != nil {
+		log.Errorf("failed migrate user roles: %s", err.Error())
+	}
 }
 
 func mediaWipeConfirmed() bool {

@@ -61,24 +61,42 @@ func initAdmin() {
 
 func initGuest() {
 	_, err := op.GetGuest()
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			salt := random.String(16)
-			guest := &model.User{
-				Username:   "guest",
-				PwdHash:    model.TwoHashPwd("guest", salt),
-				Salt:       salt,
-				Role:       model.GUEST,
-				BasePath:   "/",
-				Permission: 0,
-				Disabled:   true,
-				Authn:      "[]",
-			}
-			if err := db.CreateUser(guest); err != nil {
-				utils.Log.Fatalf("[init user] Failed to create guest user: %v", err)
-			}
-		} else {
-			utils.Log.Fatalf("[init user] Failed to get guest user: %v", err)
+	if err == nil {
+		return
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		utils.Log.Fatalf("[init user] Failed to get guest user: %v", err)
+	}
+	salt := random.String(16)
+	guest := &model.User{
+		Username:   "guest",
+		PwdHash:    model.TwoHashPwd("guest", salt),
+		Salt:       salt,
+		Role:       model.GUEST,
+		BasePath:   "/",
+		Permission: 0,
+		Disabled:   true,
+		Authn:      "[]",
+	}
+	if err := db.CreateUser(guest); err != nil {
+		// The role lookup above found nothing, yet a row named `guest` already
+		// occupies the unique username. Upgrading from AList is the common cause:
+		// its role value lives in a legacy format nothing matches, so we would
+		// re-insert forever and die on this constraint. Take the row over instead
+		// of refusing to boot.
+		legacy, getErr := db.GetUserByName(guest.Username)
+		if getErr != nil {
+			utils.Log.Fatalf("[init user] Failed to create guest user: %v", err)
 		}
+		legacy.Role = model.GUEST
+		// Never leave the guest account usable without a password.
+		legacy.Disabled = true
+		if updateErr := op.UpdateUser(legacy); updateErr != nil {
+			utils.Log.Fatalf("[init user] Failed to repair guest user (id=%d): %v", legacy.ID, updateErr)
+		}
+		utils.Log.Warnf(
+			"[init user] Username %q was already taken by user id=%d and has been taken over as the disabled guest account; rename it if it used to be a regular account",
+			legacy.Username, legacy.ID,
+		)
 	}
 }
