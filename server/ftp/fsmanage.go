@@ -33,6 +33,13 @@ func Mkdir(ctx context.Context, path string) error {
 	if !common.CanWrite(user, parentMeta, parentPath) {
 		return errs.PermissionDenied
 	}
+	// MKD of a path that already exists fails (550), as on other FTP servers;
+	// fs.MakeDir would report success for an existing directory.
+	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err == nil {
+		return errors.New("file or directory already exists")
+	} else if !errs.IsObjectNotFound(err) {
+		return err
+	}
 	return fs.MakeDir(ctx, reqPath)
 }
 
