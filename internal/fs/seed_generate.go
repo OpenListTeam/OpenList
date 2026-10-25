@@ -10,6 +10,7 @@ import (
 	stdpath "path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -97,6 +98,11 @@ type SeedGenerateParams struct {
 	IncludeDirectSource bool
 	ShareFiles          []string
 	DirectFiles         []string
+
+	// OnProgress 可选：读取文件计算哈希时回调 (已读字节, 总字节)，用于任务进度展示。
+	OnProgress func(read, total int64)
+	// OnStage 可选：进入新阶段时回调，用于展示「正在计算哈希 2/5」这类状态文案。
+	OnStage func(stage string)
 }
 
 // SeedArtifact is one generated seed container.
@@ -376,8 +382,14 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	}
 	globalHasher := torrent.NewHashWriter(pieceSize, pieceSize, 0)
 	fullPaths := make([]string, 0, len(params.Paths))
+	// 先算出总字节数，读取阶段才能给出可靠的百分比（任务进度条需要它）。
+	// 只做元数据查询，不读内容，代价可以忽略。
+	progress := &seedProgressReader{total: seedTotalSize(ctx, user, params.Paths), report: params.OnProgress}
 	var total int64
-	for _, requestedPath := range params.Paths {
+	for index, requestedPath := range params.Paths {
+		if params.OnStage != nil {
+			params.OnStage(fmt.Sprintf("正在计算哈希 %d/%d: %s", index+1, len(params.Paths), stdpath.Base(requestedPath)))
+		}
 		fullPath, err := user.JoinPath(requestedPath)
 		if err != nil {
 			return nil, nil, err
@@ -447,7 +459,9 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 			return nil, nil, err
 		}
 		fileHasher := torrent.NewHashWriter(pieceSize, pieceSize, 0)
-		n, copyErr := io.Copy(io.MultiWriter(globalHasher, fileHasher), rc)
+		progress.reader = rc
+		n, copyErr := io.Copy(io.MultiWriter(globalHasher, fileHasher), progress)
+		progress.reader = nil
 		_ = rc.Close()
 		if copyErr != nil {
 			return nil, nil, fmt.Errorf("read %s: %w", requestedPath, copyErr)
@@ -471,6 +485,11 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 		fullPaths = append(fullPaths, fullPath)
 	}
 	globalHasher.Finish()
+	// 哈希读完，先把进度推到位，再进入编码阶段
+	progress.reportNow()
+	if params.OnStage != nil {
+		params.OnStage("正在生成种子文件")
+	}
 	createdShares := make([]string, 0, len(seed.Files))
 	keepCreatedShares := false
 	defer func() {
@@ -568,12 +587,79 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	return artifacts, seed, nil
 }
 
+// seedProgressReader 在读取文件内容时按字节回报进度。
+// 多个文件复用同一个实例，done 跨文件累计，所以百分比反映整体进度而不是单文件。
+type seedProgressReader struct {
+	reader io.Reader
+	done   int64
+	total  int64
+	last   time.Time
+	report func(done, total int64)
+}
+
+func (p *seedProgressReader) Read(b []byte) (int, error) {
+	if p.reader == nil {
+		return 0, io.EOF
+	}
+	n, err := p.reader.Read(b)
+	if n > 0 {
+		p.done += int64(n)
+		p.reportProgress()
+	}
+	return n, err
+}
+
+// reportProgress 限流到约 2 次/秒，避免高频写任务状态拖慢哈希。
+func (p *seedProgressReader) reportProgress() {
+	if p.report == nil || time.Since(p.last) < 500*time.Millisecond {
+		return
+	}
+	p.reportNow()
+}
+
+// reportNow 立即回报一次当前进度（阶段切换、收尾时调用）。
+func (p *seedProgressReader) reportNow() {
+	if p.report == nil {
+		return
+	}
+	p.last = time.Now()
+	p.report(p.done, p.total)
+}
+
+// seedTotalSize 汇总待生成种子文件的总字节数，仅用于进度百分比。
+// 解析失败的文件交给主流程报错，这里静默跳过。
+func seedTotalSize(ctx context.Context, user *model.User, paths []string) int64 {
+	var total int64
+	for _, requestedPath := range paths {
+		fullPath, err := user.JoinPath(requestedPath)
+		if err != nil {
+			continue
+		}
+		storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
+		if err != nil {
+			continue
+		}
+		obj, err := op.Get(ctx, storage, actualPath)
+		if err != nil || obj.IsDir() {
+			continue
+		}
+		total += obj.GetSize()
+	}
+	return total
+}
+
 // SeedGenerateTask generates seed containers asynchronously, writing them into
 // params.OutputPath so they appear in the target folder once done.
 type SeedGenerateTask struct {
 	task.TaskExtension
 	params SeedGenerateParams
+
+	statusMu sync.Mutex
+	status   string
 }
+
+// seedHashProgressEnd 哈希阶段占整体进度的比例：剩下的留给编码和写盘。
+const seedHashProgressEnd = 90.0
 
 func (t *SeedGenerateTask) GetName() string {
 	if len(t.params.Paths) == 1 {
@@ -583,14 +669,46 @@ func (t *SeedGenerateTask) GetName() string {
 }
 
 func (t *SeedGenerateTask) GetStatus() string {
-	return "generating seed"
+	t.statusMu.Lock()
+	defer t.statusMu.Unlock()
+	if t.status == "" {
+		return "generating seed"
+	}
+	return t.status
+}
+
+func (t *SeedGenerateTask) setStatus(status string) {
+	t.statusMu.Lock()
+	t.status = status
+	t.statusMu.Unlock()
 }
 
 func (t *SeedGenerateTask) Run() error {
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
+	t.SetProgress(0)
+	t.setStatus("正在准备")
 	defer func() { t.SetEndTime(time.Now()) }()
-	_, _, err := GenerateSeedArtifacts(t.Ctx(), t.Creator, t.params)
+
+	params := t.params
+	params.OnStage = func(stage string) {
+		t.setStatus(stage)
+	}
+	params.OnProgress = func(read, total int64) {
+		t.SetTotalBytes(total)
+		if total <= 0 {
+			return
+		}
+		progress := float64(read) / float64(total) * seedHashProgressEnd
+		if progress > seedHashProgressEnd {
+			progress = seedHashProgressEnd
+		}
+		t.SetProgress(progress)
+	}
+	_, _, err := GenerateSeedArtifacts(t.Ctx(), t.Creator, params)
+	if err == nil {
+		t.SetProgress(100)
+	}
 	return err
 }
 

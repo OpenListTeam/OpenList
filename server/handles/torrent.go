@@ -460,11 +460,17 @@ func TorrentRapidUpload(c *gin.Context) {
 		common.ErrorResp(c, fmt.Errorf("该种子无法用于秒传：仅支持单文件且大小与哈希一致的种子"), 400)
 		return
 	}
+	// 秒传是同步接口，同时挂一个展示用任务，任务列表里能看到进行中的状态
+	progress := fs.NewSeedSaveTask(c.Request.Context(), user, "rapid upload "+rapidReq.Name)
+	progress.Report(0, 1, rapidReq.Name, "正在秒传")
 	obj, err := rapid.RapidUploadByHashes(c.Request.Context(), dstDir, rapidReq, true)
 	if err != nil {
+		progress.Finish(err)
 		common.ErrorResp(c, fmt.Errorf("秒传失败: %w", err), 400)
 		return
 	}
+	progress.Report(1, 1, obj.GetName(), "秒传完成")
+	progress.Finish(nil)
 
 	common.SuccessResp(c, gin.H{
 		"message":   "秒传成功",
@@ -1507,7 +1513,8 @@ func UpdateSeed(c *gin.Context) {
 }
 
 // saveSeedFilesToPath saves selected seed files into one target directory.
-func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, dstPath string, rapidOnly bool, allowOffline bool) ([]gin.H, string, string, error) {
+// progress 可为 nil；非 nil 时逐文件上报任务进度（任务本身只是展示载体）。
+func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, dstPath string, rapidOnly bool, allowOffline bool, progress *fs.SeedSaveTask) ([]gin.H, string, string, error) {
 	results := make([]gin.H, 0, len(seed.Files))
 	fullPath, err := user.JoinPath(dstPath)
 	if err != nil {
@@ -1547,6 +1554,8 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 	rapidUploader := seedRapidUploaderFor(storage)
 	_, putURL := storage.(driver.PutURL)
 	_, putURLResult := storage.(driver.PutURLResult)
+	// 先筛出真正要处理的文件，任务进度才能给出准确的分母
+	pending := make([]torrent.SeedFile, 0, len(seed.Files))
 	for index, file := range seed.Files {
 		if len(selected) > 0 {
 			if _, ok := selected[file.Path]; !ok {
@@ -1557,7 +1566,13 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 				continue
 			}
 		}
+		pending = append(pending, file)
+	}
+	for i, file := range pending {
 		name := stdpath.Base(file.Path)
+		if progress != nil {
+			progress.Report(i, len(pending), name, "正在保存")
+		}
 		if rapidUploader != nil && seedFileSupportsRapidUpload(rapidUploader, file) {
 			one := *seed
 			one.Name = name
@@ -1629,36 +1644,43 @@ func resolveSeedTransitPath(req SeedQuickSaveReq) string {
 
 // transferSeedViaTransit first saves to an intermediate directory then relays to the final target.
 func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, transitPath string) {
+	// 中转保存同样是同步请求，挂一个展示用任务，让「秒传 → 转存」整个过程可见
+	progress := fs.NewSeedSaveTask(c.Request.Context(), user, "transfer seed "+seed.Name)
+	fail := func(err error, code int) {
+		progress.Finish(err)
+		common.ErrorResp(c, err, code)
+	}
 	if !user.CanCopy() {
-		common.ErrorResp(c, errs.PermissionDenied, 403)
+		fail(errs.PermissionDenied, 403)
 		return
 	}
-	transitResults, _, _, err := saveSeedFilesToPath(c, user, seed, req, transitPath, false, false)
+	transitResults, _, _, err := saveSeedFilesToPath(c, user, seed, req, transitPath, false, false, progress)
 	if err != nil {
-		common.ErrorResp(c, err, seedSaveErrorCode(err))
+		fail(err, seedSaveErrorCode(err))
 		return
 	}
 	finalDst, err := user.JoinPath(req.Path)
 	if err != nil {
-		common.ErrorResp(c, err, 403)
+		fail(err, 403)
 		return
 	}
 	finalMeta, err := op.GetNearestMeta(finalDst)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-		common.ErrorResp(c, err, 500, true)
+		fail(err, 500)
 		return
 	}
 	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(finalMeta, finalDst)) || !common.CanWrite(user, finalMeta, finalDst) {
-		common.ErrorResp(c, errs.PermissionDenied, 403)
+		fail(errs.PermissionDenied, 403)
 		return
 	}
 	transitFullPath, err := user.JoinPath(transitPath)
 	if err != nil {
-		common.ErrorResp(c, err, 403)
+		fail(err, 403)
 		return
 	}
 	finalResults := make([]gin.H, 0, len(transitResults))
-	for _, res := range transitResults {
+	relayTotal := len(transitResults)
+	for i, res := range transitResults {
 		method, _ := res["method"].(string)
 		if method == "unavailable" {
 			finalResults = append(finalResults, res)
@@ -1673,6 +1695,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": "transit requires a synchronous intermediate save (rapid upload or PutURL)"})
 			continue
 		}
+		progress.Report(i, relayTotal, name, "正在转存")
 		srcObjPath := stdpath.Join(transitFullPath, name)
 		_, copyErr := fs.Copy(context.WithValue(c.Request.Context(), conf.NoTaskKey, struct{}{}), srcObjPath, finalDst)
 		if copyErr != nil {
@@ -1681,6 +1704,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 		}
 		finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer"})
 	}
+	progress.Finish(nil)
 	common.SuccessResp(c, gin.H{"results": finalResults})
 }
 
@@ -1801,7 +1825,11 @@ func QuickSaveSeed(c *gin.Context) {
 		transferSeedViaTransit(c, user, seed, req, transitPath)
 		return
 	}
-	results, driverName, mountPath, err := saveSeedFilesToPath(c, user, seed, req, req.Path, rapidOnly, true)
+	// 秒传/中转保存本身是同步请求，这里挂一个只在任务列表里展示进度的任务，
+	// 让用户能看到逐文件进度而不是干等 HTTP 响应。
+	progress := fs.NewSeedSaveTask(c.Request.Context(), user, "save seed "+seed.Name)
+	results, driverName, mountPath, err := saveSeedFilesToPath(c, user, seed, req, req.Path, rapidOnly, true, progress)
+	progress.Finish(err)
 	if err != nil {
 		common.ErrorResp(c, err, seedSaveErrorCode(err))
 		return

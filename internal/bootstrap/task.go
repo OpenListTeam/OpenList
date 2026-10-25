@@ -50,4 +50,9 @@ func InitTaskManager() {
 		fs.ArchiveContentUploadTaskManager.SetWorkersNumActive(taskFilterNegative(setting.GetInt(conf.TaskDecompressUploadThreadsNum, conf.Conf.Tasks.DecompressUpload.Workers)))
 	})
 	fs.SeedGenerateTaskManager = tache.NewManager[*fs.SeedGenerateTask](tache.WithWorks(setting.GetInt(conf.TaskUploadThreadsNum, conf.Conf.Tasks.Upload.Workers)), tache.WithMaxRetry(conf.Conf.Tasks.Upload.MaxRetry)) //seed generation will not support persist
+	// 种子秒传/中转保存的任务只用于展示进度：操作仍在请求内同步执行，
+	// 所以 manager 不启动 worker（Running=false），任务不会被调度执行。
+	saveOpts := tache.DefaultOptions()
+	saveOpts.Running = false
+	fs.SeedSaveTaskManager = tache.NewManager[*fs.SeedSaveTask](tache.WithOptions(*saveOpts))
 }

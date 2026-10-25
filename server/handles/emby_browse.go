@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/gin-gonic/gin"
 )
@@ -151,10 +152,17 @@ type embySeries struct {
 }
 
 // isEmbySeriesItem 判断视频条目是否属于剧集。
-// 电视剧按目录扫描（IsFolder=true，带 Episodes 选集），或被刮削为 tv；
-// 其余单文件视频一律按电影处理。仅看 video_type 会把目录型剧集误判为电影。
+// 扫描路径的类型标签优先：标签判定为剧集（电视剧/动漫/纪录片/综艺…）时，
+// 该路径下所有视频（含单文件）都按剧集归组；标签判定为电影时，即使开启了
+// 路径合并模式也按电影展示。标签无法判定时才回退到旧规则（文件夹按剧集）。
 func isEmbySeriesItem(it *model.MediaItem) bool {
-	return it.IsFolder || it.VideoType == "tv"
+	switch it.VideoType {
+	case "tv":
+		return true
+	case "movie":
+		return false
+	}
+	return it.IsFolder
 }
 
 func seriesKeyOf(item *model.MediaItem) string {
@@ -1630,7 +1638,8 @@ func embyVirtualFolders(c *gin.Context, user *model.User) {
 		collectionType := "movies"
 		switch p.MediaType {
 		case model.MediaTypeVideo:
-			if p.TypeTag == "电视剧" || p.TypeTag == "tv" {
+			// 与 Emby 浏览侧的判定保持一致：类型标签决定这个库是电影库还是剧集库
+			if media.VideoTypeForTypeTag(p.TypeTag) == "tv" {
 				collectionType = "tvshows"
 			}
 		case model.MediaTypeMusic:

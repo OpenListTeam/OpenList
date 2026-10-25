@@ -225,4 +225,8 @@ func SetupTaskRoute(g *gin.RouterGroup) {
 	taskRoute(g.Group("/offline_download_transfer"), tool.TransferTaskManager)
 	taskRoute(g.Group("/decompress"), fs.ArchiveDownloadTaskManager)
 	taskRoute(g.Group("/decompress_upload"), fs.ArchiveContentUploadTaskManager)
+	// 种子相关任务：之前生成哈希的任务既没有进度也没有出现在任务列表里，
+	// 秒传/中转保存则是纯同步请求。现在两者都能在任务列表看到进度。
+	taskRoute(g.Group("/seed_generate"), fs.SeedGenerateTaskManager)
+	taskRoute(g.Group("/seed_save"), fs.SeedSaveTaskManager)
 }

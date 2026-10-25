@@ -203,14 +203,33 @@ func SignedStreamURLWithBase(apiBase, rawPath string) string {
 	return fmt.Sprintf("%s/d%s?sign=%s", apiBase, utils.EncodePath(p), url.QueryEscape(sign.Sign(rawPath)))
 }
 
-// SignedProxyURL 构造经服务端代理的签名链接（/p）
-func SignedProxyURL(c *gin.Context, rawPath string) string {
-	apiBase := strings.TrimSuffix(common.GetApiUrl(c.Request.Context()), "/")
+// SignedProxyURLWithBase 使用指定站点前缀构造代理签名链接（/p）。
+// apiBase 为空串时返回相对路径，由浏览器按当前 origin 解析。
+func SignedProxyURLWithBase(apiBase, rawPath string) string {
+	apiBase = strings.TrimSuffix(apiBase, "/")
 	p := rawPath
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
 	return fmt.Sprintf("%s/p%s?sign=%s", apiBase, utils.EncodePath(p), url.QueryEscape(sign.Sign(rawPath)))
+}
+
+// SignedProxyURL 构造经服务端代理的签名链接（/p）
+func SignedProxyURL(c *gin.Context, rawPath string) string {
+	return SignedProxyURLWithBase(common.GetApiUrl(c.Request.Context()), rawPath)
+}
+
+// PlaybackStreamURL 构造返回给前端的播放直链。
+// 与 SignedStreamURL 的唯一差别是站点前缀来自 common.GetPlaybackBase：
+// 请求 host 是 127.0.0.1/localhost 且未配置 SiteURL 时返回相对路径，
+// 避免前端播放器被指向本机回环地址。
+func PlaybackStreamURL(c *gin.Context, rawPath string) string {
+	return SignedStreamURLWithBase(common.GetPlaybackBase(c.Request), rawPath)
+}
+
+// PlaybackProxyURL 构造返回给前端的代理播放链接（同上，回环 host 时返回相对路径）
+func PlaybackProxyURL(c *gin.Context, rawPath string) string {
+	return SignedProxyURLWithBase(common.GetPlaybackBase(c.Request), rawPath)
 }
 
 // MediaStreamURL 返回媒体条目（或其中一集）的签名直链
