@@ -237,14 +237,16 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 		return nil
 	}
 	storageDriver, err := GetStorageByMountPath(oldStorage.MountPath)
+	if err != nil {
+		return errors.WithMessage(err, "failed get storage driver")
+	}
+	// Storage settings may change which objects are exposed at the same mount
+	// path, so cached entries must be discarded before reinitializing the driver.
+	Cache.DeleteDirectoryTree(storageDriver, "/")
+	Cache.InvalidateStorageDetails(storageDriver)
 	if oldStorage.MountPath != storage.MountPath {
 		// mount path renamed, need to drop the storage
 		storagesMap.Delete(oldStorage.MountPath)
-		Cache.DeleteDirectoryTree(storageDriver, "/")
-		Cache.InvalidateStorageDetails(storageDriver)
-	}
-	if err != nil {
-		return errors.WithMessage(err, "failed get storage driver")
 	}
 	err = storageDriver.Drop(ctx)
 	if err != nil {

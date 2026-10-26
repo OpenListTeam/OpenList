@@ -31,6 +31,5 @@ func GetApiUrlFromRequest(r *http.Request) string {
 }
 
 func GetApiUrl(ctx context.Context) string {
-	api, _ := ctx.Value(conf.ApiUrlKey).(string)
-	return api
+	return conf.GetApiUrl(ctx)
 }

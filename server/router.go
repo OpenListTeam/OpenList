@@ -67,6 +67,11 @@ func Init(e *gin.Engine) {
 	g.HEAD("/sad/:sid", middlewares.EmptyPathParse, middlewares.SharingIdParse, handles.SharingArchiveExtract)
 	g.HEAD("/sad/:sid/*path", middlewares.PathParse, middlewares.SharingIdParse, handles.SharingArchiveExtract)
 
+	// 转码播放：master/variant playlist 与切片下发；token 已包含在路径中作为鉴权
+	g.GET("/tc/:job/:token/master.m3u8", handles.TCMaster)
+	g.GET("/tc/:job/:token/:profile/playlist.m3u8", handles.TCPlaylist)
+	g.GET("/tc/:job/:token/:profile/:seg", handles.TCSegment)
+
 	api := g.Group("/api")
 	auth := api.Group("", middlewares.Auth(false))
 	webauthn := api.Group("/authn", middlewares.Authn)
@@ -76,6 +81,10 @@ func Init(e *gin.Engine) {
 	api.POST("/auth/login/ldap", handles.LoginLdap)
 	auth.GET("/me", handles.CurrentUser)
 	auth.POST("/me/update", handles.UpdateCurrent)
+	// 媒体应用密钥（每个登录用户都可以为自己的客户端签发密钥）
+	auth.GET("/me/appkey/list", handles.ListMediaAppKeys)
+	auth.POST("/me/appkey/create", handles.CreateMediaAppKey)
+	auth.POST("/me/appkey/delete", handles.DeleteMediaAppKey)
 	auth.GET("/me/sshkey/list", handles.ListMyPublicKey)
 	auth.POST("/me/sshkey/add", handles.AddMyPublicKey)
 	auth.POST("/me/sshkey/delete", handles.DeleteMyPublicKey)
@@ -100,12 +109,51 @@ func Init(e *gin.Engine) {
 	// no need auth
 	public := api.Group("/public")
 	public.Any("/settings", handles.PublicSettings)
+	public.GET("/media_status", handles.PublicMediaStatus)
+	// 封面代理与本地缩略图（媒体库页面使用，免鉴权）
+	public.GET("/media/proxy", handles.PublicMediaProxy)
+	public.GET("/media/thumb", handles.PublicMediaThumb)
 	public.Any("/offline_download_tools", handles.OfflineDownloadTools)
 	public.Any("/archive_extensions", handles.ArchiveExtensions)
 	public.Any("/init_status", handles.InitStatus)
 	public.POST("/init/setup", handles.InitSetup)
 
+	// 转码 Worker 协议端点（远程 Worker 节点对接，由共享密钥/token 鉴权，无需登录）
+	transcodeWorker := api.Group("/transcode/worker")
+	transcodeWorker.POST("/register", handles.WorkerRegister)
+	transcodeWorker.POST("/heartbeat", handles.WorkerHeartbeat)
+	transcodeWorker.POST("/claim", handles.WorkerClaim)
+	transcodeWorker.PUT("/segment", handles.WorkerSegmentUpload)
+	transcodeWorker.POST("/job/finish", handles.WorkerJobFinish)
+
+	// Emby 兼容 API（自带鉴权与开关判断，路径大小写由 handler 归一化）
+	// 使用 @ 前缀，避免与用户自己创建的 /emby、/rest 目录冲突
+	g.Any("/@emby/*path", handles.EmbyAPI)
+	g.Any("/@mediabrowser/*path", handles.EmbyAPI)
+	// OpenSubsonic API（自带鉴权与开关判断）
+	g.Any("/@rest/*path", handles.SubsonicAPI)
+
 	_fs(auth.Group("/fs"))
+	// 媒体库公开 API：与文件浏览一致，允许访客访问（访客仍受自身 base_path/权限限制）
+	mediaPublic := auth.Group("/fs/media", handles.RequireMediaEnabled)
+	mediaPublic.GET("/list", handles.PublicListMedia)
+	mediaPublic.GET("/item/:id", handles.PublicGetMedia)
+	mediaPublic.GET("/albums", handles.PublicListAlbums)
+	mediaPublic.GET("/album", handles.PublicGetAlbum)
+	mediaPublic.GET("/folders", handles.PublicListFolders)
+	mediaPublic.GET("/scan_paths", handles.PublicListScanPaths)
+	mediaPublic.GET("/strm", handles.GetMediaStrm)
+	mediaPublic.GET("/stream_url", handles.GetMediaStreamURL)
+	// 播放进度与收藏（与 Emby / Subsonic 共用同一份用户数据）
+	mediaPublic.GET("/userdata", handles.GetMediaUserDataBatch)
+	mediaPublic.GET("/progress", handles.GetMediaProgress)
+	mediaPublic.POST("/progress", handles.SaveMediaProgress)
+	mediaPublic.POST("/favorite", handles.SetMediaFavorite)
+	mediaPublic.GET("/favorites", handles.ListMediaFavoritesAPI)
+	mediaPublic.GET("/resume", handles.ListMediaResumeAPI)
+	// 阅读器批注（登录用户私有数据；访客只读返回空列表，写入直接 403）
+	mediaPublic.GET("/annotations", handles.ListMediaAnnotationsAPI)
+	mediaPublic.POST("/annotations", handles.SyncMediaAnnotationsAPI)
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
 	_task(auth.Group("/task", middlewares.AuthNotGuest))
 	_sharing(auth.Group("/share", middlewares.AuthNotGuest))
@@ -190,6 +238,42 @@ func admin(g *gin.RouterGroup) {
 	scan.POST("/start", handles.StartManualScan)
 	scan.POST("/stop", handles.StopManualScan)
 	scan.GET("/progress", handles.GetManualScanProgress)
+
+	// 媒体库管理
+	mediaAdmin := g.Group("/media")
+	mediaAdmin.GET("/config/list", handles.ListMediaConfigs)
+	mediaAdmin.POST("/config/save", handles.SaveMediaConfig)
+	mediaAdmin.GET("/items", handles.ListMediaItemsAdmin)
+	mediaAdmin.POST("/items/update", handles.UpdateMediaItemAdmin)
+	mediaAdmin.POST("/items/delete", handles.DeleteMediaItemAdmin)
+	mediaAdmin.POST("/scan/start", handles.StartMediaScan)
+	mediaAdmin.GET("/scan/progress", handles.GetMediaScanProgress)
+	mediaAdmin.POST("/scrape/start", handles.StartMediaScrape)
+	mediaAdmin.GET("/scrape/stats", handles.GetMediaScrapeStats)
+	mediaAdmin.POST("/clear", handles.ClearMediaDB)
+	mediaAdmin.POST("/clear_scrape", handles.ClearMediaScrape)
+	mediaAdmin.POST("/delete_invalid", handles.DeleteInvalidMedia)
+	// 扫描路径管理
+	mediaAdmin.GET("/scan_paths", handles.ListMediaScanPaths)
+	mediaAdmin.POST("/scan_paths/create", handles.CreateMediaScanPath)
+	mediaAdmin.POST("/scan_paths/update", handles.UpdateMediaScanPath)
+	mediaAdmin.POST("/scan_paths/delete", handles.DeleteMediaScanPath)
+	mediaAdmin.POST("/scan_paths/clear", handles.ClearMediaScanPathDB)
+	// 导入 / 导出
+	mediaAdmin.GET("/export", handles.ExportMediaDB)
+	mediaAdmin.POST("/import", handles.ImportMediaDB)
+	// 媒体应用密钥（Subsonic/Emby/MoviePilot 等无交互客户端）
+	mediaAdmin.GET("/appkey/list", handles.ListMediaAppKeys)
+	mediaAdmin.POST("/appkey/create", handles.CreateMediaAppKey)
+	mediaAdmin.POST("/appkey/delete", handles.DeleteMediaAppKey)
+	// STRM 批量生成
+	mediaAdmin.POST("/strm/generate", handles.GenerateMediaStrm)
+
+	// 转码管理
+	transcodeAdmin := g.Group("/transcode")
+	transcodeAdmin.GET("/workers", handles.ListTranscodeWorkers)
+	transcodeAdmin.GET("/jobs", handles.ListTranscodeJobs)
+	transcodeAdmin.POST("/cancel", handles.CancelTranscodeJob)
 }
 
 func fsAndShare(g *gin.RouterGroup) {
@@ -198,6 +282,9 @@ func fsAndShare(g *gin.RouterGroup) {
 	a := g.Group("/archive")
 	a.Any("/meta", handles.FsArchiveMetaSplit)
 	a.Any("/list", handles.FsArchiveListSplit)
+
+	// 转码 - 用户态：申请播放
+	g.POST("/transcode/play", handles.RequireMediaEnabled, handles.TranscodePlay)
 }
 
 func _fs(g *gin.RouterGroup) {
@@ -234,6 +321,19 @@ func _fs(g *gin.RouterGroup) {
 	g.POST("/torrent/upload_parse", handles.UploadTorrentAndParse)
 	g.POST("/torrent/rapid_upload", handles.TorrentRapidUpload)
 	g.POST("/torrent/generate", handles.GenerateTorrentForPath)
+	// Unified transfer seed APIs. Legacy torrent routes above remain supported.
+	seed := g.Group("/seed")
+	seed.POST("/parse", handles.ParseSeed)
+	seed.POST("/upload_parse", handles.UploadSeedAndParse)
+	seed.POST("/generate", handles.GenerateSeedForPaths)
+	seed.POST("/convert", handles.ConvertSeed)
+	seed.POST("/diagnose", handles.DiagnoseSeed)
+	seed.POST("/capabilities", handles.SeedCapabilities)
+	seed.POST("/rapid_upload", handles.QuickSaveSeed)
+	seed.POST("/offline_download", handles.QuickSaveSeed)
+	seed.POST("/update", handles.UpdateSeed)
+	seed.POST("/quick_save", handles.QuickSaveSeed)
+	seed.POST("/update_channels", handles.UpdateSeedChannels)
 	// Direct upload (client-side upload to storage)
 	g.POST("/get_direct_upload_info", handles.FsGetDirectUploadInfo)
 }
