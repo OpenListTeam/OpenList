@@ -15,23 +15,23 @@ func archiveMeta(ctx context.Context, sid, path string, args model.SharingArchiv
 	if err != nil {
 		return nil, nil, errors.WithStack(errs.SharingNotFound)
 	}
-	path = utils.FixAndCleanPath(path)
-	if len(sharing.Files) != 1 && path == "/" {
-		return nil, nil, errors.New("cannot get sharing root archive meta")
-	}
-	if err = op.AccessSharing(args.ClientIP, args.Pwd, sharing); err != nil {
+	if err = op.CheckSharing(args.ClientIP, args.Pwd, sharing); err != nil {
 		return sharing, nil, err
 	}
-	unwrapPath, err := op.GetSharingUnwrapPath(sharing, path)
-	if err != nil {
-		return nil, nil, errors.WithMessage(err, "failed get sharing unwrap path")
+	path = utils.FixAndCleanPath(path)
+	if len(sharing.Files) == 1 || path != "/" {
+		unwrapPath, err := op.GetSharingUnwrapPath(sharing, path)
+		if err != nil {
+			return nil, nil, errors.WithMessage(err, "failed get sharing unwrap path")
+		}
+		storage, actualPath, err := op.GetStorageAndActualPath(unwrapPath)
+		if err != nil {
+			return nil, nil, errors.WithMessage(err, "failed get sharing file")
+		}
+		obj, err := op.GetArchiveMeta(ctx, storage, actualPath, args.ArchiveMetaArgs)
+		return sharing, obj, err
 	}
-	storage, actualPath, err := op.GetStorageAndActualPath(unwrapPath)
-	if err != nil {
-		return nil, nil, errors.WithMessage(err, "failed get sharing file")
-	}
-	obj, err := op.GetArchiveMeta(ctx, storage, actualPath, args.ArchiveMetaArgs)
-	return sharing, obj, err
+	return nil, nil, errors.New("cannot get sharing root archive meta")
 }
 
 func archiveList(ctx context.Context, sid, path string, args model.SharingArchiveListArgs) (*model.Sharing, []model.Obj, error) {
@@ -39,21 +39,21 @@ func archiveList(ctx context.Context, sid, path string, args model.SharingArchiv
 	if err != nil {
 		return nil, nil, errors.WithStack(errs.SharingNotFound)
 	}
-	path = utils.FixAndCleanPath(path)
-	if len(sharing.Files) != 1 && path == "/" {
-		return nil, nil, errors.New("cannot get sharing root archive list")
-	}
-	if err = op.AccessSharing(args.ClientIP, args.Pwd, sharing); err != nil {
+	if err = op.CheckSharing(args.ClientIP, args.Pwd, sharing); err != nil {
 		return sharing, nil, err
 	}
-	unwrapPath, err := op.GetSharingUnwrapPath(sharing, path)
-	if err != nil {
-		return nil, nil, errors.WithMessage(err, "failed get sharing unwrap path")
+	path = utils.FixAndCleanPath(path)
+	if len(sharing.Files) == 1 || path != "/" {
+		unwrapPath, err := op.GetSharingUnwrapPath(sharing, path)
+		if err != nil {
+			return nil, nil, errors.WithMessage(err, "failed get sharing unwrap path")
+		}
+		storage, actualPath, err := op.GetStorageAndActualPath(unwrapPath)
+		if err != nil {
+			return nil, nil, errors.WithMessage(err, "failed get sharing file")
+		}
+		obj, err := op.ListArchive(ctx, storage, actualPath, args.ArchiveListArgs)
+		return sharing, obj, err
 	}
-	storage, actualPath, err := op.GetStorageAndActualPath(unwrapPath)
-	if err != nil {
-		return nil, nil, errors.WithMessage(err, "failed get sharing file")
-	}
-	obj, err := op.ListArchive(ctx, storage, actualPath, args.ArchiveListArgs)
-	return sharing, obj, err
+	return nil, nil, errors.New("cannot get sharing root archive list")
 }

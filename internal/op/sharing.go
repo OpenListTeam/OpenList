@@ -4,7 +4,6 @@ import (
 	"fmt"
 	stdpath "path"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
@@ -52,36 +51,42 @@ func sharingAccessKey(id, ip string) string {
 	return id + ":" + ip
 }
 
-var sharingAccessMu sync.Mutex
+var sharingAccessG singleflight.Group[struct{}]
 
-// AccessSharing validates a visit and takes an access slot for the client IP.
-// Check and count happen under one lock, so concurrent visitors cannot exceed the limit.
-func AccessSharing(ip, pwd string, s *model.Sharing) error {
+func CheckSharing(ip, pwd string, s *model.Sharing) error {
 	if !s.Usable() {
 		return errors.WithStack(errs.InvalidSharing)
 	}
 	if !s.Verify(pwd) {
 		return errors.WithStack(errs.WrongShareCode)
 	}
-	key := sharingAccessKey(s.ID, ip)
-	sharingAccessMu.Lock()
-	defer sharingAccessMu.Unlock()
-	if sharingAccessCache.Exists(key) {
-		return nil
-	}
-	cur, err := db.GetSharingById(s.ID)
-	if err != nil {
-		return err
-	}
-	if cur.LimitReached() {
+	if s.LimitReached() && !sharingAccessCache.Exists(sharingAccessKey(s.ID, ip)) {
 		return errors.WithStack(errs.InvalidSharing)
 	}
-	if err = db.IncrSharingAccessed(s.ID); err != nil {
+	return nil
+}
+
+func AccessSharing(ip, pwd string, s *model.Sharing) error {
+	if err := CheckSharing(ip, pwd, s); err != nil {
 		return err
 	}
-	sharingCache.Del(s.ID)
-	sharingAccessCache.Set(key, struct{}{}, cache.WithEx[struct{}](sharingAccessCountDelay))
-	return nil
+	key := sharingAccessKey(s.ID, ip)
+	_, err, _ := sharingAccessG.Do(key, func() (struct{}, error) {
+		if sharingAccessCache.Exists(key) {
+			return struct{}{}, nil
+		}
+		ok, err := db.TakeSharingSlot(s.ID)
+		if err != nil {
+			return struct{}{}, err
+		}
+		if !ok {
+			return struct{}{}, errors.WithStack(errs.InvalidSharing)
+		}
+		sharingCache.Del(s.ID)
+		sharingAccessCache.Set(key, struct{}{}, cache.WithEx[struct{}](sharingAccessCountDelay))
+		return struct{}{}, nil
+	})
+	return err
 }
 
 func GetSharingById(id string, refresh ...bool) (*model.Sharing, error) {

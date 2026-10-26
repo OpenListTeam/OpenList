@@ -65,8 +65,11 @@ func UpdateSharing(s *model.SharingDB) error {
 	return errors.WithStack(db.Save(s).Error)
 }
 
-func IncrSharingAccessed(id string) error {
-	return errors.WithStack(db.Model(&model.SharingDB{ID: id}).UpdateColumn("accessed", gorm.Expr("accessed + 1")).Error)
+func TakeSharingSlot(id string) (bool, error) {
+	res := db.Model(&model.SharingDB{}).
+		Where("id = ? AND (max_accessed <= 0 OR accessed < max_accessed)", id).
+		UpdateColumn("accessed", gorm.Expr("accessed + 1"))
+	return res.RowsAffected > 0, errors.WithStack(res.Error)
 }
 
 func UpdateSharingId(oldId, newId string) error {

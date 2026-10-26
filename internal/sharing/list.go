@@ -18,7 +18,7 @@ func list(ctx context.Context, sid, path string, args model.SharingListArgs) (*m
 	if err != nil {
 		return nil, nil, errors.WithStack(errs.SharingNotFound)
 	}
-	if err = op.AccessSharing(args.ClientIP, args.Pwd, sharing); err != nil {
+	if err = op.CheckSharing(args.ClientIP, args.Pwd, sharing); err != nil {
 		return sharing, nil, err
 	}
 	path = utils.FixAndCleanPath(path)
