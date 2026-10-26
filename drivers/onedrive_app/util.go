@@ -52,7 +52,9 @@ var onedriveHostMap = map[string]Host{
 //	https://contoso.sharepoint.com/sites/<name>
 //	https://contoso.sharepoint.com            (site collection root)
 //
-// The path form must keep its trailing colon, otherwise Graph rejects the URL.
+// Graph has two addressing forms: /sites/{hostname} for the root site of a host, and
+// /sites/{hostname}:/{path}: for a site below it. Only the path form carries a colon,
+// so an empty path must not produce one.
 // A path-form identifier still has to be resolved to the comma form before it can
 // be followed by /drive; see resolveSiteID.
 func NormalizeSiteID(siteID string) string {
@@ -60,18 +62,24 @@ func NormalizeSiteID(siteID string) string {
 	if siteID == "" {
 		return ""
 	}
-	if strings.HasPrefix(siteID, "https://") || strings.HasPrefix(siteID, "http://") {
-		if u, err := url.Parse(siteID); err == nil && u.Host != "" {
-			siteID = u.Host + ":" + strings.TrimSuffix(u.Path, "/")
+	var host, path string
+	switch {
+	case strings.HasPrefix(siteID, "https://"), strings.HasPrefix(siteID, "http://"):
+		u, err := url.Parse(siteID)
+		if err != nil || u.Host == "" {
+			return siteID
 		}
+		host, path = u.Host, u.Path
+	case strings.Contains(siteID, ":/"):
+		host, path, _ = strings.Cut(siteID, ":/")
+	default:
+		// 已解析的复合 ID 或纯主机名
+		return strings.TrimSuffix(siteID, "/")
 	}
-	if strings.Contains(siteID, ":/") {
-		siteID = strings.TrimSuffix(siteID, "/")
-		if !strings.HasSuffix(siteID, ":") {
-			siteID += ":"
-		}
+	if path = strings.Trim(path, "/:"); path != "" {
+		return host + ":/" + path + ":"
 	}
-	return siteID
+	return host
 }
 
 // resolveSiteID turns a site path identifier into the opaque comma-separated site

@@ -26,7 +26,22 @@ func TestNormalizeSiteID(t *testing.T) {
 		{
 			name: "web url at site collection root",
 			in:   "https://contoso.sharepoint.com/",
-			want: "contoso.sharepoint.com:",
+			want: "contoso.sharepoint.com",
+		},
+		{
+			name: "web url without trailing slash at root",
+			in:   "https://contoso.sharepoint.com",
+			want: "contoso.sharepoint.com",
+		},
+		{
+			name: "bare hostname",
+			in:   "contoso.sharepoint.com",
+			want: "contoso.sharepoint.com",
+		},
+		{
+			name: "hostname with trailing slash",
+			in:   "contoso.sharepoint.com/",
+			want: "contoso.sharepoint.com",
 		},
 		{
 			name: "path form without colon",
@@ -36,7 +51,12 @@ func TestNormalizeSiteID(t *testing.T) {
 		{
 			name: "path form with colon and slash",
 			in:   "contoso.sharepoint.com:/sites/team/:",
-			want: "contoso.sharepoint.com:/sites/team/:",
+			want: "contoso.sharepoint.com:/sites/team:",
+		},
+		{
+			name: "path form of host root",
+			in:   "contoso.sharepoint.com:/",
+			want: "contoso.sharepoint.com",
 		},
 		{
 			name: "surrounding whitespace",
