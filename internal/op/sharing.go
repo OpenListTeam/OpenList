@@ -4,6 +4,7 @@ import (
 	"fmt"
 	stdpath "path"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -41,6 +42,24 @@ func makeJoined(sdb []model.SharingDB) []model.Sharing {
 
 var sharingCache = cache.NewMemCache(cache.WithShards[*model.Sharing](8))
 var sharingG singleflight.Group[*model.Sharing]
+var sharingAccessCache = cache.NewMemCache[struct{}]()
+
+const sharingAccessCountDelay = 30 * time.Minute
+
+func IsSharingValid(ip string, s *model.Sharing) bool {
+	_, accessed := sharingAccessCache.Get(fmt.Sprintf("%s:%s", s.ID, ip))
+	return s.Valid(accessed)
+}
+
+func CountSharingAccess(ip string, s *model.Sharing) error {
+	key := fmt.Sprintf("%s:%s", s.ID, ip)
+	if _, ok := sharingAccessCache.Get(key); !ok {
+		sharingAccessCache.Set(key, struct{}{}, cache.WithEx[struct{}](sharingAccessCountDelay))
+		s.Accessed += 1
+		return UpdateSharing(s, true)
+	}
+	return nil
+}
 
 func GetSharingById(id string, refresh ...bool) (*model.Sharing, error) {
 	if !utils.IsBool(refresh...) {

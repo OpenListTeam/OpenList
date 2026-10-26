@@ -17,7 +17,7 @@ func link(ctx context.Context, sid, path string, args *LinkArgs) (*model.Sharing
 	if err != nil {
 		return nil, nil, nil, errors.WithStack(errs.SharingNotFound)
 	}
-	if !sharing.Valid() {
+	if !op.IsSharingValid(args.ClientIP, sharing) {
 		return sharing, nil, nil, errors.WithStack(errs.InvalidSharing)
 	}
 	if !sharing.Verify(args.Pwd) {

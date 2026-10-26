@@ -16,7 +16,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/sharing"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/OpenListTeam/go-cache"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 )
@@ -28,13 +27,14 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 		return
 	}
 	s, obj, err := sharing.Get(c.Request.Context(), sid, path, model.SharingListArgs{
-		Refresh: false,
-		Pwd:     req.Password,
+		Refresh:  false,
+		Pwd:      req.Password,
+		ClientIP: c.ClientIP(),
 	})
 	if dealError(c, err) {
 		return
 	}
-	_ = countAccess(c.ClientIP(), s)
+	_ = op.CountSharingAccess(c.ClientIP(), s)
 	url := ""
 	if !obj.IsDir() {
 		fakePath := fmt.Sprintf("/%s/%s", sid, path)
@@ -72,13 +72,14 @@ func SharingList(c *gin.Context, req *ListReq) {
 		return
 	}
 	s, objs, err := sharing.List(c.Request.Context(), sid, path, model.SharingListArgs{
-		Refresh: req.Refresh,
-		Pwd:     req.Password,
+		Refresh:  req.Refresh,
+		Pwd:      req.Password,
+		ClientIP: c.ClientIP(),
 	})
 	if dealError(c, err) {
 		return
 	}
-	_ = countAccess(c.ClientIP(), s)
+	_ = op.CountSharingAccess(c.ClientIP(), s)
 	total, objs := pagination(objs, &req.PageReq)
 	common.SuccessResp(c, FsListResp{
 		Content: utils.MustSliceConvert(objs, func(obj model.Obj) ObjResp {
@@ -126,12 +127,13 @@ func SharingArchiveMeta(c *gin.Context, req *ArchiveMetaReq) {
 			ArchiveArgs: archiveArgs,
 			Refresh:     req.Refresh,
 		},
-		Pwd: req.Password,
+		Pwd:      req.Password,
+		ClientIP: c.ClientIP(),
 	})
 	if dealError(c, err) {
 		return
 	}
-	_ = countAccess(c.ClientIP(), s)
+	_ = op.CountSharingAccess(c.ClientIP(), s)
 	fakePath := fmt.Sprintf("/%s/%s", sid, path)
 	url := fmt.Sprintf("%s/sad%s", common.GetApiUrl(c), utils.EncodePath(fakePath, true))
 	if s.Pwd != "" {
@@ -172,12 +174,13 @@ func SharingArchiveList(c *gin.Context, req *ArchiveListReq) {
 			ArchiveInnerArgs: innerArgs,
 			Refresh:          req.Refresh,
 		},
-		Pwd: req.Password,
+		Pwd:      req.Password,
+		ClientIP: c.ClientIP(),
 	})
 	if dealError(c, err) {
 		return
 	}
-	_ = countAccess(c.ClientIP(), s)
+	_ = op.CountSharingAccess(c.ClientIP(), s)
 	total, objs := pagination(objs, &req.PageReq)
 	ret, _ := utils.SliceConvert(objs, func(src model.Obj) (ObjResp, error) {
 		return toObjsRespWithoutSignAndThumb(src), nil
@@ -195,7 +198,7 @@ func SharingDown(c *gin.Context) {
 	pwd := c.Query("pwd")
 	s, err := op.GetSharingById(sid)
 	if err == nil {
-		if !s.Valid() {
+		if !op.IsSharingValid(c.ClientIP(), s) {
 			err = errs.InvalidSharing
 		} else if !s.Verify(pwd) {
 			err = errs.WrongShareCode
@@ -219,7 +222,7 @@ func SharingDown(c *gin.Context) {
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath); url != "" {
 				c.Redirect(302, url)
-				_ = countAccess(c.ClientIP(), s)
+				_ = op.CountSharingAccess(c.ClientIP(), s)
 				return
 			}
 		}
@@ -231,7 +234,7 @@ func SharingDown(c *gin.Context) {
 			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
 			return
 		}
-		_ = countAccess(c.ClientIP(), s)
+		_ = op.CountSharingAccess(c.ClientIP(), s)
 		proxy(c, link, obj, storage.GetStorage().ProxyRange)
 	} else {
 		link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{
@@ -244,7 +247,7 @@ func SharingDown(c *gin.Context) {
 			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
 			return
 		}
-		_ = countAccess(c.ClientIP(), s)
+		_ = op.CountSharingAccess(c.ClientIP(), s)
 		redirect(c, link)
 	}
 }
@@ -262,7 +265,7 @@ func SharingArchiveExtract(c *gin.Context) {
 	archivePass := c.Query("pass")
 	s, err := op.GetSharingById(sid)
 	if err == nil {
-		if !s.Valid() {
+		if !op.IsSharingValid(c.ClientIP(), s) {
 			err = errs.InvalidSharing
 		} else if !s.Verify(pwd) {
 			err = errs.WrongShareCode
@@ -610,20 +613,4 @@ func SetEnableSharing(disable bool) func(ctx *gin.Context) {
 			common.SuccessResp(c)
 		}
 	}
-}
-
-var (
-	AccessCache      = cache.NewMemCache[interface{}]()
-	AccessCountDelay = 30 * time.Minute
-)
-
-func countAccess(ip string, s *model.Sharing) error {
-	key := fmt.Sprintf("%s:%s", s.ID, ip)
-	_, ok := AccessCache.Get(key)
-	if !ok {
-		AccessCache.Set(key, struct{}{}, cache.WithEx[interface{}](AccessCountDelay))
-		s.Accessed += 1
-		return op.UpdateSharing(s, true)
-	}
-	return nil
 }
