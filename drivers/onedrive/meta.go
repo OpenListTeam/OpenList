@@ -2,7 +2,6 @@ package onedrive
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 type Addition struct {
@@ -28,8 +27,6 @@ var config = driver.Config{
 	DefaultRoot: "/",
 }
 
-func init() {
-	op.RegisterDriver(func() driver.Driver {
-		return &Onedrive{}
-	})
+func New() driver.Driver {
+	return &Onedrive{}
 }

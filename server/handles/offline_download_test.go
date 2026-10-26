@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/OpenListTeam/OpenList/v4/drivers/local"
+	"github.com/OpenListTeam/OpenList/v4/drivers/local"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -117,6 +118,9 @@ func TestOfflineDownloadSettingsPreserveSuccessPayloads(t *testing.T) {
 }
 
 func TestValidateOfflineDownloadStorageRejectsWrongNativeTool(t *testing.T) {
+	if err := op.InstallDrivers([]driver.Constructor{local.New}); err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	addition, err := json.Marshal(struct {
 		RootFolderPath string `json:"root_folder_path"`
