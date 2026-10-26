@@ -63,6 +63,19 @@ func (ps *pendingStore) gcLocked(d *dirPending, now time.Time) bool {
 	return len(d.add) == 0 && len(d.del) == 0
 }
 
+// gcAllLocked drops expired entries in every directory and deletes directory
+// keys that are left empty. Caller must hold ps.mu.
+//
+// Run this before dirLocked or any other lookup of dirKey. It may delete
+// that key, so a *dirPending taken earlier would no longer be in the map.
+func (ps *pendingStore) gcAllLocked(now time.Time) {
+	for key, d := range ps.dirs {
+		if ps.gcLocked(d, now) {
+			delete(ps.dirs, key)
+		}
+	}
+}
+
 // addPending records obj as written into the directory dirKey.
 func addPending(dirKey string, obj model.Obj) {
 	if obj == nil {
@@ -72,8 +85,8 @@ func addPending(dirKey string, obj model.Obj) {
 	now := time.Now()
 	pendings.mu.Lock()
 	defer pendings.mu.Unlock()
+	pendings.gcAllLocked(now)
 	d := pendings.dirLocked(dirKey)
-	pendings.gcLocked(d, now)
 	delete(d.del, name)
 	d.add[name] = pendingAdd{obj: obj, expiresAt: now.Add(pendingTTL)}
 }
@@ -83,8 +96,8 @@ func delPending(dirKey, name string) {
 	now := time.Now()
 	pendings.mu.Lock()
 	defer pendings.mu.Unlock()
+	pendings.gcAllLocked(now)
 	d := pendings.dirLocked(dirKey)
-	pendings.gcLocked(d, now)
 	delete(d.add, name)
 	d.del[name] = now.Add(pendingTTL)
 }
@@ -94,12 +107,9 @@ func getPending(dirKey, name string) (model.Obj, bool) {
 	now := time.Now()
 	pendings.mu.Lock()
 	defer pendings.mu.Unlock()
+	pendings.gcAllLocked(now)
 	d, ok := pendings.dirs[dirKey]
 	if !ok {
-		return nil, false
-	}
-	if pendings.gcLocked(d, now) {
-		delete(pendings.dirs, dirKey)
 		return nil, false
 	}
 	e, ok := d.add[name]
@@ -134,12 +144,9 @@ func mergePending(dirKey string, remote []model.Obj) []model.Obj {
 	now := time.Now()
 	pendings.mu.Lock()
 	defer pendings.mu.Unlock()
+	pendings.gcAllLocked(now)
 	d, ok := pendings.dirs[dirKey]
 	if !ok {
-		return remote
-	}
-	if pendings.gcLocked(d, now) {
-		delete(pendings.dirs, dirKey)
 		return remote
 	}
 

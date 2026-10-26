@@ -291,3 +291,102 @@ func TestPendingClearedWithDirectory(t *testing.T) {
 		t.Fatal("pending entry should be cleared with its directory")
 	}
 }
+
+// pendingTTL must reclaim directories that are never opened again. A later
+// pending operation on a different directory is what drops them.
+func TestPendingGCReclaimsUnvisitedExpiredDirs(t *testing.T) {
+	clearAllPending()
+	t.Cleanup(clearAllPending)
+
+	const (
+		dirA = "/pending-gc/a/"
+		dirB = "/pending-gc/b/"
+	)
+	expired := &model.Object{Name: "expired.bin", Size: 1}
+	alive := &model.Object{Name: "alive.bin", Size: 1}
+	other := &model.Object{Name: "other.bin", Size: 1}
+
+	expireAdd := func(dirKey, name string) {
+		t.Helper()
+		pendings.mu.Lock()
+		defer pendings.mu.Unlock()
+		d := pendings.dirs[dirKey]
+		e := d.add[name]
+		e.expiresAt = time.Now().Add(-time.Second)
+		d.add[name] = e
+	}
+
+	triggers := []struct {
+		name  string
+		touch func()
+	}{
+		{name: "addPending", touch: func() { addPending(dirB, other) }},
+		{name: "delPending", touch: func() { delPending(dirB, "gone.bin") }},
+		{name: "getPending", touch: func() { getPending(dirB, "missing.bin") }},
+		{name: "mergePending", touch: func() { mergePending(dirB, nil) }},
+	}
+	for _, tc := range triggers {
+		t.Run(tc.name, func(t *testing.T) {
+			clearAllPending()
+			addPending(dirA, expired)
+			expireAdd(dirA, expired.GetName())
+
+			tc.touch()
+
+			pendings.mu.Lock()
+			defer pendings.mu.Unlock()
+			if _, ok := pendings.dirs[dirA]; ok {
+				t.Fatalf("expired directory %s still present after %s on %s", dirA, tc.name, dirB)
+			}
+		})
+	}
+
+	t.Run("expired delete", func(t *testing.T) {
+		clearAllPending()
+		delPending(dirA, "gone.bin")
+		pendings.mu.Lock()
+		pendings.dirs[dirA].del["gone.bin"] = time.Now().Add(-time.Second)
+		pendings.mu.Unlock()
+
+		addPending(dirB, other)
+
+		pendings.mu.Lock()
+		defer pendings.mu.Unlock()
+		if _, ok := pendings.dirs[dirA]; ok {
+			t.Fatalf("directory %s with only an expired delete still present", dirA)
+		}
+	})
+
+	t.Run("unexpired survives", func(t *testing.T) {
+		clearAllPending()
+		addPending(dirA, expired)
+		addPending(dirA, alive)
+		expireAdd(dirA, expired.GetName())
+
+		addPending(dirB, other)
+
+		if obj, ok := getPending(dirA, alive.GetName()); !ok || obj != alive {
+			t.Fatalf("unexpired pending add should stay visible, ok=%v", ok)
+		}
+		if _, ok := getPending(dirA, expired.GetName()); ok {
+			t.Fatal("expired pending add should not stay visible")
+		}
+
+		pendings.mu.Lock()
+		defer pendings.mu.Unlock()
+		d, ok := pendings.dirs[dirA]
+		if !ok {
+			t.Fatal("directory A should remain while an entry is still unexpired")
+		}
+		if _, ok := d.add[expired.GetName()]; ok {
+			t.Fatal("expired entry on A should be dropped by a sweep triggered from B")
+		}
+		got, ok := d.add[alive.GetName()]
+		if !ok || got.obj != alive {
+			t.Fatalf("unexpired entry on A should survive the sweep, ok=%v", ok)
+		}
+		if _, ok := pendings.dirs[dirB].add[other.GetName()]; !ok {
+			t.Fatal("pending add on B should be recorded")
+		}
+	})
+}
