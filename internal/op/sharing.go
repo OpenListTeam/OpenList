@@ -4,9 +4,11 @@ import (
 	"fmt"
 	stdpath "path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -50,17 +52,35 @@ func sharingAccessKey(id, ip string) string {
 	return id + ":" + ip
 }
 
-func IsSharingValid(ip string, s *model.Sharing) bool {
-	return s.Usable() && (!s.LimitReached() || sharingAccessCache.Exists(sharingAccessKey(s.ID, ip)))
-}
+var sharingAccessMu sync.Mutex
 
-func CountSharingAccess(ip string, s *model.Sharing) error {
-	key := sharingAccessKey(s.ID, ip)
-	if !sharingAccessCache.Exists(key) {
-		sharingAccessCache.Set(key, struct{}{}, cache.WithEx[struct{}](sharingAccessCountDelay))
-		s.Accessed += 1
-		return UpdateSharing(s, true)
+// AccessSharing validates a visit and takes an access slot for the client IP.
+// Check and count happen under one lock, so concurrent visitors cannot exceed the limit.
+func AccessSharing(ip, pwd string, s *model.Sharing) error {
+	if !s.Usable() {
+		return errors.WithStack(errs.InvalidSharing)
 	}
+	if !s.Verify(pwd) {
+		return errors.WithStack(errs.WrongShareCode)
+	}
+	key := sharingAccessKey(s.ID, ip)
+	sharingAccessMu.Lock()
+	defer sharingAccessMu.Unlock()
+	if sharingAccessCache.Exists(key) {
+		return nil
+	}
+	cur, err := db.GetSharingById(s.ID)
+	if err != nil {
+		return err
+	}
+	if cur.LimitReached() {
+		return errors.WithStack(errs.InvalidSharing)
+	}
+	if err = db.IncrSharingAccessed(s.ID); err != nil {
+		return err
+	}
+	sharingCache.Del(s.ID)
+	sharingAccessCache.Set(key, struct{}{}, cache.WithEx[struct{}](sharingAccessCountDelay))
 	return nil
 }
 

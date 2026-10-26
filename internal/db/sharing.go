@@ -4,6 +4,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/pkg/errors"
+	"gorm.io/gorm"
 )
 
 func GetSharingById(id string) (*model.SharingDB, error) {
@@ -62,6 +63,10 @@ func CreateSharing(s *model.SharingDB) (string, error) {
 
 func UpdateSharing(s *model.SharingDB) error {
 	return errors.WithStack(db.Save(s).Error)
+}
+
+func IncrSharingAccessed(id string) error {
+	return errors.WithStack(db.Model(&model.SharingDB{ID: id}).UpdateColumn("accessed", gorm.Expr("accessed + 1")).Error)
 }
 
 func UpdateSharingId(oldId, newId string) error {

@@ -27,7 +27,7 @@ func (s *Sharing) Valid() bool {
 	return s.Usable() && !s.LimitReached()
 }
 
-func (s *Sharing) LimitReached() bool {
+func (s *SharingDB) LimitReached() bool {
 	return s.MaxAccessed > 0 && s.Accessed >= s.MaxAccessed
 }
 
