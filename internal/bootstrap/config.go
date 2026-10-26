@@ -40,6 +40,7 @@ func InitConfig() {
 	if !filepath.IsAbs(dataDir) {
 		flags.DataDir = filepath.Join(pwd, flags.DataDir)
 	}
+	conf.DataDir = flags.DataDir
 	// Determine config file path: use flags.ConfigPath if provided, otherwise default to <dataDir>/config.json
 	configPath := flags.ConfigPath
 	if configPath == "" {
