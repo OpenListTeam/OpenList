@@ -19,6 +19,12 @@ var windowPool = sync.Pool{New: func() any {
 	return bufio.NewReaderSize(nil, windowSize)
 }}
 
+type closedReader struct{}
+
+func (closedReader) Read([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
 // NewBufferedRangeReader applies the server download limit using each range's context.
 func NewBufferedRangeReader(file io.ReaderAt, size int64) RangeReaderFunc {
 	var logFallback sync.Once
@@ -51,6 +57,7 @@ func NewBufferedRangeReader(file io.ReaderAt, size int64) RangeReaderFunc {
 		buffer.Reset(reader.Reader)
 		reader.Reader = buffer
 		return utils.NewReadCloser(reader, sync.OnceValue(func() error {
+			reader.Reader = closedReader{}
 			buffer.Reset(nil)
 			windowPool.Put(buffer)
 			return nil
