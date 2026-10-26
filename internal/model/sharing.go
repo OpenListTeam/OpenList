@@ -1,10 +1,6 @@
 package model
 
-import (
-	"time"
-
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-)
+import "time"
 
 type SharingDB struct {
 	ID          string     `json:"id" gorm:"type:varchar(64);primaryKey"`
@@ -27,12 +23,16 @@ type Sharing struct {
 	Creator *User    `json:"-"`
 }
 
-// Valid skips only the access limit for visits that have already been counted.
-func (s *Sharing) Valid(accessed ...bool) bool {
+func (s *Sharing) Valid() bool {
+	return s.Usable() && !s.LimitReached()
+}
+
+func (s *Sharing) LimitReached() bool {
+	return s.MaxAccessed > 0 && s.Accessed >= s.MaxAccessed
+}
+
+func (s *Sharing) Usable() bool {
 	if s.Disabled {
-		return false
-	}
-	if !utils.IsBool(accessed...) && s.MaxAccessed > 0 && s.Accessed >= s.MaxAccessed {
 		return false
 	}
 	if len(s.Files) == 0 {

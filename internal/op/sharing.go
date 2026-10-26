@@ -46,14 +46,17 @@ var sharingAccessCache = cache.NewMemCache[struct{}]()
 
 const sharingAccessCountDelay = 30 * time.Minute
 
+func sharingAccessKey(id, ip string) string {
+	return id + ":" + ip
+}
+
 func IsSharingValid(ip string, s *model.Sharing) bool {
-	_, accessed := sharingAccessCache.Get(fmt.Sprintf("%s:%s", s.ID, ip))
-	return s.Valid(accessed)
+	return s.Usable() && (!s.LimitReached() || sharingAccessCache.Exists(sharingAccessKey(s.ID, ip)))
 }
 
 func CountSharingAccess(ip string, s *model.Sharing) error {
-	key := fmt.Sprintf("%s:%s", s.ID, ip)
-	if _, ok := sharingAccessCache.Get(key); !ok {
+	key := sharingAccessKey(s.ID, ip)
+	if !sharingAccessCache.Exists(key) {
 		sharingAccessCache.Set(key, struct{}{}, cache.WithEx[struct{}](sharingAccessCountDelay))
 		s.Accessed += 1
 		return UpdateSharing(s, true)
