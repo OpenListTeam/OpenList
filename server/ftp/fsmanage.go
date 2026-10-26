@@ -63,7 +63,13 @@ func Remove(ctx context.Context, path string, recursive bool) error {
 		return err
 	}
 	if obj.IsDir() && !recursive {
-		entries, err := fs.List(ctx, reqPath, &fs.ListArgs{})
+		// fs.List leaves out entries the user cannot read or that are hidden,
+		// so ask the storage itself whether the directory is empty.
+		storage, actualPath, err := op.GetStorageAndActualPath(reqPath)
+		if err != nil {
+			return err
+		}
+		entries, err := op.List(ctx, storage, actualPath, model.ListArgs{ReqPath: reqPath, Refresh: true})
 		if err != nil {
 			return err
 		}

@@ -27,12 +27,12 @@ func TestRemoveRefusesMissingAndNonEmpty(t *testing.T) {
 	conf.Conf = conf.DefaultConfig(t.TempDir())
 	db.Init(database)
 	root := t.TempDir()
-	for _, dir := range []string{"full", "empty"} {
+	for _, dir := range []string{"full", "empty", "unreadable", "unreadable/secret"} {
 		if err := os.Mkdir(filepath.Join(root, dir), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, file := range []string{"full/inside.txt", "file.txt"} {
+	for _, file := range []string{"full/inside.txt", "file.txt", "unreadable/secret/inside.txt"} {
 		if err := os.WriteFile(filepath.Join(root, file), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -42,6 +42,10 @@ func TestRemoveRefusesMissingAndNonEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := op.CreateStorage(context.Background(), model.Storage{Driver: "Local", MountPath: "/", Addition: addition}); err != nil {
+		t.Fatal(err)
+	}
+	// A directory whose only entry the user cannot read.
+	if err := op.CreateMeta(&model.Meta{Path: "/unreadable/secret", ReadUsers: []uint{999}}); err != nil {
 		t.Fatal(err)
 	}
 	InitStage()
@@ -60,6 +64,12 @@ func TestRemoveRefusesMissingAndNonEmpty(t *testing.T) {
 	}
 	if !exists("full/inside.txt") {
 		t.Fatal("Remove deleted the contents of a non-empty directory")
+	}
+	if err := Remove(ctx, "/unreadable", false); err == nil {
+		t.Error("Remove of a directory whose only entry the user cannot read succeeded")
+	}
+	if !exists("unreadable/secret/inside.txt") {
+		t.Fatal("Remove deleted an entry the user cannot read")
 	}
 	if err := Remove(ctx, "/empty", false); err != nil || exists("empty") {
 		t.Errorf("Remove of an empty directory: err %v, still there %v", err, exists("empty"))
