@@ -694,6 +694,11 @@ type SeedConvertReq struct {
 	SeedDataReq
 	TargetFormat string `json:"target_format"`
 	Path         string `json:"path"`
+	// ComputeMissing 为 true 时，缺少的哈希会从 FileBasePath 下的实际文件重新计算，
+	// 而不是直接返回「不可转换」。
+	ComputeMissing bool `json:"compute_missing"`
+	// FileBasePath 是种子内相对路径的根目录（VFS 路径）。
+	FileBasePath string `json:"file_base_path"`
 }
 
 // SeedHashSelection controls whole-file and piece hash inclusion.
@@ -896,17 +901,41 @@ func ConvertSeed(c *gin.Context) {
 		common.ErrorStrResp(c, "target format is required", 400)
 		return
 	}
+	format := strings.ToLower(strings.TrimPrefix(targetFormat, "."))
 	diagnostics := torrent.DiagnoseConversion(seed, targetFormat)
-	if len(diagnostics) > 0 {
+	var data []byte
+	switch {
+	case len(diagnostics) == 0:
+		data, err = torrent.EncodeSeed(seed, targetFormat)
+	case req.ComputeMissing:
+		// 缺哈希时从实际文件补算，而不是直接拒绝转换
+		user := c.Request.Context().Value(conf.UserKey).(*model.User)
+		pieces, rehashErr := fs.RehashSeedFromFiles(
+			c.Request.Context(), user, seed, req.FileBasePath, targetFormat,
+		)
+		if rehashErr != nil {
+			common.ErrorResp(c, rehashErr, 400)
+			return
+		}
+		if format == "torrent" {
+			// pieces 是整包算出来的，跳过「piece 跨文件」这类按文件切分的结构性诊断
+			data, err = fs.EncodeGeneratedSeed(seed, "torrent", pieces)
+		} else {
+			if remain := torrent.DiagnoseConversion(seed, targetFormat); len(remain) > 0 {
+				// 已经按用户给的目录补算过仍然不够：直接报错，避免前端当成转换成功
+				common.ErrorStrResp(c, strings.Join(remain, "; "), 400)
+				return
+			}
+			data, err = torrent.EncodeSeed(seed, targetFormat)
+		}
+	default:
 		common.SuccessResp(c, gin.H{"convertible": false, "diagnostics": diagnostics})
 		return
 	}
-	data, err := torrent.EncodeSeed(seed, targetFormat)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	format := strings.ToLower(strings.TrimPrefix(targetFormat, "."))
 	fileName := stdpath.Base(seed.Name) + "." + format
 	result := gin.H{
 		"convertible": true, "format": format, "name": fileName,
