@@ -4,8 +4,6 @@ package s3
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	stderrors "errors"
 	"path"
@@ -37,8 +35,7 @@ func mapBackendError(err error) error {
 }
 
 func s3KeyHash(bucket, key string) string {
-	hash := sha256.Sum256([]byte(bucket + "\x00" + key))
-	return hex.EncodeToString(hash[:])
+	return model.HashS3MarkerKey(bucket, key)
 }
 
 func getS3Marker(bucket, key string) (*model.S3Marker, error) {
