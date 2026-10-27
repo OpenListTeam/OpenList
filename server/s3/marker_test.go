@@ -119,6 +119,29 @@ func TestS3NestedMarkerListing(t *testing.T) {
 	}
 }
 
+func TestS3RootSlashMarkerListing(t *testing.T) {
+	ctx := context.Background()
+	b, _ := setupMultipartBackend(t)
+	if _, err := b.PutObject(ctx, "mp", "/", nil, strings.NewReader(""), 0); err != nil {
+		t.Fatalf("PutObject root marker: %v", err)
+	}
+
+	list, err := b.ListBucket(ctx, "mp", nil, gofakes3.ListBucketPage{MaxKeys: 10})
+	if err != nil {
+		t.Fatalf("ListBucket root marker: %v", err)
+	}
+	found := false
+	for _, item := range list.Contents {
+		if item.Key == "/" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("ListBucket root marker = %#v, want key /", list.Contents)
+	}
+}
+
 func TestS3MarkerCopyETag(t *testing.T) {
 	ctx := context.Background()
 	b, _ := setupMultipartBackend(t)

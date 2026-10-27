@@ -103,6 +103,9 @@ func markerCandidates(markers []model.S3Marker, fdPath, name string, includeExac
 		marker := &markers[i]
 		trimmed := strings.TrimSuffix(marker.Key, "/")
 		if trimmed == "" {
+			if marker.Key == "/" && fdPath == "" && name == "" {
+				add(listCandidate{key: marker.Key, marker: marker})
+			}
 			continue
 		}
 		parent := ""
