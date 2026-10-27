@@ -420,7 +420,9 @@ func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	defer func() {
 		_ = out.Close()
 		if errors.Is(err, context.Canceled) {
-			_ = os.Remove(fullPath)
+			if info, statErr := os.Stat(fullPath); statErr == nil && info.Size() != stream.GetSize() {
+				_ = os.Remove(fullPath)
+			}
 		}
 	}()
 	err = utils.CopyWithCtx(ctx, out, stream, stream.GetSize(), up)
