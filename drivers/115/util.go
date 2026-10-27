@@ -297,6 +297,9 @@ func (d *Pan115) UploadByMultipart(ctx context.Context, params *driver115.Upload
 	defer ticker.Stop()
 	// 设置超时
 	timeout := time.NewTimer(options.Timeout)
+	uploadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer timeout.Stop()
 
 	if chunks, err = SplitFile(fileSize); err != nil {
 		return nil, err
@@ -305,98 +308,182 @@ func (d *Pan115) UploadByMultipart(ctx context.Context, params *driver115.Upload
 	if imur, err = bucket.InitiateMultipartUpload(params.Object,
 		oss.SetHeader(driver115.OssSecurityTokenHeaderName, ossToken.SecurityToken),
 		oss.UserAgentHeader(driver115.OSSUserAgent),
-		oss.EnableSha1(), oss.Sequential(),
+		oss.EnableSha1(), oss.Sequential(), oss.WithContext(uploadCtx),
 	); err != nil {
 		return nil, err
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(len(chunks))
-
 	chunksCh := make(chan oss.FileChunk)
-	errCh := make(chan error)
-	UploadedPartsCh := make(chan oss.UploadPart)
-	quit := make(chan struct{})
+	errCh := make(chan error, 1)
+	uploadedPartsCh := make(chan oss.UploadPart)
+	producerDone := make(chan struct{})
+	workersDone := make(chan struct{})
+	partsDone := make(chan struct{})
+	workerWG := sync.WaitGroup{}
+	workerWG.Add(options.ThreadsNum)
+	var tokenMu sync.RWMutex
+
+	reportErr := func(e error) {
+		if e == nil {
+			return
+		}
+		select {
+		case errCh <- e:
+		default:
+		}
+		cancel()
+	}
 
 	// producer
-	go chunksProducer(chunksCh, chunks)
 	go func() {
-		wg.Wait()
-		quit <- struct{}{}
+		defer close(producerDone)
+		defer close(chunksCh)
+		for _, chunk := range chunks {
+			select {
+			case chunksCh <- chunk:
+			case <-uploadCtx.Done():
+				return
+			}
+		}
 	}()
 
 	completedNum := atomic.Int32{}
 	// consumers
 	for i := 0; i < options.ThreadsNum; i++ {
-		go func(threadId int) {
+		go func() {
+			defer workerWG.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					errCh <- fmt.Errorf("recovered in %v", r)
+					reportErr(fmt.Errorf("recovered in %v", r))
 				}
 			}()
-			for chunk := range chunksCh {
-				var part oss.UploadPart // 出现错误就继续尝试，共尝试3次
-				for retry := 0; retry < 3; retry++ {
-					if utils.IsCanceled(ctx) {
-						err = ctx.Err()
-						break
+			for {
+				var chunk oss.FileChunk
+				var ok bool
+				select {
+				case chunk, ok = <-chunksCh:
+					if !ok {
+						return
 					}
-					select {
-					case <-ticker.C:
-						if ossToken, err = d.client.GetOSSToken(); err != nil { // 到时重新获取ossToken
-							errCh <- errors.Wrap(err, "刷新token时出现错误")
-						}
-					default:
+				case <-uploadCtx.Done():
+					return
+				}
+
+				var part oss.UploadPart
+				var partErr error
+				for retry := 0; retry < 3; retry++ {
+					if uploadCtx.Err() != nil {
+						return
 					}
 					buf := make([]byte, chunk.Size)
-					if _, err = tmpF.ReadAt(buf, chunk.Offset); err != nil && !errors.Is(err, io.EOF) {
+					if _, partErr = tmpF.ReadAt(buf, chunk.Offset); partErr != nil && !errors.Is(partErr, io.EOF) {
 						continue
 					}
-					if part, err = bucket.UploadPart(imur, driver.NewLimitedUploadStream(ctx, bytes.NewReader(buf)),
-						chunk.Size, chunk.Number, driver115.OssOption(params, ossToken)...); err == nil {
+					tokenMu.RLock()
+					currentToken := ossToken
+					tokenMu.RUnlock()
+					if part, partErr = bucket.UploadPart(imur, driver.NewLimitedUploadStream(uploadCtx, bytes.NewReader(buf)),
+						chunk.Size, chunk.Number, append(driver115.OssOption(params, currentToken), oss.WithContext(uploadCtx))...); partErr == nil {
 						break
 					}
 				}
-				if err != nil {
-					errCh <- errors.Wrap(err, fmt.Sprintf("上传 %s 的第%d个分片时出现错误：%v", s.GetName(), chunk.Number, err))
-				} else {
-					num := completedNum.Add(1)
-					up(float64(num) * 100.0 / float64(len(chunks)))
+				if partErr != nil {
+					reportErr(errors.Wrap(partErr, fmt.Sprintf("上传 %s 的第%d个分片时出现错误：%v", s.GetName(), chunk.Number, partErr)))
+					return
 				}
-				UploadedPartsCh <- part
+				num := completedNum.Add(1)
+				up(float64(num) * 100.0 / float64(len(chunks)))
+				select {
+				case uploadedPartsCh <- part:
+				case <-uploadCtx.Done():
+					return
+				}
 			}
-		}(i)
+		}()
 	}
 
 	go func() {
-		for part := range UploadedPartsCh {
+		workerWG.Wait()
+		close(uploadedPartsCh)
+		close(workersDone)
+	}()
+	go func() {
+		defer close(partsDone)
+		for part := range uploadedPartsCh {
 			parts = append(parts, part)
-			wg.Done()
 		}
 	}()
+
+	var uploadErr error
 LOOP:
 	for {
 		select {
+		case uploadErr = <-errCh:
+			break LOOP
+		case <-ctx.Done():
+			select {
+			case uploadErr = <-errCh:
+			default:
+				uploadErr = ctx.Err()
+			}
+			cancel()
+			break LOOP
 		case <-ticker.C:
 			// 到时重新获取ossToken
-			if ossToken, err = d.client.GetOSSToken(); err != nil {
-				return nil, err
+			currentToken, tokenErr := d.client.GetOSSToken()
+			if tokenErr != nil {
+				uploadErr = tokenErr
+				cancel()
+				break LOOP
 			}
-		case <-quit:
-			break LOOP
-		case e := <-errCh:
-			return nil, e
+			tokenMu.Lock()
+			ossToken = currentToken
+			tokenMu.Unlock()
 		case <-timeout.C:
-			return nil, fmt.Errorf("time out")
+			select {
+			case uploadErr = <-errCh:
+			default:
+				uploadErr = fmt.Errorf("time out")
+			}
+			cancel()
+			break LOOP
+		case <-workersDone:
+			select {
+			case uploadErr = <-errCh:
+			default:
+			}
+			if uploadErr == nil && ctx.Err() != nil {
+				uploadErr = ctx.Err()
+			}
+			break LOOP
 		}
 	}
+	if uploadErr != nil {
+		cancel()
+	}
+	<-workersDone
+	<-producerDone
+	<-partsDone
+	if uploadErr != nil {
+		abortCtx, abortCancel := context.WithTimeout(context.Background(), time.Minute)
+		_ = bucket.AbortMultipartUpload(imur, oss.WithContext(abortCtx))
+		abortCancel()
+		return nil, uploadErr
+	}
 
+	tokenMu.RLock()
+	currentToken := ossToken
+	tokenMu.RUnlock()
 	// 不知道啥原因，oss那边分片上传不计算sha1，导致115服务器校验错误
 	// params.Callback.Callback = strings.ReplaceAll(params.Callback.Callback, "${sha1}", params.SHA1)
 	if _, err := bucket.CompleteMultipartUpload(imur, parts, append(
-		driver115.OssOption(params, ossToken),
+		driver115.OssOption(params, currentToken),
 		oss.CallbackResult(&bodyBytes),
+		oss.WithContext(uploadCtx),
 	)...); err != nil {
+		abortCtx, abortCancel := context.WithTimeout(context.Background(), time.Minute)
+		_ = bucket.AbortMultipartUpload(imur, oss.WithContext(abortCtx))
+		abortCancel()
 		return nil, err
 	}
 
@@ -405,12 +492,6 @@ LOOP:
 		return nil, err
 	}
 	return &uploadResult, uploadResult.Err(string(bodyBytes))
-}
-
-func chunksProducer(ch chan oss.FileChunk, chunks []oss.FileChunk) {
-	for _, chunk := range chunks {
-		ch <- chunk
-	}
 }
 
 func SplitFile(fileSize int64) (chunks []oss.FileChunk, err error) {
