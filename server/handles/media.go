@@ -3,6 +3,9 @@ package handles
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,9 +102,22 @@ type CreateMediaScanPathReq struct {
 	Name         string          `json:"name"`
 	Path         string          `json:"path" binding:"required"`
 	PathMerge    bool            `json:"path_merge"`
+	MergeDepth   int             `json:"merge_depth"`
 	TypeTag      string          `json:"type_tag"`
 	ContentTags  string          `json:"content_tags"`
 	EnableScrape bool            `json:"enable_scrape"`
+}
+
+// clampMergeDepth 合并深度只允许 0~16：0 表示自动，越界值统一收敛，
+// 避免异常配置让扫描在深层目录里长时间递归。
+func clampMergeDepth(depth int) int {
+	if depth < 0 {
+		return 0
+	}
+	if depth > 16 {
+		return 16
+	}
+	return depth
 }
 
 // CreateMediaScanPath 创建扫描路径
@@ -123,6 +139,7 @@ func CreateMediaScanPath(c *gin.Context) {
 		Name:         name,
 		Path:         req.Path,
 		PathMerge:    req.PathMerge,
+		MergeDepth:   clampMergeDepth(req.MergeDepth),
 		TypeTag:      req.TypeTag,
 		ContentTags:  req.ContentTags,
 		EnableScrape: req.EnableScrape,
@@ -140,6 +157,7 @@ type UpdateMediaScanPathReq struct {
 	Name         string `json:"name"`
 	Path         string `json:"path"`
 	PathMerge    bool   `json:"path_merge"`
+	MergeDepth   int    `json:"merge_depth"`
 	TypeTag      string `json:"type_tag"`
 	ContentTags  string `json:"content_tags"`
 	EnableScrape bool   `json:"enable_scrape"`
@@ -160,6 +178,7 @@ func UpdateMediaScanPath(c *gin.Context) {
 	sp.Name = req.Name
 	sp.Path = req.Path
 	sp.PathMerge = req.PathMerge
+	sp.MergeDepth = clampMergeDepth(req.MergeDepth)
 	sp.TypeTag = req.TypeTag
 	sp.ContentTags = req.ContentTags
 	sp.EnableScrape = req.EnableScrape
@@ -267,6 +286,27 @@ type UpdateMediaItemReq struct {
 	Publisher   string  `json:"publisher"`
 	ISBN        string  `json:"isbn"`
 	Hidden      bool    `json:"hidden"`
+	// 合集 / 视频 / 音乐的扩展可编辑项
+	Episodes    string `json:"episodes"`     // 选集 JSON：[{file_name,index,title,season}]
+	VideoType   string `json:"video_type"`   // movie / tv / 空
+	Season      int    `json:"season"`       // 季
+	Episode     int    `json:"episode"`      // 集
+	TrackNumber int    `json:"track_number"` // 曲目号
+	Duration    int    `json:"duration"`     // 时长（秒）
+	ExternalID  string `json:"external_id"`  // 外部 ID（tmdb:xxx / discogs:xxx）
+}
+
+// validateJSONArray 校验字段是否为合法 JSON 数组（空串允许）
+func validateJSONArray(name, raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		return fmt.Errorf("%s 必须是 JSON 数组", name)
+	}
+	return nil
 }
 
 // UpdateMediaItemAdmin 后台更新媒体条目
@@ -276,11 +316,41 @@ func UpdateMediaItemAdmin(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	// 选集是结构化数据，非法内容会让播放器/Emby 拿不到集，直接拒收
+	if err := validateJSONArray("authors", req.Authors); err != nil {
+		common.ErrorStrResp(c, err.Error(), 400)
+		return
+	}
+	if err := validateJSONArray("reviews", req.Reviews); err != nil {
+		common.ErrorStrResp(c, err.Error(), 400)
+		return
+	}
+	if raw := strings.TrimSpace(req.Episodes); raw != "" {
+		var eps []model.EpisodeInfo
+		if err := json.Unmarshal([]byte(raw), &eps); err != nil {
+			common.ErrorStrResp(c, "选集必须是 [{file_name,index,title}] 形式的 JSON 数组", 400)
+			return
+		}
+		for i := range eps {
+			if strings.TrimSpace(eps[i].FileName) == "" {
+				common.ErrorStrResp(c, fmt.Sprintf("第 %d 个选集缺少 file_name", i+1), 400)
+				return
+			}
+		}
+	}
+	switch req.VideoType {
+	case "", "movie", "tv":
+	default:
+		common.ErrorStrResp(c, "video_type 只能是 movie 或 tv", 400)
+		return
+	}
+
 	item, err := db.GetMediaItemByID(req.ID)
 	if err != nil {
 		common.ErrorResp(c, err, 404)
 		return
 	}
+	oldCover := item.Cover
 	item.ScrapedName = req.ScrapedName
 	item.Description = req.Description
 	item.Cover = req.Cover
@@ -295,11 +365,24 @@ func UpdateMediaItemAdmin(c *gin.Context) {
 	item.Publisher = req.Publisher
 	item.ISBN = req.ISBN
 	item.Hidden = req.Hidden
+	if req.Episodes != "" || item.Episodes == "" {
+		item.Episodes = strings.TrimSpace(req.Episodes)
+	}
+	if req.VideoType != "" || item.MediaType == model.MediaTypeVideo {
+		item.VideoType = req.VideoType
+	}
+	item.Season = req.Season
+	item.Episode = req.Episode
+	item.TrackNumber = req.TrackNumber
+	item.Duration = req.Duration
+	item.ExternalID = req.ExternalID
 
 	if err := db.UpdateMediaItem(item); err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
+	// 换了封面后清掉上一张自己上传的图片，避免 data 目录里越堆越多
+	removeUploadedCover(oldCover, item.Cover)
 	common.SuccessResp(c)
 }
 
@@ -593,6 +676,8 @@ func StartMediaScrape(c *gin.Context) {
 			for idx := range jobs {
 				item := &items[idx]
 				var scrapeErr error
+				// 刮削前的封面：用于保护「文件自带封面」不被在线图片替换
+				prevCover := item.Cover
 
 				switch req.MediaType {
 				case model.MediaTypeVideo:
@@ -679,6 +764,14 @@ func StartMediaScrape(c *gin.Context) {
 					); cover != "" {
 						item.Cover = cover
 					}
+				}
+
+				// 音乐：文件自带的封面（内嵌 ID3/Vorbis 的 data URL、本地缩略图、
+				// 站内代理地址）优先级最高，刮削只允许「补空」，不允许被在线图片替换。
+				// 用户手动设置的封面同理（在同一字段里，无法区分，一并保护）。
+				if req.MediaType == model.MediaTypeMusic &&
+					isFileOwnedCover(prevCover) && item.Cover != prevCover {
+					item.Cover = prevCover
 				}
 
 				if scrapeErr != nil {
@@ -921,7 +1014,11 @@ type MediaExportData struct {
 	Items     []model.MediaItem     `json:"items"`
 }
 
-const mediaExportVersion = 1
+// mediaExportVersion 导出格式版本：
+//
+//	1 = 单个 JSON 文件
+//	2 = zip 压缩包（media_export.json + covers/，封面图片随包导出）
+const mediaExportVersion = 2
 
 // ExportMediaDB 导出媒体数据
 // query: media_type（可选，为空表示全部类型）, scan_path_id（可选，单路径导出）
@@ -989,11 +1086,12 @@ func ExportMediaDB(c *gin.Context) {
 		export.Items = items
 	}
 
-	// 直接以 JSON 流下载
+	// 以压缩包下载：media_export.json + covers/（封面图片本体），
+	// 换机器导入时不用再联网抓封面，也不会因为源站失效而丢图
 	filename := buildExportFilename(export)
 	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
-	c.Header("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(c.Writer).Encode(export); err != nil {
+	c.Header("Content-Type", "application/zip")
+	if err := writeMediaExportZip(c.Writer, &export); err != nil {
 		log.Errorf("导出媒体数据失败: %v", err)
 	}
 }
@@ -1012,11 +1110,11 @@ func buildExportFilename(d MediaExportData) string {
 		}
 		// 去掉路径中的斜杠等字符，避免文件名非法
 		safe := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(spName)
-		return "media_export_" + string(d.MediaType) + "_" + safe + "_" + ts + ".json"
+		return "media_export_" + string(d.MediaType) + "_" + safe + "_" + ts + ".zip"
 	case "media_type":
-		return "media_export_" + string(d.MediaType) + "_" + ts + ".json"
+		return "media_export_" + string(d.MediaType) + "_" + ts + ".zip"
 	default:
-		return "media_export_all_" + ts + ".json"
+		return "media_export_all_" + ts + ".zip"
 	}
 }
 
@@ -1043,9 +1141,46 @@ func ImportMediaDB(c *gin.Context) {
 			return
 		}
 		defer f.Close()
-		if err := json.NewDecoder(f).Decode(&data); err != nil {
-			common.ErrorStrResp(c, "导入文件解析失败: "+err.Error(), 400)
+		// 先落到临时文件：既能把 zip 当 ReaderAt 打开，也避免把大包整个读进内存
+		tmp, err := os.CreateTemp("", "openlist-media-import-*")
+		if err != nil {
+			common.ErrorResp(c, err, 500)
 			return
+		}
+		tmpName := tmp.Name()
+		defer func() {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}()
+		if _, err := io.Copy(tmp, f); err != nil {
+			common.ErrorStrResp(c, "读取导入文件失败: "+err.Error(), 400)
+			return
+		}
+		head := make([]byte, 4)
+		n, _ := io.ReadFull(tmp, head)
+		if isZipPayload(head[:n]) {
+			// 新版导出：zip（media_export.json + covers/）
+			stat, err := tmp.Stat()
+			if err != nil {
+				common.ErrorResp(c, err, 500)
+				return
+			}
+			parsed, err := readMediaExportZip(tmp, stat.Size())
+			if err != nil {
+				common.ErrorStrResp(c, err.Error(), 400)
+				return
+			}
+			data = *parsed
+		} else {
+			// 兼容旧版导出的纯 JSON 文件
+			if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+				common.ErrorResp(c, err, 500)
+				return
+			}
+			if err := json.NewDecoder(tmp).Decode(&data); err != nil {
+				common.ErrorStrResp(c, "导入文件解析失败: "+err.Error(), 400)
+				return
+			}
 		}
 	} else {
 		if err := c.ShouldBindJSON(&data); err != nil {

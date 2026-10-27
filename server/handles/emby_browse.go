@@ -1,4 +1,4 @@
-﻿package handles
+package handles
 
 import (
 	"encoding/json"
@@ -248,6 +248,18 @@ func parseEpisodeList(item *model.MediaItem) []model.EpisodeInfo {
 	return eps
 }
 
+// episodeSeasonOf 返回某一集的季号：选集自带的 season 优先，
+// 其次条目级 season，最后按第 1 季处理（老数据没有 season 字段）
+func episodeSeasonOf(item *model.MediaItem, ep model.EpisodeInfo) int {
+	if ep.Season > 0 {
+		return ep.Season
+	}
+	if item.Season > 0 {
+		return item.Season
+	}
+	return 1
+}
+
 // episodesOf 返回某部剧（可按季过滤）的集列表
 func (l *embyLibrary) episodesOf(seriesKey string, season int) []*embyEpisode {
 	var out []*embyEpisode
@@ -256,21 +268,18 @@ func (l *embyLibrary) episodesOf(seriesKey string, season int) []*embyEpisode {
 		if !isEmbySeriesItem(it) || seriesKeyOf(it) != seriesKey {
 			continue
 		}
-		s := it.Season
-		if s <= 0 {
-			s = 1
-		}
-		if season > 0 && s != season {
-			continue
-		}
 		if it.IsFolder {
 			for idx, ep := range parseEpisodeList(it) {
 				num := ep.Index
 				if num <= 0 {
 					num = idx + 1
 				}
+				s := episodeSeasonOf(it, ep)
+				if season > 0 && s != season {
+					continue
+				}
 				out = append(out, &embyEpisode{
-					ID:         fmt.Sprintf("ep-%d-%d", it.ID, num),
+					ID:         fmt.Sprintf("ep-%d-%d-%d", it.ID, s, num),
 					Item:       it,
 					Episode:    ep,
 					Index:      num,
@@ -281,12 +290,19 @@ func (l *embyLibrary) episodesOf(seriesKey string, season int) []*embyEpisode {
 			}
 			continue
 		}
+		s := it.Season
+		if s <= 0 {
+			s = 1
+		}
+		if season > 0 && s != season {
+			continue
+		}
 		num := it.Episode
 		if num <= 0 {
 			num = 1
 		}
 		out = append(out, &embyEpisode{
-			ID:         fmt.Sprintf("ep-%d-%d", it.ID, num),
+			ID:         fmt.Sprintf("ep-%d-%d-%d", it.ID, s, num),
 			Item:       it,
 			Index:      num,
 			Season:     s,
@@ -304,16 +320,23 @@ func (l *embyLibrary) episodesOf(seriesKey string, season int) []*embyEpisode {
 }
 
 func (l *embyLibrary) findEpisode(id string) *embyEpisode {
-	// id: ep-<itemID>-<num>
+	// id: ep-<itemID>-<season>-<num>（多季合并后需要季号才能唯一定位；
+	// 兼容旧格式 ep-<itemID>-<num>，当作第 1 季处理）
 	parts := strings.Split(id, "-")
-	if len(parts) != 3 {
+	if len(parts) != 3 && len(parts) != 4 {
 		return nil
 	}
 	itemID, err := strconv.ParseUint(parts[1], 10, 64)
 	if err != nil {
 		return nil
 	}
-	num, _ := strconv.Atoi(parts[2])
+	wantSeason := 0
+	numStr := parts[2]
+	if len(parts) == 4 {
+		wantSeason, _ = strconv.Atoi(parts[2])
+		numStr = parts[3]
+	}
+	num, _ := strconv.Atoi(numStr)
 	item, err := db.GetMediaItemByID(uint(itemID))
 	if err != nil || !CanUserAccessItem(l.user, item) {
 		return nil
@@ -328,10 +351,15 @@ func (l *embyLibrary) findEpisode(id string) *embyEpisode {
 			if n <= 0 {
 				n = i + 1
 			}
-			if n == num {
-				return &embyEpisode{ID: id, Item: item, Episode: ep, Index: n, Season: season,
-					SeriesKey: seriesKeyOf(item), SeriesName: seriesNameOf(item)}
+			s := episodeSeasonOf(item, ep)
+			if n != num {
+				continue
 			}
+			if wantSeason > 0 && s != wantSeason {
+				continue
+			}
+			return &embyEpisode{ID: id, Item: item, Episode: ep, Index: n, Season: s,
+				SeriesKey: seriesKeyOf(item), SeriesName: seriesNameOf(item)}
 		}
 		return nil
 	}
@@ -457,21 +485,21 @@ func (l *embyLibrary) movieItem(it *model.MediaItem) *embyItem {
 
 func (l *embyLibrary) seriesItem(s *embySeries) *embyItem {
 	e := &embyItem{
-		Name:         s.Name,
-		SortName:     s.Name,
-		ServerId:     embyServerID(),
-		Id:           l.guid("sr-" + s.Key),
-		ParentId:     l.guid("lib-tv"),
-		Type:         "Series",
-		IsFolder:     true,
+		Name:           s.Name,
+		SortName:       s.Name,
+		ServerId:       embyServerID(),
+		Id:             l.guid("sr-" + s.Key),
+		ParentId:       l.guid("lib-tv"),
+		Type:           "Series",
+		IsFolder:       true,
 		ProductionYear: s.Year,
-		Overview:     s.Overview,
-		DateCreated:  embyTimeStr(s.Items[0].CreatedAt),
-		ChildCount:   l.seasonCount(s),
-		LocationType: "FileSystem",
-		ImageTags:    map[string]string{},
-		ProviderIds:  map[string]string{},
-		UserData:     &embyUserData{},
+		Overview:       s.Overview,
+		DateCreated:    embyTimeStr(s.Items[0].CreatedAt),
+		ChildCount:     l.seasonCount(s),
+		LocationType:   "FileSystem",
+		ImageTags:      map[string]string{},
+		ProviderIds:    map[string]string{},
+		UserData:       &embyUserData{},
 	}
 	if tag := embyImageTag(&s.Items[0]); tag != "" {
 		e.ImageTags["Primary"] = tag
@@ -482,27 +510,35 @@ func (l *embyLibrary) seriesItem(s *embySeries) *embyItem {
 	return e
 }
 
-func (l *embyLibrary) seasonCount(s *embySeries) int {
-	seasons := map[int]bool{}
-	for i := range s.Items {
-		season := s.Items[i].Season
-		if season <= 0 {
-			season = 1
+// seasonSetOf 汇总一个系列下出现过的季号：
+// 合集条目按每个选集自带的 season 统计（一部剧两季合并成一条时能分出两季），
+// 单文件条目回落到条目级 season。
+func seasonSetOf(items []model.MediaItem) map[int]bool {
+	set := map[int]bool{}
+	for i := range items {
+		it := &items[i]
+		eps := parseEpisodeList(it)
+		if len(eps) == 0 {
+			season := it.Season
+			if season <= 0 {
+				season = 1
+			}
+			set[season] = true
+			continue
 		}
-		seasons[season] = true
+		for _, ep := range eps {
+			set[episodeSeasonOf(it, ep)] = true
+		}
 	}
-	return len(seasons)
+	return set
+}
+
+func (l *embyLibrary) seasonCount(s *embySeries) int {
+	return len(seasonSetOf(s.Items))
 }
 
 func (l *embyLibrary) seasonList(s *embySeries) []int {
-	set := map[int]bool{}
-	for i := range s.Items {
-		season := s.Items[i].Season
-		if season <= 0 {
-			season = 1
-		}
-		set[season] = true
-	}
+	set := seasonSetOf(s.Items)
 	out := make([]int, 0, len(set))
 	for n := range set {
 		out = append(out, n)
@@ -622,30 +658,30 @@ func (l *embyLibrary) songItem(it *model.MediaItem) *embyItem {
 	albumKey := albumKeyOf(it)
 	artistKey := artistKeyOf(it)
 	e := &embyItem{
-		Name:              name,
-		SortName:          name,
-		ServerId:          embyServerID(),
-		Id:                l.guid(fmt.Sprintf("so-%d", it.ID)),
-		Type:              "Audio",
-		MediaType:         "Audio",
-		IsFolder:          false,
-		ParentId:          l.guid("al-" + albumKey),
-		Album:             albumName,
-		AlbumId:           l.guid("al-" + albumKey),
-		AlbumArtist:       artist,
-		AlbumArtists:      []embyNameID{{Name: artist, Id: l.guid("ar-" + artistKey)}},
-		Artists:           []string{artist},
-		ArtistItems:       []embyNameID{{Name: artist, Id: l.guid("ar-" + artistKey)}},
-		IndexNumber:       it.TrackNumber,
-		RunTimeTicks:      embyTicks(it.Duration),
-		Path:              MediaItemFilePath(it),
-		Container:         embyExt(it.FileName),
-		DateCreated:       embyTimeStr(it.CreatedAt),
-		CommunityRating:   it.Rating,
-		UserData:          l.userDataOf(it.ID, 0),
-		ImageTags:         map[string]string{},
-		ProviderIds:       map[string]string{},
-		LocationType:      "FileSystem",
+		Name:            name,
+		SortName:        name,
+		ServerId:        embyServerID(),
+		Id:              l.guid(fmt.Sprintf("so-%d", it.ID)),
+		Type:            "Audio",
+		MediaType:       "Audio",
+		IsFolder:        false,
+		ParentId:        l.guid("al-" + albumKey),
+		Album:           albumName,
+		AlbumId:         l.guid("al-" + albumKey),
+		AlbumArtist:     artist,
+		AlbumArtists:    []embyNameID{{Name: artist, Id: l.guid("ar-" + artistKey)}},
+		Artists:         []string{artist},
+		ArtistItems:     []embyNameID{{Name: artist, Id: l.guid("ar-" + artistKey)}},
+		IndexNumber:     it.TrackNumber,
+		RunTimeTicks:    embyTicks(it.Duration),
+		Path:            MediaItemFilePath(it),
+		Container:       embyExt(it.FileName),
+		DateCreated:     embyTimeStr(it.CreatedAt),
+		CommunityRating: it.Rating,
+		UserData:        l.userDataOf(it.ID, 0),
+		ImageTags:       map[string]string{},
+		ProviderIds:     map[string]string{},
+		LocationType:    "FileSystem",
 	}
 	if tag := embyImageTag(it); tag != "" {
 		e.ImageTags["Primary"] = tag
@@ -692,7 +728,7 @@ func (l *embyLibrary) viewItems() []*embyItem {
 			CollectionType: "movies", ViewType: "movies", LocationType: "FileSystem",
 			ChildCount: movieCount, RecursiveItemCount: movieCount,
 			// 只声明客户端能正常处理的子视图，避免生成 OpenList 没有实现的 tab
-			Subviews: []string{"movies"},
+			Subviews:  []string{"movies"},
 			ImageTags: map[string]string{}, UserData: &embyUserData{},
 		})
 		out = append(out, &embyItem{
@@ -1650,10 +1686,10 @@ func embyVirtualFolders(c *gin.Context, user *model.User) {
 			collectionType = "books"
 		}
 		out = append(out, gin.H{
-			"Name": p.Name,
-			"ItemId": "libpath-" + strconv.FormatUint(uint64(p.ID), 10),
+			"Name":           p.Name,
+			"ItemId":         "libpath-" + strconv.FormatUint(uint64(p.ID), 10),
 			"CollectionType": collectionType,
-			"Locations": []string{p.Path},
+			"Locations":      []string{p.Path},
 			"LibraryOptions": gin.H{
 				"PathInfos": []gin.H{{"Path": p.Path}},
 			},

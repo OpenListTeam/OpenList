@@ -1571,7 +1571,8 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 	for i, file := range pending {
 		name := stdpath.Base(file.Path)
 		if progress != nil {
-			progress.Report(i, len(pending), name, "正在保存")
+			// Report 用的是「第几个文件」，从 1 开始；用下标会让第一个文件显示 0/N、进度条不动
+			progress.Report(i+1, len(pending), name, "正在保存")
 		}
 		if rapidUploader != nil && seedFileSupportsRapidUpload(rapidUploader, file) {
 			one := *seed
@@ -1680,6 +1681,9 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 	}
 	finalResults := make([]gin.H, 0, len(transitResults))
 	relayTotal := len(transitResults)
+	// 逐个文件转存，失败不再中断整批；但要统计失败数，
+	// 否则任务页会把「部分文件没转过去」显示成成功
+	failed := 0
 	for i, res := range transitResults {
 		method, _ := res["method"].(string)
 		if method == "unavailable" {
@@ -1695,16 +1699,22 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": "transit requires a synchronous intermediate save (rapid upload or PutURL)"})
 			continue
 		}
-		progress.Report(i, relayTotal, name, "正在转存")
+		progress.Report(i+1, relayTotal, name, "正在转存")
 		srcObjPath := stdpath.Join(transitFullPath, name)
 		_, copyErr := fs.Copy(context.WithValue(c.Request.Context(), conf.NoTaskKey, struct{}{}), srcObjPath, finalDst)
 		if copyErr != nil {
+			failed++
 			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": copyErr.Error()})
 			continue
 		}
 		finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer"})
 	}
-	progress.Finish(nil)
+	if failed > 0 {
+		// 任务状态按真实结果收尾（HTTP 仍返回逐文件结果，调用方可自行决定是否重试）
+		progress.Finish(fmt.Errorf("%d/%d 个文件转存失败", failed, relayTotal))
+	} else {
+		progress.Finish(nil)
+	}
 	common.SuccessResp(c, gin.H{"results": finalResults})
 }
 

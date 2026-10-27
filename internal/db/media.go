@@ -234,6 +234,11 @@ func CreateOrUpdateMediaItem(item *model.MediaItem) error {
 		item.ISBN = existing.ISBN
 		item.ExternalID = existing.ExternalID
 	}
+	// 扫描只在类型标签能判定时才写 video_type；标签为空（未配置或被移除）时保留原值，
+	// 否则每次重扫都会把 TMDB 刮削出的 movie/tv 清空，Emby 里的电影/剧集分类跟着翻转。
+	if item.VideoType == "" {
+		item.VideoType = existing.VideoType
+	}
 	// 扫描不覆盖用户手动隐藏的状态
 	item.Hidden = existing.Hidden
 	return db.Unscoped().Save(item).Error
@@ -253,6 +258,32 @@ func DeleteMediaItem(id uint) error {
 		}
 		return tx.Where("item_id = ?", id).Delete(&model.MediaAnnotation{}).Error
 	})
+}
+
+// DeleteMediaItemByPath 按 folder_path + file_name 硬删除媒体条目，并清理对应批注。
+// 用于清理扫描规则调整后遗留的重复条目（例如旧版本把「第一季」「第二季」各自
+// 入库，现在统一并入剧名目录，那些季条目就成了重复记录）。
+// 返回被删除的条目数。
+func DeleteMediaItemByPath(folderPath, fileName string) (int64, error) {
+	var ids []uint
+	if err := db.Unscoped().Model(&model.MediaItem{}).
+		Where("folder_path = ? AND file_name = ?", folderPath, fileName).
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Where("id IN ?", ids).Delete(&model.MediaItem{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("item_id IN ?", ids).Delete(&model.MediaAnnotation{}).Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(ids)), nil
 }
 
 // ClearMediaItems 硬删除指定类型的所有媒体条目（真正从数据库删除），并清理对应批注
@@ -392,6 +423,8 @@ func ListAlbums(q MediaItemQuery) ([]AlbumInfo, int64, error) {
 	tx := baseQuery.
 		Select("album_name, album_artist, MAX(cover) as cover, MAX(release_date) as release_date, COUNT(*) as track_count, MAX(scan_path_id) as scan_path_id").
 		Group("album_name, album_artist").
+		// 固定排序：分组 + 分页时没有 ORDER BY 会导致翻页结果不稳定（同一张专辑重复/漏出）
+		Order("album_name asc, album_artist asc").
 		Offset((q.Page - 1) * q.PageSize).Limit(q.PageSize)
 
 	var rows []albumRow
@@ -421,6 +454,31 @@ type AlbumInfo struct {
 	ReleaseDate string `json:"release_date"`
 	TrackCount  int    `json:"track_count"`
 	ScanPathID  uint   `json:"scan_path_id"`
+}
+
+// ListMediaItemsByAlbum 列出某个专辑下的真实条目（不展开合并文件夹的 episodes）。
+// 后台按专辑管理需要「可编辑的真实记录」：GetAlbumTracks 展开出来的虚拟曲目没有 id，
+// 改一份等于没改。
+func ListMediaItemsByAlbum(albumName, albumArtist string, scanPathID uint) ([]model.MediaItem, error) {
+	tx := db.Model(&model.MediaItem{}).Where("media_type = ?", model.MediaTypeMusic)
+	if albumName == "" {
+		tx = tx.Where("(album_name = '' OR album_name IS NULL)")
+	} else {
+		tx = tx.Where("album_name = ?", albumName)
+	}
+	if albumArtist == "" {
+		tx = tx.Where("(album_artist = '' OR album_artist IS NULL)")
+	} else {
+		tx = tx.Where("album_artist = ?", albumArtist)
+	}
+	if scanPathID > 0 {
+		tx = tx.Where("scan_path_id = ?", scanPathID)
+	}
+	var items []model.MediaItem
+	if err := tx.Order("track_number asc, file_name asc").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // GetAlbumTracks 获取专辑曲目列表
@@ -613,6 +671,7 @@ func ImportMediaScanPaths(paths []model.MediaScanPath) (idMap map[uint]uint, cre
 		// 已存在：更新可编辑字段
 		existing.Name = p.Name
 		existing.PathMerge = p.PathMerge
+		existing.MergeDepth = p.MergeDepth
 		existing.TypeTag = p.TypeTag
 		existing.ContentTags = p.ContentTags
 		existing.EnableScrape = p.EnableScrape

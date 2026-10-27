@@ -245,6 +245,7 @@ func admin(g *gin.RouterGroup) {
 	mediaAdmin.POST("/config/save", handles.SaveMediaConfig)
 	mediaAdmin.GET("/items", handles.ListMediaItemsAdmin)
 	mediaAdmin.POST("/items/update", handles.UpdateMediaItemAdmin)
+	mediaAdmin.POST("/items/cover", handles.UploadMediaItemCover)
 	mediaAdmin.POST("/items/delete", handles.DeleteMediaItemAdmin)
 	mediaAdmin.POST("/scan/start", handles.StartMediaScan)
 	mediaAdmin.GET("/scan/progress", handles.GetMediaScanProgress)
@@ -259,6 +260,10 @@ func admin(g *gin.RouterGroup) {
 	mediaAdmin.POST("/scan_paths/update", handles.UpdateMediaScanPath)
 	mediaAdmin.POST("/scan_paths/delete", handles.DeleteMediaScanPath)
 	mediaAdmin.POST("/scan_paths/clear", handles.ClearMediaScanPathDB)
+	// 专辑聚合管理（音乐）
+	mediaAdmin.GET("/albums", handles.ListMediaAlbumsAdmin)
+	mediaAdmin.GET("/album/items", handles.ListMediaAlbumItemsAdmin)
+	mediaAdmin.POST("/album/update", handles.UpdateMediaAlbumAdmin)
 	// 导入 / 导出
 	mediaAdmin.GET("/export", handles.ExportMediaDB)
 	mediaAdmin.POST("/import", handles.ImportMediaDB)
