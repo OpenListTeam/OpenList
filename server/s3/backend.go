@@ -134,9 +134,8 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 		"Content-Type":  utils.GetMimeType(fp),
 	}
 
-	if val, ok := b.meta.Load(fp); ok {
-		metaMap := val.(map[string]string)
-		for k, v := range metaMap {
+	if stored, ok := b.loadObjectMetadata(ctx, fp); ok {
+		for k, v := range stored {
 			meta[k] = v
 		}
 	}
@@ -211,9 +210,8 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		"Content-Type":        utils.GetMimeType(fp),
 	}
 
-	if val, ok := b.meta.Load(fp); ok {
-		metaMap := val.(map[string]string)
-		for k, v := range metaMap {
+	if stored, ok := b.loadObjectMetadata(ctx, fp); ok {
+		for k, v := range stored {
 			meta[k] = v
 		}
 	}
@@ -331,7 +329,7 @@ func (b *s3Backend) putStream(
 		return err
 	}
 
-	b.meta.Store(fp, meta)
+	b.storeObjectMetadata(ctx, fp, meta)
 
 	return nil
 }
@@ -378,6 +376,8 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	}
 
 	fs.Remove(ctx, fp)
+	b.meta.Delete(fp)
+	b.deleteStoredMetadata(ctx, fp)
 	return nil
 }
 
@@ -407,11 +407,6 @@ func (b *s3Backend) BucketExists(ctx context.Context, name string) (exists bool,
 
 // CopyObject copy specified object from srcKey to dstKey.
 func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (result gofakes3.CopyObjectResult, err error) {
-	if srcBucket == dstBucket && srcKey == dstKey {
-		//TODO: update meta
-		return result, nil
-	}
-
 	srcB, err := getBucketByName(srcBucket)
 	if err != nil {
 		return result, err
@@ -419,6 +414,12 @@ func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket
 	srcBucketPath := srcB.Path
 
 	srcFp := path.Join(srcBucketPath, srcKey)
+	if srcBucket == dstBucket && srcKey == dstKey {
+		// A self-copy is how S3 replaces an object's metadata in place: the
+		// content is not rewritten, and the metadata described by the request
+		// replaces what the object had.
+		return b.replaceObjectMetadata(ctx, srcFp, meta)
+	}
 	fmeta, _ := op.GetNearestMeta(srcFp)
 	srcNode, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), srcFp, &fs.GetArgs{})
 
@@ -439,10 +440,18 @@ func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket
 		meta["mtime"] = swift.TimeToFloatString(srcNode.ModTime())
 	}
 
+	dstB, err := getBucketByName(dstBucket)
+	if err != nil {
+		return
+	}
+
 	_, err = b.PutObject(ctx, dstBucket, dstKey, meta, c.Contents, c.Size)
 	if err != nil {
 		return
 	}
+	// CopyObject reuploads the content, and c.Metadata only carries what this
+	// process still remembers, so the recorded copy is applied afterwards.
+	b.copyStoredMetadata(ctx, srcFp, path.Join(dstB.Path, dstKey))
 
 	return gofakes3.CopyObjectResult{
 		ETag:         `"` + hex.EncodeToString(c.Hash) + `"`,
