@@ -11,9 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/media/scraper"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	log "github.com/sirupsen/logrus"
 )
 
 // 导出/导入的压缩包结构：
@@ -27,6 +30,11 @@ const (
 	mediaExportCoverDir = "covers"
 	maxCoverBytes       = 8 << 20
 	coverFetchTimeout   = 10 * time.Second
+	// 导出封面的并发度与总量上限：远程封面是网络 IO，串行导出大库会非常慢；
+	// 但要给内存兜底，避免一次导出把整库封面都读进内存。
+	coverFetchWorkers   = 4
+	maxExportCovers     = 5000
+	maxExportCoverBytes = 512 << 20
 )
 
 // coverBytes 读取封面内容（data: / thumb: / http(s)），失败返回 nil。
@@ -82,33 +90,85 @@ func coverBytes(cover string) ([]byte, string) {
 	return nil, ""
 }
 
+type coverBlob struct {
+	data []byte
+	ext  string
+}
+
+// fetchCovers 并发读取封面内容（key 为 items 下标）。
+// 单个封面失败只跳过它自己，不影响整次导出；总量超限后不再继续读取。
+func fetchCovers(items []model.MediaItem) map[int]coverBlob {
+	out := make(map[int]coverBlob)
+	idx := make([]int, 0, len(items))
+	for i := range items {
+		if strings.TrimSpace(items[i].Cover) != "" {
+			idx = append(idx, i)
+		}
+	}
+	if len(idx) == 0 {
+		return out
+	}
+	if len(idx) > maxExportCovers {
+		log.Warnf("导出封面超过上限，仅打包前 %d 张（共 %d 张）", maxExportCovers, len(idx))
+		idx = idx[:maxExportCovers]
+	}
+
+	var mu sync.Mutex
+	total := 0
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, coverFetchWorkers)
+	for _, i := range idx {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			raw, ext := coverBytes(items[i].Cover)
+			if len(raw) == 0 {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if total+len(raw) > maxExportCoverBytes {
+				return
+			}
+			total += len(raw)
+			out[i] = coverBlob{data: raw, ext: ext}
+		}(i)
+	}
+	wg.Wait()
+	return out
+}
+
 // writeMediaExportZip 把导出数据打包成 zip：JSON + covers/。
 // 会就地改写 items[].cover 为压缩包内的相对路径。
 func writeMediaExportZip(w io.Writer, data *MediaExportData) error {
 	zw := zip.NewWriter(w)
 	used := map[string]bool{}
+	covers := fetchCovers(data.Items)
 	for i := range data.Items {
-		item := &data.Items[i]
-		raw, ext := coverBytes(item.Cover)
-		if len(raw) == 0 {
+		blob, ok := covers[i]
+		if !ok {
 			continue
 		}
+		ext := blob.ext
 		if ext == "" {
 			ext = ".jpg"
 		}
-		name := fmt.Sprintf("item-%d%s", item.ID, ext)
+		id := data.Items[i].ID
+		name := fmt.Sprintf("item-%d%s", id, ext)
 		for n := 1; used[name]; n++ {
-			name = fmt.Sprintf("item-%d-%d%s", item.ID, n, ext)
+			name = fmt.Sprintf("item-%d-%d%s", id, n, ext)
 		}
 		used[name] = true
 		f, err := zw.Create(mediaExportCoverDir + "/" + name)
 		if err != nil {
 			return err
 		}
-		if _, err := f.Write(raw); err != nil {
+		if _, err := f.Write(blob.data); err != nil {
 			return err
 		}
-		item.Cover = mediaExportCoverDir + "/" + name
+		data.Items[i].Cover = mediaExportCoverDir + "/" + name
 	}
 
 	f, err := zw.Create(mediaExportJSONName)

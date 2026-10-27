@@ -106,7 +106,14 @@ func UpdateMediaAlbumAdmin(c *gin.Context) {
 		return
 	}
 
-	affected := 0
+	if req.Cover != "" && len(req.Cover) > maxCoverFieldLen {
+		common.ErrorStrResp(c, "封面数据过大（上限 12MB）", 400)
+		return
+	}
+
+	// 先只改内存，最后统一落库：整批成功才动旧封面文件，
+	// 避免「删了旧图但事务回滚」导致封面指向不存在的文件
+	oldCovers := make([]string, 0, len(items))
 	for i := range items {
 		item := &items[i]
 		if req.NewAlbumName != "" {
@@ -120,11 +127,10 @@ func UpdateMediaAlbumAdmin(c *gin.Context) {
 			item.AlbumArtist = req.NewAlbumArtist
 		}
 		if req.Cover != "" {
-			old := item.Cover
-			item.Cover = req.Cover
-			if old != req.Cover {
-				removeUploadedCover(old, req.Cover)
+			if item.Cover != req.Cover {
+				oldCovers = append(oldCovers, item.Cover)
 			}
+			item.Cover = req.Cover
 		}
 		if req.ReleaseDate != "" {
 			item.ReleaseDate = req.ReleaseDate
@@ -138,11 +144,13 @@ func UpdateMediaAlbumAdmin(c *gin.Context) {
 		if req.Description != "" {
 			item.Description = req.Description
 		}
-		if err := db.UpdateMediaItem(item); err != nil {
-			common.ErrorResp(c, err, 500)
-			return
-		}
-		affected++
 	}
-	common.SuccessResp(c, gin.H{"affected": affected})
+	if err := db.UpdateMediaItems(items); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	for _, old := range oldCovers {
+		removeUploadedCover(old, req.Cover)
+	}
+	common.SuccessResp(c, gin.H{"affected": len(items)})
 }

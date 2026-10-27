@@ -269,32 +269,42 @@ func ListMediaItemsAdmin(c *gin.Context) {
 	common.SuccessResp(c, common.PageResp{Content: items, Total: total})
 }
 
-// UpdateMediaItemReq 更新媒体条目请求
+// UpdateMediaItemReq 更新媒体条目请求。
+//
+// 所有字段都是指针：只有请求里出现过的键才会被写入，未出现的保持原值。
+// 之前用值类型是「全量覆盖」语义，任何只传部分字段的调用（例如只切 hidden）
+// 都会把 cover/plot 等清空，接口层面太脆弱。
 type UpdateMediaItemReq struct {
-	ID          uint    `json:"id" binding:"required"`
-	ScrapedName string  `json:"scraped_name"`
-	Description string  `json:"description"`
-	Cover       string  `json:"cover"`
-	ReleaseDate string  `json:"release_date"`
-	Rating      float32 `json:"rating"`
-	Genre       string  `json:"genre"`
-	Authors     string  `json:"authors"`
-	Plot        string  `json:"plot"`
-	Reviews     string  `json:"reviews"`
-	AlbumName   string  `json:"album_name"`
-	AlbumArtist string  `json:"album_artist"`
-	Publisher   string  `json:"publisher"`
-	ISBN        string  `json:"isbn"`
-	Hidden      bool    `json:"hidden"`
+	ID uint `json:"id" binding:"required"`
+
+	ScrapedName *string  `json:"scraped_name"`
+	Description *string  `json:"description"`
+	Cover       *string  `json:"cover"`
+	ReleaseDate *string  `json:"release_date"`
+	Rating      *float32 `json:"rating"`
+	Genre       *string  `json:"genre"`
+	Authors     *string  `json:"authors"`
+	Plot        *string  `json:"plot"`
+	Reviews     *string  `json:"reviews"`
+	AlbumName   *string  `json:"album_name"`
+	AlbumArtist *string  `json:"album_artist"`
+	Publisher   *string  `json:"publisher"`
+	ISBN        *string  `json:"isbn"`
+	Hidden      *bool    `json:"hidden"`
+
 	// 合集 / 视频 / 音乐的扩展可编辑项
-	Episodes    string `json:"episodes"`     // 选集 JSON：[{file_name,index,title,season}]
-	VideoType   string `json:"video_type"`   // movie / tv / 空
-	Season      int    `json:"season"`       // 季
-	Episode     int    `json:"episode"`      // 集
-	TrackNumber int    `json:"track_number"` // 曲目号
-	Duration    int    `json:"duration"`     // 时长（秒）
-	ExternalID  string `json:"external_id"`  // 外部 ID（tmdb:xxx / discogs:xxx）
+	Episodes    *string `json:"episodes"`     // 选集 JSON：[{file_name,index,title,season}]
+	VideoType   *string `json:"video_type"`   // movie / tv / 空
+	Season      *int    `json:"season"`       // 季
+	Episode     *int    `json:"episode"`      // 集
+	TrackNumber *int    `json:"track_number"` // 曲目号
+	Duration    *int    `json:"duration"`     // 时长（秒）
+	ExternalID  *string `json:"external_id"`  // 外部 ID（tmdb:xxx / discogs:xxx）
 }
+
+// maxCoverFieldLen 封面字段上限：data URL 会把 base64 直接塞进数据库，
+// 不设上限时一个超大内嵌图就能把行撑到几十 MB。
+const maxCoverFieldLen = 12 << 20
 
 // validateJSONArray 校验字段是否为合法 JSON 数组（空串允许）
 func validateJSONArray(name, raw string) error {
@@ -317,31 +327,44 @@ func UpdateMediaItemAdmin(c *gin.Context) {
 		return
 	}
 	// 选集是结构化数据，非法内容会让播放器/Emby 拿不到集，直接拒收
-	if err := validateJSONArray("authors", req.Authors); err != nil {
-		common.ErrorStrResp(c, err.Error(), 400)
-		return
-	}
-	if err := validateJSONArray("reviews", req.Reviews); err != nil {
-		common.ErrorStrResp(c, err.Error(), 400)
-		return
-	}
-	if raw := strings.TrimSpace(req.Episodes); raw != "" {
-		var eps []model.EpisodeInfo
-		if err := json.Unmarshal([]byte(raw), &eps); err != nil {
-			common.ErrorStrResp(c, "选集必须是 [{file_name,index,title}] 形式的 JSON 数组", 400)
+	if req.Authors != nil {
+		if err := validateJSONArray("authors", *req.Authors); err != nil {
+			common.ErrorStrResp(c, err.Error(), 400)
 			return
 		}
-		for i := range eps {
-			if strings.TrimSpace(eps[i].FileName) == "" {
-				common.ErrorStrResp(c, fmt.Sprintf("第 %d 个选集缺少 file_name", i+1), 400)
+	}
+	if req.Reviews != nil {
+		if err := validateJSONArray("reviews", *req.Reviews); err != nil {
+			common.ErrorStrResp(c, err.Error(), 400)
+			return
+		}
+	}
+	if req.Episodes != nil {
+		raw := strings.TrimSpace(*req.Episodes)
+		if raw != "" {
+			var eps []model.EpisodeInfo
+			if err := json.Unmarshal([]byte(raw), &eps); err != nil {
+				common.ErrorStrResp(c, "选集必须是 [{file_name,index,title}] 形式的 JSON 数组", 400)
 				return
+			}
+			for i := range eps {
+				if strings.TrimSpace(eps[i].FileName) == "" {
+					common.ErrorStrResp(c, fmt.Sprintf("第 %d 个选集缺少 file_name", i+1), 400)
+					return
+				}
 			}
 		}
 	}
-	switch req.VideoType {
-	case "", "movie", "tv":
-	default:
-		common.ErrorStrResp(c, "video_type 只能是 movie 或 tv", 400)
+	if req.VideoType != nil {
+		switch *req.VideoType {
+		case "", "movie", "tv":
+		default:
+			common.ErrorStrResp(c, "video_type 只能是 movie 或 tv", 400)
+			return
+		}
+	}
+	if req.Cover != nil && len(*req.Cover) > maxCoverFieldLen {
+		common.ErrorStrResp(c, "封面数据过大（上限 12MB）", 400)
 		return
 	}
 
@@ -351,31 +374,50 @@ func UpdateMediaItemAdmin(c *gin.Context) {
 		return
 	}
 	oldCover := item.Cover
-	item.ScrapedName = req.ScrapedName
-	item.Description = req.Description
-	item.Cover = req.Cover
-	item.ReleaseDate = req.ReleaseDate
-	item.Rating = req.Rating
-	item.Genre = req.Genre
-	item.Authors = req.Authors
-	item.Plot = req.Plot
-	item.Reviews = req.Reviews
-	item.AlbumName = req.AlbumName
-	item.AlbumArtist = req.AlbumArtist
-	item.Publisher = req.Publisher
-	item.ISBN = req.ISBN
-	item.Hidden = req.Hidden
-	if req.Episodes != "" || item.Episodes == "" {
-		item.Episodes = strings.TrimSpace(req.Episodes)
+
+	// 只写入请求里出现过的字段
+	setStr := func(dst *string, src *string) {
+		if src != nil {
+			*dst = *src
+		}
 	}
-	if req.VideoType != "" || item.MediaType == model.MediaTypeVideo {
-		item.VideoType = req.VideoType
+	setStr(&item.ScrapedName, req.ScrapedName)
+	setStr(&item.Description, req.Description)
+	setStr(&item.Cover, req.Cover)
+	setStr(&item.ReleaseDate, req.ReleaseDate)
+	setStr(&item.Genre, req.Genre)
+	setStr(&item.Authors, req.Authors)
+	setStr(&item.Plot, req.Plot)
+	setStr(&item.Reviews, req.Reviews)
+	setStr(&item.AlbumName, req.AlbumName)
+	setStr(&item.AlbumArtist, req.AlbumArtist)
+	setStr(&item.Publisher, req.Publisher)
+	setStr(&item.ISBN, req.ISBN)
+	setStr(&item.ExternalID, req.ExternalID)
+	if req.Rating != nil {
+		item.Rating = *req.Rating
 	}
-	item.Season = req.Season
-	item.Episode = req.Episode
-	item.TrackNumber = req.TrackNumber
-	item.Duration = req.Duration
-	item.ExternalID = req.ExternalID
+	if req.Hidden != nil {
+		item.Hidden = *req.Hidden
+	}
+	if req.Episodes != nil {
+		item.Episodes = strings.TrimSpace(*req.Episodes)
+	}
+	if req.VideoType != nil {
+		item.VideoType = *req.VideoType
+	}
+	if req.Season != nil {
+		item.Season = *req.Season
+	}
+	if req.Episode != nil {
+		item.Episode = *req.Episode
+	}
+	if req.TrackNumber != nil {
+		item.TrackNumber = *req.TrackNumber
+	}
+	if req.Duration != nil {
+		item.Duration = *req.Duration
+	}
 
 	if err := db.UpdateMediaItem(item); err != nil {
 		common.ErrorResp(c, err, 500)

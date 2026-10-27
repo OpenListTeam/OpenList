@@ -250,6 +250,22 @@ func UpdateMediaItem(item *model.MediaItem) error {
 	return db.Unscoped().Save(item).Error
 }
 
+// UpdateMediaItems 在一个事务里批量保存条目，任一失败整批回滚。
+// 专辑级修改要同时落到多首曲目，逐条 Save 中途失败会留下「改了一半」的中间状态。
+func UpdateMediaItems(items []model.MediaItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for i := range items {
+			if err := tx.Unscoped().Save(&items[i]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // DeleteMediaItem 硬删除媒体条目（真正从数据库删除），并清理该条目的批注
 func DeleteMediaItem(id uint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
