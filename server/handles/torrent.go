@@ -711,22 +711,26 @@ type SeedHashMatrix struct {
 
 // SeedGenerateReq generates one or more seed containers for existing files.
 type SeedGenerateReq struct {
-	Paths               []string              `json:"paths" binding:"required"`
-	Format              string                `json:"format"`
-	Formats             []string              `json:"formats"`
-	Name                string                `json:"name"`
-	Comment             string                `json:"comment"`
-	FileComments        map[string]string     `json:"file_comments"`
-	HashMatrix          SeedHashMatrix        `json:"hash_matrix"`
-	PieceSize           int64                 `json:"piece_size"`
-	Trackers            []string              `json:"trackers"`
-	Channels            []torrent.SeedChannel `json:"channels"`
-	OutputPath          string                `json:"output_path"`
-	SavePath            string                `json:"save_path"`
-	IncludeShare        bool                  `json:"include_share"`
-	IncludeDirectSource bool                  `json:"include_direct_source"`
-	ShareFiles          []string              `json:"share_files"`
-	DirectFiles         []string              `json:"direct_files"`
+	Paths        []string              `json:"paths" binding:"required"`
+	Format       string                `json:"format"`
+	Formats      []string              `json:"formats"`
+	Name         string                `json:"name"`
+	Comment      string                `json:"comment"`
+	FileComments map[string]string     `json:"file_comments"`
+	HashMatrix   SeedHashMatrix        `json:"hash_matrix"`
+	PieceSize    int64                 `json:"piece_size"`
+	Trackers     []string              `json:"trackers"`
+	Channels     []torrent.SeedChannel `json:"channels"`
+	OutputPath   string                `json:"output_path"`
+	SavePath     string                `json:"save_path"`
+	// PreserveStructure 目录展开后保留目录结构；默认 false（拍平成文件名）
+	PreserveStructure bool `json:"preserve_structure"`
+	// Split 每个文件生成一个种子；默认 false（全部合并成一个）
+	Split               bool     `json:"split"`
+	IncludeShare        bool     `json:"include_share"`
+	IncludeDirectSource bool     `json:"include_direct_source"`
+	ShareFiles          []string `json:"share_files"`
+	DirectFiles         []string `json:"direct_files"`
 }
 
 // SeedCapabilityReq supports source preflight and destination import planning.
@@ -1032,6 +1036,8 @@ func toSeedGenerateParams(req SeedGenerateReq) fs.SeedGenerateParams {
 		IncludeDirectSource: req.IncludeDirectSource,
 		ShareFiles:          req.ShareFiles,
 		DirectFiles:         req.DirectFiles,
+		PreserveStructure:   req.PreserveStructure,
+		Split:               req.Split,
 	}
 }
 
@@ -1128,22 +1134,26 @@ func SeedCapabilities(c *gin.Context) {
 			common.ErrorStrResp(c, "invalid seed file count", 400)
 			return
 		}
-		files := make([]gin.H, 0, len(req.Paths))
+		// 目录先展开成文件，能力探测与生成才能对同一批文件做判断
+		entries, expandErr := fs.ExpandSeedSources(c.Request.Context(), user, req.Paths, false)
+		if expandErr != nil {
+			common.ErrorResp(c, expandErr, 400)
+			return
+		}
+		if len(entries) == 0 {
+			common.ErrorStrResp(c, "no files found under the selected paths", 400)
+			return
+		}
+		files := make([]gin.H, 0, len(entries))
 		var estimatedTraffic int64
 		existing := make(map[string]bool)
-		for _, requestedPath := range req.Paths {
-			fullPath, joinErr := user.JoinPath(requestedPath)
-			if joinErr != nil {
-				common.ErrorResp(c, joinErr, 403)
-				return
-			}
+		for _, entry := range entries {
+			requestedPath := entry.Requested
+			fullPath := entry.FullPath
+			obj := entry.Obj
 			meta, metaErr := op.GetNearestMeta(fullPath)
 			if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
 				common.ErrorResp(c, metaErr, 500, true)
-				return
-			}
-			if !common.CanRead(user, meta, fullPath) {
-				common.ErrorResp(c, errs.PermissionDenied, 403)
 				return
 			}
 			storage, actualPath, getErr := op.GetStorageAndActualPath(fullPath)
@@ -1151,10 +1161,12 @@ func SeedCapabilities(c *gin.Context) {
 				common.ErrorResp(c, getErr, 400)
 				return
 			}
-			obj, getErr := op.Get(c.Request.Context(), storage, actualPath)
-			if getErr != nil || obj.IsDir() {
-				common.ErrorResp(c, fmt.Errorf("seed path must be a readable file: %s", requestedPath), 400)
-				return
+			if obj == nil {
+				obj, getErr = op.Get(c.Request.Context(), storage, actualPath)
+				if getErr != nil {
+					common.ErrorResp(c, fmt.Errorf("seed path must be a readable file: %s", requestedPath), 400)
+					return
+				}
 			}
 			available := make([]string, 0, 3)
 			hashInfo := obj.GetHash()
