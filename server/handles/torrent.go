@@ -699,6 +699,8 @@ type SeedConvertReq struct {
 	ComputeMissing bool `json:"compute_missing"`
 	// FileBasePath 是种子内相对路径的根目录（VFS 路径）。
 	FileBasePath string `json:"file_base_path"`
+	// Comment 非 nil 时覆盖种子的整体注释（转换时一并保存）。
+	Comment *string `json:"comment"`
 }
 
 // SeedHashSelection controls whole-file and piece hash inclusion.
@@ -892,6 +894,10 @@ func ConvertSeed(c *gin.Context) {
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
+	}
+	// 转换时顺带保存注释，前端就不必「先保存注释再转换」跑两次
+	if req.Comment != nil {
+		seed.Comment = *req.Comment
 	}
 	targetFormat := req.TargetFormat
 	if targetFormat == "" {
