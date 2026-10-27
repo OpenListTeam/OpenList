@@ -2,6 +2,7 @@ package template
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -13,11 +14,28 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
+// minAccessTokenLen mirrors the check inside the SDK: the first 16 bytes of the
+// access token are used as the AES key of every dispatcher request, so a token
+// shorter than that can never be used and must be refreshed first.
+const minAccessTokenLen = 16
+
 type Wopan struct {
 	model.Storage
 	Addition
 	client          *wopan.WoClient
 	defaultFamilyID string
+}
+
+// onTokenRefreshed keeps the driver storage in sync with the tokens issued by
+// the SDK, so a refresh survives restarts.
+func (d *Wopan) onTokenRefreshed(accessToken, refreshToken string) {
+	d.setTokens(accessToken, refreshToken)
+	op.MustSaveDriverStorage(d)
+}
+
+func (d *Wopan) setTokens(accessToken, refreshToken string) {
+	d.AccessToken = accessToken
+	d.RefreshToken = refreshToken
 }
 
 func (d *Wopan) Config() driver.Config {
@@ -31,17 +49,50 @@ func (d *Wopan) GetAddition() driver.Additional {
 func (d *Wopan) Init(ctx context.Context) error {
 	d.client = wopan.DefaultWithRefreshToken(d.RefreshToken)
 	d.client.SetAccessToken(d.AccessToken)
-	d.client.OnRefreshToken(func(accessToken, refreshToken string) {
-		d.AccessToken = accessToken
-		d.RefreshToken = refreshToken
-		op.MustSaveDriverStorage(d)
+	d.client.OnRefreshToken(d.onTokenRefreshed)
+	return d.initClient(ctx)
+}
+
+// initClient prepares the client before any dispatcher request is served.
+//
+// Two things have to happen here, in this order:
+//
+//  1. The browser User-Agent must be applied to the underlying resty client.
+//     The SDK only records it in WithUA/SetUA (and uses w.ua for upload2C), so
+//     dispatcher requests would otherwise be sent with resty's default
+//     "go-resty/..." UA, which the WoPan edge rejects with HTTP 403
+//     ("failed to list objs: request failed with status: 403 Forbidden").
+//  2. A missing or too short access token must be refreshed before the first
+//     request. Every wohome/api-user request body is AES encrypted with
+//     accessToken[:16]; with an empty token the SDK fails with
+//     "crypto/aes: invalid key size 0", which used to break refresh-token-only
+//     configurations during FamilyUserCurrentEncode.
+func (d *Wopan) initClient(ctx context.Context) error {
+	d.client.SetUserAgent(wopan.DefaultUA)
+
+	if len(d.AccessToken) < minAccessTokenLen {
+		if d.RefreshToken == "" {
+			return fmt.Errorf("an access token of at least %d characters or a refresh token is required", minAccessTokenLen)
+		}
+		if err := d.client.RefreshToken(); err != nil {
+			return fmt.Errorf("refresh access token: %w", err)
+		}
+		if accessToken, _ := d.client.GetToken(); len(accessToken) < minAccessTokenLen {
+			return errors.New("refresh access token: the server returned an invalid access token")
+		}
+	}
+
+	if err := d.client.InitData(); err != nil {
+		return fmt.Errorf("initialize user data: %w", err)
+	}
+	fml, err := d.client.FamilyUserCurrentEncode(func(req *resty.Request) {
+		req.SetContext(ctx)
 	})
-	fml, err := d.client.FamilyUserCurrentEncode()
 	if err != nil {
-		return err
+		return fmt.Errorf("query default family: %w", err)
 	}
 	d.defaultFamilyID = strconv.Itoa(fml.DefaultHomeId)
-	return d.client.InitData()
+	return nil
 }
 
 func (d *Wopan) Drop(ctx context.Context) error {
