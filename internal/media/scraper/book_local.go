@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/disintegration/imaging"
 	"github.com/OpenListTeam/OpenList/v4/internal/media/imgmime"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/disintegration/imaging"
+	"github.com/go-pdfkit/reader"
+	"github.com/go-pdfkit/render"
 )
 
 // BookLocalScraper 书籍本地刮削器
@@ -282,9 +284,46 @@ func extractEpubCoverBase64(data []byte) string {
 
 // ── PDF 封面提取 ──────────────────────────────────────────────────────────────
 
-// extractPDFCoverData 从 PDF 数据中提取第一个内嵌 JPEG 图片流，返回原始字节
-// PDF 内嵌图片通常以 JPEG 流存储（SOI marker: 0xFF 0xD8），直接扫描字节流提取
+// extractPDFCoverData 提取 PDF 封面，返回图片字节。
+//
+// 优先用纯 Go 光栅化渲染第 1 页：矢量封面、扫描件、用了 Flate/JPX 压缩的
+// 内嵌图都能出图，比「扫字节流找 JPEG」可靠得多。
+// 渲染失败（加密、结构异常、超时）时退回内嵌 JPEG 扫描，保证最差也有老行为。
 func extractPDFCoverData(data []byte) []byte {
+	if cover := renderPDFFirstPage(data); len(cover) > 0 {
+		return cover
+	}
+	return scanPDFEmbeddedJPEG(data)
+}
+
+// renderPDFFirstPage 用 go-pdfkit/render 渲染 PDF 第 1 页并缩放到封面尺寸。
+//
+// 渲染来自网络的文件必须设上限：MaxPixels 防超大 MediaBox 吃爆内存，
+// MaxDuration 防复杂/恶意页面卡住扫描协程。
+func renderPDFFirstPage(data []byte) []byte {
+	doc, err := reader.Open(data)
+	if err != nil || doc.PageCount() < 1 {
+		return nil
+	}
+	img, err := render.Page(doc, 1, render.Options{
+		Scale:       1, // 72 DPI 足够当封面，后面再缩到 300px
+		MaxPixels:   20_000_000,
+		MaxDuration: 8 * time.Second,
+	})
+	// ErrTimedOut 会返回「画了一半」的图，仍然可用；其他错误放弃
+	if img == nil || (err != nil && !errors.Is(err, render.ErrTimedOut)) {
+		return nil
+	}
+	thumb := imaging.Resize(img.ToNRGBA(), 300, 0, imaging.Lanczos)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 80}); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
+// scanPDFEmbeddedJPEG 兜底：从 PDF 字节流中找到第一个内嵌 JPEG（SOI 0xFFD8 → EOI 0xFFD9）。
+func scanPDFEmbeddedJPEG(data []byte) []byte {
 	// 扫描 JPEG SOI (0xFF 0xD8 0xFF) 标记
 	for i := 0; i < len(data)-2; i++ {
 		if data[i] == 0xFF && data[i+1] == 0xD8 && data[i+2] == 0xFF {

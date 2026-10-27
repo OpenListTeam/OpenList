@@ -31,6 +31,10 @@ const (
 	ThumbModeRuntime = "runtime"
 	// ThumbModeVFS 缩略图写入挂载目录（VFS 路径）
 	ThumbModeVFS = "local"
+	// ThumbModeSameDir 缩略图写入媒体文件所在目录，文件名 = 原文件名 + 图片后缀
+	// （foo.flac -> foo.flac.jpg）。与 STRM 的「同目录」选项语义一致，
+	// 只是不需要额外配置目录。
+	ThumbModeSameDir = "samedir"
 )
 
 // NormalizeThumbMode 归一化缩略图模式，未知/空值按运行目录处理
@@ -40,6 +44,8 @@ func NormalizeThumbMode(mode string) string {
 		return ThumbModeBase64
 	case ThumbModeVFS, "vfs":
 		return ThumbModeVFS
+	case ThumbModeSameDir, "same_dir":
+		return ThumbModeSameDir
 	default:
 		return ThumbModeRuntime
 	}
@@ -66,6 +72,32 @@ func SaveThumb(ctx context.Context, mode, thumbPath, rawPath, mimeType string, d
 	}
 	if mode == ThumbModeBase64 {
 		return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
+	}
+
+	if mode == ThumbModeSameDir {
+		if strings.TrimSpace(rawPath) == "" {
+			return ""
+		}
+		vfsDir := stdpath.Dir(rawPath)
+		if vfsDir == "." {
+			vfsDir = "/"
+		}
+		name := stdpath.Base(rawPath) + coverExt(mimeType)
+		file := &stream.FileStream{
+			Ctx: ctx,
+			Obj: &model.Object{
+				Name:     name,
+				Size:     int64(len(data)),
+				Modified: time.Now(),
+			},
+			Reader:   bytes.NewReader(data),
+			Mimetype: mimeType,
+		}
+		if err := fs.PutDirectly(ctx, vfsDir, file, true); err != nil {
+			return ""
+		}
+		vfsFile := stdpath.Join(vfsDir, name)
+		return "/d" + vfsFile + "?sign=" + sign.Sign(vfsFile)
 	}
 
 	dir := strings.Trim(strings.TrimSpace(thumbPath), "/")
@@ -103,6 +135,21 @@ func SaveThumb(ctx context.Context, mode, thumbPath, rawPath, mimeType string, d
 		return ""
 	}
 	return "thumb:/" + stdpath.Join(dir, name)
+}
+
+// coverExt 按 MIME 类型给出封面后缀（同目录模式用「原文件名 + 后缀」，
+// 例如 song.flac.jpg，既不会覆盖原文件，也一眼能看出属于哪个文件）。
+func coverExt(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0])) {
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ".jpg"
+	}
 }
 
 // thumbName 根据媒体文件路径生成缩略图文件名

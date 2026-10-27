@@ -184,6 +184,7 @@ const (
 	MediaThumbnailMode     = "media_thumbnail_mode"
 	MediaThumbnailPath     = "media_thumbnail_path"
 	MediaStoreThumbnail    = "media_store_thumbnail"
+	MediaOverwriteCover    = "media_overwrite_cover" // 刮削是否覆盖已有封面（默认关闭：只补空）
 	MediaScrapeConcurrency = "media_scrape_concurrency"
 	MediaScrapeLanguage    = "media_scrape_language"  // 首选刮削语言（TMDB / Google Books）
 	MediaBookSource        = "media_book_source"      // 书籍刮削源：douban/google/openlibrary
@@ -191,18 +192,18 @@ const (
 	MediaDownloadCover     = "media_download_cover"   // 是否把远程封面下载到本地存储
 
 	// media library master switch & protocol switches
-	MediaEnabled             = "media_enabled"               // 媒体库总开关（PUBLIC，前端据此显示/隐藏）
-	MediaEmbyEnabled         = "media_emby_enabled"          // Emby 兼容 API 开关
-	MediaSubsonicEnabled     = "media_subsonic_enabled"      // OpenSubsonic API 开关
-	MediaSubsonicProxyStream = "media_subsonic_proxy_stream" // Subsonic 播放是否强制代理（兼容不跟随 302 的客户端）
+	MediaEnabled             = "media_enabled"                      // 媒体库总开关（PUBLIC，前端据此显示/隐藏）
+	MediaEmbyEnabled         = "media_emby_enabled"                 // Emby 兼容 API 开关
+	MediaSubsonicEnabled     = "media_subsonic_enabled"             // OpenSubsonic API 开关
+	MediaSubsonicProxyStream = "media_subsonic_proxy_stream"        // Subsonic 播放是否强制代理（兼容不跟随 302 的客户端）
 	MediaSubsonicAllowPwd    = "media_subsonic_allow_password_auth" // Subsonic 是否允许 u+p 使用 OpenList 登录密码认证（默认关闭）
-	MediaProxyCover          = "media_proxy_cover"           // 是否通过服务端代理外部封面（TMDB/豆瓣等）
-	MediaCoverGateway        = "media_cover_gateway"         // 封面代理直连失败时是否回退第三方图片网关（wsrv.nl，默认关闭）
-	MediaStrmOnScan          = "media_strm_on_scan"          // 扫描完成后自动生成 STRM
-	MediaStrmSameDir         = "media_strm_same_dir"         // STRM 是否与媒体文件同目录（同名 .strm）
-	MediaStrmPath            = "media_strm_path"             // STRM 输出目录（VFS 路径，仅在指定目录模式下使用）
-	MediaStrmOverwrite       = "media_strm_overwrite"        // 生成 STRM 时是否覆盖已存在文件
-	MediaStrmTemplate        = "media_strm_template"         // STRM 内容模板
+	MediaProxyCover          = "media_proxy_cover"                  // 是否通过服务端代理外部封面（TMDB/豆瓣等）
+	MediaCoverGateway        = "media_cover_gateway"                // 封面代理直连失败时是否回退第三方图片网关（wsrv.nl，默认关闭）
+	MediaStrmOnScan          = "media_strm_on_scan"                 // 扫描完成后自动生成 STRM
+	MediaStrmSameDir         = "media_strm_same_dir"                // STRM 是否与媒体文件同目录（同名 .strm）
+	MediaStrmPath            = "media_strm_path"                    // STRM 输出目录（VFS 路径，仅在指定目录模式下使用）
+	MediaStrmOverwrite       = "media_strm_overwrite"               // 生成 STRM 时是否覆盖已存在文件
+	MediaStrmTemplate        = "media_strm_template"                // STRM 内容模板
 
 	// transcode (云端/本地 FFmpeg 转码)
 	TranscodeEnabled            = "transcode_enabled"              // 总开关，默认关

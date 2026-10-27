@@ -808,11 +808,11 @@ func StartMediaScrape(c *gin.Context) {
 					}
 				}
 
-				// 音乐：文件自带的封面（内嵌 ID3/Vorbis 的 data URL、本地缩略图、
-				// 站内代理地址）优先级最高，刮削只允许「补空」，不允许被在线图片替换。
-				// 用户手动设置的封面同理（在同一字段里，无法区分，一并保护）。
-				if req.MediaType == model.MediaTypeMusic &&
-					isFileOwnedCover(prevCover) && item.Cover != prevCover {
+				// 默认不覆盖已有封面：文件自带封面（内嵌 ID3/Vorbis、书籍内页提取、
+				// 本地缩略图）与用户手动设置的封面优先，刮削只负责「补空」。
+				// 需要让刮削封面替换已有封面时，在媒体设置里打开「刮削覆盖已有封面」。
+				if prevCover != "" && item.Cover != prevCover &&
+					!setting.GetBool(conf.MediaOverwriteCover) {
 					item.Cover = prevCover
 				}
 
