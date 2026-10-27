@@ -5,6 +5,7 @@ package s3
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path"
@@ -32,6 +33,8 @@ var (
 	emptyPrefix = &gofakes3.Prefix{}
 	timeFormat  = "Mon, 2 Jan 2006 15:04:05 GMT"
 )
+
+const emptyObjectETag = `"d41d8cd98f00b204e9800998ecf8427e"`
 
 // s3Backend implements the gofakes3.Backend interface to make an S3
 // backend for gofakes3. It also implements gofakes3.MultipartBackend so that
@@ -94,7 +97,11 @@ func (b *s3Backend) ListBucket(ctx context.Context, bucketName string, prefix *g
 
 	path, remaining := prefixParser(prefix)
 
-	response, err := b.listPage(ctx, bucketPath, path, remaining, prefix.HasDelimiter, page)
+	markers, err := listS3Markers(bucketName)
+	if err != nil {
+		return nil, err
+	}
+	response, err := b.listPageWithMarkers(ctx, bucketPath, path, remaining, prefix.HasDelimiter, page, markers)
 	if err == gofakes3.ErrNoSuchKey {
 		// AWS just returns an empty list
 		response = gofakes3.NewObjectList()
@@ -114,6 +121,18 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 		return nil, err
 	}
 	bucketPath := bucket.Path
+
+	if marker, markerErr := getS3Marker(bucketName, objectName); markerErr != nil {
+		return nil, markerErr
+	} else if marker != nil {
+		metadata := s3MarkerMetadata(marker, objectName)
+		return &gofakes3.Object{
+			Name:     objectName,
+			Metadata: metadata,
+			Size:     0,
+			Contents: noOpReadCloser{},
+		}, nil
+	}
 
 	fp := path.Join(bucketPath, objectName)
 	fmeta, _ := op.GetNearestMeta(fp)
@@ -159,6 +178,21 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		return nil, err
 	}
 	bucketPath := bucket.Path
+
+	if marker, markerErr := getS3Marker(bucketName, objectName); markerErr != nil {
+		return nil, markerErr
+	} else if marker != nil {
+		if rangeRequest != nil {
+			return nil, gofakes3.ErrInvalidRange
+		}
+		metadata := s3MarkerMetadata(marker, objectName)
+		return &gofakes3.Object{
+			Name:     objectName,
+			Metadata: metadata,
+			Size:     0,
+			Contents: io.NopCloser(strings.NewReader("")),
+		}, nil
+	}
 
 	fp := path.Join(bucketPath, objectName)
 	fmeta, _ := op.GetNearestMeta(fp)
@@ -259,22 +293,41 @@ func (b *s3Backend) putStream(
 	}
 	bucketPath := bucket.Path
 
-	isDir := strings.HasSuffix(objectName, "/")
-	log.Debugf("isDir: %v", isDir)
+	if strings.HasSuffix(objectName, "/") {
+		if size != 0 {
+			return gofakes3.ErrorMessagef(gofakes3.ErrInvalidArgument, "trailing-slash objects must be empty")
+		}
+		if input != nil {
+			var extra [1]byte
+			n, readErr := io.ReadFull(input, extra[:])
+			if n != 0 {
+				return gofakes3.ErrorMessagef(gofakes3.ErrInvalidArgument, "trailing-slash objects must be empty")
+			}
+			if readErr != io.EOF {
+				return readErr
+			}
+		}
+		encodedMeta, err := json.Marshal(meta)
+		if err != nil {
+			return err
+		}
+		return saveS3Marker(&model.S3Marker{
+			Bucket:   bucketName,
+			Key:      objectName,
+			KeyHash:  s3KeyHash(bucketName, objectName),
+			Metadata: string(encodedMeta),
+			Modified: time.Now(),
+		})
+	}
 
 	fp := path.Join(bucketPath, objectName)
 	log.Debugf("fp: %s, bucketPath: %s, objectName: %s", fp, bucketPath, objectName)
 
 	var reqPath string
-	if isDir {
-		reqPath = fp + "/"
-	} else {
-		reqPath = path.Dir(fp)
-	}
+	reqPath = path.Dir(fp)
 	log.Debugf("reqPath: %s", reqPath)
 	fmeta, _ := op.GetNearestMeta(fp)
 	ctx = context.WithValue(ctx, conf.MetaKey, fmeta)
-
 	_, err = fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
 		if errs.IsObjectNotFound(err) && strings.Contains(objectName, "/") {
@@ -286,10 +339,6 @@ func (b *s3Backend) putStream(
 		} else {
 			return gofakes3.KeyNotFound(objectName)
 		}
-	}
-
-	if isDir {
-		return nil
 	}
 
 	var ti time.Time
@@ -367,6 +416,11 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	if err != nil {
 		return err
 	}
+	if marker, markerErr := getS3Marker(bucketName, objectName); markerErr != nil {
+		return markerErr
+	} else if marker != nil {
+		return deleteS3Marker(bucketName, objectName)
+	}
 	bucketPath := bucket.Path
 
 	fp := path.Join(bucketPath, objectName)
@@ -417,6 +471,31 @@ func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket
 		return result, err
 	}
 	srcBucketPath := srcB.Path
+
+	if marker, markerErr := getS3Marker(srcBucket, srcKey); markerErr != nil {
+		return result, markerErr
+	} else if marker != nil {
+		c, getErr := b.GetObject(ctx, srcBucket, srcKey, nil)
+		if getErr != nil {
+			return result, getErr
+		}
+		defer func() { _ = c.Contents.Close() }()
+		if meta == nil {
+			meta = make(map[string]string)
+		}
+		for k, v := range c.Metadata {
+			if _, found := meta[k]; !found && k != "X-Amz-Acl" {
+				meta[k] = v
+			}
+		}
+		if _, putErr := b.PutObject(ctx, dstBucket, dstKey, meta, c.Contents, c.Size); putErr != nil {
+			return result, putErr
+		}
+		return gofakes3.CopyObjectResult{
+			ETag:         emptyObjectETag,
+			LastModified: gofakes3.NewContentTime(marker.Modified),
+		}, nil
+	}
 
 	srcFp := path.Join(srcBucketPath, srcKey)
 	fmeta, _ := op.GetNearestMeta(srcFp)

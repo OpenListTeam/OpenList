@@ -57,6 +57,13 @@ type multipartState struct {
 	parts map[int]*multipartPart
 }
 
+func validateMultipartObject(state *multipartState, bucket, object string) error {
+	if state.bucket != bucket || state.object != object {
+		return gofakes3.ErrNoSuchUpload
+	}
+	return nil
+}
+
 // CreateMultipartUpload begins a new multipart upload. Parts are streamed to
 // local temp files so that large uploads do not need to be buffered in memory.
 //
@@ -107,6 +114,9 @@ func (b *s3Backend) UploadPart(ctx context.Context, bucket, object string, uploa
 		return "", gofakes3.ErrNoSuchUpload
 	}
 	state := val.(*multipartState)
+	if err := validateMultipartObject(state, bucket, object); err != nil {
+		return "", err
+	}
 
 	partPath := filepath.Join(state.dir, fmt.Sprintf("part-%05d", partNumber))
 	f, err := os.Create(partPath)
@@ -171,6 +181,9 @@ func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object 
 		return "", "", gofakes3.ErrNoSuchUpload
 	}
 	state := val.(*multipartState)
+	if err := validateMultipartObject(state, bucket, object); err != nil {
+		return "", "", err
+	}
 
 	if input == nil || len(input.Parts) == 0 {
 		return "", "", gofakes3.ErrorMessagef(gofakes3.ErrMalformedXML, "complete multipart upload has no parts")
@@ -255,6 +268,11 @@ func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object 
 // It implements gofakes3.MultipartBackend and is idempotent: aborting an
 // unknown upload succeeds so retries do not fail.
 func (b *s3Backend) AbortMultipartUpload(ctx context.Context, bucket, object string, uploadID gofakes3.UploadID) error {
+	if val, ok := b.uploads.Load(uploadID); ok {
+		if err := validateMultipartObject(val.(*multipartState), bucket, object); err != nil {
+			return err
+		}
+	}
 	b.removeUpload(uploadID)
 	return nil
 }
