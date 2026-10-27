@@ -372,9 +372,7 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.WithValue(context.Background(), conf.UserKey, s.Creator)
-	ctx = context.WithValue(ctx, conf.MultipartUploadKey, struct{}{})
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), conf.UserKey, s.Creator))
 	done := make(chan struct{})
 	s.win = win
 	s.cancel = cancel

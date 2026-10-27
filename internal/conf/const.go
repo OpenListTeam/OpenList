@@ -269,5 +269,4 @@ const (
 	DirectUploadContentTypeKey
 	SkipNoOverwriteKey
 	ThumbnailBaseURLKey
-	MultipartUploadKey
 )

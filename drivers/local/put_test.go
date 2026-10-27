@@ -1,6 +1,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -20,6 +21,30 @@ func (r blockedReader) Read([]byte) (int, error) {
 	close(r.started)
 	<-r.release
 	return 0, context.Canceled
+}
+
+func TestPutReplacesExistingFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "test.bin")
+	if err := os.WriteFile(path, []byte("old"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	file := &stream.FileStream{
+		Obj:    &model.Object{Name: "test.bin", Size: 3},
+		Reader: bytes.NewReader([]byte("new")),
+	}
+	if err := (&Local{}).Put(context.Background(), &model.Object{Path: root}, file, nil); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("file contents = %q, want %q", got, "new")
+	}
 }
 
 func TestPutCancellationPreservesCompletedReplacement(t *testing.T) {
