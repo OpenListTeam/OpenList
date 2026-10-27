@@ -388,6 +388,21 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 			dstPath = filepath.Join(recycleBinPath, objName+"_"+time.Now().Format("20060102150405"))
 		}
 		err = os.Rename(objPath, dstPath)
+		if isCrossDeviceError(err) {
+			err = d.copyForMove(objPath, dstPath)
+			if err != nil {
+				_ = os.RemoveAll(dstPath)
+			} else {
+				if obj.IsDir() {
+					err = os.RemoveAll(objPath)
+				} else {
+					err = os.Remove(objPath)
+				}
+				if err != nil {
+					_ = os.RemoveAll(dstPath)
+				}
+			}
+		}
 	}
 	if err != nil {
 		return err

@@ -444,6 +444,39 @@ func (m *DirectoryMap) DeleteDirNode(dirname string) error {
 	return nil
 }
 
+func (d *Local) copyForMove(srcPath, dstPath string) error {
+	info, err := os.Lstat(srcPath)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeDevice != 0 {
+		return errors.New("cannot copy a device")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return d.copySymlink(srcPath, dstPath)
+	}
+	if info.Mode()&os.ModeNamedPipe != 0 {
+		return copyNamedPipe(dstPath, info.Mode(), os.FileMode(d.mkdirPerm))
+	}
+	if !info.IsDir() {
+		return utils.CopyFile(srcPath, dstPath)
+	}
+
+	if err = os.MkdirAll(dstPath, info.Mode()); err != nil {
+		return err
+	}
+	files, err := readDir(srcPath)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err = d.copyForMove(filepath.Join(srcPath, file.Name()), filepath.Join(dstPath, file.Name())); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(dstPath, info.Mode())
+}
+
 func (d *Local) tryCopy(srcPath, dstPath string, info os.FileInfo) error {
 	if info.Mode()&os.ModeDevice != 0 {
 		return errors.New("cannot copy a device")
