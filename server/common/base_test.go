@@ -61,4 +61,9 @@ func TestGetPlaybackBase(t *testing.T) {
 	if got := GetPlaybackBase(newReq("127.0.0.1:5244", "")); got != "https://site.example.com" {
 		t.Errorf("site_url: got %q", got)
 	}
+	// site_url 写成子路径时也属于「已配置」：不能退化成相对路径，否则前缀会丢
+	conf.Conf.SiteURL = "/openlist"
+	if got := GetPlaybackBase(newReq("127.0.0.1:5244", "")); got != "http://127.0.0.1:5244/openlist" {
+		t.Errorf("site_url path prefix: got %q", got)
+	}
 }

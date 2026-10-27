@@ -43,8 +43,11 @@ func GetApiUrl(ctx context.Context) string {
 // 否则播放器会拿到 http://127.0.0.1:5244/...，在反向代理、容器映射端口或
 // 其它设备访问时都会指向错误的主机。
 func GetPlaybackBase(r *http.Request) string {
-	if siteURL := strings.TrimSpace(conf.Conf.SiteURL); strings.HasPrefix(siteURL, "http") {
-		return strings.TrimSuffix(siteURL, "/")
+	// 只要配置了 site_url 就走绝对地址。site_url 除了完整 URL，也可能是
+	// "/openlist" 这种路径前缀（GetApiUrlFromRequest 会把它拼到 host 后面）；
+	// 此时若按「回环地址」返回相对路径，前缀会丢掉，播放地址直接 404。
+	if strings.TrimSpace(conf.Conf.SiteURL) != "" {
+		return GetApiUrlFromRequest(r)
 	}
 	if r != nil && isLoopbackHost(playbackHost(r)) {
 		return ""
