@@ -966,6 +966,7 @@ func PublicListAlbums(c *gin.Context) {
 		PathPrefix: userPathPrefix(mediaUser(c)),
 		Hidden:     &hidden,
 		Keyword:    keyword,
+		Artist:     c.Query("album_artist"),
 		Page:       page,
 		PageSize:   pageSize,
 	}
@@ -975,6 +976,38 @@ func PublicListAlbums(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c, common.PageResp{Content: albums, Total: total})
+}
+
+// PublicListArtists 公开艺术家列表（音乐），供「按艺术家」分类视图使用
+func PublicListArtists(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "40"))
+	page, pageSize = clampMediaPage(page, pageSize, 40, 200)
+	keyword := c.Query("keyword")
+	scanPathIDStr := c.Query("scan_path_id")
+	var scanPathID uint
+	if scanPathIDStr != "" {
+		if id, err := strconv.ParseUint(scanPathIDStr, 10, 64); err == nil {
+			scanPathID = uint(id)
+		}
+	}
+
+	hidden := false
+	q := db.MediaItemQuery{
+		MediaType:  model.MediaTypeMusic,
+		ScanPathID: scanPathID,
+		PathPrefix: userPathPrefix(mediaUser(c)),
+		Hidden:     &hidden,
+		Keyword:    keyword,
+		Page:       page,
+		PageSize:   pageSize,
+	}
+	artists, total, err := db.ListArtists(q)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c, common.PageResp{Content: artists, Total: total})
 }
 
 // PublicGetAlbum 公开获取专辑详情及曲目

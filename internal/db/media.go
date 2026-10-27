@@ -96,6 +96,7 @@ type MediaItemQuery struct {
 	FolderPath string // 按文件夹路径筛选
 	TypeTag    string // 按类型标签筛选（电影、电视剧等）
 	ContentTag string // 按内容标签筛选（喜剧、惊悚等）
+	Artist     string // 按专辑艺术家筛选（音乐）
 	PathPrefix string // 按文件夹路径前缀筛选（用于用户 base_path 隔离）
 	Hidden     *bool
 	Keyword    string
@@ -415,6 +416,9 @@ func ListAlbums(q MediaItemQuery) ([]AlbumInfo, int64, error) {
 	if q.ScanPathID > 0 {
 		baseQuery = baseQuery.Where("scan_path_id = ?", q.ScanPathID)
 	}
+	if q.Artist != "" {
+		baseQuery = baseQuery.Where("album_artist = ?", q.Artist)
+	}
 	if q.Keyword != "" {
 		like := "%" + q.Keyword + "%"
 		baseQuery = baseQuery.Where("album_name LIKE ? OR album_artist LIKE ? OR scraped_name LIKE ?", like, like, like)
@@ -470,6 +474,78 @@ type AlbumInfo struct {
 	ReleaseDate string `json:"release_date"`
 	TrackCount  int    `json:"track_count"`
 	ScanPathID  uint   `json:"scan_path_id"`
+}
+
+// ArtistInfo 艺术家聚合信息
+type ArtistInfo struct {
+	Artist     string `json:"artist"`
+	AlbumCount int    `json:"album_count"`
+	TrackCount int    `json:"track_count"`
+	Cover      string `json:"cover"`
+	ScanPathID uint   `json:"scan_path_id"`
+}
+
+// ListArtists 按专辑艺术家聚合（音乐专用），列表按艺术家名排序，分页稳定
+func ListArtists(q MediaItemQuery) ([]ArtistInfo, int64, error) {
+	type artistRow struct {
+		Artist     string
+		AlbumCount int
+		TrackCount int
+		Cover      string
+		ScanPathID uint
+	}
+
+	baseQuery := db.Model(&model.MediaItem{}).
+		Where("media_type = ?", model.MediaTypeMusic)
+	if q.Hidden != nil {
+		baseQuery = baseQuery.Where("hidden = ?", *q.Hidden)
+	}
+	if q.ScanPathID > 0 {
+		baseQuery = baseQuery.Where("scan_path_id = ?", q.ScanPathID)
+	}
+	if q.PathPrefix != "" {
+		baseQuery = baseQuery.Where("folder_path LIKE ? ESCAPE '\\'", escapeLike(q.PathPrefix)+"%")
+	}
+	if q.Keyword != "" {
+		baseQuery = baseQuery.Where("album_artist LIKE ?", "%"+q.Keyword+"%")
+	}
+
+	var total int64
+	if err := db.Table("(?) as sub", baseQuery.
+		Select("album_artist").
+		Group("album_artist")).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if q.PageSize <= 0 {
+		q.PageSize = 20
+	}
+	if q.Page <= 0 {
+		q.Page = 1
+	}
+
+	tx := baseQuery.
+		Select("album_artist AS artist, COUNT(DISTINCT album_name) AS album_count, COUNT(*) AS track_count, MAX(cover) AS cover, MAX(scan_path_id) AS scan_path_id").
+		Group("album_artist").
+		Order("album_artist asc").
+		Offset((q.Page - 1) * q.PageSize).Limit(q.PageSize)
+
+	var rows []artistRow
+	if err := tx.Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	out := make([]ArtistInfo, len(rows))
+	for i, r := range rows {
+		out[i] = ArtistInfo{
+			Artist:     r.Artist,
+			AlbumCount: r.AlbumCount,
+			TrackCount: r.TrackCount,
+			Cover:      r.Cover,
+			ScanPathID: r.ScanPathID,
+		}
+	}
+	return out, total, nil
 }
 
 // ListMediaItemsByAlbum 列出某个专辑下的真实条目（不展开合并文件夹的 episodes）。
