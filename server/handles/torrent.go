@@ -1516,6 +1516,12 @@ func UpdateSeed(c *gin.Context) {
 // progress 可为 nil；非 nil 时逐文件上报任务进度（任务本身只是展示载体）。
 func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, req SeedQuickSaveReq, dstPath string, rapidOnly bool, allowOffline bool, progress *fs.SeedSaveTask) ([]gin.H, string, string, error) {
 	results := make([]gin.H, 0, len(seed.Files))
+	// 保存是同步进行的，只有把 IO 绑到任务上下文上，「取消」才能真正中断它；
+	// 没有任务载体时退回请求上下文（客户端断开即停止）。
+	ctx := c.Request.Context()
+	if progress != nil {
+		ctx = progress.Ctx()
+	}
 	fullPath, err := user.JoinPath(dstPath)
 	if err != nil {
 		return nil, "", "", err
@@ -1531,7 +1537,7 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 	if err != nil {
 		return nil, "", "", err
 	}
-	dstDir, err := op.Get(c.Request.Context(), storage, actualPath)
+	dstDir, err := op.Get(ctx, storage, actualPath)
 	if err != nil || !dstDir.IsDir() {
 		return nil, "", "", errs.NotFolder
 	}
@@ -1569,6 +1575,10 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 		pending = append(pending, file)
 	}
 	for i, file := range pending {
+		// 每个文件开始前检查一次：取消后不再继续排队下一个文件
+		if err := ctx.Err(); err != nil {
+			return results, driverName, mountPath, err
+		}
 		name := stdpath.Base(file.Path)
 		if progress != nil {
 			// Report 用的是「第几个文件」，从 1 开始；用下标会让第一个文件显示 0/N、进度条不动
@@ -1580,8 +1590,8 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			one.Files = []torrent.SeedFile{file}
 			if data, encodeErr := torrent.EncodeSeed(&one, "torrent"); encodeErr == nil {
 				if t, decErr := torrent.Decode(data); decErr == nil {
-					if rapidReq := buildSeedRapidUploadRequest(t, seedContentOpener(seed, file, c.Request.Context())); rapidReq != nil {
-						if obj, rapidErr := rapidUploader.RapidUploadByHashes(c.Request.Context(), dstDir, rapidReq, req.Overwrite); rapidErr == nil {
+					if rapidReq := buildSeedRapidUploadRequest(t, seedContentOpener(seed, file, ctx)); rapidReq != nil {
+						if obj, rapidErr := rapidUploader.RapidUploadByHashes(ctx, dstDir, rapidReq, req.Overwrite); rapidErr == nil {
 							results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
 							continue
 						}
@@ -1599,7 +1609,7 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			continue
 		}
 		if putURL || putURLResult {
-			if putErr := fs.PutURL(c.Request.Context(), fullPath, name, source); putErr == nil {
+			if putErr := fs.PutURL(ctx, fullPath, name, source); putErr == nil {
 				results = append(results, gin.H{"path": file.Path, "name": name, "method": "put_url"})
 				continue
 			}
@@ -1720,6 +1730,11 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 
 // seedSaveErrorCode maps a save error to an HTTP status code.
 func seedSaveErrorCode(err error) int {
+	// 用户取消：请求本身没出错，用 499（客户端主动断开）语义最接近，
+	// 前端也不会把它当成服务端异常
+	if errors.Is(err, context.Canceled) {
+		return 499
+	}
 	if errors.Is(errors.Cause(err), errs.PermissionDenied) {
 		return 403
 	}

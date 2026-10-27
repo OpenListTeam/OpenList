@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	stdpath "path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -248,14 +249,82 @@ func parseEpisodeList(item *model.MediaItem) []model.EpisodeInfo {
 	return eps
 }
 
-// episodeSeasonOf 返回某一集的季号：选集自带的 season 优先，
-// 其次条目级 season，最后按第 1 季处理（老数据没有 season 字段）
+// 季号兜底解析用的正则，规则与前端 episodeSeasonOf 保持一致：
+// 第N季（中文数字）→ Season N → SxxEyy
+var (
+	seasonCNRe  = regexp.MustCompile(`第\s*([0-9]+|[一二三四五六七八九十百零两]+)\s*季`)
+	seasonENRe  = regexp.MustCompile(`(?i)season[\s._-]*([0-9]{1,2})`)
+	seasonSxxRe = regexp.MustCompile(`(?i)\bS([0-9]{1,2})E[0-9]{1,3}\b`)
+)
+
+var cnDigits = map[rune]int{
+	'零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+	'五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+}
+
+// chineseNumeral 解析「一 / 十二 / 二十三」这类中文数字，失败返回 0
+func chineseNumeral(s string) int {
+	total, current := 0, 0
+	for _, ch := range s {
+		if ch == '十' {
+			if current == 0 {
+				current = 1
+			}
+			total += current * 10
+			current = 0
+			continue
+		}
+		v, ok := cnDigits[ch]
+		if !ok {
+			return 0
+		}
+		current = v
+	}
+	return total + current
+}
+
+// seasonFromText 从选集标题 / 文件名推断季号，无法判断返回 0。
+// 老数据没有 season 字段时（重扫前）Emby 侧靠它分季，
+// 与前端展示保持一致，避免「网盘里分了两季、Emby 里全在第 1 季」。
+func seasonFromText(text string) int {
+	if text == "" {
+		return 0
+	}
+	if m := seasonCNRe.FindStringSubmatch(text); len(m) == 2 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			return n
+		}
+		if n := chineseNumeral(m[1]); n > 0 {
+			return n
+		}
+	}
+	if m := seasonENRe.FindStringSubmatch(text); len(m) == 2 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			return n
+		}
+	}
+	if m := seasonSxxRe.FindStringSubmatch(text); len(m) == 2 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// episodeSeasonOf 返回某一集的季号，优先级：
+// 选集自带 season → 条目级 season → 标题/文件名里的季信息 → 第 1 季。
 func episodeSeasonOf(item *model.MediaItem, ep model.EpisodeInfo) int {
 	if ep.Season > 0 {
 		return ep.Season
 	}
 	if item.Season > 0 {
 		return item.Season
+	}
+	if n := seasonFromText(ep.Title); n > 0 {
+		return n
+	}
+	if n := seasonFromText(ep.FileName); n > 0 {
+		return n
 	}
 	return 1
 }
@@ -319,25 +388,37 @@ func (l *embyLibrary) episodesOf(seriesKey string, season int) []*embyEpisode {
 	return out
 }
 
-func (l *embyLibrary) findEpisode(id string) *embyEpisode {
-	// id: ep-<itemID>-<season>-<num>（多季合并后需要季号才能唯一定位；
-	// 兼容旧格式 ep-<itemID>-<num>，当作第 1 季处理）
+// parseEpisodeID 解析 Emby 集 ID。
+//
+// 现格式：ep-<itemID>-<season>-<num>；兼容旧格式 ep-<itemID>-<num>，
+// 此时 season 返回 0，表示「未指定季」，调用方按任意季匹配。
+// 多季合并成一条记录后，仅有集号无法唯一定位（S01E01 与 S02E01 同号），
+// 所以新格式必须带季号；旧 ID 仍能解析，避免已缓存的客户端 ID 直接失效。
+func parseEpisodeID(id string) (itemID uint, season, num int, ok bool) {
 	parts := strings.Split(id, "-")
 	if len(parts) != 3 && len(parts) != 4 {
-		return nil
+		return 0, 0, 0, false
 	}
-	itemID, err := strconv.ParseUint(parts[1], 10, 64)
+	n, err := strconv.ParseUint(parts[1], 10, 64)
 	if err != nil {
+		return 0, 0, 0, false
+	}
+	num, err = strconv.Atoi(parts[len(parts)-1])
+	if err != nil || num <= 0 {
+		return 0, 0, 0, false
+	}
+	if len(parts) == 4 {
+		season, _ = strconv.Atoi(parts[2])
+	}
+	return uint(n), season, num, true
+}
+
+func (l *embyLibrary) findEpisode(id string) *embyEpisode {
+	itemID, wantSeason, num, ok := parseEpisodeID(id)
+	if !ok {
 		return nil
 	}
-	wantSeason := 0
-	numStr := parts[2]
-	if len(parts) == 4 {
-		wantSeason, _ = strconv.Atoi(parts[2])
-		numStr = parts[3]
-	}
-	num, _ := strconv.Atoi(numStr)
-	item, err := db.GetMediaItemByID(uint(itemID))
+	item, err := db.GetMediaItemByID(itemID)
 	if err != nil || !CanUserAccessItem(l.user, item) {
 		return nil
 	}
@@ -365,6 +446,44 @@ func (l *embyLibrary) findEpisode(id string) *embyEpisode {
 	}
 	return &embyEpisode{ID: id, Item: item, Index: num, Season: season,
 		SeriesKey: seriesKeyOf(item), SeriesName: seriesNameOf(item)}
+}
+
+// resumeEpisodeID 根据「条目 + 集号」还原 Emby 集 ID。
+//
+// 续播记录里只存了集号，多季合并后可能出现同号（S01E01 / S02E01），
+// 能唯一定位时补上季号；出现同号则退回旧的两段 ID（按任意季匹配，
+// 与原行为一致），避免把续播位置错标到别的季。
+func (l *embyLibrary) resumeEpisodeID(itemID uint, index int) string {
+	var it *model.MediaItem
+	for i := range l.videos {
+		if l.videos[i].ID == itemID {
+			it = &l.videos[i]
+			break
+		}
+	}
+	if it != nil && it.IsFolder {
+		season := 0
+		for i, ep := range parseEpisodeList(it) {
+			n := ep.Index
+			if n <= 0 {
+				n = i + 1
+			}
+			if n != index {
+				continue
+			}
+			s := episodeSeasonOf(it, ep)
+			if season != 0 && s != season {
+				// 同号集出现在不同季，无法从集号反推季号
+				season = -1
+				break
+			}
+			season = s
+		}
+		if season > 0 {
+			return fmt.Sprintf("ep-%d-%d-%d", itemID, season, index)
+		}
+	}
+	return fmt.Sprintf("ep-%d-%d", itemID, index)
 }
 
 // music 索引
@@ -1439,7 +1558,7 @@ func embyResume(c *gin.Context, lib *embyLibrary) {
 	for _, row := range rows {
 		id := fmt.Sprintf("mv-%d", row.ItemID)
 		if row.EpisodeIndex > 0 {
-			id = fmt.Sprintf("ep-%d-%d", row.ItemID, row.EpisodeIndex)
+			id = lib.resumeEpisodeID(row.ItemID, row.EpisodeIndex)
 		}
 		if it, ok := lib.resolveItem(id); ok {
 			if it.UserData == nil {

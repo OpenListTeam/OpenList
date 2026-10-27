@@ -464,10 +464,47 @@ type mediaSaver struct {
 	buf  []*model.MediaItem
 	last time.Time
 	p    *ScanProgress
+	// 定时落盘的守护协程。只在 Add 里检查间隔是不够的：扫描卡在慢速远端目录上时
+	// 可能长时间没有新条目，缓冲区里的数据就一直不落盘。
+	stop chan struct{}
+	done chan struct{}
 }
 
 func newMediaSaver(p *ScanProgress) *mediaSaver {
-	return &mediaSaver{last: time.Now(), p: p}
+	s := &mediaSaver{
+		last: time.Now(),
+		p:    p,
+		stop: make(chan struct{}),
+		done: make(chan struct{}),
+	}
+	go s.loop()
+	return s
+}
+
+// loop 按 mediaSaveBatchInterval 周期落盘
+func (s *mediaSaver) loop() {
+	defer close(s.done)
+	t := time.NewTicker(mediaSaveBatchInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-t.C:
+			s.Flush()
+		}
+	}
+}
+
+// Close 停止定时落盘并做最后一次 Flush（可重复调用）
+func (s *mediaSaver) Close() {
+	select {
+	case <-s.stop:
+	default:
+		close(s.stop)
+	}
+	<-s.done
+	s.Flush()
 }
 
 // Add 把条目放入缓冲区，必要时立即落盘。
@@ -522,8 +559,8 @@ func doScanPath(sp *model.MediaScanPath, p *ScanProgress) error {
 
 	ctx := context.Background()
 	saver := newMediaSaver(p)
-	// 无论正常结束还是中途报错，都要把缓冲区里的条目落盘
-	defer saver.Flush()
+	// 无论正常结束还是中途报错，都要停掉定时器并把缓冲区里的条目落盘
+	defer saver.Close()
 
 	// 每个扫描目标的处理逻辑：普通文件独立成条，合并模式的文件夹带选集信息
 	// seen 记录已经入库的目标，避免「第一季」「第二季」上移到同一部剧后重复处理

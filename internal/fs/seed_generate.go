@@ -384,9 +384,13 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	fullPaths := make([]string, 0, len(params.Paths))
 	// 先算出总字节数，读取阶段才能给出可靠的百分比（任务进度条需要它）。
 	// 只做元数据查询，不读内容，代价可以忽略。
-	progress := &seedProgressReader{total: seedTotalSize(ctx, user, params.Paths), report: params.OnProgress}
+	progress := &seedProgressReader{ctx: ctx, total: seedTotalSize(ctx, user, params.Paths), report: params.OnProgress}
 	var total int64
 	for index, requestedPath := range params.Paths {
+		// 取消后不再继续处理下一个文件
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		if params.OnStage != nil {
 			params.OnStage(fmt.Sprintf("正在计算哈希 %d/%d: %s", index+1, len(params.Paths), stdpath.Base(requestedPath)))
 		}
@@ -590,6 +594,9 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 // seedProgressReader 在读取文件内容时按字节回报进度。
 // 多个文件复用同一个实例，done 跨文件累计，所以百分比反映整体进度而不是单文件。
 type seedProgressReader struct {
+	// ctx 用于响应任务取消：哈希大文件时要等整个文件读完才发现取消，
+	// 在 Read 里检查一次才能真正中断
+	ctx    context.Context
 	reader io.Reader
 	done   int64
 	total  int64
@@ -598,6 +605,11 @@ type seedProgressReader struct {
 }
 
 func (p *seedProgressReader) Read(b []byte) (int, error) {
+	if p.ctx != nil {
+		if err := p.ctx.Err(); err != nil {
+			return 0, err
+		}
+	}
 	if p.reader == nil {
 		return 0, io.EOF
 	}

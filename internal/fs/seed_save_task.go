@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -27,6 +28,9 @@ type SeedSaveTask struct {
 
 	statusMu sync.Mutex
 	status   string
+	// cancel 释放任务上下文：保存过程用 t.Ctx() 做 IO，
+	// 用户点「取消」时这个 ctx 会被取消，正在跑的文件传输随之中断。
+	cancel context.CancelFunc
 }
 
 func (t *SeedSaveTask) GetName() string {
@@ -66,10 +70,20 @@ func (t *SeedSaveTask) Report(index, total int, name, action string) {
 	t.SetProgress(float64(index) / float64(total) * 100)
 }
 
-// Finish 结束任务：成功后进度置 100，失败时记录错误
+// Finish 结束任务：成功后进度置 100，失败时记录错误，取消则保留「已取消」
 func (t *SeedSaveTask) Finish(err error) {
+	if t.cancel != nil {
+		defer t.cancel()
+	}
 	t.SetEndTime(time.Now())
 	if err != nil {
+		// 用户点过「取消」：不要把任务标成失败，否则任务列表里看不出是自己取消的
+		if errors.Is(err, context.Canceled) ||
+			t.GetState() == tache.StateCanceling || t.GetState() == tache.StateCanceled {
+			t.SetStatus("已取消")
+			t.SetState(tache.StateCanceled)
+			return
+		}
 		t.SetErr(err)
 		t.SetState(tache.StateFailed)
 		return
@@ -95,6 +109,12 @@ func NewSeedSaveTask(ctx context.Context, user *model.User, title string) *SeedS
 	// 先标记成功再 Add：避免 manager 把任务放进无人消费的执行队列（见类型注释）
 	t.SetState(tache.StateSucceeded)
 	SeedSaveTaskManager.Add(t)
+	// Add 会用一个基于 background 的 ctx 覆盖任务上下文，并换上它自己的 cancel。
+	// 这里换回从请求派生的 ctx：既能跟随请求结束，也能被「取消」按钮中断。
+	workCtx, cancel := context.WithCancel(ctx)
+	t.SetCtx(workCtx)
+	t.SetCancelFunc(cancel)
+	t.cancel = cancel
 	t.SetState(tache.StateRunning)
 	t.SetProgress(0)
 	t.SetStatus("正在准备")
