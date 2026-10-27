@@ -56,4 +56,11 @@ func TestPutCancellationPreservesCompletedReplacement(t *testing.T) {
 	if string(got) != content {
 		t.Fatalf("replacement contents = %q, want %q", got, content)
 	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "test.bin" {
+		t.Fatalf("directory entries after cancellation = %v, want only test.bin", entries)
+	}
 }

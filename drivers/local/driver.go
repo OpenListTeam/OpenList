@@ -413,25 +413,49 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 
 func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	fullPath := filepath.Join(dstDir.GetPath(), stream.GetName())
-	out, err := os.Create(fullPath)
+	tempPath := filepath.Join(filepath.Dir(fullPath), ".openlist-upload-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+	out, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
 	if err != nil {
 		return err
 	}
+	tempPath = out.Name()
 	defer func() {
 		_ = out.Close()
-		if errors.Is(err, context.Canceled) {
-			if info, statErr := os.Stat(fullPath); statErr == nil && info.Size() != stream.GetSize() {
-				_ = os.Remove(fullPath)
-			}
+		if err != nil {
+			_ = os.Remove(tempPath)
 		}
 	}()
 	err = utils.CopyWithCtx(ctx, out, stream, stream.GetSize(), up)
 	if err != nil {
 		return err
 	}
-	err = os.Chtimes(fullPath, stream.ModTime(), stream.ModTime())
-	if err != nil {
+	if err = out.Close(); err != nil {
+		return err
+	}
+	if err = os.Chtimes(tempPath, stream.ModTime(), stream.ModTime()); err != nil {
 		log.Errorf("[local] failed to change time of %s: %s", fullPath, err)
+	}
+	if err = os.Rename(tempPath, fullPath); err != nil {
+		if !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		backup, backupErr := os.CreateTemp(filepath.Dir(fullPath), ".openlist-backup-*")
+		if backupErr != nil {
+			return err
+		}
+		backupPath := backup.Name()
+		_ = backup.Close()
+		_ = os.Remove(backupPath)
+		if backupErr = os.Rename(fullPath, backupPath); backupErr != nil {
+			return err
+		}
+		if err = os.Rename(tempPath, fullPath); err != nil {
+			if restoreErr := os.Rename(backupPath, fullPath); restoreErr != nil {
+				log.Errorf("[local] failed to restore %s after upload: %s", fullPath, restoreErr)
+			}
+			return err
+		}
+		_ = os.Remove(backupPath)
 	}
 	if d.directoryMap.Has(dstDir.GetPath()) {
 		d.directoryMap.UpdateDirSize(dstDir.GetPath())
