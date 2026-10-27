@@ -24,7 +24,7 @@ jobs:
 
       - name: Create or update ref
         id: create-or-update-ref
-        uses: ovsds/create-or-update-ref-action@1157b2991820188d5a8e6f22656775d1d171f762 # v1
+        uses: ovsds/create-or-update-ref-action@f66e3f24fa250e50da7d3e599bae67bc3f749a5e # v1
         with:
           ref: tags/beta
           sha: ${{ github.sha }}
