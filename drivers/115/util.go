@@ -384,8 +384,8 @@ LOOP:
 			}
 		case <-quit:
 			break LOOP
-		case <-errCh:
-			return nil, err
+		case e := <-errCh:
+			return nil, e
 		case <-timeout.C:
 			return nil, fmt.Errorf("time out")
 		}
