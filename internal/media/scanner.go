@@ -17,13 +17,24 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
+
+// SkipFileMetadata 表示「不从文件读取信息」开关已打开。
+//
+// 打开后扫描与刮削都不再读取媒体文件内容（音乐 ID3 / Vorbis、书籍内嵌封面、
+// 图片 EXIF），只用文件名与目录名推断元数据。适合网盘风控敏感、
+// 或扫描大库时不想为每个文件产生一次读取请求的场景。
+func SkipFileMetadata() bool {
+	return setting.GetBool(conf.MediaSkipFileMetadata)
+}
 
 // 支持的文件扩展名
 var (
@@ -887,21 +898,23 @@ func saveMusicTarget(ctx context.Context, target string, sp *model.MediaScanPath
 			return nil
 		}
 
-		// 取第一首音乐文件读取标签
+		// 取第一首音乐文件读取标签（关闭「读取文件信息」时不读，退回目录名）
 		firstFile := musicFiles[0]
 		firstExt := strings.ToLower(stdpath.Ext(firstFile))
 		var tag *MusicTag
-		readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
-		if reader := FetchFileReader(readCtx, firstFile); reader != nil {
-			switch firstExt {
-			case ".flac":
-				tag, _ = ParseFLACVorbisComment(reader)
-			default:
-				tag, _ = ParseID3v2(reader)
+		if !SkipFileMetadata() {
+			readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
+			if reader := FetchFileReader(readCtx, firstFile); reader != nil {
+				switch firstExt {
+				case ".flac":
+					tag, _ = ParseFLACVorbisComment(reader)
+				default:
+					tag, _ = ParseID3v2(reader)
+				}
+				_ = reader.Close()
 			}
-			_ = reader.Close()
+			readCancel()
 		}
-		readCancel()
 
 		// 解析标签（用文件夹名作为默认专辑名）
 		albumName := name
@@ -978,17 +991,19 @@ func saveMusicTarget(ctx context.Context, target string, sp *model.MediaScanPath
 		ext := strings.ToLower(stdpath.Ext(name))
 
 		var tag *MusicTag
-		readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
-		if reader := FetchFileReader(readCtx, target); reader != nil {
-			switch ext {
-			case ".flac":
-				tag, _ = ParseFLACVorbisComment(reader)
-			default:
-				tag, _ = ParseID3v2(reader)
+		if !SkipFileMetadata() {
+			readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
+			if reader := FetchFileReader(readCtx, target); reader != nil {
+				switch ext {
+				case ".flac":
+					tag, _ = ParseFLACVorbisComment(reader)
+				default:
+					tag, _ = ParseID3v2(reader)
+				}
+				_ = reader.Close()
 			}
-			_ = reader.Close()
+			readCancel()
 		}
-		readCancel()
 
 		albumName := ""
 		albumArtist := ""

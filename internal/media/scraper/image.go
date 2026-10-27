@@ -25,6 +25,8 @@ type ImageScraper struct {
 	ThumbnailMode string
 	// ThumbnailPath 本地存储路径，ThumbnailMode 为 "local" 时有效，默认 "/.thumbnail"
 	ThumbnailPath string
+	// SkipEXIF 为 true 时只生成缩略图，不解析 EXIF（「不从文件读取信息」开关）
+	SkipEXIF bool
 }
 
 // NewImageScraper 创建图片刮削器
@@ -82,7 +84,10 @@ func (s *ImageScraper) ScrapeImage(item *model.MediaItem, reader io.Reader) erro
 	}
 
 	// ── 1. 解析 EXIF ──────────────────────────────────────────────
-	s.parseEXIF(item, bytes.NewReader(data))
+	// 关闭「读取文件信息」时跳过：拍摄时间/地点/设备都不填，只留缩略图
+	if !s.SkipEXIF {
+		s.parseEXIF(item, bytes.NewReader(data))
+	}
 
 	// ── 2. 生成缩略图并按配置存储 ────────────────────────────────
 	if thumb := s.generateThumbBytes(data); len(thumb) > 0 {

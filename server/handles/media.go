@@ -758,7 +758,8 @@ func StartMediaScrape(c *gin.Context) {
 						log.Debugf("书籍刮削失败 [%s/%s]: %v，将尝试本地提取封面", item.FolderPath, item.FileName, bookErr)
 					}
 
-					if item.Cover == "" {
+					// 关闭「读取文件信息」时不读内嵌封面，留给刮削结果或手动上传
+					if item.Cover == "" && !media.SkipFileMetadata() {
 						bookCtx, bookCancel := context.WithTimeout(context.Background(), 60*time.Second)
 						bookFilePath := item.FolderPath + "/" + item.FileName
 						bookReader := media.FetchFileReader(bookCtx, bookFilePath)
@@ -787,6 +788,8 @@ func StartMediaScrape(c *gin.Context) {
 						thumbnailMode,
 						thumbnailPath,
 					)
+					// 关闭「读取文件信息」时只出缩略图，不解析 EXIF
+					s.SkipEXIF = media.SkipFileMetadata()
 					scrapeErr = s.ScrapeImage(item, imgReader)
 					if imgReader != nil {
 						_ = imgReader.Close()

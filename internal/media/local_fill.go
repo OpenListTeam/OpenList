@@ -33,6 +33,11 @@ func FillMusicFromLocal(ctx context.Context, item *model.MediaItem) {
 	if musicPath == "" {
 		return
 	}
+	// 关闭「读取文件信息」时完全不碰文件：标签、内嵌封面、内嵌歌词都没有，
+	// 只保留扫描阶段从文件名/目录名得到的信息
+	if SkipFileMetadata() {
+		return
+	}
 
 	// 解析 tag（mp3 / flac / 其它）
 	ext := strings.ToLower(stdpath.Ext(musicPath))
