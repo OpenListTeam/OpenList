@@ -78,40 +78,46 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 		if !storage.Config().NoCache {
 			// keep objects written through OpenList that a lagging List does not return yet
-			files = mergePending(key, files)
-			if len(files) > 0 {
-				log.Debugf("set cache: %s => %+v", key, files)
+			var pendingDir *dirPending
+			var pendingVersion uint64
+			files, pendingDir, pendingVersion = mergePendingState(key, files)
+			if storage.Config().LocalSort {
+				model.SortFiles(files, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
+			}
+			model.ExtractFolder(files, storage.GetStorage().ExtractFolder)
+			ttl := storage.GetStorage().CacheExpiration
+			customCachePolicies := storage.GetStorage().CustomCachePolicies
+			if len(customCachePolicies) > 0 {
+				for configPolicy := range strings.SplitSeq(customCachePolicies, "\n") {
+					pattern, ttlstr, ok := strings.Cut(strings.TrimSpace(configPolicy), ":")
+					if !ok {
+						log.Warnf("Malformed custom cache policy entry: %s in storage %s for path %s. Expected format: pattern:ttl", configPolicy, storage.GetStorage().MountPath, path)
+						continue
+					}
+					if match, err1 := doublestar.Match(pattern, path); err1 != nil {
+						log.Warnf("Invalid glob pattern in custom cache policy: %s, error: %v", pattern, err1)
+						continue
+					} else if !match {
+						continue
+					}
 
-				ttl := storage.GetStorage().CacheExpiration
-
-				customCachePolicies := storage.GetStorage().CustomCachePolicies
-				if len(customCachePolicies) > 0 {
-					for configPolicy := range strings.SplitSeq(customCachePolicies, "\n") {
-						pattern, ttlstr, ok := strings.Cut(strings.TrimSpace(configPolicy), ":")
-						if !ok {
-							log.Warnf("Malformed custom cache policy entry: %s in storage %s for path %s. Expected format: pattern:ttl", configPolicy, storage.GetStorage().MountPath, path)
-							continue
-						}
-						if match, err1 := doublestar.Match(pattern, path); err1 != nil {
-							log.Warnf("Invalid glob pattern in custom cache policy: %s, error: %v", pattern, err1)
-							continue
-						} else if !match {
-							continue
-						}
-
-						if configTtl, err1 := strconv.ParseInt(ttlstr, 10, 64); err1 == nil {
-							ttl = int(configTtl)
-							break
-						}
+					if configTtl, err1 := strconv.ParseInt(ttlstr, 10, 64); err1 == nil {
+						ttl = int(configTtl)
+						break
 					}
 				}
-
-				duration := time.Minute * time.Duration(ttl)
-				Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), duration)
-			} else {
-				log.Debugf("del cache: %s", key)
-				Cache.deleteDirectoryTree(key)
 			}
+			duration := time.Minute * time.Duration(ttl)
+
+			cachePendingResult(key, pendingDir, pendingVersion, func() {
+				if len(files) > 0 {
+					log.Debugf("set cache: %s => %+v", key, files)
+					Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), duration)
+				} else {
+					log.Debugf("del cache: %s", key)
+					Cache.deleteDirectoryTree(key)
+				}
+			})
 		}
 		return files, nil
 	})

@@ -85,6 +85,17 @@ func (cm *CacheManager) removeDirectoryObject(storage driver.Driver, dirPath str
 	}
 }
 
+func (dc *directoryCache) HasObject(name string) bool {
+	dc.mu.RLock()
+	defer dc.mu.RUnlock()
+	for _, obj := range dc.objs {
+		if obj.GetName() == name {
+			return true
+		}
+	}
+	return false
+}
+
 // cache user data
 func (cm *CacheManager) SetUser(username string, user *model.User) {
 	cm.userCache.Set(username, user)

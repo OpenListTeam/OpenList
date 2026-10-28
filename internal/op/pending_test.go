@@ -1,6 +1,7 @@
 package op
 
 import (
+	"container/heap"
 	"context"
 	"fmt"
 	"slices"
@@ -212,6 +213,36 @@ func TestPendingSurvivesLaggingListWithoutDirCache(t *testing.T) {
 	}
 }
 
+// A pending object participates in the configured local sort order.
+func TestPendingAddRespectsListSort(t *testing.T) {
+	d := newLagDriver(t)
+	d.Storage.OrderBy = "name"
+	d.setHidden("aaa.bin", true)
+	putFile(t, d, "aaa.bin")
+
+	if names := listNames(t, d, true); !slices.Equal(names, []string{"aaa.bin", "old.bin"}) {
+		t.Fatalf("listing should preserve name order, got %v", names)
+	}
+}
+
+// A placeholder must not replace a real object that a concurrent List cached.
+func TestPendingPlaceholderDoesNotReplaceRemoteCache(t *testing.T) {
+	d := newLagDriver(t)
+	placeholder := placeholderDriver{d}
+	d.onPut = func() {
+		listNames(t, d, true)
+	}
+
+	putFile(t, placeholder, "new.bin")
+	if cache, ok := Cache.dirCache.Get(Key(placeholder, "/dir")); ok {
+		for _, obj := range cache.objs {
+			if obj.GetName() == "new.bin" && model.ObjHasMask(obj, model.Temp) {
+				t.Fatalf("cached remote object was replaced by placeholder: %+v", obj)
+			}
+		}
+	}
+}
+
 // Once the backend List returns the name, the pending entry is dropped and
 // the remote object is used.
 func TestPendingClearedWhenSeen(t *testing.T) {
@@ -314,6 +345,12 @@ func TestPendingGCReclaimsUnvisitedExpiredDirs(t *testing.T) {
 		e := d.add[name]
 		e.expiresAt = time.Now().Add(-time.Second)
 		d.add[name] = e
+		for i := range pendings.expiries {
+			if pendings.expiries[i].dirKey == dirKey && pendings.expiries[i].name == name && pendings.expiries[i].isAdd {
+				pendings.expiries[i].expiresAt = e.expiresAt
+			}
+		}
+		heap.Init(&pendings.expiries)
 	}
 
 	triggers := []struct {
@@ -346,6 +383,12 @@ func TestPendingGCReclaimsUnvisitedExpiredDirs(t *testing.T) {
 		delPending(dirA, "gone.bin")
 		pendings.mu.Lock()
 		pendings.dirs[dirA].del["gone.bin"] = time.Now().Add(-time.Second)
+		for i := range pendings.expiries {
+			if pendings.expiries[i].dirKey == dirA && pendings.expiries[i].name == "gone.bin" && !pendings.expiries[i].isAdd {
+				pendings.expiries[i].expiresAt = pendings.dirs[dirA].del["gone.bin"]
+			}
+		}
+		heap.Init(&pendings.expiries)
 		pendings.mu.Unlock()
 
 		addPending(dirB, other)

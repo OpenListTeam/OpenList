@@ -1,6 +1,7 @@
 package op
 
 import (
+	"container/heap"
 	"strings"
 	"sync"
 	"time"
@@ -25,13 +26,37 @@ type pendingAdd struct {
 }
 
 type dirPending struct {
-	add map[string]pendingAdd
-	del map[string]time.Time
+	add     map[string]pendingAdd
+	del     map[string]time.Time
+	version uint64
+}
+
+type pendingExpiry struct {
+	expiresAt time.Time
+	dirKey    string
+	name      string
+	isAdd     bool
+}
+
+type pendingExpiryHeap []pendingExpiry
+
+func (h pendingExpiryHeap) Len() int           { return len(h) }
+func (h pendingExpiryHeap) Less(i, j int) bool { return h[i].expiresAt.Before(h[j].expiresAt) }
+func (h pendingExpiryHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *pendingExpiryHeap) Push(x any)        { *h = append(*h, x.(pendingExpiry)) }
+func (h *pendingExpiryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
 }
 
 type pendingStore struct {
-	mu   sync.Mutex
-	dirs map[string]*dirPending
+	mu       sync.Mutex
+	dirs     map[string]*dirPending
+	expiries pendingExpiryHeap
+	version  uint64
 }
 
 var pendings = &pendingStore{dirs: make(map[string]*dirPending)}
@@ -48,32 +73,50 @@ func (ps *pendingStore) dirLocked(key string) *dirPending {
 	return d
 }
 
-// gcLocked drops expired entries and reports whether d is now empty.
-func (ps *pendingStore) gcLocked(d *dirPending, now time.Time) bool {
-	for n, e := range d.add {
-		if now.After(e.expiresAt) {
-			delete(d.add, n)
+// gcAllLocked drops expired entries in every directory and deletes directory
+// keys that are left empty. Expirations are kept in a min-heap so the common
+// path only examines entries that are actually due. Caller must hold ps.mu.
+func (ps *pendingStore) gcAllLocked(now time.Time) {
+	for len(ps.expiries) > 0 && !ps.expiries[0].expiresAt.After(now) {
+		expired := heap.Pop(&ps.expiries).(pendingExpiry)
+		d, ok := ps.dirs[expired.dirKey]
+		if !ok {
+			continue
+		}
+		if expired.isAdd {
+			e, ok := d.add[expired.name]
+			if !ok || e.expiresAt.After(now) || !e.expiresAt.Equal(expired.expiresAt) {
+				continue
+			}
+			delete(d.add, expired.name)
+		} else {
+			expiresAt, ok := d.del[expired.name]
+			if !ok || expiresAt.After(now) || !expiresAt.Equal(expired.expiresAt) {
+				continue
+			}
+			delete(d.del, expired.name)
+		}
+		ps.version++
+		if len(d.add) == 0 && len(d.del) == 0 {
+			delete(ps.dirs, expired.dirKey)
 		}
 	}
-	for n, exp := range d.del {
-		if now.After(exp) {
-			delete(d.del, n)
-		}
-	}
-	return len(d.add) == 0 && len(d.del) == 0
 }
 
-// gcAllLocked drops expired entries in every directory and deletes directory
-// keys that are left empty. Caller must hold ps.mu.
-//
-// Run this before dirLocked or any other lookup of dirKey. It may delete
-// that key, so a *dirPending taken earlier would no longer be in the map.
-func (ps *pendingStore) gcAllLocked(now time.Time) {
-	for key, d := range ps.dirs {
-		if ps.gcLocked(d, now) {
-			delete(ps.dirs, key)
-		}
-	}
+func (ps *pendingStore) addLocked(dirKey string, obj model.Obj, now time.Time) {
+	d := ps.dirLocked(dirKey)
+	name := obj.GetName()
+	delete(d.del, name)
+	expiresAt := now.Add(pendingTTL)
+	d.add[name] = pendingAdd{obj: obj, expiresAt: expiresAt}
+	d.version++
+	ps.version++
+	heap.Push(&ps.expiries, pendingExpiry{
+		expiresAt: expiresAt,
+		dirKey:    dirKey,
+		name:      name,
+		isAdd:     true,
+	})
 }
 
 // addPending records obj as written into the directory dirKey.
@@ -81,14 +124,11 @@ func addPending(dirKey string, obj model.Obj) {
 	if obj == nil {
 		return
 	}
-	name := obj.GetName()
 	now := time.Now()
 	pendings.mu.Lock()
 	defer pendings.mu.Unlock()
 	pendings.gcAllLocked(now)
-	d := pendings.dirLocked(dirKey)
-	delete(d.del, name)
-	d.add[name] = pendingAdd{obj: obj, expiresAt: now.Add(pendingTTL)}
+	pendings.addLocked(dirKey, obj, now)
 }
 
 // delPending records name as removed from the directory dirKey.
@@ -99,7 +139,15 @@ func delPending(dirKey, name string) {
 	pendings.gcAllLocked(now)
 	d := pendings.dirLocked(dirKey)
 	delete(d.add, name)
-	d.del[name] = now.Add(pendingTTL)
+	expiresAt := now.Add(pendingTTL)
+	d.del[name] = expiresAt
+	d.version++
+	pendings.version++
+	heap.Push(&pendings.expiries, pendingExpiry{
+		expiresAt: expiresAt,
+		dirKey:    dirKey,
+		name:      name,
+	})
 }
 
 // getPending returns the pending-add object for name in dirKey, if any.
@@ -127,6 +175,7 @@ func clearPendingTree(dirKey string) {
 	for k := range pendings.dirs {
 		if k == dirKey || strings.HasPrefix(k, prefix) {
 			delete(pendings.dirs, k)
+			pendings.version++
 		}
 	}
 }
@@ -135,28 +184,40 @@ func clearAllPending() {
 	pendings.mu.Lock()
 	defer pendings.mu.Unlock()
 	pendings.dirs = make(map[string]*dirPending)
+	pendings.expiries = nil
+	pendings.version++
 }
 
 // mergePending applies pending entries of dirKey to a fresh remote listing.
 // Names the remote listing already returns clear their pending-add; names it
 // no longer returns clear their pending-delete. Remote objects win.
 func mergePending(dirKey string, remote []model.Obj) []model.Obj {
+	merged, _, _ := mergePendingState(dirKey, remote)
+	return merged
+}
+
+// mergePendingState also returns the pending directory and version used to
+// produce the result. The state lets the caller avoid caching a result that a
+// concurrent pending update has already made stale.
+func mergePendingState(dirKey string, remote []model.Obj) ([]model.Obj, *dirPending, uint64) {
 	now := time.Now()
 	pendings.mu.Lock()
 	defer pendings.mu.Unlock()
 	pendings.gcAllLocked(now)
 	d, ok := pendings.dirs[dirKey]
 	if !ok {
-		return remote
+		return remote, nil, pendings.version
 	}
 
 	remoteNames := make(map[string]struct{}, len(remote))
 	for _, o := range remote {
 		remoteNames[o.GetName()] = struct{}{}
 	}
+	changed := false
 	for name := range d.del {
 		if _, ok := remoteNames[name]; !ok {
 			delete(d.del, name)
+			changed = true
 		}
 	}
 
@@ -169,21 +230,52 @@ func mergePending(dirKey string, remote []model.Obj) []model.Obj {
 	for name, e := range d.add {
 		if _, ok := remoteNames[name]; ok {
 			delete(d.add, name)
+			changed = true
 			continue
 		}
 		merged = append(merged, e.obj)
 	}
 
+	if changed {
+		d.version++
+		pendings.version++
+	}
 	if len(d.add) == 0 && len(d.del) == 0 {
 		delete(pendings.dirs, dirKey)
+		return merged, nil, pendings.version
 	}
-	return merged
+	return merged, d, pendings.version
+}
+
+// cachePendingResult runs fn only if no pending change occurred after the
+// result was merged. It prevents a concurrent Put/List from overwriting a
+// newer cache state with an older result.
+func cachePendingResult(dirKey string, d *dirPending, version uint64, fn func()) bool {
+	pendings.mu.Lock()
+	defer pendings.mu.Unlock()
+	current, ok := pendings.dirs[dirKey]
+	if pendings.version != version {
+		return false
+	}
+	if d == nil {
+		if ok {
+			return false
+		}
+	} else if !ok || current != d {
+		return false
+	}
+	fn()
+	return true
 }
 
 // putPending records a written object and adds it to the directory cache if present.
 func putPending(dirKey string, obj model.Obj) {
 	addPending(dirKey, obj)
 	if cache, exist := Cache.dirCache.Get(dirKey); exist {
+		if model.ObjHasMask(obj, model.Temp) && cache.HasObject(obj.GetName()) {
+			Cache.dirCache.Delete(dirKey)
+			return
+		}
 		cache.UpdateObject(obj.GetName(), obj)
 	}
 }
