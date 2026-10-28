@@ -1,0 +1,3 @@
+#!/bin/sh
+. $(dirname $0)/installer
+$(basename $0) > $SYNOPKG_TEMP_LOGFILE

@@ -1,0 +1,78 @@
+
+### common installer functions and variables for synocommunity generic service installer
+# 
+# functions are common for all DSM versions
+# 
+
+# Tools shortcuts
+MV="/bin/mv -f"
+RM="/bin/rm -rf"
+CP="/bin/cp -rfp"
+MKDIR="/bin/mkdir -p"
+LN="/bin/ln -nsf"
+TEE="/usr/bin/tee -a"
+RSYNC="/bin/rsync -avh"
+TAR="/bin/tar"
+
+INST_ETC="/var/packages/${SYNOPKG_PKGNAME}/etc"
+INST_VARIABLES="${INST_ETC}/installer-variables"
+
+
+### Functions library
+
+log_step ()
+{
+    install_log "===> Step $1. STATUS=${SYNOPKG_PKG_STATUS} USER=$USER GROUP=$GROUP SHARE_PATH=${SHARE_PATH}"
+}
+
+
+initialize_variables ()
+{
+    # Expect user to be set from package specific variables
+    if [ -n "${USER}" -a -z "${USER_DESC}" ]; then
+        USER_DESC="User running ${SYNOPKG_PKGNAME}"
+    fi
+
+    # Default description if group name provided by UI
+    if [ -n "${GROUP}" -a -z "${GROUP_DESC}" ]; then
+        GROUP_DESC="${SYNOPKG_PKGNAME} Package Group"
+    fi
+
+    # Extract share volume and share name from download location if provided
+    if [ -n "${SHARE_PATH}" ]; then
+        if [ -n "${wizard_volume}" ]; then
+            SHARE_PATH="${wizard_volume}/${SHARE_PATH}"
+        fi
+        SHARE_VOLUME=$(echo "${SHARE_PATH}" | awk -F/ '{print "/"$2}')
+        SHARE_NAME=$(echo "${SHARE_PATH}" | awk -F/ '{print $3}')
+    fi
+}
+
+
+reload_inst_variables ()
+{
+    # Reload wizard variables stored by postinst
+    if [ -r "${INST_VARIABLES}" ]; then
+        # we cannot source the file to reload the variables, when values have special characters like <, >, ...
+        for _line in $(cat "${INST_VARIABLES}"); do
+            _key="$(echo ${_line} | awk -F'=' '{print $1}')"
+            _value="$(echo ${_line} | awk -F'=' '{print $2}')"
+            declare "${_key}=${_value}"
+        done
+    fi
+}
+
+
+save_wizard_variables ()
+{
+    if [ -e "${INST_VARIABLES}" ]; then
+        $RM "${INST_VARIABLES}"
+    fi
+    if [ -n "${GROUP}" ]; then
+        echo "GROUP=${GROUP}" >> ${INST_VARIABLES}
+    fi
+    if [ -n "${SHARE_PATH}" ]; then
+        echo "SHARE_PATH=${SHARE_PATH}" >> ${INST_VARIABLES}
+    fi
+}
+
