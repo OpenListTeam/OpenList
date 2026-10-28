@@ -840,7 +840,7 @@ func ParseSeed(c *gin.Context) {
 		"files":       seed.Files,
 		"total_size":  seedTotalSize(seed),
 		"diagnostics": seedDiagnostics(seed),
-		"conversions": seedConversionStates(seed),
+		"conversions": seedConversionStates(seed, format),
 		"capabilities": gin.H{
 			"rapid_upload": hasRapidHashes, "offline_download": hasSource || format == "torrent",
 			"transfer": hasSource, "convert": true, "edit": true, "recalculate": true,
@@ -906,9 +906,15 @@ func ConvertSeed(c *gin.Context) {
 		return
 	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	source := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sourceFormat), "."))
 
 	// 预检：不补算且确实缺哈希时，保持原来的「可转换=false + 原因」响应
 	for _, target := range targets {
+		// 目标与源格式相同：本身已经是这个容器，直接复制原始数据，
+		// 不参与「能否重新编码」的诊断（否则合法的 torrent 会被误判）
+		if target == source {
+			continue
+		}
 		if diags := torrent.DiagnoseConversion(seed, target); len(diags) > 0 && !req.ComputeMissing {
 			common.SuccessResp(c, gin.H{"convertible": false, "format": target, "diagnostics": diags})
 			return
@@ -950,10 +956,17 @@ func ConvertSeed(c *gin.Context) {
 		if req.Comment != nil {
 			targetSeed.Comment = *req.Comment
 		}
-		data, convertErr := convertSeedToFormat(c.Request.Context(), user, targetSeed, target, req)
-		if convertErr != nil {
-			common.ErrorResp(c, convertErr, 400)
-			return
+		var data []byte
+		if target == source {
+			// 已经是目标格式：原样输出，避免对合法种子重新编码
+			data = rawData
+		} else {
+			var convertErr error
+			data, convertErr = convertSeedToFormat(c.Request.Context(), user, targetSeed, target, req)
+			if convertErr != nil {
+				common.ErrorResp(c, convertErr, 400)
+				return
+			}
 		}
 		fileName := stdpath.Base(targetSeed.Name) + "." + target
 		artifact := gin.H{
@@ -2100,9 +2113,19 @@ func seedDiagnostics(seed *torrent.Seed) gin.H {
 	}
 }
 
-func seedConversionStates(seed *torrent.Seed) gin.H {
+// seedConversionStates 给出每个目标格式的可行性。
+//
+// 目标格式等于当前格式时直接标为可行：种子本身就是这个格式，不存在「转换」；
+// 而 DiagnoseConversion 是按文件 pieces 判断能否重新编码成整包 torrent 的，
+// 对本来就合法的 .torrent（pieces 跨文件、按文件拆不开）会误报不可转换。
+func seedConversionStates(seed *torrent.Seed, sourceFormat string) gin.H {
 	states := make(gin.H, 3)
+	source := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sourceFormat), "."))
 	for _, format := range []string{"oss", "torrent", "cas"} {
+		if format == source {
+			states[format] = gin.H{"feasible": true, "missing": []string{}}
+			continue
+		}
 		missing := torrent.DiagnoseConversion(seed, format)
 		states[format] = gin.H{"feasible": len(missing) == 0, "missing": missing}
 	}

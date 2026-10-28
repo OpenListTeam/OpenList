@@ -25,12 +25,25 @@ func TestFinalizeSeedEntriesPreserve(t *testing.T) {
 		{requested: "/剧/S01/01.mkv", full: "/剧/S01/01.mkv"},
 		{requested: "/剧/S02/01.mkv", full: "/剧/S02/01.mkv"},
 	}
-	got := finalizeSeedEntries(raw, []string{"/剧"}, true)
+	// 只选了一个目录：种子根就是该目录，路径不能再重复一层目录名
+	got := finalizeSeedEntries(raw, true, "/剧")
 	if len(got) != 2 {
 		t.Fatalf("entries = %d", len(got))
 	}
-	if got[0].SeedPath != "剧/S01/01.mkv" || got[1].SeedPath != "剧/S02/01.mkv" {
+	if got[0].SeedPath != "S01/01.mkv" || got[1].SeedPath != "S02/01.mkv" {
 		t.Fatalf("保留结构时路径不对: %q, %q", got[0].SeedPath, got[1].SeedPath)
+	}
+}
+
+func TestFinalizeSeedEntriesPreserveMultiRoot(t *testing.T) {
+	raw := []rawSeedEntry{
+		{requested: "/剧/A/01.mkv", full: "/剧/A/01.mkv"},
+		{requested: "/影/B/02.mkv", full: "/影/B/02.mkv"},
+	}
+	// 多选时根是公共父目录，各自目录名要保留
+	got := finalizeSeedEntries(raw, true, "/")
+	if got[0].SeedPath != "剧/A/01.mkv" || got[1].SeedPath != "影/B/02.mkv" {
+		t.Fatalf("多选保留结构时路径不对: %q, %q", got[0].SeedPath, got[1].SeedPath)
 	}
 }
 
@@ -40,7 +53,7 @@ func TestFinalizeSeedEntriesFlattenDedupes(t *testing.T) {
 		{requested: "/剧/S02/01.mkv", full: "/剧/S02/01.mkv"},
 		{requested: "/剧/S02/02.mkv", full: "/剧/S02/02.mkv"},
 	}
-	got := finalizeSeedEntries(raw, []string{"/剧"}, false)
+	got := finalizeSeedEntries(raw, false, "/剧")
 	want := []string{"01.mkv", "01 (2).mkv", "02.mkv"}
 	for i := range want {
 		if got[i].SeedPath != want[i] {
@@ -51,7 +64,7 @@ func TestFinalizeSeedEntriesFlattenDedupes(t *testing.T) {
 
 func TestFinalizeSeedEntriesSingleFile(t *testing.T) {
 	raw := []rawSeedEntry{{requested: "/电影/a.mkv", full: "/电影/a.mkv"}}
-	got := finalizeSeedEntries(raw, []string{"/电影/a.mkv"}, false)
+	got := finalizeSeedEntries(raw, false, "/电影")
 	if len(got) != 1 || got[0].SeedPath != "a.mkv" {
 		t.Fatalf("单文件种子路径 = %+v", got)
 	}

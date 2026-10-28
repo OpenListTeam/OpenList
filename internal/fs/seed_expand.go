@@ -49,6 +49,7 @@ func ExpandSeedSources(ctx context.Context, user *model.User, paths []string, pr
 		return nil, fmt.Errorf("no seed source paths")
 	}
 	var raw []rawSeedEntry
+	dirCount := 0
 	for _, requestedPath := range paths {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -73,6 +74,7 @@ func ExpandSeedSources(ctx context.Context, user *model.User, paths []string, pr
 			return nil, fmt.Errorf("seed path is not readable: %s", requestedPath)
 		}
 		if obj.IsDir() {
+			dirCount++
 			if err := walkSeedDir(ctx, user, requestedPath, fullPath, "", &raw, 0); err != nil {
 				return nil, err
 			}
@@ -90,13 +92,22 @@ func ExpandSeedSources(ctx context.Context, user *model.User, paths []string, pr
 		}
 	}
 
-	return finalizeSeedEntries(raw, paths, preserve), nil
+	// 只选了一个目录时，种子根就是这个目录本身：种子名已经是目录名，
+	// 文件路径必须是相对该目录的路径，否则会出现「剧/剧/S01/...」这种重复嵌套
+	root := commonParentDir(paths)
+	if dirCount == 1 && len(paths) == 1 {
+		root = stdpath.Clean(paths[0])
+	}
+	if root == "" || root == "." {
+		root = "/"
+	}
+
+	return finalizeSeedEntries(raw, preserve, root), nil
 }
 
-// finalizeSeedEntries 根据「相对公共父目录」的路径生成种子内路径：
+// finalizeSeedEntries 根据相对 root 的路径生成种子内路径：
 // preserve 时保留层级，否则只留文件名并处理重名。
-func finalizeSeedEntries(raw []rawSeedEntry, paths []string, preserve bool) []SeedSourceEntry {
-	root := commonParentDir(paths)
+func finalizeSeedEntries(raw []rawSeedEntry, preserve bool, root string) []SeedSourceEntry {
 	entries := make([]SeedSourceEntry, 0, len(raw))
 	for _, item := range raw {
 		rel := strings.TrimPrefix(item.full, strings.TrimSuffix(root, "/")+"/")
