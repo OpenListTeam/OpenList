@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -44,6 +45,47 @@ func TestPutReplacesExistingFile(t *testing.T) {
 	}
 	if string(got) != "new" {
 		t.Fatalf("file contents = %q, want %q", got, "new")
+	}
+}
+
+func TestPutPreservesExistingFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permission bits are not supported on Windows")
+	}
+
+	for _, test := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{name: "0600", mode: 0o600},
+		{name: "0755", mode: 0o755},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "test.bin")
+			if err := os.WriteFile(path, []byte("old"), 0o666); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, test.mode); err != nil {
+				t.Fatal(err)
+			}
+
+			file := &stream.FileStream{
+				Obj:    &model.Object{Name: "test.bin", Size: 3},
+				Reader: bytes.NewReader([]byte("new")),
+			}
+			if err := (&Local{}).Put(context.Background(), &model.Object{Path: root}, file, nil); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != test.mode {
+				t.Errorf("file mode = %o, want %o", got, test.mode)
+			}
+		})
 	}
 }
 
