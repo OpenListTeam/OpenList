@@ -535,7 +535,7 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 		if errors.Is(err, errs.PermissionDenied) {
 			return http.StatusForbidden, err
 		}
-		if errors.Is(err, errs.UploadNotSupported) {
+		if errors.Is(err, errs.UploadNotSupported) || errs.IsNotImplementError(err) || errs.IsNotSupportError(err) {
 			return http.StatusMethodNotAllowed, err
 		}
 		return http.StatusInternalServerError, err

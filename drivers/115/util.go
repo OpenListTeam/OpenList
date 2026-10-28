@@ -432,7 +432,11 @@ LOOP:
 			// 到时重新获取ossToken
 			currentToken, tokenErr := d.client.GetOSSToken()
 			if tokenErr != nil {
-				uploadErr = tokenErr
+				select {
+				case uploadErr = <-errCh:
+				default:
+					uploadErr = tokenErr
+				}
 				cancel()
 				break LOOP
 			}
