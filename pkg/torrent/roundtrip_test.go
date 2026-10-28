@@ -43,6 +43,17 @@ func TestTorrentRoundTripCrossingPieces(t *testing.T) {
 	if len(seed.GlobalPieces) != count {
 		t.Fatalf("GlobalPieces = %d, want %d", len(seed.GlobalPieces), count)
 	}
+	// 跨文件时 pieces 无法拆到单个文件，必须在种子级标出「已带 sha1 pieces」，
+	// 否则前端会把已有哈希全显示成 needs file
+	found := false
+	for _, algo := range seed.AvailablePieceHashes {
+		if algo == "sha1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("AvailablePieceHashes = %v, want sha1", seed.AvailablePieceHashes)
+	}
 	if diags := DiagnoseConversion(seed, "torrent"); len(diags) > 0 {
 		t.Fatalf("torrent seed should be re-encodable, got %v", diags)
 	}

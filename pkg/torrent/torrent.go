@@ -71,6 +71,12 @@ type Seed struct {
 	// piece 对齐；从 OSS 种子或逐文件独立计算得到的 pieces 不走这条路。
 	// 仅运行时数据，不参与序列化。
 	GlobalPieces []string `json:"-"`
+
+	// AvailableHashes / AvailablePieceHashes 表示种子整体已经带有哪些算法。
+	// BT 的 pieces 是整包的，跨文件时无法拆到单个文件上，所以前端要按这个
+	// 种子级字段判断 in seed，而不是逐个文件看 hashes。
+	AvailableHashes      []string `json:"available_hashes,omitempty"`
+	AvailablePieceHashes []string `json:"available_piece_hashes,omitempty"`
 }
 
 // SeedChannel contains only public storage discovery metadata.
@@ -1215,6 +1221,54 @@ func validateOpenListTorrentConsistency(t *Torrent, seed *Seed) error {
 	return nil
 }
 
+// seedHashAlgoOrder 固定算法输出顺序，避免 map 遍历导致 JSON 抖动。
+var seedHashAlgoOrder = []string{"md5", "sha1", "sha256"}
+
+// fillAvailableHashes 汇总种子整体已带的算法；extraPieceAlgo 用于补充
+// 「pieces 只存在于容器里、没挂到文件上」的算法（BT 的 sha1）。
+func fillAvailableHashes(seed *Seed, extraPieceAlgo string) {
+	if seed == nil {
+		return
+	}
+	whole := map[string]bool{}
+	pieces := map[string]bool{}
+	for _, f := range seed.Files {
+		if f.Hashes.MD5 != "" {
+			whole["md5"] = true
+		}
+		if f.Hashes.SHA1 != "" {
+			whole["sha1"] = true
+		}
+		if f.Hashes.SHA256 != "" {
+			whole["sha256"] = true
+		}
+		if f.Hashes.Pieces != nil {
+			if len(f.Hashes.Pieces.MD5) > 0 {
+				pieces["md5"] = true
+			}
+			if len(f.Hashes.Pieces.SHA1) > 0 {
+				pieces["sha1"] = true
+			}
+			if len(f.Hashes.Pieces.SHA256) > 0 {
+				pieces["sha256"] = true
+			}
+		}
+	}
+	if extraPieceAlgo != "" {
+		pieces[extraPieceAlgo] = true
+	}
+	seed.AvailableHashes = seed.AvailableHashes[:0]
+	seed.AvailablePieceHashes = seed.AvailablePieceHashes[:0]
+	for _, algo := range seedHashAlgoOrder {
+		if whole[algo] {
+			seed.AvailableHashes = append(seed.AvailableHashes, algo)
+		}
+		if pieces[algo] {
+			seed.AvailablePieceHashes = append(seed.AvailablePieceHashes, algo)
+		}
+	}
+}
+
 // SeedFromTorrent normalizes a standard torrent and preserves x-openlist when present.
 func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
 	if t == nil {
@@ -1234,6 +1288,11 @@ func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
 		// 记下整包 pieces：重新编码这个 torrent 时直接复用，不必按文件拼，
 		// 也就不会因为「piece 跨文件」被判成不可转换
 		t.OpenList.GlobalPieces = pieceHex
+		extra := ""
+		if len(pieceHex) > 0 {
+			extra = "sha1"
+		}
+		fillAvailableHashes(t.OpenList, extra)
 		return t.OpenList, nil
 	}
 	seed := NewSeed(t.Info.Name, t.CreatedBy, t.Info.PieceLength)
@@ -1264,6 +1323,9 @@ func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
 		}
 		seed.Files = []SeedFile{{Path: t.Info.Name, Size: t.Info.Length, Hashes: hashes}}
 	} else {
+		// pieces 是整包的：跨文件时无法按文件均分（ValidateSeed 要求每个文件的
+		// 片数 = ceil(size/piece)），所以只在能整除时挂到文件上，
+		// 其余情况靠种子级的 AvailablePieceHashes 表示「已带该算法的 pieces」
 		pieceOffset := 0
 		for i, file := range t.Info.Files {
 			hashes := SeedHashes{MD5: file.MD5Sum}
@@ -1282,6 +1344,11 @@ func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
 	if err := ValidateSeed(seed, limits); err != nil {
 		return nil, err
 	}
+	extra := ""
+	if len(pieceHex) > 0 {
+		extra = "sha1"
+	}
+	fillAvailableHashes(seed, extra)
 	return seed, nil
 }
 
