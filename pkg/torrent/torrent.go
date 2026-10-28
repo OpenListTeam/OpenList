@@ -1180,8 +1180,20 @@ func TorrentFromSeed(seed *Seed) (*Torrent, []string) {
 }
 
 func validateOpenListTorrentConsistency(t *Torrent, seed *Seed) error {
-	if seed.Name != t.Info.Name || seed.PieceSize != t.Info.PieceLength {
+	if seed.PieceSize != t.Info.PieceLength {
 		return fmt.Errorf("x-openlist metadata conflicts with torrent info")
+	}
+	if seed.Name != t.Info.Name {
+		// 单文件 torrent 的 info.name 是文件名，而种子名可以不带扩展名
+		// （生成时 Info.Name = base(file.Path)、seed.Name = 用户起的名字），
+		// 不能因为这两者不同就判定整份种子损坏
+		nameOK := false
+		if len(t.Info.Files) == 0 && len(seed.Files) == 1 {
+			nameOK = t.Info.Name == path.Base(seed.Files[0].Path)
+		}
+		if !nameOK {
+			return fmt.Errorf("x-openlist metadata conflicts with torrent info")
+		}
 	}
 	if len(t.Info.Files) == 0 {
 		if len(seed.Files) != 1 || seed.Files[0].Size != t.Info.Length {
