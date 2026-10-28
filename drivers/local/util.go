@@ -453,7 +453,7 @@ func (d *Local) copyForMove(srcPath, dstPath string) error {
 		return errors.New("cannot copy a device")
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return d.copySymlink(srcPath, dstPath)
+		return d.copySymlinkForMove(srcPath, dstPath)
 	}
 	if info.Mode()&os.ModeNamedPipe != 0 {
 		return copyNamedPipe(dstPath, info.Mode(), os.FileMode(d.mkdirPerm))
@@ -462,7 +462,7 @@ func (d *Local) copyForMove(srcPath, dstPath string) error {
 		return utils.CopyFile(srcPath, dstPath)
 	}
 
-	if err = os.MkdirAll(dstPath, info.Mode()); err != nil {
+	if err = os.MkdirAll(dstPath, os.FileMode(d.mkdirPerm)); err != nil {
 		return err
 	}
 	files, err := readDir(srcPath)
@@ -475,6 +475,17 @@ func (d *Local) copyForMove(srcPath, dstPath string) error {
 		}
 	}
 	return os.Chmod(dstPath, info.Mode())
+}
+
+func (d *Local) copySymlinkForMove(srcPath, dstPath string) error {
+	linkOrig, err := os.Readlink(srcPath)
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(dstPath), os.FileMode(d.mkdirPerm)); err != nil {
+		return err
+	}
+	return os.Symlink(linkOrig, dstPath)
 }
 
 func (d *Local) tryCopy(srcPath, dstPath string, info os.FileInfo) error {

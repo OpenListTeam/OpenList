@@ -398,9 +398,6 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 				} else {
 					err = os.Remove(objPath)
 				}
-				if err != nil {
-					_ = os.RemoveAll(dstPath)
-				}
 			}
 		}
 	}
