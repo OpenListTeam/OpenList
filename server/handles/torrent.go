@@ -693,7 +693,9 @@ type SeedDataReq struct {
 type SeedConvertReq struct {
 	SeedDataReq
 	TargetFormat string `json:"target_format"`
-	Path         string `json:"path"`
+	// Formats 支持一次转换到多个格式；为空时回落到 TargetFormat / Format。
+	Formats []string `json:"formats"`
+	Path    string   `json:"path"`
 	// ComputeMissing 为 true 时，缺少的哈希会从 FileBasePath 下的实际文件重新计算，
 	// 而不是直接返回「不可转换」。
 	ComputeMissing bool `json:"compute_missing"`
@@ -884,74 +886,41 @@ func UploadSeedAndParse(c *gin.Context) {
 }
 
 // ConvertSeed converts between OSS, standard torrent+x-openlist and CAS containers.
+//
+// 支持一次转换到多个格式：逐个编码并写入目标目录，返回 artifacts。
+// 只有一个目标格式时，响应仍保留原来的 format / data / seed_data / name / size / path 字段。
 func ConvertSeed(c *gin.Context) {
 	var req SeedConvertReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	_, seed, _, err := decodeSeedData(req.SeedDataReq)
+	rawData, seed, sourceFormat, err := decodeSeedData(req.SeedDataReq)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	// 转换时顺带保存注释，前端就不必「先保存注释再转换」跑两次
-	if req.Comment != nil {
-		seed.Comment = *req.Comment
-	}
-	targetFormat := req.TargetFormat
-	if targetFormat == "" {
-		targetFormat = req.Format
-	}
-	if targetFormat == "" {
+	targets := seedConvertTargets(req)
+	if len(targets) == 0 {
 		common.ErrorStrResp(c, "target format is required", 400)
 		return
 	}
-	format := strings.ToLower(strings.TrimPrefix(targetFormat, "."))
-	diagnostics := torrent.DiagnoseConversion(seed, targetFormat)
-	var data []byte
-	switch {
-	case len(diagnostics) == 0:
-		data, err = torrent.EncodeSeed(seed, targetFormat)
-	case req.ComputeMissing:
-		// 缺哈希时从实际文件补算，而不是直接拒绝转换
-		user := c.Request.Context().Value(conf.UserKey).(*model.User)
-		pieces, rehashErr := fs.RehashSeedFromFiles(
-			c.Request.Context(), user, seed, req.FileBasePath, targetFormat,
-		)
-		if rehashErr != nil {
-			common.ErrorResp(c, rehashErr, 400)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+
+	// 预检：不补算且确实缺哈希时，保持原来的「可转换=false + 原因」响应
+	for _, target := range targets {
+		if diags := torrent.DiagnoseConversion(seed, target); len(diags) > 0 && !req.ComputeMissing {
+			common.SuccessResp(c, gin.H{"convertible": false, "format": target, "diagnostics": diags})
 			return
 		}
-		if format == "torrent" {
-			// pieces 是整包算出来的，跳过「piece 跨文件」这类按文件切分的结构性诊断
-			data, err = fs.EncodeGeneratedSeed(seed, "torrent", pieces)
-		} else {
-			if remain := torrent.DiagnoseConversion(seed, targetFormat); len(remain) > 0 {
-				// 已经按用户给的目录补算过仍然不够：直接报错，避免前端当成转换成功
-				common.ErrorStrResp(c, strings.Join(remain, "; "), 400)
-				return
-			}
-			data, err = torrent.EncodeSeed(seed, targetFormat)
-		}
-	default:
-		common.SuccessResp(c, gin.H{"convertible": false, "diagnostics": diagnostics})
-		return
 	}
-	if err != nil {
-		common.ErrorResp(c, err, 400)
-		return
-	}
-	fileName := stdpath.Base(seed.Name) + "." + format
-	result := gin.H{
-		"convertible": true, "format": format, "name": fileName,
-		"data": base64.StdEncoding.EncodeToString(data), "seed_data": base64.StdEncoding.EncodeToString(data), "size": len(data),
-	}
+
+	// 目标目录的写权限只需要校验一次
+	dstDir := ""
 	if req.Path != "" {
-		user := c.Request.Context().Value(conf.UserKey).(*model.User)
-		dstDir, joinErr := user.JoinPath(req.Path)
-		if joinErr != nil {
-			common.ErrorResp(c, joinErr, 403)
+		dstDir, err = user.JoinPath(req.Path)
+		if err != nil {
+			common.ErrorResp(c, err, 403)
 			return
 		}
 		meta, metaErr := op.GetNearestMeta(dstDir)
@@ -963,14 +932,119 @@ func ConvertSeed(c *gin.Context) {
 			common.ErrorResp(c, errs.PermissionDenied, 403)
 			return
 		}
-		fileStream := &stream.FileStream{Ctx: c.Request.Context(), Obj: &model.Object{Name: fileName, Size: int64(len(data)), Modified: time.Now()}, Reader: bytes.NewReader(data), Mimetype: "application/octet-stream"}
-		if err = fs.PutDirectly(c.Request.Context(), dstDir, fileStream); err != nil {
-			common.ErrorResp(c, err, 500)
+	}
+
+	artifacts := make([]gin.H, 0, len(targets))
+	for _, target := range targets {
+		// 每个目标独立解码：CAS 补算会把 PieceSize 固定成 10MiB，
+		// 复用同一个 seed 会污染 torrent 目标的 pieces
+		targetSeed := seed
+		if len(targets) > 1 {
+			targetSeed, err = torrent.DecodeSeed(rawData, sourceFormat, torrent.DefaultParseLimits())
+			if err != nil {
+				common.ErrorResp(c, err, 400)
+				return
+			}
+		}
+		// 转换时顺带保存注释，前端就不必「先保存注释再转换」跑两次
+		if req.Comment != nil {
+			targetSeed.Comment = *req.Comment
+		}
+		data, convertErr := convertSeedToFormat(c.Request.Context(), user, targetSeed, target, req)
+		if convertErr != nil {
+			common.ErrorResp(c, convertErr, 400)
 			return
 		}
-		result["path"] = stdpath.Join(req.Path, fileName)
+		fileName := stdpath.Base(targetSeed.Name) + "." + target
+		artifact := gin.H{
+			"convertible": true, "format": target, "name": fileName, "file_name": fileName,
+			"data":      base64.StdEncoding.EncodeToString(data),
+			"seed_data": base64.StdEncoding.EncodeToString(data), "size": len(data),
+		}
+		if dstDir != "" {
+			fileStream := &stream.FileStream{
+				Ctx:    c.Request.Context(),
+				Obj:    &model.Object{Name: fileName, Size: int64(len(data)), Modified: time.Now()},
+				Reader: bytes.NewReader(data), Mimetype: "application/octet-stream",
+			}
+			if err := fs.PutDirectly(c.Request.Context(), dstDir, fileStream); err != nil {
+				common.ErrorResp(c, err, 500)
+				return
+			}
+			artifact["path"] = stdpath.Join(req.Path, fileName)
+		}
+		artifacts = append(artifacts, artifact)
+	}
+
+	first := artifacts[0]
+	result := gin.H{
+		"convertible": true,
+		"artifacts":   artifacts,
+		"format":      first["format"],
+		"name":        first["name"],
+		"data":        first["data"],
+		"seed_data":   first["seed_data"],
+		"size":        first["size"],
+	}
+	if path, ok := first["path"]; ok {
+		result["path"] = path
 	}
 	common.SuccessResp(c, result)
+}
+
+// seedConvertTargets 归一化请求里的目标格式列表（去重、bt -> torrent、最多三个）。
+func seedConvertTargets(req SeedConvertReq) []string {
+	raw := req.Formats
+	if len(raw) == 0 {
+		switch {
+		case req.TargetFormat != "":
+			raw = []string{req.TargetFormat}
+		case req.Format != "":
+			raw = []string{req.Format}
+		}
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(value), "."))
+		if format == "bt" {
+			format = "torrent"
+		}
+		if format != "torrent" && format != "cas" && format != "oss" {
+			continue
+		}
+		if seen[format] {
+			continue
+		}
+		seen[format] = true
+		out = append(out, format)
+		if len(out) == 3 {
+			break
+		}
+	}
+	return out
+}
+
+// convertSeedToFormat 把 seed 编码成目标格式，缺哈希时按需从文件补算。
+func convertSeedToFormat(ctx context.Context, user *model.User, seed *torrent.Seed, target string, req SeedConvertReq) ([]byte, error) {
+	if len(torrent.DiagnoseConversion(seed, target)) == 0 {
+		return torrent.EncodeSeed(seed, target)
+	}
+	if !req.ComputeMissing {
+		return nil, fmt.Errorf("seed cannot be converted to %s", target)
+	}
+	pieces, err := fs.RehashSeedFromFiles(ctx, user, seed, req.FileBasePath, target)
+	if err != nil {
+		return nil, err
+	}
+	if target == "torrent" {
+		// pieces 是整包算出来的，跳过「piece 跨文件」这类按文件切分的结构性诊断
+		return fs.EncodeGeneratedSeed(seed, "torrent", pieces)
+	}
+	if remain := torrent.DiagnoseConversion(seed, target); len(remain) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(remain, "; "))
+	}
+	return torrent.EncodeSeed(seed, target)
 }
 
 // DiagnoseSeed reports conversion requirements for every supported container.
