@@ -237,6 +237,12 @@ func (b *s3Backend) walkPage(
 
 	for _, candidate := range candidates {
 		if candidate.marker != nil {
+			if addPrefix && candidate.marker.Key != fdPath+"/" {
+				if !page.addPrefix(candidate.marker.Key) {
+					return false, nil
+				}
+				continue
+			}
 			item := &gofakes3.Content{
 				Key:          candidate.marker.Key,
 				LastModified: gofakes3.NewContentTime(candidate.marker.Modified),

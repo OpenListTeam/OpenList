@@ -3,6 +3,8 @@ package s3
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -114,9 +116,66 @@ func TestS3NestedMarkerListing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delimited ListBucket: %v", err)
 	}
-	if len(delimited.Contents) != 1 || delimited.Contents[0].Key != key || len(delimited.CommonPrefixes) != 0 {
-		t.Fatalf("delimited listing = %#v, want marker content %q", delimited, key)
+	if len(delimited.Contents) != 0 || len(delimited.CommonPrefixes) != 1 || delimited.CommonPrefixes[0].Prefix != key {
+		t.Fatalf("delimited listing = %#v, want common prefix %q", delimited, key)
 	}
+}
+
+func TestS3MarkerHTTPTrailingSlashLifecycle(t *testing.T) {
+	ctx := context.Background()
+	_, _ = setupMultipartBackend(t)
+	handler, err := NewServer(ctx)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	url := server.URL + "/mp/http-marker-" + sanitizeTestName(t.Name()) + "/"
+	do := func(method string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(""))
+		if err != nil {
+			t.Fatalf("new %s request: %v", method, err)
+		}
+		req.ContentLength = 0
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s marker: %v", method, err)
+		}
+		return response
+	}
+
+	put := do(http.MethodPut)
+	if put.StatusCode != http.StatusOK {
+		t.Fatalf("PUT marker status = %d, want %d", put.StatusCode, http.StatusOK)
+	}
+	put.Body.Close()
+
+	head := do(http.MethodHead)
+	if head.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD marker status = %d, want %d", head.StatusCode, http.StatusOK)
+	}
+	head.Body.Close()
+
+	get := do(http.MethodGet)
+	body, readErr := io.ReadAll(get.Body)
+	get.Body.Close()
+	if get.StatusCode != http.StatusOK || readErr != nil || len(body) != 0 {
+		t.Fatalf("GET marker status = %d, body = %q, err = %v", get.StatusCode, body, readErr)
+	}
+
+	deleteResponse := do(http.MethodDelete)
+	if deleteResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE marker status = %d, want %d", deleteResponse.StatusCode, http.StatusNoContent)
+	}
+	deleteResponse.Body.Close()
+
+	head = do(http.MethodHead)
+	if head.StatusCode != http.StatusNotFound {
+		t.Fatalf("HEAD deleted marker status = %d, want %d", head.StatusCode, http.StatusNotFound)
+	}
+	head.Body.Close()
 }
 
 func TestS3RootSlashMarkerListing(t *testing.T) {

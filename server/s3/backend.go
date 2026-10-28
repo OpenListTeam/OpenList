@@ -122,12 +122,12 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 	}
 	bucketPath := bucket.Path
 
-	if marker, markerErr := getS3Marker(bucketName, objectName); markerErr != nil {
+	if marker, markerErr := getS3MarkerForRequest(ctx, bucketName, objectName); markerErr != nil {
 		return nil, markerErr
 	} else if marker != nil {
-		metadata := s3MarkerMetadata(marker, objectName)
+		metadata := s3MarkerMetadata(marker, marker.Key)
 		return &gofakes3.Object{
-			Name:     objectName,
+			Name:     marker.Key,
 			Metadata: metadata,
 			Size:     0,
 			Contents: noOpReadCloser{},
@@ -179,15 +179,15 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 	}
 	bucketPath := bucket.Path
 
-	if marker, markerErr := getS3Marker(bucketName, objectName); markerErr != nil {
+	if marker, markerErr := getS3MarkerForRequest(ctx, bucketName, objectName); markerErr != nil {
 		return nil, markerErr
 	} else if marker != nil {
 		if rangeRequest != nil {
 			return nil, gofakes3.ErrInvalidRange
 		}
-		metadata := s3MarkerMetadata(marker, objectName)
+		metadata := s3MarkerMetadata(marker, marker.Key)
 		return &gofakes3.Object{
-			Name:     objectName,
+			Name:     marker.Key,
 			Metadata: metadata,
 			Size:     0,
 			Contents: io.NopCloser(strings.NewReader("")),
@@ -416,10 +416,10 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	if err != nil {
 		return err
 	}
-	if marker, markerErr := getS3Marker(bucketName, objectName); markerErr != nil {
+	if marker, markerErr := getS3MarkerForRequest(ctx, bucketName, objectName); markerErr != nil {
 		return markerErr
 	} else if marker != nil {
-		return deleteS3Marker(bucketName, objectName)
+		return deleteS3Marker(marker.Bucket, marker.Key)
 	}
 	bucketPath := bucket.Path
 

@@ -54,6 +54,19 @@ func getS3Marker(bucket, key string) (*model.S3Marker, error) {
 	return nil, nil
 }
 
+func getS3MarkerForRequest(ctx context.Context, bucket, key string) (*model.S3Marker, error) {
+	marker, err := getS3Marker(bucket, key)
+	if err != nil || marker != nil || !isTrailingSlashRequest(ctx) || strings.HasSuffix(key, "/") {
+		return marker, err
+	}
+	return getS3Marker(bucket, key+"/")
+}
+
+func isTrailingSlashRequest(ctx context.Context) bool {
+	value, _ := ctx.Value(trailingSlashRequestKey{}).(bool)
+	return value
+}
+
 func listS3Markers(bucket string) ([]model.S3Marker, error) {
 	if db.GetDb() == nil {
 		return nil, nil
