@@ -174,10 +174,10 @@ func GetMediaStreamURL(c *gin.Context) {
 			return
 		}
 		common.SuccessResp(c, gin.H{
-			"url":     SignedStreamURL(c, rawPath),
+			"url":     PlaybackStreamURL(c, rawPath),
 			"path":    rawPath,
 			"name":    stdpath.Base(rawPath),
-			"proxied": SignedProxyURL(c, rawPath),
+			"proxied": PlaybackProxyURL(c, rawPath),
 		})
 		return
 	}
@@ -212,10 +212,10 @@ func GetMediaStreamURL(c *gin.Context) {
 		return
 	}
 	common.SuccessResp(c, gin.H{
-		"url":     SignedStreamURL(c, rawPath),
+		"url":     PlaybackStreamURL(c, rawPath),
 		"path":    rawPath,
 		"name":    stdpath.Base(rawPath),
-		"proxied": SignedProxyURL(c, rawPath),
+		"proxied": PlaybackProxyURL(c, rawPath),
 	})
 }
 
