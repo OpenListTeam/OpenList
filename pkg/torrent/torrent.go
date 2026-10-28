@@ -65,6 +65,12 @@ type Seed struct {
 	Trackers  []string      `json:"trackers,omitempty"`
 	Channels  []SeedChannel `json:"channels,omitempty"`
 	Files     []SeedFile    `json:"files"`
+
+	// GlobalPieces 是解析 .torrent 时拿到的整包 SHA1 pieces（按文件首尾相接切分）。
+	// 有了它就不必用「每文件 pieces 拼接」去重建 torrent，也就不要求文件大小与
+	// piece 对齐；从 OSS 种子或逐文件独立计算得到的 pieces 不走这条路。
+	// 仅运行时数据，不参与序列化。
+	GlobalPieces []string `json:"-"`
 }
 
 // SeedChannel contains only public storage discovery metadata.
@@ -75,17 +81,17 @@ type SeedChannel struct {
 
 // SeedFile describes one relative file in a sharing seed.
 type SeedFile struct {
-	Path            string       `json:"path"`
-	Size            int64        `json:"size"`
-	Modified        string       `json:"modified,omitempty"`
-	Comment         string       `json:"comment,omitempty"`
-	Hashes          SeedHashes   `json:"hashes"`
-	Sources         []SeedSource `json:"sources,omitempty"`
-	CASSliceMD5     string       `json:"cas_slice_md5,omitempty"`
-	CASCreateTime   string       `json:"cas_create_time,omitempty"`
+	Path          string       `json:"path"`
+	Size          int64        `json:"size"`
+	Modified      string       `json:"modified,omitempty"`
+	Comment       string       `json:"comment,omitempty"`
+	Hashes        SeedHashes   `json:"hashes"`
+	Sources       []SeedSource `json:"sources,omitempty"`
+	CASSliceMD5   string       `json:"cas_slice_md5,omitempty"`
+	CASCreateTime string       `json:"cas_create_time,omitempty"`
 	// CASCloud 标识该文件 CAS 元数据所属的云盘类型（如 "189"）。留空视为 189。
-	CASCloud        string       `json:"cas_cloud,omitempty"`
-	MissingChannels []string     `json:"missing_channels,omitempty"`
+	CASCloud        string   `json:"cas_cloud,omitempty"`
+	MissingChannels []string `json:"missing_channels,omitempty"`
 }
 
 // SeedHashes contains whole-file and optional per-piece hashes.
@@ -130,13 +136,13 @@ type CASFileEntry struct {
 // the optional "files" array extends it to multi-file seeds, and the optional
 // slice_md5s/slice_size preserve the per-piece MD5 list.
 type CASPayload struct {
-	Name       string         `json:"name"`
-	Size       int64          `json:"size"`
-	MD5        string         `json:"md5"`
-	SliceMD5   string         `json:"sliceMd5"`
-	CreateTime string         `json:"create_time"`
-	SliceMD5s  []string       `json:"slice_md5s,omitempty"`
-	SliceSize  int64          `json:"slice_size,omitempty"`
+	Name       string   `json:"name"`
+	Size       int64    `json:"size"`
+	MD5        string   `json:"md5"`
+	SliceMD5   string   `json:"sliceMd5"`
+	CreateTime string   `json:"create_time"`
+	SliceMD5s  []string `json:"slice_md5s,omitempty"`
+	SliceSize  int64    `json:"slice_size,omitempty"`
 	// Cloud 标识该 CAS 载荷所属的云盘类型（如 "189"）；留空视为 189。
 	Cloud string         `json:"cloud,omitempty"`
 	Files []CASFileEntry `json:"files,omitempty"`
@@ -1061,6 +1067,11 @@ func DiagnoseConversion(seed *Seed, format string) []string {
 	var diagnostics []string
 	switch strings.ToLower(strings.TrimPrefix(format, ".")) {
 	case "torrent":
+		// 解析自 .torrent 的种子自带整包 pieces，可直接重构，
+		// 不需要（也不能）按文件检查边界
+		if len(seed.GlobalPieces) > 0 {
+			break
+		}
 		for i, file := range seed.Files {
 			if file.Hashes.Pieces == nil || len(file.Hashes.Pieces.SHA1) == 0 {
 				diagnostics = append(diagnostics, fmt.Sprintf("%s: missing SHA-1 piece hashes", file.Path))
@@ -1109,10 +1120,6 @@ func TorrentFromSeed(seed *Seed) (*Torrent, []string) {
 		}
 	}
 	for _, file := range seed.Files {
-		for _, piece := range file.Hashes.Pieces.SHA1 {
-			raw, _ := hex.DecodeString(piece)
-			t.Info.Pieces = append(t.Info.Pieces, raw...)
-		}
 		if len(seed.Files) == 1 {
 			t.Info.Length = file.Size
 			t.Info.MD5Sum = file.Hashes.MD5
@@ -1122,6 +1129,26 @@ func TorrentFromSeed(seed *Seed) (*Torrent, []string) {
 				Path:   strings.Split(file.Path, "/"),
 				MD5Sum: file.Hashes.MD5,
 			})
+		}
+	}
+	// 优先用解析时保留的整包 pieces（可能跨文件）；没有时才按文件拼接
+	if len(seed.GlobalPieces) > 0 {
+		for _, piece := range seed.GlobalPieces {
+			raw, err := hex.DecodeString(piece)
+			if err != nil || len(raw) != sha1.Size {
+				return nil, []string{"invalid global piece hash"}
+			}
+			t.Info.Pieces = append(t.Info.Pieces, raw...)
+		}
+	} else {
+		for _, file := range seed.Files {
+			if file.Hashes.Pieces == nil {
+				continue
+			}
+			for _, piece := range file.Hashes.Pieces.SHA1 {
+				raw, _ := hex.DecodeString(piece)
+				t.Info.Pieces = append(t.Info.Pieces, raw...)
+			}
 		}
 	}
 	if len(seed.Files) == 1 {
@@ -1193,6 +1220,10 @@ func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
 	if t == nil {
 		return nil, fmt.Errorf("missing torrent")
 	}
+	pieceHex := make([]string, 0, len(t.Info.Pieces)/sha1.Size)
+	for _, piece := range t.GetPieceHashes() {
+		pieceHex = append(pieceHex, hex.EncodeToString(piece))
+	}
 	if t.OpenList != nil {
 		if err := ValidateSeed(t.OpenList, limits); err != nil {
 			return nil, err
@@ -1200,6 +1231,9 @@ func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
 		if err := validateOpenListTorrentConsistency(t, t.OpenList); err != nil {
 			return nil, err
 		}
+		// 记下整包 pieces：重新编码这个 torrent 时直接复用，不必按文件拼，
+		// 也就不会因为「piece 跨文件」被判成不可转换
+		t.OpenList.GlobalPieces = pieceHex
 		return t.OpenList, nil
 	}
 	seed := NewSeed(t.Info.Name, t.CreatedBy, t.Info.PieceLength)
@@ -1215,10 +1249,7 @@ func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
 		seed.Trackers = append(seed.Trackers, tier...)
 	}
 	seed.Trackers = uniqueNonEmpty(seed.Trackers)
-	pieceHex := make([]string, 0, len(t.Info.Pieces)/sha1.Size)
-	for _, piece := range t.GetPieceHashes() {
-		pieceHex = append(pieceHex, hex.EncodeToString(piece))
-	}
+	seed.GlobalPieces = pieceHex
 	if len(t.Info.Files) == 0 {
 		hashes := SeedHashes{MD5: t.Info.MD5Sum}
 		if len(pieceHex) > 0 {

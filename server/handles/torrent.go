@@ -1562,6 +1562,8 @@ func UpdateSeed(c *gin.Context) {
 			return
 		}
 		seed.Files = kept
+		// 文件集合变了，整包 pieces 不再对应，不能直接复用
+		seed.GlobalPieces = nil
 	}
 	if req.Recalculate {
 		pieceSize := req.PieceSize
@@ -1605,6 +1607,8 @@ func UpdateSeed(c *gin.Context) {
 			applySeedMatrix(&rehashed, matrix)
 			seed.Files[i] = rehashed
 		}
+		// 重算得到的是逐文件独立 pieces，不能再当整包 pieces 复用
+		seed.GlobalPieces = nil
 	}
 	data, err := torrent.EncodeSeed(seed, format)
 	if err != nil {
