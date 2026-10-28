@@ -272,7 +272,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.MediaOverwriteCover, Value: "false", Type: conf.TypeBool, Group: model.MEDIA, Flag: model.PRIVATE,
 			Help: `刮削时是否用刮削到的封面覆盖条目已有封面。默认关闭：文件自带/手动设置的封面优先，刮削只补空`},
 		{Key: conf.MediaSkipFileMetadata, Value: "false", Type: conf.TypeBool, Group: model.MEDIA, Flag: model.PRIVATE,
-			Help: `开启后扫描/刮削不读取媒体文件内容（音乐 ID3、书籍内嵌封面、图片 EXIF），只用文件名与目录名推断元数据。默认关闭`},
+			Help: `开启后扫描/刮削跳过音乐 ID3/Vorbis 标签、图片 EXIF、EPUB/PDF 书籍内嵌封面读取，使用文件名与目录名推断元数据。图片缩略图生成与同目录外部 .lrc 歌词仍可读取文件内容，不等于禁止所有文件读取。默认关闭`},
 		{Key: conf.MediaScrapeConcurrency, Value: "5", Type: conf.TypeNumber, Group: model.MEDIA, Flag: model.PRIVATE},
 		{Key: conf.MediaScrapeLanguage, Value: "zh-CN", Type: conf.TypeSelect, Options: "zh-CN,zh-TW,en-US,ja-JP,ko-KR,fr-FR,de-DE,es-ES,ru-RU,pt-BR", Group: model.MEDIA, Flag: model.PRIVATE,
 			Help: `首选刮削语言：影响 TMDB 的标题/简介/海报文字与 Google Books 的检索语言；豆瓣固定为中文`},

@@ -3,8 +3,10 @@ package handles
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -716,10 +718,9 @@ func StartMediaScrape(c *gin.Context) {
 		worker := func() {
 			defer wg.Done()
 			for idx := range jobs {
-				item := &items[idx]
+				prevCover := items[idx].Cover
+				item, preserveCover := prepareMediaScrapeCandidate(items[idx], setting.GetBool(conf.MediaOverwriteCover))
 				var scrapeErr error
-				// 刮削前的封面：用于保护「文件自带封面」不被在线图片替换
-				prevCover := item.Cover
 
 				switch req.MediaType {
 				case model.MediaTypeVideo:
@@ -758,8 +759,8 @@ func StartMediaScrape(c *gin.Context) {
 						log.Debugf("书籍刮削失败 [%s/%s]: %v，将尝试本地提取封面", item.FolderPath, item.FileName, bookErr)
 					}
 
-					// 关闭「读取文件信息」时不读内嵌封面，留给刮削结果或手动上传
-					if item.Cover == "" && !media.SkipFileMetadata() {
+					// 关闭文件信息读取时不提取书籍内嵌封面；启用时只补空且不覆盖受保护封面。
+					if item.Cover == "" && !preserveCover && !media.SkipFileMetadata() {
 						bookCtx, bookCancel := context.WithTimeout(context.Background(), 60*time.Second)
 						bookFilePath := item.FolderPath + "/" + item.FileName
 						bookReader := media.FetchFileReader(bookCtx, bookFilePath)
@@ -768,6 +769,7 @@ func StartMediaScrape(c *gin.Context) {
 								thumbnailMode,
 								thumbnailPath,
 							)
+							localScraper.PreserveCover = preserveCover
 							if localCover := localScraper.ExtractLocalCover(item.FileName, bookFilePath, bookReader); localCover != "" {
 								item.Cover = localCover
 							}
@@ -790,6 +792,7 @@ func StartMediaScrape(c *gin.Context) {
 					)
 					// 关闭「读取文件信息」时只出缩略图，不解析 EXIF
 					s.SkipEXIF = media.SkipFileMetadata()
+					s.PreserveCover = preserveCover
 					scrapeErr = s.ScrapeImage(item, imgReader)
 					if imgReader != nil {
 						_ = imgReader.Close()
@@ -798,7 +801,7 @@ func StartMediaScrape(c *gin.Context) {
 				}
 
 				// 远程封面按需下载到本地存储（或 base64），避免直接保存图片链接
-				if downloadCover && strings.HasPrefix(item.Cover, "http") {
+				if !preserveCover && downloadCover && strings.HasPrefix(item.Cover, "http") {
 					rawPath := strings.TrimSuffix(item.FolderPath, "/") + "/" + item.FileName
 					if cover := scraper.DownloadCoverToStorage(
 						context.Background(),
@@ -814,8 +817,7 @@ func StartMediaScrape(c *gin.Context) {
 				// 默认不覆盖已有封面：文件自带封面（内嵌 ID3/Vorbis、书籍内页提取、
 				// 本地缩略图）与用户手动设置的封面优先，刮削只负责「补空」。
 				// 需要让刮削封面替换已有封面时，在媒体设置里打开「刮削覆盖已有封面」。
-				if prevCover != "" && item.Cover != prevCover &&
-					!setting.GetBool(conf.MediaOverwriteCover) {
+				if preserveCover || (prevCover != "" && item.Cover == "") {
 					item.Cover = prevCover
 				}
 
@@ -853,6 +855,15 @@ func StartMediaScrape(c *gin.Context) {
 
 	_ = cfg
 	common.SuccessResp(c)
+}
+
+func prepareMediaScrapeCandidate(original model.MediaItem, overwriteCover bool) (*model.MediaItem, bool) {
+	candidate := original
+	preserveCover := original.Cover != "" && !overwriteCover
+	if overwriteCover {
+		candidate.Cover = ""
+	}
+	return &candidate, preserveCover
 }
 
 // hasAnyScrapedField 判断 item 是否已经有任意一个有意义的刮削字段被填充
@@ -963,15 +974,20 @@ func PublicListAlbums(c *gin.Context) {
 	}
 
 	hidden := false
+	user := mediaUser(c)
 	q := db.MediaItemQuery{
 		MediaType:  model.MediaTypeMusic,
 		ScanPathID: scanPathID,
-		PathPrefix: userPathPrefix(mediaUser(c)),
+		PathPrefix: userPathPrefix(user),
 		Hidden:     &hidden,
 		Keyword:    keyword,
 		Artist:     c.Query("album_artist"),
+		ArtistSet:  c.Request.URL.Query().Has("album_artist"),
 		Page:       page,
 		PageSize:   pageSize,
+		CanAccess: func(item *model.MediaItem) bool {
+			return CanUserAccessItem(user, item)
+		},
 	}
 	albums, total, err := db.ListAlbums(q)
 	if err != nil {
@@ -996,14 +1012,18 @@ func PublicListArtists(c *gin.Context) {
 	}
 
 	hidden := false
+	user := mediaUser(c)
 	q := db.MediaItemQuery{
 		MediaType:  model.MediaTypeMusic,
 		ScanPathID: scanPathID,
-		PathPrefix: userPathPrefix(mediaUser(c)),
+		PathPrefix: userPathPrefix(user),
 		Hidden:     &hidden,
 		Keyword:    keyword,
 		Page:       page,
 		PageSize:   pageSize,
+		CanAccess: func(item *model.MediaItem) bool {
+			return CanUserAccessItem(user, item)
+		},
 	}
 	artists, total, err := db.ListArtists(q)
 	if err != nil {
@@ -1169,7 +1189,7 @@ func ExportMediaDB(c *gin.Context) {
 	filename := buildExportFilename(export)
 	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
 	c.Header("Content-Type", "application/zip")
-	if err := writeMediaExportZip(c.Writer, &export); err != nil {
+	if err := writeMediaExportZip(c.Request.Context(), c.Writer, &export); err != nil {
 		log.Errorf("导出媒体数据失败: %v", err)
 	}
 }
@@ -1196,6 +1216,90 @@ func buildExportFilename(d MediaExportData) string {
 	}
 }
 
+func readMediaImportRequest(c *gin.Context, byteLimit int64) (*MediaExportData, []mediaImportedCover, error) {
+	multipart := strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data")
+	if !multipart {
+		byteLimit = min(byteLimit, int64(maxImportJSONBytes))
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, byteLimit)
+	if multipart {
+		defer func() {
+			if c.Request.MultipartForm != nil {
+				_ = c.Request.MultipartForm.RemoveAll()
+			}
+		}()
+		if err := c.Request.ParseMultipartForm(8 << 20); err != nil {
+			return nil, nil, fmt.Errorf("导入表单解析失败: %w", err)
+		}
+		fileHeader, err := c.FormFile("file")
+		if err != nil {
+			return nil, nil, fmt.Errorf("缺少 file 文件参数: %w", err)
+		}
+		f, err := fileHeader.Open()
+		if err != nil {
+			return nil, nil, err
+		}
+		defer f.Close()
+		return readMediaImportFile(c.Request.Context(), f)
+	}
+	raw, err := io.ReadAll(&mediaContextReader{ctx: c.Request.Context(), r: c.Request.Body})
+	if err != nil {
+		return nil, nil, err
+	}
+	var data MediaExportData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return nil, nil, err
+	}
+	return &data, nil, nil
+}
+
+func readMediaImportFile(ctx context.Context, r io.Reader) (*MediaExportData, []mediaImportedCover, error) {
+	tmp, err := os.CreateTemp("", "openlist-media-import-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+	size, err := io.Copy(tmp, io.LimitReader(&mediaContextReader{ctx: ctx, r: r}, maxImportBytes+1))
+	if err != nil || size > maxImportBytes {
+		return nil, nil, fmt.Errorf("读取导入文件失败或大小超限")
+	}
+	head := make([]byte, 4)
+	n, err := tmp.ReadAt(head, 0)
+	if err != nil && err != io.EOF {
+		return nil, nil, err
+	}
+	if isZipPayload(head[:n]) {
+		return readMediaExportZipWithBudget(ctx, tmp, size, defaultMediaImportLimits())
+	}
+	if size > maxImportJSONBytes {
+		return nil, nil, fmt.Errorf("导入 JSON 文件过大")
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return nil, nil, err
+	}
+	raw, err := io.ReadAll(&mediaContextReader{ctx: ctx, r: tmp})
+	if err != nil {
+		return nil, nil, err
+	}
+	var data MediaExportData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return nil, nil, fmt.Errorf("导入文件解析失败: %w", err)
+	}
+	return &data, nil, nil
+}
+
+func cleanupMediaImportedCovers(covers []mediaImportedCover) {
+	for _, cover := range covers {
+		referenced, err := db.HasMediaCoverReference(cover.cover)
+		if err == nil && !referenced {
+			_ = os.Remove(cover.path)
+		}
+	}
+}
+
 // ImportMediaDB 导入媒体数据
 // 支持两种调用方式：
 //  1. multipart/form-data：file 字段携带导出生成的 JSON 文件
@@ -1204,68 +1308,23 @@ func buildExportFilename(d MediaExportData) string {
 // 可选 query 参数 scan_path_id：当导入"scan_path"范围数据时，
 // 把所有条目重定向到该扫描路径ID（覆盖文件中原有的 scan_path_id）。
 func ImportMediaDB(c *gin.Context) {
-	var data MediaExportData
-
-	contentType := c.GetHeader("Content-Type")
-	if strings.HasPrefix(contentType, "multipart/form-data") {
-		fileHeader, err := c.FormFile("file")
-		if err != nil {
-			common.ErrorStrResp(c, "缺少 file 文件参数", 400)
-			return
+	parsed, covers, err := readMediaImportRequest(c, maxImportBytes)
+	if err != nil {
+		status := http.StatusBadRequest
+		var sizeErr *http.MaxBytesError
+		if errors.As(err, &sizeErr) {
+			status = http.StatusRequestEntityTooLarge
 		}
-		f, err := fileHeader.Open()
-		if err != nil {
-			common.ErrorResp(c, err, 400)
-			return
-		}
-		defer f.Close()
-		// 先落到临时文件：既能把 zip 当 ReaderAt 打开，也避免把大包整个读进内存
-		tmp, err := os.CreateTemp("", "openlist-media-import-*")
-		if err != nil {
-			common.ErrorResp(c, err, 500)
-			return
-		}
-		tmpName := tmp.Name()
-		defer func() {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
-		}()
-		if _, err := io.Copy(tmp, f); err != nil {
-			common.ErrorStrResp(c, "读取导入文件失败: "+err.Error(), 400)
-			return
-		}
-		head := make([]byte, 4)
-		n, _ := io.ReadFull(tmp, head)
-		if isZipPayload(head[:n]) {
-			// 新版导出：zip（media_export.json + covers/）
-			stat, err := tmp.Stat()
-			if err != nil {
-				common.ErrorResp(c, err, 500)
-				return
-			}
-			parsed, err := readMediaExportZip(tmp, stat.Size())
-			if err != nil {
-				common.ErrorStrResp(c, err.Error(), 400)
-				return
-			}
-			data = *parsed
-		} else {
-			// 兼容旧版导出的纯 JSON 文件
-			if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-				common.ErrorResp(c, err, 500)
-				return
-			}
-			if err := json.NewDecoder(tmp).Decode(&data); err != nil {
-				common.ErrorStrResp(c, "导入文件解析失败: "+err.Error(), 400)
-				return
-			}
-		}
-	} else {
-		if err := c.ShouldBindJSON(&data); err != nil {
-			common.ErrorResp(c, err, 400)
-			return
-		}
+		common.ErrorResp(c, err, status)
+		return
 	}
+	data := *parsed
+	complete := false
+	defer func() {
+		if !complete {
+			cleanupMediaImportedCovers(covers)
+		}
+	}()
 
 	if data.Version <= 0 || data.Version > mediaExportVersion {
 		common.ErrorStrResp(c, "不支持的导入文件版本", 400)
@@ -1305,6 +1364,8 @@ func ImportMediaDB(c *gin.Context) {
 		return
 	}
 
+	complete = true
+	cleanupMediaImportedCovers(covers)
 	common.SuccessResp(c, gin.H{
 		"scan_paths_created": spCreated,
 		"scan_paths_updated": spUpdated,

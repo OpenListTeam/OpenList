@@ -46,20 +46,6 @@ func coverFileExt(data []byte) string {
 	return ""
 }
 
-// isFileOwnedCover 判断封面是否来自媒体文件自身（内嵌 data URL / 本地缩略图 /
-// 站内代理 / blob）。这类封面不该被刮削结果覆盖。
-func isFileOwnedCover(cover string) bool {
-	switch {
-	case strings.HasPrefix(cover, "data:"),
-		strings.HasPrefix(cover, "thumb:"),
-		strings.HasPrefix(cover, "blob:"),
-		strings.HasPrefix(cover, "/d/"),
-		strings.HasPrefix(cover, "/p/"):
-		return true
-	}
-	return false
-}
-
 // saveUploadedCover 把上传的图片写入缩略图目录，返回 cover 字段值（thumb:/<dir>/<name>）
 func saveUploadedCover(itemID uint, data []byte) (string, error) {
 	ext := coverFileExt(data)
@@ -80,25 +66,33 @@ func saveUploadedCover(itemID uint, data []byte) (string, error) {
 
 // removeUploadedCover 换封面时删掉上一张自定义封面。
 // 只删本接口生成的文件（cover-<id>-<ts>.<ext>），不动刮削缩略图。
-func removeUploadedCover(oldCover, newCover string) {
+func removeUploadedCover(oldCover, newCover string) error {
 	if oldCover == "" || oldCover == newCover {
-		return
+		return nil
 	}
 	dir := thumbsDirName()
 	prefix := "thumb:/" + dir + "/cover-"
 	if !strings.HasPrefix(oldCover, prefix) {
-		return
+		return nil
 	}
 	name := strings.TrimPrefix(oldCover, "thumb:/"+dir+"/")
-	if name == "" || strings.Contains(name, "/") {
-		return
+	if name == "" || strings.ContainsAny(name, `/\:`) {
+		return nil
 	}
-	_ = os.Remove(filepath.Join(scraper.RuntimeThumbRoot(dir), name))
+	referenced, err := db.HasMediaCoverReference(oldCover)
+	if err != nil || referenced {
+		return err
+	}
+	err = os.Remove(filepath.Join(scraper.RuntimeThumbRoot(dir), name))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 // UploadMediaItemCover 后台上传自定义封面
 //
-//	POST /api/admin/media/items/cover   form-data: id=<item id> & file=<image>
+//	POST /api/admin/media/items/cover   form-data: id=<item id> & file=<image> & deferred=true
 //
 // 图片写入 <data>/<thumbnail_path>/cover-<id>-<ts>.<ext>，返回 thumb:/... 形式的
 // cover 值；前端用 /api/public/media/thumb?path= 访问，与刮削缩略图同一套机制。
@@ -106,6 +100,19 @@ func UploadMediaItemCover(c *gin.Context) {
 	id, err := strconv.ParseUint(c.PostForm("id"), 10, 64)
 	if err != nil || id == 0 {
 		common.ErrorStrResp(c, "无效的 id", 400)
+		return
+	}
+	if cover := c.PostForm("discard"); cover != "" {
+		prefix := fmt.Sprintf("thumb:/%s/cover-%d-", thumbsDirName(), id)
+		if !strings.HasPrefix(cover, prefix) || strings.ContainsAny(strings.TrimPrefix(cover, prefix), `/\:`) {
+			common.ErrorStrResp(c, "无效的暂存封面", 400)
+			return
+		}
+		if err := removeUploadedCover(cover, ""); err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		common.SuccessResp(c, nil)
 		return
 	}
 	item, err := db.GetMediaItemByID(uint(id))
@@ -141,6 +148,10 @@ func UploadMediaItemCover(c *gin.Context) {
 	cover, err := saveUploadedCover(item.ID, data)
 	if err != nil {
 		common.ErrorStrResp(c, err.Error(), 400)
+		return
+	}
+	if c.PostForm("deferred") == "true" {
+		common.SuccessResp(c, gin.H{"cover": cover})
 		return
 	}
 	old := item.Cover

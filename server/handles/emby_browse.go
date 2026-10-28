@@ -117,6 +117,7 @@ func (l *embyLibrary) registerIDs() {
 		}
 		for _, ep := range l.episodesOf(s.Key, 0) {
 			register(ep.ID)
+			register(fmt.Sprintf("ep-%d-%d", ep.Item.ID, ep.Index))
 		}
 	}
 	for i := range l.music {

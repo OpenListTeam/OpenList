@@ -20,7 +20,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -322,6 +321,11 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	if err != nil {
 		return nil, nil, err
 	}
+	release, err := AcquireSeedHashSlot(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer release()
 	matrix := normalizedSeedMatrix(params.HashMatrix, formats)
 	pieceSize := params.PieceSize
 	if pieceSize <= 0 {
@@ -481,17 +485,9 @@ func buildSeedGroup(
 			continue
 		}
 
-		link, _, err := op.Link(ctx, storage, actualPath, model.LinkArgs{})
+		rc, err := openSeedSourceStream(ctx, fullPath, obj.GetSize())
 		if err != nil {
-			return nil, nil, fmt.Errorf("storage cannot stream %s: %v", requestedPath, err)
-		}
-		rangeReader, err := stream.GetRangeReaderFromLink(obj.GetSize(), link)
-		if err != nil {
-			return nil, nil, fmt.Errorf("storage cannot stream %s", requestedPath)
-		}
-		rc, err := rangeReader.RangeRead(ctx, http_range.Range{Length: obj.GetSize()})
-		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("storage cannot stream %s: %w", requestedPath, err)
 		}
 		fileHasher := torrent.NewHashWriter(pieceSize, pieceSize, 0)
 		progress.reader = rc
@@ -612,12 +608,7 @@ func buildSeedGroup(
 		if err != nil {
 			return nil, nil, fmt.Errorf("generate %s seed: %w", format, err)
 		}
-		fileName := stdpath.Base(seed.Name) + "." + format
-		// 拆分模式下不同目录可能有同名文件，输出到同一目录时要避免互相覆盖
-		if n := usedNames[fileName]; n > 0 {
-			fileName = fmt.Sprintf("%s (%d).%s", stdpath.Base(seed.Name), n+1, format)
-		}
-		usedNames[fileName]++
+		fileName := uniqueSeedFileName(stdpath.Base(seed.Name)+"."+format, usedNames)
 		artifact, err := writeArtifact(format, fileName, data)
 		if err != nil {
 			return nil, nil, err

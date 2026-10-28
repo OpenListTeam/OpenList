@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
+	"image"
 	"image/jpeg"
 	"io"
 	"strings"
@@ -29,6 +30,8 @@ type BookLocalScraper struct {
 	ThumbnailMode string
 	// ThumbnailPath 本地存储路径，ThumbnailMode 为 "local" 时有效，默认 "/.thumbnail"
 	ThumbnailPath string
+	// PreserveCover 为 true 时不提取或写入封面。
+	PreserveCover bool
 }
 
 // NewBookLocalScraper 创建书籍本地刮削器
@@ -69,8 +72,8 @@ func (s *BookLocalScraper) ScrapeBookLocal(item *model.MediaItem, reader io.Read
 		item.ScrapedName = trimExt(item.FileName)
 	}
 
-	// 从文件流提取封面，提取失败则 cover 保持为空
-	if reader != nil {
+	// 有已有封面或要求保留时不读取、生成或写入候选封面。
+	if reader != nil && !s.PreserveCover && item.Cover == "" {
 		data, err := readAllLimited(reader, MaxBookFileBytes)
 		if err == nil && len(data) > 0 {
 			var coverData []byte
@@ -97,7 +100,7 @@ func (s *BookLocalScraper) ScrapeBookLocal(item *model.MediaItem, reader io.Read
 // ExtractLocalCover 从书籍文件流中提取封面并根据配置存储（供外部调用）。
 // 提取失败返回空字符串，不降级为文件路径。
 func (s *BookLocalScraper) ExtractLocalCover(fileName string, filePath string, reader io.Reader) string {
-	if reader == nil {
+	if reader == nil || s.PreserveCover {
 		return ""
 	}
 	ext := strings.ToLower(getFileExt(fileName))
@@ -120,6 +123,9 @@ func (s *BookLocalScraper) ExtractLocalCover(fileName string, filePath string, r
 
 // storeCover 根据 ThumbnailMode 存储封面数据，返回 Cover 字段值
 func (s *BookLocalScraper) storeCover(filePath string, coverData []byte) string {
+	if s.PreserveCover {
+		return ""
+	}
 	if NormalizeThumbMode(s.ThumbnailMode) == ThumbModeBase64 {
 		return imageDataToBase64Thumb(coverData)
 	}
@@ -130,13 +136,13 @@ func (s *BookLocalScraper) storeCover(filePath string, coverData []byte) string 
 	return SaveThumb(context.Background(), s.ThumbnailMode, s.ThumbnailPath, filePath, "image/jpeg", thumb)
 }
 
-// resizeCoverBytes 将封面缩放为 300px 宽，返回 JPEG 字节
+// resizeCoverBytes 将封面缩小至双边不超过 300px，返回 JPEG 字节
 func resizeCoverBytes(data []byte) []byte {
 	img, err := decodeBounded(data)
 	if err != nil {
 		return nil
 	}
-	thumb := imaging.Resize(img, 300, 0, imaging.Lanczos)
+	thumb := boundedCoverThumbnail(img)
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 80}); err != nil {
 		return nil
@@ -298,9 +304,13 @@ func extractPDFCoverData(data []byte) []byte {
 
 // renderPDFFirstPage 用 go-pdfkit/render 渲染 PDF 第 1 页并缩放到封面尺寸。
 //
-// 渲染来自网络的文件必须设上限：MaxPixels 防超大 MediaBox 吃爆内存，
-// MaxDuration 防复杂/恶意页面卡住扫描协程。
+// MaxPixels 限制页面输出像素，MaxDuration 只约束渲染阶段。
+// reader.Open 的内部解压仍缺少硬预算，并发上限不能代替单任务资源限制。
+var pdfRenderSem = make(chan struct{}, 2)
+
 func renderPDFFirstPage(data []byte) []byte {
+	pdfRenderSem <- struct{}{}
+	defer func() { <-pdfRenderSem }()
 	doc, err := reader.Open(data)
 	if err != nil || doc.PageCount() < 1 {
 		return nil
@@ -314,7 +324,7 @@ func renderPDFFirstPage(data []byte) []byte {
 	if img == nil || (err != nil && !errors.Is(err, render.ErrTimedOut)) {
 		return nil
 	}
-	thumb := imaging.Resize(img.ToNRGBA(), 300, 0, imaging.Lanczos)
+	thumb := boundedCoverThumbnail(img.ToNRGBA())
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 80}); err != nil {
 		return nil
@@ -354,7 +364,28 @@ func extractPDFCoverBase64(data []byte) string {
 
 // ── 公共辅助 ──────────────────────────────────────────────────────────────────
 
-// imageDataToBase64Thumb 将图片字节解码并缩放为 300px 宽缩略图，返回 data URI base64
+func boundedCoverThumbnail(img image.Image) image.Image {
+	width, height := img.Bounds().Dx(), img.Bounds().Dy()
+	if width <= 300 && height <= 300 {
+		return img
+	}
+	if width >= height {
+		height = int(int64(height) * 300 / int64(width))
+		width = 300
+	} else {
+		width = int(int64(width) * 300 / int64(height))
+		height = 300
+	}
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
+	}
+	return imaging.Resize(img, width, height, imaging.Lanczos)
+}
+
+// imageDataToBase64Thumb 将图片字节解码并缩小至双边不超过 300px，返回 data URI base64
 func imageDataToBase64Thumb(data []byte) string {
 	img, err := decodeBounded(data)
 	if err != nil {
@@ -368,7 +399,7 @@ func imageDataToBase64Thumb(data []byte) string {
 		}
 		return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 	}
-	thumb := imaging.Resize(img, 300, 0, imaging.Lanczos)
+	thumb := boundedCoverThumbnail(img)
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 80}); err != nil {
 		return ""

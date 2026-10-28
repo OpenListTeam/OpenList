@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
@@ -406,5 +410,148 @@ func TestWalkMergeFoldersDepthLimit(t *testing.T) {
 	tree[dir] = []string{"deep.mkv"}
 	if got := collectMerge(t, tree, "/A"); len(got) != 0 {
 		t.Fatalf("expected depth limit to stop the walk, got %v", got)
+	}
+}
+
+func TestWalkMergeDepthFiltersExtrasBeforeFallback(t *testing.T) {
+	tree := map[string][]string{
+		"/TV":          {"剧A/"},
+		"/TV/剧A":       {"01.mkv", "Extras/", "Subs/"},
+		"/TV/剧A/Extras": {"trailer.mkv"},
+	}
+	got := collectDepth(t, tree, "/TV", 3)
+	if len(got) != 1 || got[0] != "/TV/剧A" {
+		t.Fatalf("got %v, want [/TV/剧A]", got)
+	}
+}
+
+func TestWalkMergeDepthKeepsIntermediateMedia(t *testing.T) {
+	tree := map[string][]string{
+		"/TV":            {"剧A/"},
+		"/TV/剧A":         {"Special.mkv", "Season 1/"},
+		"/TV/剧A/Season 1": {"01.mkv"},
+	}
+	got := collectDepth(t, tree, "/TV", 3)
+	if len(got) != 1 || got[0] != "/TV/剧A" {
+		t.Fatalf("got %v, want [/TV/剧A]", got)
+	}
+	raw, err := buildEpisodesFromFolderWith(context.Background(), fakeTree(tree), got[0], model.MediaTypeVideo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var episodes []EpisodeInfo
+	if err := json.Unmarshal([]byte(raw), &episodes); err != nil {
+		t.Fatal(err)
+	}
+	if len(episodes) != 2 {
+		t.Fatalf("episodes=%v, want intermediate and child media", episodes)
+	}
+}
+
+func TestScanWalkRootListErrors(t *testing.T) {
+	walkers := map[string]func(listDirFunc, func(string) error) error{
+		"auto": func(list listDirFunc, visit func(string) error) error {
+			return walkMergeFoldersWith(context.Background(), list, "/TV", model.MediaTypeVideo, 0, visit)
+		},
+		"fixed": func(list listDirFunc, visit func(string) error) error {
+			return walkMergeDepthWith(context.Background(), list, "/TV", model.MediaTypeVideo, 2, 0, visit)
+		},
+		"files": func(list listDirFunc, visit func(string) error) error {
+			return walkVFSWith(context.Background(), list, "/TV", model.MediaTypeVideo, 0, visit)
+		},
+	}
+	for name, walk := range walkers {
+		t.Run(name, func(t *testing.T) {
+			rootErr := errors.New("root unavailable")
+			list := func(context.Context, string) ([]model.Obj, error) { return nil, rootErr }
+			if err := walk(list, func(string) error { t.Fatal("visited unreadable root"); return nil }); !errors.Is(err, rootErr) {
+				t.Fatalf("got %v, want root error", err)
+			}
+			var visited []string
+			tree := map[string][]string{"/TV": {"bad/", "good/"}, "/TV/good": {"01.mkv"}}
+			if err := walk(fakeTree(tree), func(p string) error { visited = append(visited, p); return nil }); err != nil {
+				t.Fatalf("child error interrupted scan: %v", err)
+			}
+			if len(visited) != 1 || !strings.HasPrefix(visited[0], "/TV/good") {
+				t.Fatalf("good sibling was not scanned: %v", visited)
+			}
+		})
+	}
+}
+
+func TestMediaSaverSerializesConcurrentFlushAndAdd(t *testing.T) {
+	var active, saved, overlapping int32
+	s := &mediaSaver{p: &ScanProgress{}, last: time.Now()}
+	s.save = func(*model.MediaItem) error {
+		if atomic.AddInt32(&active, 1) != 1 {
+			atomic.StoreInt32(&overlapping, 1)
+		}
+		time.Sleep(time.Millisecond)
+		atomic.AddInt32(&saved, 1)
+		atomic.AddInt32(&active, -1)
+		return nil
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 80; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Add(&model.MediaItem{FileName: "track.mp3"})
+			s.Flush()
+		}()
+	}
+	wg.Wait()
+	s.Flush()
+	if atomic.LoadInt32(&overlapping) != 0 {
+		t.Fatal("concurrent database writes")
+	}
+	if got := atomic.LoadInt32(&saved); got != 80 || s.p.Done != 80 {
+		t.Fatalf("saved=%d done=%d, want 80", got, s.p.Done)
+	}
+}
+
+func TestPreserveMusicAlbumIdentity(t *testing.T) {
+	for _, oldAlbum := range []string{"Tagged album", ""} {
+		for _, newAlbum := range []string{"Tagged album", "Directory", ""} {
+			item := &model.MediaItem{MediaType: model.MediaTypeMusic, AlbumName: newAlbum}
+			if err := preserveMusicAlbumIdentity(item, []model.MediaItem{{AlbumName: oldAlbum}}); err != nil {
+				t.Fatal(err)
+			}
+			if item.AlbumName != oldAlbum {
+				t.Fatalf("album=%q, want stable %q", item.AlbumName, oldAlbum)
+			}
+		}
+	}
+	item := &model.MediaItem{MediaType: model.MediaTypeMusic, AlbumName: "new"}
+	if err := preserveMusicAlbumIdentity(item, nil); err != nil || item.AlbumName != "new" {
+		t.Fatalf("new item changed: %+v error=%v", item, err)
+	}
+	if err := preserveMusicAlbumIdentity(item, []model.MediaItem{{AlbumName: "a"}, {AlbumName: "b"}}); err == nil || item.AlbumName != "new" {
+		t.Fatalf("ambiguous identity not rejected without mutation: %+v error=%v", item, err)
+	}
+	video := &model.MediaItem{MediaType: model.MediaTypeVideo, AlbumName: "original"}
+	if err := preserveMusicAlbumIdentity(video, []model.MediaItem{{AlbumName: "other"}}); err != nil || video.AlbumName != "original" {
+		t.Fatalf("non-music changed: %+v error=%v", video, err)
+	}
+}
+
+func TestFillMusicSkipMetadataStillReadsSidecarLyrics(t *testing.T) {
+	item := &model.MediaItem{MediaType: model.MediaTypeMusic, FolderPath: "/music", FileName: "song.mp3", AlbumName: "existing album"}
+	reads := 0
+	fetch := func(_ context.Context, path string) io.ReadCloser {
+		reads++
+		if path != "/music/song.lrc" {
+			t.Fatalf("skip mode read audio content: %q", path)
+		}
+		return io.NopCloser(strings.NewReader("\ufeff[00:01.00]lyrics\n"))
+	}
+	fillMusicFromLocalWith(context.Background(), item, true, fetch)
+	if reads != 1 || item.Lyrics != "[00:01.00]lyrics" || item.AlbumName != "existing album" {
+		t.Fatalf("reads=%d item=%+v", reads, item)
+	}
+	item.Lyrics = "manual lyrics"
+	fillMusicFromLocalWith(context.Background(), item, true, fetch)
+	if reads != 1 || item.Lyrics != "manual lyrics" {
+		t.Fatalf("existing lyrics overwritten: reads=%d lyrics=%q", reads, item.Lyrics)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -66,11 +67,9 @@ type Seed struct {
 	Channels  []SeedChannel `json:"channels,omitempty"`
 	Files     []SeedFile    `json:"files"`
 
-	// GlobalPieces 是解析 .torrent 时拿到的整包 SHA1 pieces（按文件首尾相接切分）。
-	// 有了它就不必用「每文件 pieces 拼接」去重建 torrent，也就不要求文件大小与
-	// piece 对齐；从 OSS 种子或逐文件独立计算得到的 pieces 不走这条路。
-	// 仅运行时数据，不参与序列化。
-	GlobalPieces []string `json:"-"`
+	// GlobalPieces contains whole-package SHA1 pieces over concatenated files.
+	// The optional OSS field preserves crossing pieces through format conversion.
+	GlobalPieces []string `json:"global_pieces,omitempty"`
 
 	// AvailableHashes / AvailablePieceHashes 表示种子整体已经带有哪些算法。
 	// BT 的 pieces 是整包的，跨文件时无法拆到单个文件上，所以前端要按这个
@@ -139,9 +138,10 @@ type CASFileEntry struct {
 
 // CASPayload matches the reference .cas JSON payload. The five legacy fields
 // describe a single file (byte-for-byte compatible with the reference project);
-// the optional "files" array extends it to multi-file seeds, and the optional
-// slice_md5s/slice_size preserve the per-piece MD5 list.
+// the optional "files" array extends it to multi-file seeds, slice_md5s/slice_size
+// preserve per-piece MD5, and comment preserves sharing metadata.
 type CASPayload struct {
+	Comment    string   `json:"comment,omitempty"`
 	Name       string   `json:"name"`
 	Size       int64    `json:"size"`
 	MD5        string   `json:"md5"`
@@ -419,12 +419,12 @@ func Decode(data []byte) (*Torrent, error) {
 			return nil, fmt.Errorf("torrent: info is not a dict")
 		}
 
-		// 计算 info_hash
-		infoBytes, err := BencodeEncode(infoDict)
+		// Hash the original info bytes, including noncanonical ordering.
+		fields, err := rawBencodeRoot(data)
 		if err != nil {
-			return nil, fmt.Errorf("encode info for hash: %w", err)
+			return nil, err
 		}
-		infoHashRaw := sha1.Sum(infoBytes)
+		infoHashRaw := sha1.Sum(fields["info"])
 		t.InfoHash = infoHashRaw[:]
 
 		// 解析 info 字段
@@ -647,7 +647,7 @@ func ValidateTorrent(t *Torrent, limits ParseLimits) error {
 	}
 	expectedPieces := int64(0)
 	if total > 0 {
-		expectedPieces = (total + t.Info.PieceLength - 1) / t.Info.PieceLength
+		expectedPieces = (total-1)/t.Info.PieceLength + 1
 	}
 	if int64(len(t.Info.Pieces)/sha1.Size) != expectedPieces {
 		return fmt.Errorf("torrent: piece count mismatch")
@@ -743,6 +743,43 @@ func ValidateSeed(seed *Seed, limits ParseLimits) error {
 			return fmt.Errorf("channel mount_path contains invalid characters")
 		}
 	}
+	return validateGlobalPieces(seed, total)
+}
+
+func validateGlobalPieces(seed *Seed, total int64) error {
+	if len(seed.GlobalPieces) == 0 {
+		return nil
+	}
+	expected := int64(0)
+	if total > 0 {
+		expected = (total-1)/seed.PieceSize + 1
+	}
+	if int64(len(seed.GlobalPieces)) != expected {
+		return fmt.Errorf("global SHA1 piece count is %d, expected %d", len(seed.GlobalPieces), expected)
+	}
+	for _, piece := range seed.GlobalPieces {
+		if !validHexHash(piece, sha1.Size*2) {
+			return fmt.Errorf("invalid global SHA1 piece hash")
+		}
+	}
+	var offset int64
+	for i, file := range seed.Files {
+		if offset%seed.PieceSize == 0 && file.Hashes.Pieces != nil {
+			count := file.Size / seed.PieceSize
+			if i == len(seed.Files)-1 && file.Size%seed.PieceSize != 0 {
+				count++
+			}
+			for j, piece := range file.Hashes.Pieces.SHA1 {
+				if int64(j) >= count {
+					break
+				}
+				if !strings.EqualFold(piece, seed.GlobalPieces[offset/seed.PieceSize+int64(j)]) {
+					return fmt.Errorf("file %q SHA1 piece %d conflicts with global pieces", file.Path, j)
+				}
+			}
+		}
+		offset += file.Size
+	}
 	return nil
 }
 
@@ -779,9 +816,9 @@ func validateSeedHashes(hashes SeedHashes, size, pieceSize int64) error {
 	if hashes.Pieces == nil {
 		return nil
 	}
-	expected := 0
+	expected := int64(0)
 	if size > 0 {
-		expected = int((size + pieceSize - 1) / pieceSize)
+		expected = (size-1)/pieceSize + 1
 	}
 	pieceSets := []struct {
 		name   string
@@ -793,7 +830,7 @@ func validateSeedHashes(hashes SeedHashes, size, pieceSize int64) error {
 		{"sha256", 64, hashes.Pieces.SHA256},
 	}
 	for _, set := range pieceSets {
-		if len(set.values) != 0 && len(set.values) != expected {
+		if len(set.values) != 0 && int64(len(set.values)) != expected {
 			return fmt.Errorf("%s piece count is %d, expected %d", set.name, len(set.values), expected)
 		}
 		for _, value := range set.values {
@@ -845,6 +882,7 @@ func DecodeOSS(data []byte, limits ParseLimits) (*Seed, error) {
 	if err := ValidateSeed(&seed, limits); err != nil {
 		return nil, err
 	}
+	fillAvailableHashes(&seed, "")
 	return &seed, nil
 }
 
@@ -923,6 +961,7 @@ func EncodeCAS(seed *Seed) ([]byte, error) {
 		}
 		payload = CASPayload{Name: seed.Name, Size: totalSize, Files: entries}
 	}
+	payload.Comment = seed.Comment
 	content, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -950,6 +989,7 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 		return nil, fmt.Errorf("decode CAS: %w", err)
 	}
 	seed := NewSeed(payload.Name, "OpenList CAS", DefaultPieceSize)
+	seed.Comment = payload.Comment
 	if len(payload.Files) > 0 {
 		// Multi-file extension.
 		if len(payload.Files) > limits.MaxFiles {
@@ -1065,6 +1105,157 @@ func EncodeSeed(seed *Seed, format string) ([]byte, error) {
 	}
 }
 
+// UpdateSeedComment changes container metadata without rebuilding torrent info.
+// CAS updates preserve unknown JSON fields and the original plain/base64 wrapper.
+func UpdateSeedComment(data []byte, format, comment string) ([]byte, error) {
+	if int64(len(comment)) > DefaultMaxSeedSize {
+		return nil, fmt.Errorf("comment exceeds %d bytes", DefaultMaxSeedSize)
+	}
+	if !utf8.ValidString(comment) {
+		return nil, fmt.Errorf("comment is not valid UTF-8")
+	}
+	switch strings.ToLower(strings.TrimPrefix(format, ".")) {
+	case "oss":
+		seed, err := DecodeOSS(data, DefaultParseLimits())
+		if err != nil {
+			return nil, err
+		}
+		seed.Comment = comment
+		return EncodeOSS(seed)
+	case "torrent":
+		if _, err := Decode(data); err != nil {
+			return nil, err
+		}
+		fields, err := rawBencodeRoot(data)
+		if err != nil {
+			return nil, err
+		}
+		if comment == "" {
+			delete(fields, "comment")
+		} else {
+			fields["comment"], err = BencodeEncode(comment)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if raw, ok := fields[OpenListExtensionKey]; ok {
+			value, err := BencodeDecode(raw)
+			if err != nil {
+				return nil, err
+			}
+			extension, ok := value.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("x-openlist is not a dictionary")
+			}
+			if comment == "" {
+				delete(extension, "comment")
+			} else {
+				extension["comment"] = comment
+			}
+			fields[OpenListExtensionKey], err = BencodeEncode(extension)
+			if err != nil {
+				return nil, err
+			}
+		}
+		keys := make([]string, 0, len(fields))
+		for key := range fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var output bytes.Buffer
+		output.WriteByte('d')
+		for _, key := range keys {
+			if err := bencodeEncodeString(&output, key); err != nil {
+				return nil, err
+			}
+			output.Write(fields[key])
+		}
+		output.WriteByte('e')
+		if int64(output.Len()) > DefaultMaxSeedSize {
+			return nil, fmt.Errorf("seed exceeds %d bytes", DefaultMaxSeedSize)
+		}
+		return output.Bytes(), nil
+	case "cas":
+		if _, err := DecodeCAS(data, DefaultParseLimits()); err != nil {
+			return nil, err
+		}
+		content := bytes.TrimSpace(data)
+		decoded, err := base64.StdEncoding.DecodeString(string(content))
+		encoded := err == nil
+		if encoded {
+			content = decoded
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(content, &fields); err != nil {
+			return nil, fmt.Errorf("decode CAS: %w", err)
+		}
+		if comment == "" {
+			delete(fields, "comment")
+		} else {
+			fields["comment"], err = json.Marshal(comment)
+			if err != nil {
+				return nil, err
+			}
+		}
+		content, err = json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+		if encoded {
+			output := make([]byte, base64.StdEncoding.EncodedLen(len(content)))
+			base64.StdEncoding.Encode(output, content)
+			content = output
+		}
+		if int64(len(content)) > DefaultMaxSeedSize {
+			return nil, fmt.Errorf("CAS seed exceeds %d bytes", DefaultMaxSeedSize)
+		}
+		return content, nil
+	default:
+		return nil, fmt.Errorf("unsupported seed format %q", format)
+	}
+}
+
+func rawBencodeRoot(data []byte) (map[string][]byte, error) {
+	if int64(len(data)) > DefaultMaxSeedSize {
+		return nil, fmt.Errorf("bencode: input exceeds %d bytes", DefaultMaxSeedSize)
+	}
+	if len(data) == 0 || data[0] != 'd' {
+		return nil, fmt.Errorf("torrent: root is not a dict")
+	}
+	reader := bytes.NewReader(data[1:])
+	fields := make(map[string][]byte)
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		if b == 'e' {
+			if reader.Len() != 0 {
+				return nil, fmt.Errorf("bencode: trailing data")
+			}
+			return fields, nil
+		}
+		if len(fields) >= DefaultMaxSeedFiles*4 {
+			return nil, fmt.Errorf("bencode: dictionary item limit exceeded")
+		}
+		if err := reader.UnreadByte(); err != nil {
+			return nil, err
+		}
+		key, err := bencodeDecodeString(reader)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := fields[string(key)]; exists {
+			return nil, fmt.Errorf("bencode: duplicate root key %q", key)
+		}
+		start := len(data) - reader.Len()
+		if _, err := bencodeDecodeValue(reader, 1); err != nil {
+			return nil, err
+		}
+		fields[string(key)] = data[start : len(data)-reader.Len()]
+	}
+}
+
 // DiagnoseConversion reports information missing for a lossless target conversion.
 func DiagnoseConversion(seed *Seed, format string) []string {
 	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
@@ -1127,6 +1318,7 @@ func TorrentFromSeed(seed *Seed) (*Torrent, []string) {
 	}
 	for _, file := range seed.Files {
 		if len(seed.Files) == 1 {
+			t.Info.Name = path.Base(file.Path)
 			t.Info.Length = file.Size
 			t.Info.MD5Sum = file.Hashes.MD5
 		} else {
@@ -1210,27 +1402,20 @@ func validateOpenListTorrentConsistency(t *Torrent, seed *Seed) error {
 		}
 	}
 	standardPieces := t.GetPieceHashes()
-	extensionPieces := make([]string, 0, len(standardPieces))
-	pieceBoundariesAligned := true
-	for i, file := range seed.Files {
-		if i < len(seed.Files)-1 && file.Size%seed.PieceSize != 0 {
-			pieceBoundariesAligned = false
-		}
-		if file.Hashes.Pieces != nil {
-			extensionPieces = append(extensionPieces, file.Hashes.Pieces.SHA1...)
-		}
+	globalPieces := make([]string, 0, len(standardPieces))
+	if len(seed.GlobalPieces) > 0 && len(seed.GlobalPieces) != len(standardPieces) {
+		return fmt.Errorf("x-openlist global SHA1 pieces conflict with torrent info")
 	}
-	if pieceBoundariesAligned && len(extensionPieces) > 0 {
-		if len(extensionPieces) != len(standardPieces) {
-			return fmt.Errorf("x-openlist SHA-1 pieces conflict with torrent info")
+	for i, piece := range standardPieces {
+		value := hex.EncodeToString(piece)
+		if len(seed.GlobalPieces) > 0 && !strings.EqualFold(seed.GlobalPieces[i], value) {
+			return fmt.Errorf("x-openlist global SHA1 piece %d conflicts with torrent info", i)
 		}
-		for i, piece := range standardPieces {
-			if !strings.EqualFold(extensionPieces[i], hex.EncodeToString(piece)) {
-				return fmt.Errorf("x-openlist SHA-1 piece %d conflicts with torrent info", i)
-			}
-		}
+		globalPieces = append(globalPieces, value)
 	}
-	return nil
+	check := *seed
+	check.GlobalPieces = globalPieces
+	return validateGlobalPieces(&check, t.GetTotalSize())
 }
 
 // seedHashAlgoOrder 固定算法输出顺序，避免 map 遍历导致 JSON 抖动。
@@ -1244,6 +1429,9 @@ func fillAvailableHashes(seed *Seed, extraPieceAlgo string) {
 	}
 	whole := map[string]bool{}
 	pieces := map[string]bool{}
+	if len(seed.GlobalPieces) > 0 {
+		pieces["sha1"] = true
+	}
 	for _, f := range seed.Files {
 		if f.Hashes.MD5 != "" {
 			whole["md5"] = true
@@ -1283,8 +1471,8 @@ func fillAvailableHashes(seed *Seed, extraPieceAlgo string) {
 
 // SeedFromTorrent normalizes a standard torrent and preserves x-openlist when present.
 func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
-	if t == nil {
-		return nil, fmt.Errorf("missing torrent")
+	if err := ValidateTorrent(t, limits); err != nil {
+		return nil, err
 	}
 	pieceHex := make([]string, 0, len(t.Info.Pieces)/sha1.Size)
 	for _, piece := range t.GetPieceHashes() {
@@ -1338,18 +1526,20 @@ func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
 		// pieces 是整包的：跨文件时无法按文件均分（ValidateSeed 要求每个文件的
 		// 片数 = ceil(size/piece)），所以只在能整除时挂到文件上，
 		// 其余情况靠种子级的 AvailablePieceHashes 表示「已带该算法的 pieces」
-		pieceOffset := 0
+		var offset int64
 		for i, file := range t.Info.Files {
 			hashes := SeedHashes{MD5: file.MD5Sum}
-			pieceCount := 0
+			pieceCount := int64(0)
 			if file.Length > 0 && t.Info.PieceLength > 0 {
-				pieceCount = int((file.Length + t.Info.PieceLength - 1) / t.Info.PieceLength)
+				pieceCount = (file.Length-1)/t.Info.PieceLength + 1
 			}
-			aligned := i == len(t.Info.Files)-1 || file.Length%t.Info.PieceLength == 0
-			if aligned && pieceOffset+pieceCount <= len(pieceHex) {
+			pieceOffset := offset / t.Info.PieceLength
+			aligned := offset%t.Info.PieceLength == 0 &&
+				(i == len(t.Info.Files)-1 || file.Length%t.Info.PieceLength == 0)
+			if aligned && pieceOffset+pieceCount <= int64(len(pieceHex)) {
 				hashes.Pieces = &SeedPieceHashes{SHA1: append([]string(nil), pieceHex[pieceOffset:pieceOffset+pieceCount]...)}
 			}
-			pieceOffset += pieceCount
+			offset += file.Length
 			seed.Files = append(seed.Files, SeedFile{Path: strings.Join(file.Path, "/"), Size: file.Length, Hashes: hashes})
 		}
 	}

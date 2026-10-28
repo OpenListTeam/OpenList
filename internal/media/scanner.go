@@ -29,9 +29,8 @@ import (
 
 // SkipFileMetadata 表示「不从文件读取信息」开关已打开。
 //
-// 打开后扫描与刮削都不再读取媒体文件内容（音乐 ID3 / Vorbis、书籍内嵌封面、
-// 图片 EXIF），只用文件名与目录名推断元数据。适合网盘风控敏感、
-// 或扫描大库时不想为每个文件产生一次读取请求的场景。
+// 打开后扫描与刮削跳过音乐 ID3 / Vorbis、图片 EXIF 与 EPUB/PDF 内嵌封面读取，
+// 只用文件名与目录名推断元数据；图片缩略图与同目录外部 .lrc 仍允许读取内容。
 func SkipFileMetadata() bool {
 	return setting.GetBool(conf.MediaSkipFileMetadata)
 }
@@ -391,6 +390,9 @@ func ScanMedia(cfg *model.MediaConfig) {
 			p.mu.Unlock()
 
 			if err := doScanPath(sp, p); err != nil {
+				p.mu.Lock()
+				p.Error = err.Error()
+				p.mu.Unlock()
 				log.Errorf("media scan error [%s] path[%s]: %v", cfg.MediaType, sp.Path, err)
 			} else {
 				// 更新最后扫描时间
@@ -401,18 +403,21 @@ func ScanMedia(cfg *model.MediaConfig) {
 		}
 
 		p.mu.Lock()
-		if p.Skipped > 0 {
-			// 让管理端能直接看到「有 N 条因为路径过长没入库」
+		failed := p.Error != ""
+		if failed {
+			p.Message = "扫描完成（部分路径失败）"
+		} else if p.Skipped > 0 {
 			p.Message = fmt.Sprintf("扫描完成（跳过 %d 条）", p.Skipped)
-			log.Warnf("media scan skipped %d items (path/name too long for unique index)", p.Skipped)
+			log.Warnf("media scan skipped %d items (see warnings for rejected items)", p.Skipped)
 		} else {
 			p.Message = "扫描完成"
 		}
 		p.mu.Unlock()
-		// 更新媒体库最后扫描时间
-		now := time.Now()
-		cfg.LastScanAt = &now
-		_ = db.SaveMediaConfig(cfg)
+		if !failed {
+			now := time.Now()
+			cfg.LastScanAt = &now
+			_ = db.SaveMediaConfig(cfg)
+		}
 
 		// 按需生成 STRM
 		TriggerStrmOnScan(cfg.MediaType, GetAPIRoot())
@@ -455,7 +460,7 @@ func ScanMediaPath(sp *model.MediaScanPath) {
 			p.mu.Lock()
 			if p.Skipped > 0 {
 				p.Message = fmt.Sprintf("扫描完成（跳过 %d 条）", p.Skipped)
-				log.Warnf("media scan skipped %d items (path/name too long for unique index)", p.Skipped)
+				log.Warnf("media scan skipped %d items (see warnings for rejected items)", p.Skipped)
 			} else {
 				p.Message = "扫描完成"
 			}
@@ -471,10 +476,12 @@ func ScanMediaPath(sp *model.MediaScanPath) {
 // mediaSaveBatchInterval 就写一次数据库。这样扫描过程本身是可见的，不必等整棵树
 // 枚举完毕。
 type mediaSaver struct {
-	mu   sync.Mutex
-	buf  []*model.MediaItem
-	last time.Time
-	p    *ScanProgress
+	mu      sync.Mutex
+	writeMu sync.Mutex
+	buf     []*model.MediaItem
+	last    time.Time
+	p       *ScanProgress
+	save    func(*model.MediaItem) error
 	// 定时落盘的守护协程。只在 Add 里检查间隔是不够的：扫描卡在慢速远端目录上时
 	// 可能长时间没有新条目，缓冲区里的数据就一直不落盘。
 	stop chan struct{}
@@ -535,6 +542,8 @@ func (s *mediaSaver) Add(item *model.MediaItem) {
 
 // Flush 把缓冲区写库并更新进度。
 func (s *mediaSaver) Flush() {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.mu.Lock()
 	items := s.buf
 	s.buf = nil
@@ -543,9 +552,13 @@ func (s *mediaSaver) Flush() {
 	if len(items) == 0 {
 		return
 	}
+	save := s.save
+	if save == nil {
+		save = saveScannedMediaItem
+	}
 	var lastName string
 	for _, item := range items {
-		if err := db.CreateOrUpdateMediaItem(item); err != nil {
+		if err := save(item); err != nil {
 			log.Warnf("save media item error [%s/%s]: %v", item.FolderPath, item.FileName, err)
 			s.p.mu.Lock()
 			s.p.Skipped++
@@ -560,6 +573,35 @@ func (s *mediaSaver) Flush() {
 		s.p.Message = fmt.Sprintf("已落盘 %d 条，最近: %s", s.p.Done, lastName)
 	}
 	s.p.mu.Unlock()
+}
+
+// 扫描时专辑名属于旧唯一键，保持既有身份；调整专辑归属或清理重复需显式迁移。
+func preserveMusicAlbumIdentity(item *model.MediaItem, existing []model.MediaItem) error {
+	if item.MediaType != model.MediaTypeMusic {
+		return nil
+	}
+	if len(existing) > 1 {
+		return fmt.Errorf("multiple music identities at %s/%s; explicit migration required", item.FolderPath, item.FileName)
+	}
+	if len(existing) == 1 {
+		item.AlbumName = existing[0].AlbumName
+	}
+	return nil
+}
+
+func saveScannedMediaItem(item *model.MediaItem) error {
+	if item.MediaType == model.MediaTypeMusic {
+		var existing []model.MediaItem
+		if err := db.GetDb().Unscoped().Select("album_name").
+			Where("media_type = ? AND folder_path = ? AND file_name = ?", model.MediaTypeMusic, item.FolderPath, item.FileName).
+			Limit(2).Find(&existing).Error; err != nil {
+			return err
+		}
+		if err := preserveMusicAlbumIdentity(item, existing); err != nil {
+			return err
+		}
+	}
+	return db.CreateOrUpdateMediaItem(item)
 }
 
 func doScanPath(sp *model.MediaScanPath, p *ScanProgress) error {
@@ -636,15 +678,7 @@ func doScanPath(sp *model.MediaScanPath, p *ScanProgress) error {
 			}
 		}
 
-		// 旧版本按季各成一条的记录（folder_path=剧名目录, file_name=第一季）会与
-		// 当前这条重复，顺手清掉，避免同一部剧在媒体库里出现两次
-		if len(seasons) > 0 {
-			for _, name := range seasons {
-				if _, err := db.DeleteMediaItemByPath(target, name); err != nil {
-					log.Warnf("delete stale season item [%s/%s]: %v", target, name, err)
-				}
-			}
-		}
+		// 旧季条目及其批注保留；合并后的历史条目需要用户显式迁移，扫描不硬删除。
 
 		if err := mediaItemSizeCheck(item); err != nil {
 			log.Warnf("skip media item [%s]: %v", target, err)
@@ -722,7 +756,10 @@ func walkMergeFoldersWith(ctx context.Context, list listDirFunc, dirPath string,
 	entries, err := list(ctx, dirPath)
 	if err != nil {
 		log.Warnf("media scan: list vfs path [%s] error: %v", dirPath, err)
-		return nil // 跳过无权限目录，不中断整体扫描
+		if depth == 0 {
+			return err
+		}
+		return nil // 子目录错误不影响其余路径
 	}
 
 	// 第一遍：收集本层文件与子目录
@@ -798,38 +835,40 @@ func walkMergeDepthWith(ctx context.Context, list listDirFunc, dirPath string, m
 	entries, err := list(ctx, dirPath)
 	if err != nil {
 		log.Warnf("media scan: list vfs path [%s] error: %v", dirPath, err)
-		return nil // 跳过无权限目录，不中断整体扫描
+		if curDepth == 0 {
+			return err
+		}
+		return nil // 子目录错误不影响其余路径
 	}
 
 	var dirs []string
+	hasMedia := false
 	for _, e := range entries {
 		childPath := stdpath.Join(dirPath, e.GetName())
 		if e.IsDir() {
-			dirs = append(dirs, childPath)
+			if !isExtraMediaDir(e.GetName()) {
+				dirs = append(dirs, childPath)
+			}
 			continue
 		}
+		if !isMediaFile(e.GetName(), mediaType) {
+			continue
+		}
+		hasMedia = true
 		// 扫描根下散落的媒体文件：各自独立成条（与自动模式保持一致）
-		if curDepth == 0 && isMediaFile(e.GetName(), mediaType) {
+		if curDepth == 0 {
 			if err := visit(childPath); err != nil {
 				return err
 			}
 		}
 	}
 
-	if len(dirs) == 0 {
-		// 层级还没到目标深度，但已经没有子目录可下钻：当前目录就是这一条，
-		// 否则这种「层级不够」的库会一条都扫不出来。
-		if curDepth > 0 {
-			return visit(dirPath)
-		}
-		return nil
+	// 本层已有媒体时提前归入当前集合，visit 递归收集整棵子树，不再创建重复子条目。
+	if curDepth > 0 && (hasMedia || len(dirs) == 0) {
+		return visit(dirPath)
 	}
 
 	for _, sub := range dirs {
-		// 花絮 / 字幕 / 样片这类附属目录不参与成条
-		if isExtraMediaDir(stdpath.Base(sub)) {
-			continue
-		}
 		if err := walkMergeDepthWith(ctx, list, sub, mediaType, targetDepth, curDepth+1, visit); err != nil {
 			return err
 		}
@@ -1086,12 +1125,16 @@ func saveMusicTarget(ctx context.Context, target string, sp *model.MediaScanPath
 //
 // musicVfsPath 为音乐文件的 VFS 全路径；tag 可为 nil
 func loadLyricsForMusic(ctx context.Context, musicVfsPath string, tag *MusicTag) string {
+	return loadLyricsForMusicWith(ctx, musicVfsPath, tag, FetchFileReader)
+}
+
+func loadLyricsForMusicWith(ctx context.Context, musicVfsPath string, tag *MusicTag, fetch func(context.Context, string) io.ReadCloser) string {
 	// 尝试同目录同名 .lrc
 	ext := stdpath.Ext(musicVfsPath)
 	if ext != "" {
 		lrcPath := strings.TrimSuffix(musicVfsPath, ext) + ".lrc"
 		lrcCtx, lrcCancel := context.WithTimeout(ctx, 8*time.Second)
-		reader := FetchFileReader(lrcCtx, lrcPath)
+		reader := fetch(lrcCtx, lrcPath)
 		if reader != nil {
 			// 限制读取上限 1MB，避免异常文件压垮内存
 			data, err := io.ReadAll(io.LimitReader(reader, 1024*1024))
@@ -1146,15 +1189,22 @@ func FetchFileReader(ctx context.Context, vfsPath string) io.ReadCloser {
 
 // walkVFS 递归遍历 VFS 路径，收集匹配的媒体文件路径（每个目录都刷新缓存）
 func walkVFS(ctx context.Context, dirPath string, mediaType model.MediaType, visit func(string) error) error {
-	entries, err := fs.List(ctx, dirPath, &fs.ListArgs{NoLog: true, Refresh: true})
+	return walkVFSWith(ctx, listVFSDir, dirPath, mediaType, 0, visit)
+}
+
+func walkVFSWith(ctx context.Context, list listDirFunc, dirPath string, mediaType model.MediaType, depth int, visit func(string) error) error {
+	entries, err := list(ctx, dirPath)
 	if err != nil {
 		log.Warnf("media scan: list vfs path [%s] error: %v", dirPath, err)
-		return nil // 跳过无权限目录，不中断整体扫描
+		if depth == 0 {
+			return err
+		}
+		return nil // 子目录错误不影响其余路径
 	}
 	for _, e := range entries {
 		childPath := stdpath.Join(dirPath, e.GetName())
 		if e.IsDir() {
-			if err := walkVFS(ctx, childPath, mediaType, visit); err != nil {
+			if err := walkVFSWith(ctx, list, childPath, mediaType, depth+1, visit); err != nil {
 				return err
 			}
 		} else if isMediaFile(e.GetName(), mediaType) {

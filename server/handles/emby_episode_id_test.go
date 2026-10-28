@@ -75,3 +75,25 @@ func TestResumeEpisodeIDSingleFile(t *testing.T) {
 		t.Fatalf("单文件条目应保持旧格式，got %q", got)
 	}
 }
+
+func TestRegisterEpisodeIDLegacyAliases(t *testing.T) {
+	lib, _ := newResumeTestLibrary(`[
+		{"file_name":"S01E01.mkv","index":1,"season":1},
+		{"file_name":"S02E01.mkv","index":1,"season":2},
+		{"file_name":"S02E02.mkv","index":2,"season":2}
+	]`)
+	lib.ids = make(map[string]string)
+	lib.registerIDs()
+	for _, orig := range []string{"ep-7-1", "ep-7-2", "ep-7-1-1", "ep-7-2-1", "ep-7-2-2"} {
+		for _, id := range []string{orig, embyNumericID(orig), embyGUID(orig)} {
+			if got := lib.origID(id); got != orig {
+				t.Fatalf("origID(%q) = %q, want %q", id, got, orig)
+			}
+			item, season, num, ok := parseEpisodeID(lib.origID(id))
+			wantItem, wantSeason, wantNum, wantOK := parseEpisodeID(orig)
+			if !ok || !wantOK || item != wantItem || season != wantSeason || num != wantNum {
+				t.Fatalf("episode alias %q did not resolve to %q", id, orig)
+			}
+		}
+	}
+}

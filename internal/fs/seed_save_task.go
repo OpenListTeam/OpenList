@@ -76,14 +76,14 @@ func (t *SeedSaveTask) Finish(err error) {
 		defer t.cancel()
 	}
 	t.SetEndTime(time.Now())
+	if errors.Is(err, context.Canceled) ||
+		t.GetState() == tache.StateCanceling || t.GetState() == tache.StateCanceled ||
+		(t.Ctx() != nil && errors.Is(t.Ctx().Err(), context.Canceled)) {
+		t.SetStatus("已取消")
+		t.SetState(tache.StateCanceled)
+		return
+	}
 	if err != nil {
-		// 用户点过「取消」：不要把任务标成失败，否则任务列表里看不出是自己取消的
-		if errors.Is(err, context.Canceled) ||
-			t.GetState() == tache.StateCanceling || t.GetState() == tache.StateCanceled {
-			t.SetStatus("已取消")
-			t.SetState(tache.StateCanceled)
-			return
-		}
 		t.SetErr(err)
 		t.SetState(tache.StateFailed)
 		return

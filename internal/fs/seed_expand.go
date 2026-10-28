@@ -6,6 +6,7 @@ import (
 	stdpath "path"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -65,13 +66,12 @@ func ExpandSeedSources(ctx context.Context, user *model.User, paths []string, pr
 		if !common.CanRead(user, meta, fullPath) {
 			return nil, errs.PermissionDenied
 		}
-		storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
-		if err != nil {
+		if err := checkSeedSourceVisibility(user, fullPath); err != nil {
 			return nil, err
 		}
-		obj, err := op.Get(ctx, storage, actualPath)
+		obj, err := Get(ctx, fullPath, &GetArgs{NoLog: true})
 		if err != nil {
-			return nil, fmt.Errorf("seed path is not readable: %s", requestedPath)
+			return nil, fmt.Errorf("seed path is not readable: %s: %w", requestedPath, err)
 		}
 		if obj.IsDir() {
 			dirCount++
@@ -105,12 +105,34 @@ func ExpandSeedSources(ctx context.Context, user *model.User, paths []string, pr
 	return finalizeSeedEntries(raw, preserve, root), nil
 }
 
+func checkSeedSourceVisibility(user *model.User, fullPath string) error {
+	if user.CanSeeHides() {
+		return nil
+	}
+	base := stdpath.Clean(user.BasePath)
+	for current := stdpath.Clean(fullPath); current != "/" && current != base; current = stdpath.Dir(current) {
+		parent := stdpath.Dir(current)
+		meta, err := op.GetNearestMeta(parent)
+		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+			return err
+		}
+		if whetherHide(user, meta, parent) {
+			merge := model.NewObjMerge()
+			merge.InitHideReg(meta.Hide)
+			if len(merge.Merge([]model.Obj{&model.Object{Name: stdpath.Base(current)}})) == 0 {
+				return errs.PermissionDenied
+			}
+		}
+	}
+	return nil
+}
+
 // finalizeSeedEntries 根据相对 root 的路径生成种子内路径：
 // preserve 时保留层级，否则只留文件名并处理重名。
 func finalizeSeedEntries(raw []rawSeedEntry, preserve bool, root string) []SeedSourceEntry {
 	entries := make([]SeedSourceEntry, 0, len(raw))
 	for _, item := range raw {
-		rel := strings.TrimPrefix(item.full, strings.TrimSuffix(root, "/")+"/")
+		rel := strings.TrimPrefix(stdpath.Clean(item.requested), strings.TrimSuffix(root, "/")+"/")
 		rel = strings.TrimPrefix(rel, "/")
 		seedPath := rel
 		if !preserve {
@@ -147,17 +169,11 @@ func walkSeedDir(ctx context.Context, user *model.User, requestedDir, fullDir, r
 	if !common.CanRead(user, meta, fullDir) {
 		return errs.PermissionDenied
 	}
-	storage, actualPath, err := op.GetStorageAndActualPath(fullDir)
-	if err != nil {
-		return err
-	}
-	objs, err := op.List(ctx, storage, actualPath, model.ListArgs{})
+	listCtx := context.WithValue(ctx, conf.UserKey, user)
+	listCtx = context.WithValue(listCtx, conf.MetaKey, meta)
+	objs, err := List(listCtx, fullDir, &ListArgs{NoLog: true})
 	if err != nil {
 		return fmt.Errorf("list %s: %w", fullDir, err)
-	}
-	objs, err = filterReadableObjs(objs, user, fullDir, meta)
-	if err != nil {
-		return err
 	}
 	for _, obj := range objs {
 		if err := ctx.Err(); err != nil {
@@ -200,20 +216,20 @@ func seedModified(obj model.Obj) string {
 func dedupeSeedPaths(entries []SeedSourceEntry) {
 	used := make(map[string]int, len(entries))
 	for i := range entries {
-		name := entries[i].SeedPath
-		if n := used[name]; n > 0 {
-			ext := stdpath.Ext(name)
-			base := strings.TrimSuffix(name, ext)
-			for {
-				n++
-				candidate := fmt.Sprintf("%s (%d)%s", base, n, ext)
-				if used[candidate] == 0 {
-					name = candidate
-					break
-				}
-			}
-		}
-		used[name]++
-		entries[i].SeedPath = name
+		entries[i].SeedPath = uniqueSeedFileName(entries[i].SeedPath, used)
 	}
+}
+
+func uniqueSeedFileName(name string, used map[string]int) string {
+	original := name
+	ext := stdpath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	for n := 2; used[name] > 0; n++ {
+		name = fmt.Sprintf("%s (%d)%s", base, n, ext)
+	}
+	used[original]++
+	if name != original {
+		used[name]++
+	}
+	return name
 }

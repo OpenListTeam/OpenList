@@ -124,7 +124,8 @@ func getBatchHandler[T task.TaskExtensionInfo](manager task.Manager[T], callback
 	}
 }
 
-func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manager[T]) {
+func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manager[T], allowRetry ...bool) {
+	canRetry := len(allowRetry) == 0 || allowRetry[0]
 	g.GET("/undone", func(c *gin.Context) {
 		isAdmin, uid, ok := getUserInfo(c)
 		if !ok {
@@ -162,19 +163,23 @@ func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manage
 		manager.Remove(task.GetID())
 		common.SuccessResp(c)
 	}))
-	g.POST("/retry", getTargetedHandler(manager, func(c *gin.Context, task T) {
-		manager.Retry(task.GetID())
-		common.SuccessResp(c)
-	}))
+	if canRetry {
+		g.POST("/retry", getTargetedHandler(manager, func(c *gin.Context, task T) {
+			manager.Retry(task.GetID())
+			common.SuccessResp(c)
+		}))
+	}
 	g.POST("/cancel_some", getBatchHandler(manager, func(task T) {
 		manager.Cancel(task.GetID())
 	}))
 	g.POST("/delete_some", getBatchHandler(manager, func(task T) {
 		manager.Remove(task.GetID())
 	}))
-	g.POST("/retry_some", getBatchHandler(manager, func(task T) {
-		manager.Retry(task.GetID())
-	}))
+	if canRetry {
+		g.POST("/retry_some", getBatchHandler(manager, func(task T) {
+			manager.Retry(task.GetID())
+		}))
+	}
 	g.POST("/clear_done", func(c *gin.Context) {
 		isAdmin, uid, ok := getUserInfo(c)
 		if !ok {
@@ -200,21 +205,22 @@ func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manage
 		})
 		common.SuccessResp(c)
 	})
-	g.POST("/retry_failed", func(c *gin.Context) {
-		isAdmin, uid, ok := getUserInfo(c)
-		if !ok {
-			// if there is no bug, here is unreachable
-			common.ErrorStrResp(c, "user invalid", 401)
-			return
-		}
-		tasks := manager.GetByCondition(func(task T) bool {
-			return (isAdmin || uid == task.GetCreator().ID) && task.GetState() == tache.StateFailed
+	if canRetry {
+		g.POST("/retry_failed", func(c *gin.Context) {
+			isAdmin, uid, ok := getUserInfo(c)
+			if !ok {
+				common.ErrorStrResp(c, "user invalid", 401)
+				return
+			}
+			tasks := manager.GetByCondition(func(task T) bool {
+				return (isAdmin || uid == task.GetCreator().ID) && task.GetState() == tache.StateFailed
+			})
+			for _, t := range tasks {
+				manager.Retry(t.GetID())
+			}
+			common.SuccessResp(c)
 		})
-		for _, t := range tasks {
-			manager.Retry(t.GetID())
-		}
-		common.SuccessResp(c)
-	})
+	}
 }
 
 func SetupTaskRoute(g *gin.RouterGroup) {
@@ -228,5 +234,5 @@ func SetupTaskRoute(g *gin.RouterGroup) {
 	// 种子相关任务：之前生成哈希的任务既没有进度也没有出现在任务列表里，
 	// 秒传/中转保存则是纯同步请求。现在两者都能在任务列表看到进度。
 	taskRoute(g.Group("/seed_generate"), fs.SeedGenerateTaskManager)
-	taskRoute(g.Group("/seed_save"), fs.SeedSaveTaskManager)
+	taskRoute(g.Group("/seed_save"), fs.SeedSaveTaskManager, false)
 }

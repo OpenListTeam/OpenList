@@ -3,6 +3,8 @@ package db
 import (
 	"encoding/json"
 	"fmt"
+	"path"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -97,6 +99,8 @@ type MediaItemQuery struct {
 	TypeTag    string // 按类型标签筛选（电影、电视剧等）
 	ContentTag string // 按内容标签筛选（喜剧、惊悚等）
 	Artist     string // 按专辑艺术家筛选（音乐）
+	ArtistSet  bool   // 显式空艺术家筛选
+	CanAccess  func(*model.MediaItem) bool
 	PathPrefix string // 按文件夹路径前缀筛选（用于用户 base_path 隔离）
 	Hidden     *bool
 	Keyword    string
@@ -251,6 +255,12 @@ func UpdateMediaItem(item *model.MediaItem) error {
 	return db.Unscoped().Save(item).Error
 }
 
+func HasMediaCoverReference(cover string) (bool, error) {
+	var count int64
+	err := db.Unscoped().Model(&model.MediaItem{}).Where("cover = ?", cover).Count(&count).Error
+	return count > 0, err
+}
+
 // UpdateMediaItems 在一个事务里批量保存条目，任一失败整批回滚。
 // 专辑级修改要同时落到多首曲目，逐条 Save 中途失败会留下「改了一半」的中间状态。
 func UpdateMediaItems(items []model.MediaItem) error {
@@ -396,6 +406,115 @@ func DeleteMediaItemsByIDs(ids []uint) error {
 	})
 }
 
+func mediaAggregatePathQuery(tx *gorm.DB, prefix string) *gorm.DB {
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" {
+		return tx
+	}
+	return tx.Where("(folder_path = ? OR folder_path LIKE ? ESCAPE '\\' OR (folder_path = ? AND file_name = ?))",
+		prefix, escapeLike(prefix)+"/%", path.Dir(prefix), path.Base(prefix))
+}
+
+func forEachAccessibleMedia(tx *gorm.DB, canAccess func(*model.MediaItem) bool, visit func(*model.MediaItem)) error {
+	var items []model.MediaItem
+	return tx.FindInBatches(&items, 256, func(_ *gorm.DB, _ int) error {
+		for i := range items {
+			if canAccess(&items[i]) {
+				visit(&items[i])
+			}
+		}
+		return nil
+	}).Error
+}
+
+func mediaAggregatePage(total, page, pageSize int) (int, int) {
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if total == 0 || page > (total-1)/pageSize+1 {
+		return total, total
+	}
+	start, end := (page-1)*pageSize, total
+	if pageSize < total-start {
+		end = start + pageSize
+	}
+	return start, end
+}
+
+func listAccessibleAlbums(tx *gorm.DB, q MediaItemQuery) ([]AlbumInfo, int64, error) {
+	groups := make(map[[2]string]*AlbumInfo)
+	err := forEachAccessibleMedia(tx, q.CanAccess, func(item *model.MediaItem) {
+		key := [2]string{item.AlbumName, item.AlbumArtist}
+		album := groups[key]
+		if album == nil {
+			album = &AlbumInfo{AlbumName: item.AlbumName, AlbumArtist: item.AlbumArtist}
+			groups[key] = album
+		}
+		album.TrackCount++
+		if item.Cover > album.Cover {
+			album.Cover = item.Cover
+		}
+		if item.ReleaseDate > album.ReleaseDate {
+			album.ReleaseDate = item.ReleaseDate
+		}
+		if item.ScanPathID > album.ScanPathID {
+			album.ScanPathID = item.ScanPathID
+		}
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	albums := make([]AlbumInfo, 0, len(groups))
+	for _, album := range groups {
+		albums = append(albums, *album)
+	}
+	sort.Slice(albums, func(i, j int) bool {
+		if albums[i].AlbumName == albums[j].AlbumName {
+			return albums[i].AlbumArtist < albums[j].AlbumArtist
+		}
+		return albums[i].AlbumName < albums[j].AlbumName
+	})
+	start, end := mediaAggregatePage(len(albums), q.Page, q.PageSize)
+	return albums[start:end], int64(len(albums)), nil
+}
+
+func listAccessibleArtists(tx *gorm.DB, q MediaItemQuery) ([]ArtistInfo, int64, error) {
+	type artistAggregate struct {
+		info ArtistInfo
+		albums map[string]struct{}
+	}
+	groups := make(map[string]*artistAggregate)
+	err := forEachAccessibleMedia(tx, q.CanAccess, func(item *model.MediaItem) {
+		artist := groups[item.AlbumArtist]
+		if artist == nil {
+			artist = &artistAggregate{info: ArtistInfo{Artist: item.AlbumArtist}, albums: make(map[string]struct{})}
+			groups[item.AlbumArtist] = artist
+		}
+		artist.info.TrackCount++
+		artist.albums[item.AlbumName] = struct{}{}
+		if item.Cover > artist.info.Cover {
+			artist.info.Cover = item.Cover
+		}
+		if item.ScanPathID > artist.info.ScanPathID {
+			artist.info.ScanPathID = item.ScanPathID
+		}
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	artists := make([]ArtistInfo, 0, len(groups))
+	for _, artist := range groups {
+		artist.info.AlbumCount = len(artist.albums)
+		artists = append(artists, artist.info)
+	}
+	sort.Slice(artists, func(i, j int) bool { return artists[i].Artist < artists[j].Artist })
+	start, end := mediaAggregatePage(len(artists), q.Page, q.PageSize)
+	return artists[start:end], int64(len(artists)), nil
+}
+
 // ListAlbums 列出所有专辑（音乐专用）
 func ListAlbums(q MediaItemQuery) ([]AlbumInfo, int64, error) {
 	type albumRow struct {
@@ -416,12 +535,20 @@ func ListAlbums(q MediaItemQuery) ([]AlbumInfo, int64, error) {
 	if q.ScanPathID > 0 {
 		baseQuery = baseQuery.Where("scan_path_id = ?", q.ScanPathID)
 	}
-	if q.Artist != "" {
-		baseQuery = baseQuery.Where("album_artist = ?", q.Artist)
+	baseQuery = mediaAggregatePathQuery(baseQuery, q.PathPrefix)
+	if q.ArtistSet || q.Artist != "" {
+		if q.Artist == "" {
+			baseQuery = baseQuery.Where("album_artist = '' OR album_artist IS NULL")
+		} else {
+			baseQuery = baseQuery.Where("album_artist = ?", q.Artist)
+		}
 	}
 	if q.Keyword != "" {
 		like := "%" + q.Keyword + "%"
 		baseQuery = baseQuery.Where("album_name LIKE ? OR album_artist LIKE ? OR scraped_name LIKE ?", like, like, like)
+	}
+	if q.CanAccess != nil {
+		return listAccessibleAlbums(baseQuery, q)
 	}
 
 	// 统计分组数（用子查询）
@@ -503,11 +630,12 @@ func ListArtists(q MediaItemQuery) ([]ArtistInfo, int64, error) {
 	if q.ScanPathID > 0 {
 		baseQuery = baseQuery.Where("scan_path_id = ?", q.ScanPathID)
 	}
-	if q.PathPrefix != "" {
-		baseQuery = baseQuery.Where("folder_path LIKE ? ESCAPE '\\'", escapeLike(q.PathPrefix)+"%")
-	}
+	baseQuery = mediaAggregatePathQuery(baseQuery, q.PathPrefix)
 	if q.Keyword != "" {
 		baseQuery = baseQuery.Where("album_artist LIKE ?", "%"+q.Keyword+"%")
+	}
+	if q.CanAccess != nil {
+		return listAccessibleArtists(baseQuery, q)
 	}
 
 	var total int64

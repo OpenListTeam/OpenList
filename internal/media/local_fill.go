@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	stdpath "path"
 	"strings"
 	"time"
@@ -25,6 +26,10 @@ import (
 //
 // 错误以静默忽略为主——本地兜底失败不应阻塞主流程。
 func FillMusicFromLocal(ctx context.Context, item *model.MediaItem) {
+	fillMusicFromLocalWith(ctx, item, SkipFileMetadata(), FetchFileReader)
+}
+
+func fillMusicFromLocalWith(ctx context.Context, item *model.MediaItem, skipMetadata bool, fetch func(context.Context, string) io.ReadCloser) {
 	if item == nil || item.MediaType != model.MediaTypeMusic {
 		return
 	}
@@ -33,9 +38,11 @@ func FillMusicFromLocal(ctx context.Context, item *model.MediaItem) {
 	if musicPath == "" {
 		return
 	}
-	// 关闭「读取文件信息」时完全不碰文件：标签、内嵌封面、内嵌歌词都没有，
-	// 只保留扫描阶段从文件名/目录名得到的信息
-	if SkipFileMetadata() {
+	// 跳过音频元信息时仍允许读取同目录 .lrc，已有歌词不覆盖。
+	if skipMetadata {
+		if item.Lyrics == "" {
+			item.Lyrics = loadLyricsForMusicWith(ctx, musicPath, nil, fetch)
+		}
 		return
 	}
 
@@ -43,7 +50,7 @@ func FillMusicFromLocal(ctx context.Context, item *model.MediaItem) {
 	ext := strings.ToLower(stdpath.Ext(musicPath))
 	var tag *MusicTag
 	readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
-	if reader := FetchFileReader(readCtx, musicPath); reader != nil {
+	if reader := fetch(readCtx, musicPath); reader != nil {
 		switch ext {
 		case ".flac":
 			tag, _ = ParseFLACVorbisComment(reader)
@@ -98,7 +105,7 @@ func FillMusicFromLocal(ctx context.Context, item *model.MediaItem) {
 
 	// 歌词：若为空则尝试 .lrc 同名文件 / 内嵌歌词
 	if item.Lyrics == "" {
-		if lrc := loadLyricsForMusic(ctx, musicPath, tag); lrc != "" {
+		if lrc := loadLyricsForMusicWith(ctx, musicPath, tag, fetch); lrc != "" {
 			item.Lyrics = lrc
 		}
 	}

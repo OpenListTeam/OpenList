@@ -463,7 +463,10 @@ func TorrentRapidUpload(c *gin.Context) {
 	// 秒传是同步接口，同时挂一个展示用任务，任务列表里能看到进行中的状态
 	progress := fs.NewSeedSaveTask(c.Request.Context(), user, "rapid upload "+rapidReq.Name)
 	progress.Report(0, 1, rapidReq.Name, "正在秒传")
-	obj, err := rapid.RapidUploadByHashes(c.Request.Context(), dstDir, rapidReq, true)
+	obj, err := rapid.RapidUploadByHashes(progress.Ctx(), dstDir, rapidReq, true)
+	if cancelErr := progress.Ctx().Err(); cancelErr != nil {
+		err = cancelErr
+	}
 	if err != nil {
 		progress.Finish(err)
 		common.ErrorResp(c, fmt.Errorf("秒传失败: %w", err), 400)
@@ -702,7 +705,9 @@ type SeedConvertReq struct {
 	// FileBasePath 是种子内相对路径的根目录（VFS 路径）。
 	FileBasePath string `json:"file_base_path"`
 	// Comment 非 nil 时覆盖种子的整体注释（转换时一并保存）。
-	Comment *string `json:"comment"`
+	Comment       *string         `json:"comment"`
+	SelectedFiles []int           `json:"selected_files"`
+	HashMatrix    *SeedHashMatrix `json:"hash_matrix"`
 }
 
 // SeedHashSelection controls whole-file and piece hash inclusion.
@@ -907,12 +912,17 @@ func ConvertSeed(c *gin.Context) {
 	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	source := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sourceFormat), "."))
+	selectionChanged, err := selectSeedConvertFiles(seed, req.SelectedFiles)
+	if err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
 
 	// 预检：不补算且确实缺哈希时，保持原来的「可转换=false + 原因」响应
 	for _, target := range targets {
 		// 目标与源格式相同：本身已经是这个容器，直接复制原始数据，
 		// 不参与「能否重新编码」的诊断（否则合法的 torrent 会被误判）
-		if target == source {
+		if target == source && !selectionChanged && req.HashMatrix == nil {
 			continue
 		}
 		if diags := torrent.DiagnoseConversion(seed, target); len(diags) > 0 && !req.ComputeMissing {
@@ -951,22 +961,32 @@ func ConvertSeed(c *gin.Context) {
 				common.ErrorResp(c, err, 400)
 				return
 			}
+			if _, err = selectSeedConvertFiles(targetSeed, req.SelectedFiles); err != nil {
+				common.ErrorResp(c, err, 400)
+				return
+			}
 		}
-		// 转换时顺带保存注释，前端就不必「先保存注释再转换」跑两次
+		commentChanged := req.Comment != nil && *req.Comment != targetSeed.Comment
 		if req.Comment != nil {
 			targetSeed.Comment = *req.Comment
 		}
 		var data []byte
-		if target == source {
-			// 已经是目标格式：原样输出，避免对合法种子重新编码
+		var convertErr error
+		if target == source && !selectionChanged && req.HashMatrix == nil {
 			data = rawData
-		} else {
-			var convertErr error
-			data, convertErr = convertSeedToFormat(c.Request.Context(), user, targetSeed, target, req)
-			if convertErr != nil {
-				common.ErrorResp(c, convertErr, 400)
-				return
+			if commentChanged {
+				data, convertErr = torrent.UpdateSeedComment(rawData, sourceFormat, targetSeed.Comment)
 			}
+		} else {
+			data, convertErr = convertSeedToFormat(c.Request.Context(), user, targetSeed, target, req)
+		}
+		if convertErr != nil {
+			code := seedSaveErrorCode(convertErr)
+			if code == 500 {
+				code = 400
+			}
+			common.ErrorResp(c, convertErr, code)
+			return
 		}
 		fileName := stdpath.Base(targetSeed.Name) + "." + target
 		artifact := gin.H{
@@ -1005,6 +1025,36 @@ func ConvertSeed(c *gin.Context) {
 	common.SuccessResp(c, result)
 }
 
+func selectSeedConvertFiles(seed *torrent.Seed, indexes []int) (bool, error) {
+	if indexes == nil {
+		return false, nil
+	}
+	if len(indexes) == 0 {
+		return false, fmt.Errorf("at least one seed file must be selected")
+	}
+	selected := make(map[int]bool, len(indexes))
+	for _, index := range indexes {
+		if index < 0 || index >= len(seed.Files) {
+			return false, fmt.Errorf("selected_files contains an invalid index")
+		}
+		selected[index] = true
+	}
+	if len(selected) == len(seed.Files) {
+		return false, nil
+	}
+	files := make([]torrent.SeedFile, 0, len(selected))
+	for index, file := range seed.Files {
+		if selected[index] {
+			files = append(files, file)
+		}
+	}
+	seed.Files = files
+	seed.GlobalPieces = nil
+	seed.AvailableHashes = nil
+	seed.AvailablePieceHashes = nil
+	return true, nil
+}
+
 // seedConvertTargets 归一化请求里的目标格式列表（去重、bt -> torrent、最多三个）。
 func seedConvertTargets(req SeedConvertReq) []string {
 	raw := req.Formats
@@ -1040,24 +1090,77 @@ func seedConvertTargets(req SeedConvertReq) []string {
 
 // convertSeedToFormat 把 seed 编码成目标格式，缺哈希时按需从文件补算。
 func convertSeedToFormat(ctx context.Context, user *model.User, seed *torrent.Seed, target string, req SeedConvertReq) ([]byte, error) {
-	if len(torrent.DiagnoseConversion(seed, target)) == 0 {
+	matrix := seedConvertMatrix(req.HashMatrix, target)
+	missing := matrix != nil && seedConvertMatrixMissing(seed, *matrix)
+	if matrix != nil {
+		for i := range seed.Files {
+			applySeedMatrix(&seed.Files[i], *matrix)
+		}
+		if !matrix.SHA1.Pieces {
+			seed.GlobalPieces = nil
+		}
+		seed.AvailableHashes = nil
+		seed.AvailablePieceHashes = nil
+	}
+	if !missing && len(torrent.DiagnoseConversion(seed, target)) == 0 {
 		return torrent.EncodeSeed(seed, target)
 	}
 	if !req.ComputeMissing {
-		return nil, fmt.Errorf("seed cannot be converted to %s", target)
+		return nil, fmt.Errorf("seed cannot be converted to %s without reading source files", target)
 	}
-	pieces, err := fs.RehashSeedFromFiles(ctx, user, seed, req.FileBasePath, target)
+	var pieces []byte
+	var err error
+	if matrix == nil {
+		pieces, err = fs.RehashSeedFromFiles(ctx, user, seed, req.FileBasePath, target)
+	} else {
+		pieces, err = fs.RehashSeedFromFilesWithMatrix(ctx, user, seed, req.FileBasePath, target, fs.SeedHashMatrix{
+			MD5: fs.SeedHashSelection(matrix.MD5), SHA1: fs.SeedHashSelection(matrix.SHA1), SHA256: fs.SeedHashSelection(matrix.SHA256),
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
 	if target == "torrent" {
-		// pieces 是整包算出来的，跳过「piece 跨文件」这类按文件切分的结构性诊断
 		return fs.EncodeGeneratedSeed(seed, "torrent", pieces)
 	}
 	if remain := torrent.DiagnoseConversion(seed, target); len(remain) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(remain, "; "))
 	}
 	return torrent.EncodeSeed(seed, target)
+}
+
+func seedConvertMatrix(requested *SeedHashMatrix, target string) *SeedHashMatrix {
+	if requested == nil {
+		return nil
+	}
+	matrix := *requested
+	if target == "torrent" {
+		matrix.SHA1 = SeedHashSelection{Whole: true, Pieces: true}
+	}
+	if target == "cas" {
+		matrix.MD5 = SeedHashSelection{Whole: true, Pieces: true}
+	}
+	return &matrix
+}
+
+func seedConvertMatrixMissing(seed *torrent.Seed, matrix SeedHashMatrix) bool {
+	for _, file := range seed.Files {
+		if (matrix.MD5.Whole && file.Hashes.MD5 == "") ||
+			(matrix.SHA1.Whole && file.Hashes.SHA1 == "") ||
+			(matrix.SHA256.Whole && file.Hashes.SHA256 == "") {
+			return true
+		}
+		if file.Size == 0 {
+			continue
+		}
+		pieces := file.Hashes.Pieces
+		if (matrix.MD5.Pieces && (pieces == nil || len(pieces.MD5) == 0)) ||
+			(matrix.SHA1.Pieces && len(seed.GlobalPieces) == 0 && (pieces == nil || len(pieces.SHA1) == 0)) ||
+			(matrix.SHA256.Pieces && (pieces == nil || len(pieces.SHA256) == 0)) {
+			return true
+		}
+	}
+	return false
 }
 
 // DiagnoseSeed reports conversion requirements for every supported container.
@@ -1478,6 +1581,7 @@ func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSi
 	if err != nil {
 		return out, fmt.Errorf("storage cannot stream %s: %v", sourcePath, err)
 	}
+	defer link.Close()
 	rangeReader, err := stream.GetRangeReaderFromLink(obj.GetSize(), link)
 	if err != nil {
 		return out, fmt.Errorf("storage cannot stream %s", sourcePath)
@@ -1512,7 +1616,7 @@ func UpdateSeed(c *gin.Context) {
 		return
 	}
 	applySeedUpdateOptions(&req)
-	_, seed, format, err := decodeSeedData(req.SeedDataReq)
+	rawData, seed, format, err := decodeSeedData(req.SeedDataReq)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -1610,7 +1714,17 @@ func UpdateSeed(c *gin.Context) {
 		// 重算得到的是逐文件独立 pieces，不能再当整包 pieces 复用
 		seed.GlobalPieces = nil
 	}
-	data, err := torrent.EncodeSeed(seed, format)
+	var data []byte
+	commentOnly := !req.Recalculate && req.Trackers == nil && req.Channels == nil &&
+		len(req.FileComments) == 0 && len(req.FileSources) == 0 && len(req.RemoveFiles) == 0
+	if commentOnly {
+		data = rawData
+		if req.Comment != nil {
+			data, err = torrent.UpdateSeedComment(rawData, format, seed.Comment)
+		}
+	} else {
+		data, err = torrent.EncodeSeed(seed, format)
+	}
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -1726,6 +1840,9 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			one := *seed
 			one.Name = name
 			one.Files = []torrent.SeedFile{file}
+			if len(seed.Files) != 1 {
+				one.GlobalPieces = nil
+			}
 			if data, encodeErr := torrent.EncodeSeed(&one, "torrent"); encodeErr == nil {
 				if t, decErr := torrent.Decode(data); decErr == nil {
 					if rapidReq := buildSeedRapidUploadRequest(t, seedContentOpener(seed, file, ctx)); rapidReq != nil {
@@ -1736,6 +1853,9 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 					}
 				}
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			return results, driverName, mountPath, err
 		}
 		if rapidOnly {
 			results = append(results, gin.H{"path": file.Path, "name": name, "method": "unavailable", "error": "target driver cannot reuse the available hashes"})
@@ -1752,6 +1872,9 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 				continue
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			return results, driverName, mountPath, err
+		}
 		if !allowOffline {
 			results = append(results, gin.H{"path": file.Path, "name": name, "method": "offline_download", "error": "transit requires a synchronous intermediate save (rapid upload or PutURL)"})
 			continue
@@ -1764,7 +1887,7 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			results = append(results, gin.H{"path": file.Path, "name": name, "method": "offline_download", "error": "offline download tool is required"})
 			continue
 		}
-		t, addErr := tool.AddURL(c, &tool.AddURLArgs{URL: source, DstDirPath: fullPath, Tool: req.Tool, DeletePolicy: tool.DeletePolicy(req.DeletePolicy)})
+		t, addErr := tool.AddURL(ctx, &tool.AddURLArgs{URL: source, DstDirPath: fullPath, Tool: req.Tool, DeletePolicy: tool.DeletePolicy(req.DeletePolicy)})
 		if addErr != nil {
 			results = append(results, gin.H{"path": file.Path, "name": name, "method": "offline_download", "error": addErr.Error()})
 			continue
@@ -1833,8 +1956,13 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 	// 否则任务页会把「部分文件没转过去」显示成成功
 	failed := 0
 	for i, res := range transitResults {
+		if err := progress.Ctx().Err(); err != nil {
+			fail(err, seedSaveErrorCode(err))
+			return
+		}
 		method, _ := res["method"].(string)
-		if method == "unavailable" {
+		if method == "unavailable" || res["error"] != nil {
+			failed++
 			finalResults = append(finalResults, res)
 			continue
 		}
@@ -1844,12 +1972,17 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 		}
 		// Asynchronous offline downloads cannot be relayed synchronously.
 		if method == "offline_download" {
+			failed++
 			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": "transit requires a synchronous intermediate save (rapid upload or PutURL)"})
 			continue
 		}
 		progress.Report(i+1, relayTotal, name, "正在转存")
 		srcObjPath := stdpath.Join(transitFullPath, name)
-		_, copyErr := fs.Copy(context.WithValue(c.Request.Context(), conf.NoTaskKey, struct{}{}), srcObjPath, finalDst)
+		_, copyErr := fs.Copy(context.WithValue(progress.Ctx(), conf.NoTaskKey, struct{}{}), srcObjPath, finalDst)
+		if err := progress.Ctx().Err(); err != nil {
+			fail(err, seedSaveErrorCode(err))
+			return
+		}
 		if copyErr != nil {
 			failed++
 			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": copyErr.Error()})
@@ -1992,11 +2125,16 @@ func QuickSaveSeed(c *gin.Context) {
 	// 让用户能看到逐文件进度而不是干等 HTTP 响应。
 	progress := fs.NewSeedSaveTask(c.Request.Context(), user, "save seed "+seed.Name)
 	results, driverName, mountPath, err := saveSeedFilesToPath(c, user, seed, req, req.Path, rapidOnly, true, progress)
-	progress.Finish(err)
 	if err != nil {
+		progress.Finish(err)
 		common.ErrorResp(c, err, seedSaveErrorCode(err))
 		return
 	}
+	progressErr := seedSaveResultsError(results)
+	if cancelErr := progress.Ctx().Err(); cancelErr != nil {
+		progressErr = cancelErr
+	}
+	progress.Finish(progressErr)
 	resp := gin.H{"results": results}
 	if req.UpdateChannel {
 		applyChannelUpdate(seed, driverName, mountPath, results)
@@ -2006,6 +2144,20 @@ func QuickSaveSeed(c *gin.Context) {
 		}
 	}
 	common.SuccessResp(c, resp)
+}
+
+func seedSaveResultsError(results []gin.H) error {
+	failed := 0
+	for _, result := range results {
+		message, _ := result["error"].(string)
+		if result["method"] == "unavailable" || message != "" {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d/%d seed files failed to save", failed, len(results))
+	}
+	return nil
 }
 
 // seedContentOpener returns a lazy content provider for a seed file.

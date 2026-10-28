@@ -64,6 +64,24 @@ func TestTorrentRoundTripCrossingPieces(t *testing.T) {
 	if !bytes.Equal(rebuilt.Info.Pieces, pieces) {
 		t.Fatal("rebuilt pieces differ from the original torrent")
 	}
+	ossData, err := EncodeOSS(seed)
+	if err != nil {
+		t.Fatalf("EncodeOSS() error = %v", err)
+	}
+	fromOSS, err := DecodeOSS(ossData, DefaultParseLimits())
+	if err != nil {
+		t.Fatalf("DecodeOSS() error = %v", err)
+	}
+	rebuilt, diags = TorrentFromSeed(fromOSS)
+	if len(diags) > 0 {
+		t.Fatalf("TorrentFromSeed(OSS) diagnostics = %v", diags)
+	}
+	if !bytes.Equal(rebuilt.Info.Pieces, pieces) {
+		t.Fatal("torrent -> OSS -> torrent changed crossing pieces")
+	}
+	if len(fromOSS.AvailablePieceHashes) != 1 || fromOSS.AvailablePieceHashes[0] != "sha1" {
+		t.Fatalf("OSS available pieces = %v, want only sha1", fromOSS.AvailablePieceHashes)
+	}
 }
 
 // TestTorrentFromSeedStillRejectsPerFilePieces 确认没有整包 pieces 时，
@@ -83,5 +101,70 @@ func TestTorrentFromSeedStillRejectsPerFilePieces(t *testing.T) {
 	}
 	if diags := DiagnoseConversion(seed, "torrent"); len(diags) == 0 {
 		t.Fatal("per-file pieces with crossing boundaries should not be convertible")
+	}
+}
+
+func TestSeedFromTorrentUsesByteOffsetsForAlignedFiles(t *testing.T) {
+	const piece = int64(16 * 1024)
+	pieces := make([]byte, 3*20)
+	for i := range pieces {
+		pieces[i] = byte(i)
+	}
+	src := &Torrent{Info: TorrentInfo{
+		Name: "crossing", PieceLength: piece, Pieces: pieces,
+		Files: []TorrentFile{
+			{Path: []string{"a.bin"}, Length: piece / 2},
+			{Path: []string{"b.bin"}, Length: piece / 2},
+			{Path: []string{"c.bin"}, Length: piece + 1},
+		},
+	}}
+	seed, err := SeedFromTorrent(src, DefaultParseLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seed.Files[0].Hashes.Pieces != nil || seed.Files[1].Hashes.Pieces != nil {
+		t.Fatal("crossing file pieces were falsely treated as independent pieces")
+	}
+	last := seed.Files[2].Hashes.Pieces
+	if last == nil || len(last.SHA1) != 2 || last.SHA1[0] != seed.GlobalPieces[1] || last.SHA1[1] != seed.GlobalPieces[2] {
+		t.Fatalf("aligned final file has incorrect pieces: %#v", last)
+	}
+}
+
+func TestTorrentOSSConversionWithOpenListCrossingPieces(t *testing.T) {
+	const piece = int64(16 * 1024)
+	seed := NewSeed("crossing", "OpenList", piece)
+	seed.Files = []SeedFile{{Path: "a.bin", Size: piece / 2}, {Path: "b.bin", Size: piece / 2}}
+	seed.GlobalPieces = []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	original, err := EncodeSeed(seed, "torrent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := DecodeSeed(original, "torrent", DefaultParseLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oss, err := EncodeOSS(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = DecodeOSS(oss, DefaultParseLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := EncodeSeed(parsed, "torrent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := Decode(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := Decode(rebuilt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.GetInfoHashHex() != after.GetInfoHashHex() || !bytes.Equal(before.Info.Pieces, after.Info.Pieces) {
+		t.Fatal("torrent with x-openlist changed infohash or pieces across OSS")
 	}
 }

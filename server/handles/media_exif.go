@@ -47,8 +47,12 @@ type mediaExifResp struct {
 	Focal    string `json:"focal_length,omitempty"`
 	TakenAt  string `json:"taken_at,omitempty"`
 	// 位置
-	Latitude  float64 `json:"latitude,omitempty"`
-	Longitude float64 `json:"longitude,omitempty"`
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
+}
+
+func (r *mediaExifResp) hasGPS() bool {
+	return r.Latitude != nil && r.Longitude != nil
 }
 
 type cachedExif struct {
@@ -117,13 +121,13 @@ func loadImageExif(ctx context.Context, user *model.User, item *model.MediaItem)
 		out.Focal = formatFocal(x)
 		out.TakenAt = formatTakenAt(exifString(x, exif.DateTimeOriginal))
 		if lat, lng, err := x.LatLong(); err == nil {
-			out.Latitude, out.Longitude = lat, lng
+			out.Latitude, out.Longitude = &lat, &lng
 		}
 		// 有些图片只有 EXIF 头（尺寸/方向），没有拍摄信息，
 		// 这种情况按「没有 EXIF」处理，前端才显示提示而不是一个空面板
 		out.Available = out.Camera != "" || out.Lens != "" ||
 			out.Exposure != "" || out.Aperture != "" || out.ISO != "" ||
-			out.TakenAt != "" || out.Latitude != 0 || out.Longitude != 0
+			out.TakenAt != "" || out.hasGPS()
 	}
 
 	exifCacheMu.Lock()
@@ -138,10 +142,7 @@ func loadImageExif(ctx context.Context, user *model.User, item *model.MediaItem)
 
 // readMediaHead 读取媒体文件开头最多 limit 字节
 func readMediaHead(ctx context.Context, user *model.User, item *model.MediaItem, limit int64) ([]byte, error) {
-	fullPath, err := user.JoinPath(MediaItemFilePath(item))
-	if err != nil {
-		return nil, err
-	}
+	fullPath := MediaItemFilePath(item)
 	storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
 	if err != nil {
 		return nil, err

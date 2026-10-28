@@ -1,6 +1,7 @@
 package handles
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
@@ -17,16 +18,16 @@ func crossingSeed() *torrent.Seed {
 			Path: "a.pdf",
 			Size: piece + 123,
 			Hashes: torrent.SeedHashes{
-				MD5:    "md5-a",
-				Pieces: &torrent.SeedPieceHashes{SHA1: []string{"aa", "bb"}},
+				MD5:    strings.Repeat("a", 32),
+				Pieces: &torrent.SeedPieceHashes{SHA1: []string{strings.Repeat("a", 40), strings.Repeat("b", 40)}},
 			},
 		},
 		{
 			Path: "b.pdf",
 			Size: piece + 456,
 			Hashes: torrent.SeedHashes{
-				MD5:    "md5-b",
-				Pieces: &torrent.SeedPieceHashes{SHA1: []string{"cc", "dd"}},
+				MD5:    strings.Repeat("b", 32),
+				Pieces: &torrent.SeedPieceHashes{SHA1: []string{strings.Repeat("c", 40), strings.Repeat("d", 40)}},
 			},
 		},
 	}
@@ -64,7 +65,8 @@ func TestSeedConversionStatesCrossFormatStillDiagnosed(t *testing.T) {
 	if feasible, _ := state["feasible"].(bool); feasible {
 		t.Fatal("oss -> torrent with crossing pieces should stay infeasible")
 	}
-	if missing, _ := state["missing"].([]string); len(missing) == 0 {
-		t.Fatal("expected diagnostics for crossing pieces")
+	missing, _ := state["missing"].([]string)
+	if !strings.Contains(strings.Join(missing, "; "), "piece boundary crosses") {
+		t.Fatalf("expected crossing-boundary diagnostic, got %v", missing)
 	}
 }

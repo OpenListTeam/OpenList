@@ -36,6 +36,7 @@ func TestSingleFileTorrentNameMismatchParses(t *testing.T) {
 			Length:      piece,
 			PieceLength: piece,
 			Pieces:      pieces,
+			MD5Sum:      seed.Files[0].Hashes.MD5,
 		},
 		OpenList: seed,
 	}
@@ -53,6 +54,24 @@ func TestSingleFileTorrentNameMismatchParses(t *testing.T) {
 	}
 	if len(parsed.Files) != 1 || parsed.Files[0].Hashes.SHA256 == "" {
 		t.Fatalf("parsed seed lost hashes: %+v", parsed.Files)
+	}
+	rebuilt, diags := TorrentFromSeed(parsed)
+	if len(diags) > 0 {
+		t.Fatalf("TorrentFromSeed() diagnostics = %v", diags)
+	}
+	if rebuilt.Info.Name != src.Info.Name {
+		t.Fatalf("rebuilt info.name = %q, want %q", rebuilt.Info.Name, src.Info.Name)
+	}
+	rebuiltData, err := rebuilt.Encode()
+	if err != nil {
+		t.Fatalf("rebuilt.Encode() error = %v", err)
+	}
+	reparsed, err := Decode(rebuiltData)
+	if err != nil {
+		t.Fatalf("Decode(rebuilt) error = %v", err)
+	}
+	if reparsed.GetInfoHashHex() != decoded.GetInfoHashHex() {
+		t.Fatal("single-file torrent round trip changed infohash")
 	}
 	for _, format := range []string{"oss", "torrent", "cas"} {
 		if diags := DiagnoseConversion(parsed, format); len(diags) > 0 {

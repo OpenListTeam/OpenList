@@ -70,17 +70,17 @@ func ListMediaAlbumItemsAdmin(c *gin.Context) {
 // 因此这里把改动一次性写到该专辑下的所有条目（封面 / 简介 / 年份 / 类型 / 名称）。
 type UpdateMediaAlbumReq struct {
 	// 定位旧专辑
-	AlbumName   string `json:"album_name"`
-	AlbumArtist string `json:"album_artist"`
-	ScanPathID  uint   `json:"scan_path_id"`
+	AlbumName   *string `json:"album_name"`
+	AlbumArtist *string `json:"album_artist"`
+	ScanPathID  uint    `json:"scan_path_id"`
 	// 新值
-	NewAlbumName   string `json:"new_album_name"`
-	NewAlbumArtist string `json:"new_album_artist"`
-	Cover          string `json:"cover"`
-	ReleaseDate    string `json:"release_date"`
-	Genre          string `json:"genre"`
-	Plot           string `json:"plot"`
-	Description    string `json:"description"`
+	NewAlbumName   *string `json:"new_album_name"`
+	NewAlbumArtist *string `json:"new_album_artist"`
+	Cover          *string `json:"cover"`
+	ReleaseDate    *string `json:"release_date"`
+	Genre          *string `json:"genre"`
+	Plot           *string `json:"plot"`
+	Description    *string `json:"description"`
 }
 
 // UpdateMediaAlbumAdmin 按专辑批量更新
@@ -92,11 +92,18 @@ func UpdateMediaAlbumAdmin(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if req.AlbumName == "" && req.AlbumArtist == "" {
-		common.ErrorStrResp(c, "缺少专辑名", 400)
+	if req.AlbumName == nil && req.AlbumArtist == nil {
+		common.ErrorStrResp(c, "缺少专辑定位字段", 400)
 		return
 	}
-	items, err := db.ListMediaItemsByAlbum(req.AlbumName, req.AlbumArtist, req.ScanPathID)
+	albumName, albumArtist := "", ""
+	if req.AlbumName != nil {
+		albumName = *req.AlbumName
+	}
+	if req.AlbumArtist != nil {
+		albumArtist = *req.AlbumArtist
+	}
+	items, err := db.ListMediaItemsByAlbum(albumName, albumArtist, req.ScanPathID)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
@@ -106,7 +113,7 @@ func UpdateMediaAlbumAdmin(c *gin.Context) {
 		return
 	}
 
-	if req.Cover != "" && len(req.Cover) > maxCoverFieldLen {
+	if req.Cover != nil && len(*req.Cover) > maxCoverFieldLen {
 		common.ErrorStrResp(c, "封面数据过大（上限 12MB）", 400)
 		return
 	}
@@ -116,33 +123,33 @@ func UpdateMediaAlbumAdmin(c *gin.Context) {
 	oldCovers := make([]string, 0, len(items))
 	for i := range items {
 		item := &items[i]
-		if req.NewAlbumName != "" {
-			item.AlbumName = req.NewAlbumName
+		if req.NewAlbumName != nil {
+			item.AlbumName = *req.NewAlbumName
 			// 合并文件夹型条目：显示名也跟着走，否则列表里还是旧专辑名
 			if item.IsFolder && item.ScrapedName != "" {
-				item.ScrapedName = req.NewAlbumName
+				item.ScrapedName = *req.NewAlbumName
 			}
 		}
-		if req.NewAlbumArtist != "" {
-			item.AlbumArtist = req.NewAlbumArtist
+		if req.NewAlbumArtist != nil {
+			item.AlbumArtist = *req.NewAlbumArtist
 		}
-		if req.Cover != "" {
-			if item.Cover != req.Cover {
+		if req.Cover != nil {
+			if item.Cover != *req.Cover {
 				oldCovers = append(oldCovers, item.Cover)
 			}
-			item.Cover = req.Cover
+			item.Cover = *req.Cover
 		}
-		if req.ReleaseDate != "" {
-			item.ReleaseDate = req.ReleaseDate
+		if req.ReleaseDate != nil {
+			item.ReleaseDate = *req.ReleaseDate
 		}
-		if req.Genre != "" {
-			item.Genre = req.Genre
+		if req.Genre != nil {
+			item.Genre = *req.Genre
 		}
-		if req.Plot != "" {
-			item.Plot = req.Plot
+		if req.Plot != nil {
+			item.Plot = *req.Plot
 		}
-		if req.Description != "" {
-			item.Description = req.Description
+		if req.Description != nil {
+			item.Description = *req.Description
 		}
 	}
 	if err := db.UpdateMediaItems(items); err != nil {
@@ -150,7 +157,7 @@ func UpdateMediaAlbumAdmin(c *gin.Context) {
 		return
 	}
 	for _, old := range oldCovers {
-		removeUploadedCover(old, req.Cover)
+		removeUploadedCover(old, "")
 	}
 	common.SuccessResp(c, gin.H{"affected": len(items)})
 }

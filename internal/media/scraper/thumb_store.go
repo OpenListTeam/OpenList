@@ -14,13 +14,17 @@ import (
 	stdpath "path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 // 缩略图存储模式
@@ -75,29 +79,7 @@ func SaveThumb(ctx context.Context, mode, thumbPath, rawPath, mimeType string, d
 	}
 
 	if mode == ThumbModeSameDir {
-		if strings.TrimSpace(rawPath) == "" {
-			return ""
-		}
-		vfsDir := stdpath.Dir(rawPath)
-		if vfsDir == "." {
-			vfsDir = "/"
-		}
-		name := stdpath.Base(rawPath) + coverExt(mimeType)
-		file := &stream.FileStream{
-			Ctx: ctx,
-			Obj: &model.Object{
-				Name:     name,
-				Size:     int64(len(data)),
-				Modified: time.Now(),
-			},
-			Reader:   bytes.NewReader(data),
-			Mimetype: mimeType,
-		}
-		if err := fs.PutDirectly(ctx, vfsDir, file, true); err != nil {
-			return ""
-		}
-		vfsFile := stdpath.Join(vfsDir, name)
-		return "/d" + vfsFile + "?sign=" + sign.Sign(vfsFile)
+		return saveSameDirThumbWith(ctx, rawPath, mimeType, data, setting.GetBool(conf.MediaOverwriteCover), fs.Get, fs.PutDirectly, thumbVFSURL)
 	}
 
 	dir := strings.Trim(strings.TrimSpace(thumbPath), "/")
@@ -123,7 +105,7 @@ func SaveThumb(ctx context.Context, mode, thumbPath, rawPath, mimeType string, d
 			return ""
 		}
 		// 带上签名，兼容开启「签名所有」的站点
-		return "/d" + vfsFile + "?sign=" + sign.Sign(vfsFile)
+		return thumbVFSURL(vfsFile)
 	}
 
 	// 运行目录模式：<data>/<dir>/<name>
@@ -135,6 +117,59 @@ func SaveThumb(ctx context.Context, mode, thumbPath, rawPath, mimeType string, d
 		return ""
 	}
 	return "thumb:/" + stdpath.Join(dir, name)
+}
+
+var sameDirThumbMu sync.Mutex
+
+func thumbVFSURL(vfsFile string) string {
+	return thumbVFSURLWith(vfsFile, sign.Sign)
+}
+
+func thumbVFSURLWith(vfsFile string, signPath func(string) string) string {
+	return "/d" + utils.EncodePath(vfsFile, true) + "?sign=" + url.QueryEscape(signPath(vfsFile))
+}
+
+func saveSameDirThumbWith(ctx context.Context, rawPath, mimeType string, data []byte, overwrite bool,
+	get func(context.Context, string, *fs.GetArgs) (model.Obj, error),
+	put func(context.Context, string, model.FileStreamer, ...bool) error,
+	signedURL func(string) string) string {
+	if strings.TrimSpace(rawPath) == "" || len(data) == 0 {
+		return ""
+	}
+	sameDirThumbMu.Lock()
+	defer sameDirThumbMu.Unlock()
+	vfsDir := stdpath.Dir(rawPath)
+	if vfsDir == "." {
+		vfsDir = "/"
+	}
+	name := stdpath.Base(rawPath) + coverExt(mimeType)
+	vfsFile := stdpath.Join(vfsDir, name)
+	if !overwrite {
+		obj, err := get(ctx, vfsFile, &fs.GetArgs{NoLog: true})
+		if err == nil {
+			if obj == nil || obj.IsDir() {
+				return ""
+			}
+			return signedURL(vfsFile)
+		}
+		if !errs.IsObjectNotFound(err) {
+			return ""
+		}
+	}
+	file := &stream.FileStream{
+		Ctx: ctx,
+		Obj: &model.Object{
+			Name:     name,
+			Size:     int64(len(data)),
+			Modified: time.Now(),
+		},
+		Reader:   bytes.NewReader(data),
+		Mimetype: mimeType,
+	}
+	if err := put(ctx, vfsDir, file, true); err != nil {
+		return ""
+	}
+	return signedURL(vfsFile)
 }
 
 // coverExt 按 MIME 类型给出封面后缀（同目录模式用「原文件名 + 后缀」，
