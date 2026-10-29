@@ -18,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 func SharingGet(c *gin.Context, req *FsGetReq) {
@@ -209,7 +210,9 @@ func SharingDown(c *gin.Context) {
 		return
 	}
 	storage, actualPath, err := op.GetStorageAndActualPath(unwrapPath)
-	if dealErrorPage(c, err) {
+	if err != nil {
+		log.Errorf("failed get sharing storage: %+v", err)
+		common.ErrorPage(c, errors.New("failed get sharing link"), 500)
 		return
 	}
 	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
@@ -224,7 +227,8 @@ func SharingDown(c *gin.Context) {
 			Type:   c.Query("type"),
 		})
 		if err != nil {
-			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
+			log.Errorf("failed get sharing link: %+v", err)
+			common.ErrorPage(c, errors.New("failed get sharing link"), 500)
 			return
 		}
 		proxy(c, link, obj, storage.GetStorage().ProxyRange)
@@ -236,7 +240,8 @@ func SharingDown(c *gin.Context) {
 			Redirect: true,
 		})
 		if err != nil {
-			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
+			log.Errorf("failed get sharing link: %+v", err)
+			common.ErrorPage(c, errors.New("failed get sharing link"), 500)
 			return
 		}
 		redirect(c, link)
