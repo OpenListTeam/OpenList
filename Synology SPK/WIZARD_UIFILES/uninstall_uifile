@@ -1,0 +1,16 @@
+[{
+  "step_title": "卸载套件",
+  "items": [{
+    "type": "singleselect",
+    "desc": "保留或删除套件设置",
+    "subitems": [{
+      "key": "wizard_keep_data",
+      "desc": "<b>仅卸载。</b> 保留现有文件以备将来重新安装。",
+      "defaultValue": true
+    }, {
+      "key": "wizard_delete_data",
+      "desc": "<b style=\"color: red\">删除所有套件配置数据。（不可恢复）</b>",
+      "defaultValue": false
+    }]
+  }]
+}]

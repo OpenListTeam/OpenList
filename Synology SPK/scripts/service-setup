@@ -1,0 +1,26 @@
+### Generic variables and functions
+### -------------------------------
+
+if [ -z "${SYNOPKG_PKGNAME}" ] || [ -z "${SYNOPKG_DSM_VERSION_MAJOR}" ]; then
+  echo "Error: Environment variables are not set." 1>&2;
+  echo "Please run me using synopkg instead. Example: \"synopkg start [packagename]\"" 1>&2;
+  exit 1
+fi
+
+PACKAGE_BASE="/var/packages/${SYNOPKG_PKGNAME}/target"
+OPENLIST_BIN="${PACKAGE_BASE}/bin/openlist"
+SVC_CWD="${SYNOPKG_PKGVAR}"
+
+# start-stop-status script redirect stdout/stderr to LOG_FILE
+LOG_FILE="${SYNOPKG_PKGVAR}/openlist.log"
+
+# Service command has to deliver its pid into PID_FILE
+PID_FILE="${SYNOPKG_PKGVAR}/openlist.pid"
+
+### Package specific variables and functions
+### ----------------------------------------
+
+SERVICE_COMMAND[0]="${OPENLIST_BIN} server --data ${SYNOPKG_PKGVAR} --config ${PACKAGE_BASE}/etc/config.json"
+
+SVC_BACKGROUND=y
+SVC_WRITE_PID=y

@@ -1,0 +1,308 @@
+#!/bin/sh
+
+# - files are migrated from ${SYNOPKG_PKGDEST}/var to ${SYNOPKG_PKGVAR}
+
+# installer log is not writable, use for reference only.
+INST_LOG="/var/log/packages/${SYNOPKG_PKGNAME}.log"
+
+# Optional FWPORTS file
+FWPORTS_FILE="/var/packages/${SYNOPKG_PKGNAME}/conf/${SYNOPKG_PKGNAME}.sc"
+
+# Temporary directory when the package is upgrading
+TMP_DIR="${SYNOPKG_TEMP_UPGRADE_FOLDER}"
+
+install_log ()
+{
+    local _msg_="$@"
+    if [ -z "${_msg_}" ]; then
+        # read multiline from stdin
+        while IFS=$'\n' read -r line; do
+            install_log "${line}"
+        done
+    else
+        # stderr goes to /var/log/packages/{package}.log
+        # stdout goes to dialog in package manager ui.
+        echo -e "$(date +'%Y/%m/%d %H:%M:%S')\t${_msg_}" 1>&2
+    fi
+}
+
+# Invoke shell function if available
+call_func ()
+{
+    FUNC=$1
+    if type "${FUNC}" 2>/dev/null | grep -q 'function' 2>/dev/null; then
+        install_log "Begin ${FUNC}"
+        LOG=$2
+        if [ -z "${LOG}" ]; then
+            eval ${FUNC}
+        else
+            eval ${FUNC} 2>&1 | ${LOG}
+        fi
+        install_log "End ${FUNC}"
+    fi
+}
+
+# Source installer variables and functions
+INST_FUNCTIONS=$(dirname $0)"/functions"
+if [ -r "${INST_FUNCTIONS}" ]; then
+    . "${INST_FUNCTIONS}"
+fi
+
+
+# Source package specific variables and functions
+SVC_SETUP=$(dirname $0)"/service-setup"
+if [ -r "${SVC_SETUP}" ]; then
+    . "${SVC_SETUP}"
+fi
+
+
+# Reload wizard variables stored by postinst
+call_func "reload_inst_variables"
+
+# init variables either reloaded, from package or from wizard
+call_func "initialize_variables"
+
+### Functions library
+
+#
+# syncronize all files from var folder in spk (extracted to target/var)
+# (@appdata) /var/packages/<package>/target/var -> /var/packages/<package>/var
+#
+
+syno_sync_config_folder () {
+    if [ -d ${SYNOPKG_PKGDEST}/config ]; then
+
+        echo "Install files from config folder"
+
+        # Move all files except existing
+        echo "$RSYNC --ignore-existing --remove-source-files ${SYNOPKG_PKGDEST}/config/ ${SYNOPKG_PKGVAR}/config/"
+        $RSYNC --ignore-existing --remove-source-files ${SYNOPKG_PKGDEST}/config/ ${SYNOPKG_PKGVAR}/config/
+
+        # Rename any remaining (thus pre-existing) files with .new suffix
+        # find ${SYNOPKG_PKGDEST}/config -type f -exec sh -c 'x="{}"; mv "$x" "${x}.new"' \;
+
+        # Move .new files (overwrite existing)
+        # echo "$RSYNC --remove-source-files ${SYNOPKG_PKGDEST}/config/ ${SYNOPKG_PKGVAR}/config/"
+        # $RSYNC --remove-source-files ${SYNOPKG_PKGDEST}/config/ ${SYNOPKG_PKGVAR}/config/
+
+        # Remove config folder extraced from spk
+        $RM ${SYNOPKG_PKGDEST}/config && $LN ${SYNOPKG_PKGVAR}/config ${SYNOPKG_PKGDEST}
+
+    fi
+}
+
+syno_sync_data_folder () {
+    if [ -d ${SYNOPKG_PKGDEST}/data ]; then
+
+        echo "Install files from data folder"
+
+        # Move all files except existing
+        echo "$RSYNC --ignore-existing --remove-source-files ${SYNOPKG_PKGDEST}/data/ ${SYNOPKG_PKGVAR}/data/"
+        $RSYNC --ignore-existing --remove-source-files ${SYNOPKG_PKGDEST}/data/ ${SYNOPKG_PKGVAR}/data/
+
+        # Rename any remaining (thus pre-existing) files with .new suffix
+        # find ${SYNOPKG_PKGDEST}/data-type f -exec sh -c 'x="{}"; mv "$x" "${x}.new"' \;
+
+        # Move .new files (overwrite existing)
+        # echo "$RSYNC --remove-source-files ${SYNOPKG_PKGDEST}/data/ ${SYNOPKG_PKGVAR}/data/"
+        # $RSYNC --remove-source-files ${SYNOPKG_PKGDEST}/data/ ${SYNOPKG_PKGVAR}/data/
+
+        # Remove data folder extraced from spk
+        $RM ${SYNOPKG_PKGDEST}/data && $LN ${SYNOPKG_PKGVAR}/data ${SYNOPKG_PKGDEST}
+
+    fi
+}
+
+syno_sync_cache_folder () {
+    if [ -d ${SYNOPKG_PKGDEST}/cache ]; then
+
+        echo "Install files from cache folder"
+
+        # Move all files except existing
+        echo "$RSYNC --ignore-existing --remove-source-files ${SYNOPKG_PKGDEST}/cache/ ${SYNOPKG_PKGVAR}/cache/"
+        $RSYNC --ignore-existing --remove-source-files ${SYNOPKG_PKGDEST}/cache/ ${SYNOPKG_PKGVAR}/cache/
+
+        # Rename any remaining (thus pre-existing) files with .new suffix
+        # find ${SYNOPKG_PKGDEST}/cache-type f -exec sh -c 'x="{}"; mv "$x" "${x}.new"' \;
+
+        # Move .new files (overwrite existing)
+        # echo "$RSYNC --remove-source-files ${SYNOPKG_PKGDEST}/cache/ ${SYNOPKG_PKGVAR}/cache/"
+        # $RSYNC --remove-source-files ${SYNOPKG_PKGDEST}/cache/ ${SYNOPKG_PKGVAR}/cache/
+
+        # Remove cache folder extraced from spk
+        $RM ${SYNOPKG_PKGDEST}/cache && $LN ${SYNOPKG_PKGVAR}/cache ${SYNOPKG_PKGDEST}
+
+    fi
+}
+
+set_unix_permissions ()
+{
+    echo "Notice: set_unix_permissions() is no longer required on DSM7."
+}
+
+syno_remove_user ()
+{
+    echo "${SYNOPKG_PKGNAME} has not been updated to DSM7 yet. syno_remove_user() is no longer supported."
+}
+
+syno_group_create ()
+{
+    echo "${SYNOPKG_PKGNAME} has not been updated to DSM7 yet. syno_group_create() is no longer supported."
+}
+
+syno_group_remove ()
+{
+    echo "${SYNOPKG_PKGNAME} has not been updated to DSM7 yet. syno_group_remove() is no longer supported."
+}
+
+syno_user_add_to_group ()
+{
+    echo "${SYNOPKG_PKGNAME} has not been updated to DSM7 yet. syno_user_add_to_group() is no longer supported."
+}
+
+set_syno_permissions ()
+{
+    echo "${SYNOPKG_PKGNAME} has not been updated to DSM7 yet. set_syno_permissions() is no longer supported."
+}
+
+syno_user_add_to_legacy_group () {
+    echo "${SYNOPKG_PKGNAME} has not been updated to DSM7 yet. syno_user_add_to_legacy_group() is no longer supported."
+}
+
+
+### Generic package behaviors
+
+preinst ()
+{
+    log_step "preinst"
+    call_func "validate_preinst"
+    call_func "service_preinst" install_log
+
+    # Check volume exists
+    if [ -n "${SHARE_PATH}" ]; then
+        if [ ! -d "${SHARE_VOLUME}" ]; then
+            echo "ERROR: Volume ${SHARE_VOLUME} does not exist." | $TEE 1>&2
+            exit 1
+        fi
+    fi
+
+    exit 0
+}
+
+postinst ()
+{
+    log_step "postinst"
+    call_func "save_wizard_variables" install_log
+
+    # copy target/config target/data target/cache data to permanent storage
+    # and don't override old configurations
+    call_func "syno_sync_config_folder" install_log
+    call_func "syno_sync_data_folder" install_log
+    call_func "syno_sync_cache_folder" install_log
+
+    if [ -n "${LOG_FILE}" ]; then
+        echo "Installation log: ${INST_LOG}" >> ${LOG_FILE}
+    fi
+
+    exit 0
+}
+
+preuninst ()
+{
+    log_step "preuninst"
+    call_func "validate_preuninst"
+    call_func "service_preuninst" install_log
+    exit 0
+}
+
+postuninst ()
+{
+    log_step "postuninst"
+    call_func "service_postuninst" install_log
+
+    if [ "$wizard_delete_data" = "true" ]; then
+        echo "Removing files..." | install_log
+        if [ "$(ls -A ${SYNOPKG_PKGHOME})" != "" ]; then
+            find ${SYNOPKG_PKGHOME} -mindepth 1 -delete -print | install_log
+        fi
+
+        if [ "$(ls -A ${SYNOPKG_PKGVAR})" != "" ]; then
+            find ${SYNOPKG_PKGVAR} -mindepth 1 -delete -print | install_log
+        fi
+
+        if [ "$(ls -A /var/packages/${SYNOPKG_PKGNAME}/etc)" != "" ]; then
+            find /var/packages/${SYNOPKG_PKGNAME}/etc -mindepth 1 -delete -print | install_log
+        fi
+    fi
+    exit 0
+}
+
+preupgrade ()
+{
+    log_step "preupgrade"
+    call_func "validate_preupgrade"
+
+    # old -> new
+    if [ -d ${SYNOPKG_PKGDEST}/config ]; then
+        [ ! -d ${SYNOPKG_PKGVAR}/config ] && $MKDIR ${SYNOPKG_PKGVAR}/config
+        if [ $(realpath ${SYNOPKG_PKGVAR}/config) != $(realpath ${SYNOPKG_PKGDEST}/config) ]; then
+            # Copy to temporary directory if upgrading from old -> new
+            # Then restore once to permanent storage at postupgrade
+            if [ -d ${SYNOPKG_PKGDEST}/config -a "$(ls -A ${SYNOPKG_PKGDEST}/config 2>/dev/null)" ]; then
+                echo "Backup target/config folder used under old" | install_log
+                echo "$RSYNC ${SYNOPKG_PKGDEST}/config/ ${SYNOPKG_PKGVAR}/config/" | install_log
+                $RSYNC ${SYNOPKG_PKGDEST}/config/ ${SYNOPKG_PKGVAR}/config/ 2>&1 | install_log
+                # remove target/config folder
+                $RM ${SYNOPKG_PKGDEST}/config 2>&1 | install_log
+            fi
+        fi
+    fi
+
+    if [ -d ${SYNOPKG_PKGDEST}/data ]; then
+        [ ! -d ${SYNOPKG_PKGVAR}/data ] && $MKDIR ${SYNOPKG_PKGVAR}/data
+        if [ $(realpath ${SYNOPKG_PKGVAR}/data) != $(realpath ${SYNOPKG_PKGDEST}/data) ]; then
+            # Copy to temporary directory if upgrading from old -> new
+            # Then restore once to permanent storage at postupgrade
+            if [ -d ${SYNOPKG_PKGDEST}/data -a "$(ls -A ${SYNOPKG_PKGDEST}/data 2>/dev/null)" ]; then
+                echo "Backup target/data folder used under old" | install_log
+                echo "$RSYNC ${SYNOPKG_PKGDEST}/data/ ${SYNOPKG_PKGVAR}/data/" | install_log
+                $RSYNC ${SYNOPKG_PKGDEST}/data/ ${SYNOPKG_PKGVAR}/data/ 2>&1 | install_log
+                # remove target/data folder
+                $RM ${SYNOPKG_PKGDEST}/data 2>&1 | install_log
+            fi
+        fi
+    fi
+
+    if [ -d ${SYNOPKG_PKGDEST}/cache ]; then
+        [ ! -d ${SYNOPKG_PKGVAR}/cache ] && $MKDIR ${SYNOPKG_PKGVAR}/cache
+        if [ $(realpath ${SYNOPKG_PKGVAR}/cache) != $(realpath ${SYNOPKG_PKGDEST}/cache) ]; then
+            # Copy to temporary directory if upgrading from old -> new
+            # Then restore once to permanent storage at postupgrade
+            if [ -d ${SYNOPKG_PKGDEST}/cache -a "$(ls -A ${SYNOPKG_PKGDEST}/cache 2>/dev/null)" ]; then
+                echo "Backup target/cache folder used under old" | install_log
+                echo "$RSYNC ${SYNOPKG_PKGDEST}/cache/ ${SYNOPKG_PKGVAR}/cache/" | install_log
+                $RSYNC ${SYNOPKG_PKGDEST}/cache/ ${SYNOPKG_PKGVAR}/cache/ 2>&1 | install_log
+                # remove target/cache folder
+                $RM ${SYNOPKG_PKGDEST}/cache 2>&1 | install_log
+            fi
+        fi
+    fi
+
+    call_func "service_preupgrade" install_log
+    call_func "service_save" install_log
+    exit 0
+}
+
+postupgrade ()
+{
+    log_step "postupgrade"
+
+    call_func "service_restore" install_log
+
+    # dsm7: Now sync in any new files to permanent storage
+    call_func "syno_sync_config_folder" install_log
+    call_func "syno_sync_data_folder" install_log
+    call_func "syno_sync_cache_folder" install_log
+    call_func "service_postupgrade" install_log
+    exit 0
+}

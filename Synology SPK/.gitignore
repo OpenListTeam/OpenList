@@ -1,0 +1,5 @@
+*.spk
+*.tgz
+extracted/
+openlist.tar.gz
+__pycache__/
