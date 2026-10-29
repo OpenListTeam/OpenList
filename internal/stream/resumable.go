@@ -7,6 +7,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -14,6 +15,20 @@ const (
 	maxResumeAttempts = 5
 	resumeBackoff     = 200 * time.Millisecond
 )
+
+// NewResumableReader opens a full stream and resumes interrupted reads up to size.
+// Non-positive sizes use the original stream without resuming or limiting it.
+func NewResumableReader(ctx context.Context, rr model.RangeReaderIF, size int64) (io.ReadCloser, error) {
+	rc, err := rr.RangeRead(ctx, http_range.Range{Length: -1})
+	if err != nil {
+		return nil, err
+	}
+	if size <= 0 {
+		return rc, nil
+	}
+	r := &resumableReader{ctx: ctx, rr: rr, rc: rc}
+	return utils.NewLimitReadCloser(r, r.Close, size), nil
+}
 
 type resumableReader struct {
 	ctx    context.Context

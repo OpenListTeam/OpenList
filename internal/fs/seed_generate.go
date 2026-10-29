@@ -19,7 +19,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -31,9 +30,6 @@ import (
 // requests are turned into an asynchronous task.
 const MaxSeedGenerateSyncSize = 1 * 1024 * 1024 * 1024
 
-// SeedGenerateNeedsAsync reports whether the given files must be generated
-// asynchronously because they exceed the synchronous size limit. It resolves
-// each path and sums the file sizes, returning the first error encountered.
 func SeedGenerateNeedsAsync(ctx context.Context, user *model.User, paths []string) (bool, error) {
 	var total int64
 	for _, requestedPath := range paths {
@@ -442,7 +438,7 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 		if err != nil {
 			return nil, nil, fmt.Errorf("storage cannot stream %s", requestedPath)
 		}
-		rc, err := rangeReader.RangeRead(ctx, http_range.Range{Length: obj.GetSize()})
+		rc, err := stream.NewResumableReader(ctx, rangeReader, obj.GetSize())
 		if err != nil {
 			return nil, nil, err
 		}
