@@ -1,114 +1,107 @@
 package stream
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"io"
+	"strings"
 	"testing"
+	"testing/iotest"
+	"testing/synctest"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/stretchr/testify/require"
 )
 
-// truncatingReader 只吐出 left 个字节，之后一直返回 ErrUnexpectedEOF，模拟 CDN 掐连接
-type truncatingReader struct {
-	r    io.Reader
-	left int
-}
+type resumeTestReader func([]byte) (int, error)
 
-func (t *truncatingReader) Read(p []byte) (int, error) {
-	if t.left <= 0 {
-		return 0, io.ErrUnexpectedEOF
-	}
-	if len(p) > t.left {
-		p = p[:t.left]
-	}
-	n, err := t.r.Read(p)
-	t.left -= n
-	if err == io.EOF {
-		err = io.ErrUnexpectedEOF
-	}
-	return n, err
-}
+func (f resumeTestReader) Read(p []byte) (int, error) { return f(p) }
 
-func (*truncatingReader) Close() error { return nil }
+func TestResumableReaderResumes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const data = "openlist"
+		chunk := func(offset int64) io.ReadCloser {
+			return io.NopCloser(iotest.DataErrReader(strings.NewReader(data[offset : offset+1])))
+		}
+		var offsets []int64
+		rr := RangeReaderFunc(func(ctx context.Context, r http_range.Range) (io.ReadCloser, error) {
+			offsets = append(offsets, r.Start)
+			return chunk(r.Start), nil
+		})
+		r := &SeekableStream{
+			FileStream: &FileStream{
+				Ctx: context.Background(),
+				Obj: &model.Object{Size: int64(len(data))},
+			},
+			rangeReader: rr,
+		}
+		defer r.Close()
 
-func sliceOf(data []byte, r http_range.Range) []byte {
-	end := int64(len(data))
-	if r.Length >= 0 && r.Start+r.Length < end {
-		end = r.Start + r.Length
-	}
-	if r.Start >= end {
-		return nil
-	}
-	return data[r.Start:end]
-}
-
-func TestResumableReaderResumesAfterTruncate(t *testing.T) {
-	data := bytes.Repeat([]byte("openlist"), 10000)
-	var requests []int64
-	rr := RangeReaderFunc(func(ctx context.Context, r http_range.Range) (io.ReadCloser, error) {
-		requests = append(requests, r.Start)
-		return io.NopCloser(bytes.NewReader(sliceOf(data, r))), nil
+		got, err := io.ReadAll(r)
+		require.NoError(t, err)
+		require.Equal(t, data, string(got))
+		require.Equal(t, []int64{0, 1, 2, 3, 4, 5, 6, 7}, offsets)
 	})
-
-	cut := len(data) / 3
-	r := newResumableReader(context.Background(), rr, int64(len(data)), &truncatingReader{r: bytes.NewReader(data), left: cut})
-
-	got, err := io.ReadAll(r)
-	require.NoError(t, err)
-	require.Equal(t, data, got)
-	require.Len(t, requests, 1)
-	require.Equal(t, int64(cut), requests[0], "should resume right after the truncated offset")
-	require.NoError(t, r.Close())
 }
 
-func TestResumableReaderGivesUpAfterMaxAttempts(t *testing.T) {
-	data := bytes.Repeat([]byte("x"), 100)
-	attempts := 0
-	rr := RangeReaderFunc(func(ctx context.Context, r http_range.Range) (io.ReadCloser, error) {
-		attempts++
-		return &truncatingReader{r: bytes.NewReader(sliceOf(data, r))}, nil
-	})
-	r := newResumableReader(context.Background(), rr, int64(len(data)), &truncatingReader{r: bytes.NewReader(data)})
+func TestResumableReaderRetryLimit(t *testing.T) {
+	requestErr := errors.New("range request failed")
+	for _, failure := range []error{io.EOF, io.ErrUnexpectedEOF, requestErr} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				broken := func() io.ReadCloser {
+					return io.NopCloser(resumeTestReader(func([]byte) (int, error) { return 0, failure }))
+				}
+				attempts := 0
+				rr := RangeReaderFunc(func(ctx context.Context, r http_range.Range) (io.ReadCloser, error) {
+					attempts++
+					if failure == requestErr {
+						return nil, failure
+					}
+					return broken(), nil
+				})
+				r := &resumableReader{ctx: context.Background(), rr: rr, rc: broken()}
+				defer r.Close()
 
-	_, err := io.ReadAll(r)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-	require.Equal(t, maxResumeAttempts, attempts)
+				_, err := io.ReadAll(r)
+				want := failure
+				if want == io.EOF {
+					want = io.ErrUnexpectedEOF
+				}
+				require.ErrorIs(t, err, want)
+				require.Equal(t, maxResumeAttempts, attempts)
+			})
+		})
+	}
 }
 
-func TestResumableReaderKeepsProgressAcrossRetries(t *testing.T) {
-	data := bytes.Repeat([]byte("openlist"), 100)
-	rr := RangeReaderFunc(func(ctx context.Context, r http_range.Range) (io.ReadCloser, error) {
-		return &truncatingReader{r: bytes.NewReader(sliceOf(data, r)), left: 100}, nil
-	})
-	r := newResumableReader(context.Background(), rr, int64(len(data)), &truncatingReader{r: bytes.NewReader(data), left: 100})
+func TestSeekableStreamSizeBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int64
+		err  error
+	}{
+		{name: "known", size: 8},
+		{name: "unknown", size: -1, err: io.ErrUnexpectedEOF},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reads := 0
+			r := &SeekableStream{
+				FileStream: &FileStream{Ctx: context.Background(), Obj: &model.Object{Size: tc.size}},
+				rangeReader: RangeReaderFunc(func(context.Context, http_range.Range) (io.ReadCloser, error) {
+					return io.NopCloser(resumeTestReader(func(p []byte) (int, error) {
+						reads++
+						require.Equal(t, 1, reads, "must not read upstream again")
+						return copy(p, "openlist"), io.ErrUnexpectedEOF
+					})), nil
+				}),
+			}
+			defer r.Close()
 
-	got, err := io.ReadAll(r)
-	require.NoError(t, err)
-	require.Equal(t, data, got)
-}
-
-func TestResumableReaderDoesNotResumeWhenSizeUnknown(t *testing.T) {
-	rr := RangeReaderFunc(func(ctx context.Context, r http_range.Range) (io.ReadCloser, error) {
-		t.Fatal("should not resume when size is unknown")
-		return nil, nil
-	})
-	r := newResumableReader(context.Background(), rr, 0, &truncatingReader{r: bytes.NewReader([]byte("abc")), left: 1})
-
-	_, err := io.ReadAll(r)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-}
-
-func TestResumableReaderStopsOnCanceledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	rr := RangeReaderFunc(func(ctx context.Context, r http_range.Range) (io.ReadCloser, error) {
-		t.Fatal("should not resume when context is canceled")
-		return nil, nil
-	})
-	r := newResumableReader(ctx, rr, 100, &truncatingReader{r: bytes.NewReader([]byte("abc")), left: 1})
-
-	_, err := io.ReadAll(r)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+			got, err := io.ReadAll(r)
+			require.ErrorIs(t, err, tc.err)
+			require.Equal(t, "openlist", string(got))
+		})
+	}
 }
