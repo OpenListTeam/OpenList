@@ -53,21 +53,37 @@ func sharingAccessKey(id, ip string) string {
 
 var sharingAccessG singleflight.Group[struct{}]
 
-func CheckSharing(ip, pwd string, s *model.Sharing) error {
+func validateSharing(pwd string, s *model.Sharing) error {
 	if !s.Usable() {
 		return errors.WithStack(errs.InvalidSharing)
 	}
 	if !s.Verify(pwd) {
 		return errors.WithStack(errs.WrongShareCode)
 	}
-	if s.LimitReached() && !sharingAccessCache.Exists(sharingAccessKey(s.ID, ip)) {
-		return errors.WithStack(errs.InvalidSharing)
+	return nil
+}
+
+func CheckSharing(ip, pwd string, s *model.Sharing) error {
+	if err := validateSharing(pwd, s); err != nil {
+		return err
+	}
+	key := sharingAccessKey(s.ID, ip)
+	if s.LimitReached() && !sharingAccessCache.Exists(key) {
+		_, err, _ := sharingAccessG.Do(key, func() (struct{}, error) {
+			return struct{}{}, nil
+		})
+		if err != nil {
+			return err
+		}
+		if !sharingAccessCache.Exists(key) {
+			return errors.WithStack(errs.InvalidSharing)
+		}
 	}
 	return nil
 }
 
 func AccessSharing(ip, pwd string, s *model.Sharing) error {
-	if err := CheckSharing(ip, pwd, s); err != nil {
+	if err := validateSharing(pwd, s); err != nil {
 		return err
 	}
 	key := sharingAccessKey(s.ID, ip)

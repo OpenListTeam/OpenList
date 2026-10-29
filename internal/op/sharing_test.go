@@ -76,6 +76,19 @@ func TestSharingAccessLimit(t *testing.T) {
 	}
 }
 
+func TestSharingAccessUsesDatabaseState(t *testing.T) {
+	s := newTestSharing(t, 1)
+
+	// The in-memory sharing metadata can be stale while the database is authoritative.
+	s.Accessed = 1
+	if err := op.AccessSharing("3.3.3.3", "", s); err != nil {
+		t.Fatalf("stale metadata rejected access: %v", err)
+	}
+	if n := accessed(t, s.ID); n != 1 {
+		t.Fatalf("accessed = %d, want 1", n)
+	}
+}
+
 func TestSharingAccessConcurrent(t *testing.T) {
 	t.Run("distinct ips never exceed limit", func(t *testing.T) {
 		s := newTestSharing(t, 3)
