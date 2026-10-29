@@ -5,6 +5,7 @@ import (
 	stdpath "path"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -41,11 +42,11 @@ func FsMkdir(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+	if !user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -92,7 +93,7 @@ func FsMove(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, srcMeta, srcDir) {
+	if !authz.CanWrite(user, srcMeta, srcDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -106,7 +107,7 @@ func FsMove(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, dstMeta, dstDir) {
+	if !authz.CanWrite(user, dstMeta, dstDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -206,7 +207,7 @@ func FsCopy(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanRead(user, srcMeta, srcDir) {
+	if !authz.CanRead(user, srcMeta, srcDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -220,7 +221,7 @@ func FsCopy(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, dstMeta, dstDir) {
+	if !authz.CanWrite(user, dstMeta, dstDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -333,7 +334,7 @@ func FsRename(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -398,7 +399,7 @@ func FsRemove(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, meta, reqPath) {
+	if !authz.CanWrite(user, meta, reqPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -531,7 +532,7 @@ func FsRemoveEmptyDirectory(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, meta, srcDir) {
+	if !authz.CanWrite(user, meta, srcDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}

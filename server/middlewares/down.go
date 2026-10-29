@@ -3,6 +3,7 @@ package middlewares
 import (
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 
@@ -60,7 +61,7 @@ func needSign(meta *model.Meta, path string) bool {
 	if meta == nil || meta.Password == "" {
 		return false
 	}
-	if !meta.PSub && !common.MetaCoversPath(meta.Path, path, false) {
+	if !meta.PSub && !authz.MetaCoversPath(meta.Path, path, false) {
 		return false
 	}
 	return true

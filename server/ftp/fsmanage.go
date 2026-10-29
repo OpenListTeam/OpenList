@@ -4,12 +4,12 @@ import (
 	"context"
 	stdpath "path"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
 )
 
@@ -27,10 +27,10 @@ func Mkdir(ctx context.Context, path string) error {
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return err
 	}
-	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+	if !user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
 		return errs.PermissionDenied
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		return errs.PermissionDenied
 	}
 	return fs.MakeDir(ctx, reqPath)
@@ -49,7 +49,7 @@ func Remove(ctx context.Context, path string) error {
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return err
 	}
-	if !common.CanWrite(user, meta, reqPath) {
+	if !authz.CanWrite(user, meta, reqPath) {
 		return errs.PermissionDenied
 	}
 	if err = RemoveStage(reqPath); !errors.Is(err, errs.ObjectNotFound) {
@@ -75,7 +75,7 @@ func Rename(ctx context.Context, oldPath, newPath string) error {
 		return err
 	}
 	if srcDir == dstDir {
-		if !user.CanRename() || !user.CanFTPManage() || !common.CanWrite(user, dstMeta, dstDir) {
+		if !user.CanRename() || !user.CanFTPManage() || !authz.CanWrite(user, dstMeta, dstDir) {
 			return errs.PermissionDenied
 		}
 		if err = MoveStage(srcPath, dstPath); !errors.Is(err, errs.ObjectNotFound) {
@@ -87,7 +87,7 @@ func Rename(ctx context.Context, oldPath, newPath string) error {
 		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			return err
 		}
-		if !user.CanMove() || !user.CanFTPManage() || (srcBase != dstBase && !user.CanRename()) || !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
+		if !user.CanMove() || !user.CanFTPManage() || (srcBase != dstBase && !user.CanRename()) || !authz.CanWrite(user, srcMeta, srcDir) || !authz.CanWrite(user, dstMeta, dstDir) {
 			return errs.PermissionDenied
 		}
 		if err = MoveStage(srcPath, dstPath); !errors.Is(err, errs.ObjectNotFound) {
