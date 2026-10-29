@@ -63,7 +63,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.11
 	github.com/pquerna/otp v1.5.0
-	github.com/quic-go/quic-go v0.61.0
+	github.com/quic-go/quic-go v0.64.1
 	github.com/rclone/rclone v1.75.2
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	github.com/shirou/gopsutil/v4 v4.26.8
