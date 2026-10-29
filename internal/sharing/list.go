@@ -18,11 +18,8 @@ func list(ctx context.Context, sid, path string, args model.SharingListArgs) (*m
 	if err != nil {
 		return nil, nil, errors.WithStack(errs.SharingNotFound)
 	}
-	if !sharing.Valid() {
-		return sharing, nil, errors.WithStack(errs.InvalidSharing)
-	}
-	if !sharing.Verify(args.Pwd) {
-		return sharing, nil, errors.WithStack(errs.WrongShareCode)
+	if err = op.CheckSharing(args.ClientIP, args.Pwd, sharing); err != nil {
+		return sharing, nil, err
 	}
 	path = utils.FixAndCleanPath(path)
 	if len(sharing.Files) == 1 || path != "/" {
