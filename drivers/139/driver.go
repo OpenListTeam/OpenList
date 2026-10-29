@@ -769,10 +769,6 @@ func (d *Yun139) restoreImageSuffixName(ctx context.Context, dstDir model.Obj, s
 		}
 	}
 	if uploaded == nil {
-		if existing != nil {
-			// 目录中已存在目标文件名，无需再次改名
-			return nil
-		}
 		return fmt.Errorf("uploaded file %s not found in %s after image suffix upload, it may still be stored with the .jpg suffix", stream.uploadName, dstDir.GetPath())
 	}
 	if uploaded.GetName() == stream.finalName {
