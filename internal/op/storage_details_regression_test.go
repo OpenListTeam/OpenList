@@ -645,6 +645,48 @@ func TestGetStorageDetailsUpdateFailureAndRetry(t *testing.T) {
 	}
 }
 
+func TestGetStorageDetailsUpdateDatabaseFailurePreservesActiveDriver(t *testing.T) {
+	d1 := newLifecycleDetailsTestDriver(t)
+	d2 := newLifecycleDetailsTestDriver(t)
+
+	val, err := GetStorageDetails(context.Background(), d1)
+	if err != nil || val.TotalSpace != 1000 {
+		t.Fatalf("initial capacity: %+v, %v", val, err)
+	}
+
+	// Trigger db.UpdateStorage failure via unique MountPath collision with d2.
+	// Neither Drop nor initializeStorage should run, and d1 must remain queryable.
+	conflicting := d1.Storage
+	conflicting.Addition = `{"total":2000}`
+	conflicting.MountPath = d2.MountPath
+	if err := UpdateStorage(context.Background(), conflicting); err == nil {
+		t.Fatal("expected db.UpdateStorage unique constraint error, got nil")
+	}
+
+	detailsLock.Lock()
+	_, hasChange := detailsChanges[d1]
+	detailsLock.Unlock()
+	if hasChange {
+		t.Fatal("detailsChanges retained entry after db.UpdateStorage failure")
+	}
+
+	val, err = GetStorageDetails(context.Background(), d1, true)
+	if err != nil || val.TotalSpace != 1000 {
+		t.Fatalf("working driver became unqueryable after db update failure: %+v, %v", val, err)
+	}
+
+	// A subsequent valid update must still succeed and publish the new capacity.
+	validUpdate := d1.Storage
+	validUpdate.Addition = `{"total":3000}`
+	if err := UpdateStorage(context.Background(), validUpdate); err != nil {
+		t.Fatal(err)
+	}
+	val, err = GetStorageDetails(context.Background(), d1)
+	if err != nil || val.TotalSpace != 3000 {
+		t.Fatalf("capacity after valid update: %+v, %v", val, err)
+	}
+}
+
 func TestGetStorageDetailsRetiredDriver(t *testing.T) {
 	for _, action := range []string{"disable", "delete"} {
 		t.Run(action, func(t *testing.T) {
@@ -661,6 +703,12 @@ func TestGetStorageDetailsRetiredDriver(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			detailsLock.Lock()
+			_, retained := detailsChanges[d]
+			detailsLock.Unlock()
+			if retained {
+				t.Fatalf("detailsChanges retained retired driver after %s", action)
+			}
 			if _, err := GetStorageDetails(context.Background(), d); !errors.Is(err, errs.StorageNotInit) {
 				t.Fatal("retired object was admitted")
 			}
@@ -670,5 +718,80 @@ func TestGetStorageDetailsRetiredDriver(t *testing.T) {
 				t.Fatal("retired object republished capacity")
 			}
 		})
+	}
+}
+
+func TestGetStorageDetailsRepeatedDisableEnableAndDeleteDoesNotRetainDrivers(t *testing.T) {
+	var registerOnce sync.Once
+	registerOnce.Do(func() {
+		if _, err := GetDriver("DetailsRegression"); err != nil {
+			RegisterDriver(func() driver.Driver {
+				return &lifecycleDetailsTestDriver{
+					detailsTestDriver: &detailsTestDriver{},
+				}
+			})
+		}
+	})
+
+	d := newLifecycleDetailsTestDriver(t)
+	mountPath := d.MountPath
+	retiredDrivers := []driver.Driver{d}
+
+	detailsLock.Lock()
+	prevGen := storageDetailsStateLocked(mountPath).generation
+	detailsLock.Unlock()
+
+	for i := 0; i < 3; i++ {
+		if err := DisableStorage(context.Background(), d.ID); err != nil {
+			t.Fatalf("disable %d: %v", i, err)
+		}
+		detailsLock.Lock()
+		changesLen := len(detailsChanges)
+		curGen := storageDetailsStateLocked(mountPath).generation
+		detailsLock.Unlock()
+		if changesLen != 0 {
+			t.Fatalf("detailsChanges retained %d entries after disable %d", changesLen, i)
+		}
+		if curGen <= prevGen {
+			t.Fatalf("generation did not advance monotonically on disable %d: %d -> %d", i, prevGen, curGen)
+		}
+		prevGen = curGen
+
+		if err := EnableStorage(context.Background(), d.ID); err != nil {
+			t.Fatalf("enable %d: %v", i, err)
+		}
+		active, err := GetStorageByMountPath(mountPath)
+		if err != nil {
+			t.Fatalf("get active storage %d: %v", i, err)
+		}
+		val, err := GetStorageDetails(context.Background(), active)
+		if err != nil || val.TotalSpace != 1000 {
+			t.Fatalf("active storage details %d: %+v, %v", i, val, err)
+		}
+		for idx, old := range retiredDrivers {
+			if _, err := GetStorageDetails(context.Background(), old); !errors.Is(err, errs.StorageNotInit) {
+				t.Fatalf("retired driver %d was admitted on cycle %d: %v", idx, i, err)
+			}
+		}
+		retiredDrivers = append(retiredDrivers, active)
+	}
+
+	if err := DeleteStorageById(context.Background(), d.ID); err != nil {
+		t.Fatalf("delete storage: %v", err)
+	}
+	detailsLock.Lock()
+	changesLen := len(detailsChanges)
+	curGen := storageDetailsStateLocked(mountPath).generation
+	detailsLock.Unlock()
+	if changesLen != 0 {
+		t.Fatalf("detailsChanges retained %d entries after delete", changesLen)
+	}
+	if curGen <= prevGen {
+		t.Fatalf("generation did not advance monotonically on delete: %d -> %d", prevGen, curGen)
+	}
+	for idx, old := range retiredDrivers {
+		if _, err := GetStorageDetails(context.Background(), old); !errors.Is(err, errs.StorageNotInit) {
+			t.Fatalf("retired driver %d was admitted after delete: %v", idx, err)
+		}
 	}
 }

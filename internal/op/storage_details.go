@@ -102,9 +102,12 @@ func finishStorageDetailsChange(storage driver.Driver, change *storageDetailsCha
 		invalidateStorageDetailsLocked(key)
 	}
 	change.active = false
-	if ready {
-		delete(detailsChanges, storage)
+	if !ready {
+		if meta := storage.GetStorage(); meta != nil && meta.Status == WORK {
+			meta.SetStatus(DISABLED)
+		}
 	}
+	delete(detailsChanges, storage)
 }
 
 type storageDetailsSnapshot struct {
@@ -125,8 +128,12 @@ func prepareStorageDetails(ctx context.Context, storage driver.Driver, refresh b
 	}
 	config := storage.Config()
 	meta := storage.GetStorage()
-	if config.CheckStatus && meta.Status != WORK {
-		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", meta.Status)
+	if meta == nil || meta.Status != WORK {
+		status := ""
+		if meta != nil {
+			status = meta.Status
+		}
+		return nil, nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", status)
 	}
 	wd, ok := storage.(driver.WithDetails)
 	if !ok {
@@ -136,6 +143,9 @@ func prepareStorageDetails(ctx context.Context, storage driver.Driver, refresh b
 		key:   utils.FixAndCleanPath(meta.MountPath),
 		ttl:   time.Minute * time.Duration(meta.CacheExpiration),
 		cache: !config.NoCache,
+	}
+	if registered, ok := storagesMap.Load(snapshot.key); ok && registered != storage {
+		return nil, nil, errors.WithMessage(errs.StorageNotInit, "storage driver has been replaced")
 	}
 	state := storageDetailsStateLocked(snapshot.key)
 	if refresh && !state.refreshing && (cooldownSec <= 0 || time.Now().Unix()-state.lastDone >= int64(cooldownSec)) {

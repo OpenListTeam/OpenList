@@ -263,6 +263,7 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 	defer func() { finishStorageDetailsChange(storageDriver, change, ready) }()
 	err = db.UpdateStorage(&storage)
 	if err != nil {
+		ready = true
 		return errors.WithMessage(err, "failed update storage in database")
 	}
 	// Storage settings may change which objects are exposed at the same mount
