@@ -3,10 +3,12 @@ package op
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -255,3 +257,52 @@ func TestNestedListProjectsOnlyPublicSnapshot(t *testing.T) {
 
 var _ driver.Driver = (*listIdentityDriver)(nil)
 var _ driver.GetRooter = (*listIdentityDriver)(nil)
+
+type thumbnailListDriver struct {
+	*listIdentityDriver
+	started chan string
+	release chan struct{}
+}
+
+func (d *thumbnailListDriver) Config() driver.Config { return driver.Config{NoCache: true} }
+func (d *thumbnailListDriver) List(ctx context.Context, _ model.Obj, _ model.ListArgs) ([]model.Obj, error) {
+	base := ctx.Value(conf.ThumbnailBaseURLKey).(*url.URL).String()
+	d.started <- base
+	<-d.release
+	return []model.Obj{&model.Object{Name: base}}, nil
+}
+
+func TestListSeparatesConcurrentThumbnailOrigins(t *testing.T) {
+	previousCache := Cache
+	Cache = NewCacheManager()
+	t.Cleanup(func() { Cache = previousCache })
+	d := &thumbnailListDriver{listIdentityDriver: newListIdentityDriver("/thumbnails", nil), started: make(chan string, 2), release: make(chan struct{})}
+	results := make(chan string, 2)
+	for _, host := range []string{"first.example", "second.example"} {
+		ctx := context.WithValue(context.Background(), conf.ThumbnailBaseURLKey, &url.URL{Scheme: "https", Host: host})
+		go func() {
+			objs, err := List(ctx, d, "/", model.ListArgs{})
+			if err != nil {
+				results <- err.Error()
+				return
+			}
+			results <- objs[0].GetName()
+		}()
+	}
+	for range 2 {
+		select {
+		case <-d.started:
+		case <-time.After(time.Second * 5):
+			close(d.release)
+			<-results
+			<-results
+			t.Fatal("different thumbnail origins shared an in-flight result")
+		}
+	}
+	close(d.release)
+	seen := map[string]bool{<-results: true}
+	seen[<-results] = true
+	if !seen["https://first.example"] || !seen["https://second.example"] {
+		t.Fatalf("thumbnail origins = %v", seen)
+	}
+}

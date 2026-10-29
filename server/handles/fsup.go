@@ -399,7 +399,7 @@ func writeUploadSeedSidecar(c *gin.Context, dir, name string, expectedSize int64
 			Obj:    &model.Object{Name: name + "." + format, Size: int64(len(data)), Modified: time.Now()},
 			Reader: bytes.NewReader(data), Mimetype: "application/octet-stream",
 		}
-		if err = fs.PutDirectly(c.Request.Context(), dir, sidecar, true); err != nil {
+		if err = fs.PutDirectly(c.Request.Context(), dir, sidecar); err != nil {
 			return fmt.Errorf("upload %s seed sidecar: %w", format, err)
 		}
 	}

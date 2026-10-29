@@ -283,7 +283,7 @@ func GenerateStrmForItems(ctx context.Context, items []model.MediaItem, opts Str
 				Reader:   bytes.NewReader(data),
 				Mimetype: "text/plain",
 			}
-			if err := fs.PutDirectly(ctx, stdpath.Dir(dst), file, true); err != nil {
+			if err := fs.PutDirectly(ctx, stdpath.Dir(dst), file); err != nil {
 				return written, fmt.Errorf("write %s: %w", dst, err)
 			}
 			written++

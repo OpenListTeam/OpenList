@@ -87,7 +87,7 @@ func SaveThumb(ctx context.Context, mode, thumbPath, rawPath, mimeType string, d
 			Reader:   bytes.NewReader(data),
 			Mimetype: mimeType,
 		}
-		if err := fs.PutDirectly(ctx, vfsDir, file, true); err != nil {
+		if err := fs.PutDirectly(ctx, vfsDir, file); err != nil {
 			return ""
 		}
 		// 带上签名，兼容开启「签名所有」的站点

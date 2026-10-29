@@ -457,9 +457,9 @@ func followSeedTransfer(c *gin.Context, operation, srcPath, dstDir string) ([]ta
 		var current task.TaskExtensionInfo
 		switch operation {
 		case "copy":
-			current, err = fs.Copy(c.Request.Context(), sidecarPath, dstDir, true)
+			current, err = fs.Copy(c.Request.Context(), sidecarPath, dstDir)
 		case "move":
-			current, err = fs.Move(c.Request.Context(), sidecarPath, dstDir, true)
+			current, err = fs.Move(c.Request.Context(), sidecarPath, dstDir)
 		default:
 			return nil, fmt.Errorf("unsupported seed sidecar operation %q", operation)
 		}
@@ -484,7 +484,7 @@ func followSeedRename(c *gin.Context, srcPath, newName string) error {
 			continue
 		}
 		suffix := strings.TrimPrefix(sidecarPath, srcPath)
-		if err = fs.Rename(c.Request.Context(), sidecarPath, newName+suffix, true); err != nil {
+		if err = fs.Rename(c.Request.Context(), sidecarPath, newName+suffix); err != nil {
 			return fmt.Errorf("rename seed sidecar %s: %w", sidecarPath, err)
 		}
 	}
