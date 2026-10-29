@@ -302,8 +302,9 @@ func (ss *SeekableStream) generateReader() error {
 		if err != nil {
 			return err
 		}
-		ss.Add(rc)
-		ss.Reader = rc
+		rr := newResumableReader(ss.Ctx, ss.rangeReader, ss.GetSize(), rc)
+		ss.Reader = rr
+		ss.Add(rr)
 	}
 	return nil
 }
