@@ -551,11 +551,15 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 			}
 		}
 		s.mu.Lock()
-		completed := s.state == StateCompleted
+		st, cause := s.state, s.err
 		snap := s.snapshotLocked()
 		s.mu.Unlock()
-		if completed {
+		if st == StateCompleted {
 			return snap, nil
+		}
+		if st != StateReceiving && cause != nil {
+			// the window only closed because the attempt ended; say why
+			return snap, fmt.Errorf("upload failed (%s): %w", st, cause)
 		}
 		return snap, err
 	}

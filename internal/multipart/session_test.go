@@ -760,3 +760,57 @@ func TestSupersedeWaitsForTheOldAttempt(t *testing.T) {
 		t.Fatalf("events = %v, want the superseded attempt to return before its replacement starts", events)
 	}
 }
+
+// When the storage fails, a chunk caught in flight by the closing window must
+// report the storage's error, not the generic "window closed" (#3309).
+func TestChunkReportsStorageError(t *testing.T) {
+	m := setupSessionTest(t)
+	oldSlots := WindowSlots
+	WindowSlots = 1
+	t.Cleanup(func() { WindowSlots = oldSlots })
+	const chunkSize = 1024
+	totalSize := int64(4 * chunkSize)
+	data := genData(totalSize)
+	user := testUser()
+	cause := errors.New("upload part 7 rejected by the storage")
+
+	halfRead := make(chan struct{})
+	fail := make(chan struct{})
+	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		buf := make([]byte, chunkSize/2)
+		if _, err := io.ReadFull(fs, buf); err != nil {
+			return err
+		}
+		close(halfRead)
+		<-fail
+		return cause
+	})
+
+	snap, _, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	sendChunk(t, m, user, snap.ID, data, 0, chunkSize)
+	<-halfRead
+	type result struct {
+		snap SessionSnapshot
+		err  error
+	}
+	parked := make(chan result, 1)
+	go func() {
+		// chunk 0 still holds the only slot (half read), so chunk 1 waits
+		s, err := m.Chunk(user, snap.ID, 1, bytes.NewReader(chunkOf(data, 1, chunkSize)))
+		parked <- result{s, err}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	close(fail)
+
+	r := <-parked
+	if r.err == nil {
+		t.Fatal("chunk 1 succeeded on a failed upload")
+	}
+	if errors.Is(r.err, ErrClosed) || !strings.Contains(r.err.Error(), cause.Error()) {
+		t.Fatalf("chunk error = %q, want it to carry the storage error %q", r.err, cause)
+	}
+}
