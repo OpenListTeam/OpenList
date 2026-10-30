@@ -36,7 +36,22 @@ func (d *OnedriveAPP) Init(ctx context.Context) error {
 	if d.ChunkSize < 1 {
 		d.ChunkSize = 5
 	}
-	return d.accessToken()
+	if d.IsSharepoint && d.SiteID == "" {
+		return fmt.Errorf("site_id is required when is_sharepoint is enabled")
+	}
+	if !d.IsSharepoint && d.Email == "" {
+		return fmt.Errorf("email is required when is_sharepoint is disabled")
+	}
+	if d.IsSharepoint {
+		d.SiteID = NormalizeSiteID(d.SiteID)
+	}
+	if err := d.accessToken(); err != nil {
+		return err
+	}
+	if d.IsSharepoint {
+		return d.resolveSiteID()
+	}
+	return nil
 }
 
 func (d *OnedriveAPP) Drop(ctx context.Context) error {
