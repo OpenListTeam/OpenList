@@ -468,16 +468,18 @@ LOOP:
 	<-workersDone
 	<-producerDone
 	<-partsDone
+	tokenMu.RLock()
+	currentToken := ossToken
+	tokenMu.RUnlock()
 	if uploadErr != nil {
 		abortCtx, abortCancel := context.WithTimeout(context.Background(), time.Minute)
-		_ = bucket.AbortMultipartUpload(imur, oss.WithContext(abortCtx))
+		_ = bucket.AbortMultipartUpload(imur,
+			oss.SetHeader(driver115.OssSecurityTokenHeaderName, currentToken.SecurityToken),
+			oss.WithContext(abortCtx))
 		abortCancel()
 		return nil, uploadErr
 	}
 
-	tokenMu.RLock()
-	currentToken := ossToken
-	tokenMu.RUnlock()
 	// 不知道啥原因，oss那边分片上传不计算sha1，导致115服务器校验错误
 	// params.Callback.Callback = strings.ReplaceAll(params.Callback.Callback, "${sha1}", params.SHA1)
 	if _, err := bucket.CompleteMultipartUpload(imur, parts, append(
@@ -486,7 +488,9 @@ LOOP:
 		oss.WithContext(uploadCtx),
 	)...); err != nil {
 		abortCtx, abortCancel := context.WithTimeout(context.Background(), time.Minute)
-		_ = bucket.AbortMultipartUpload(imur, oss.WithContext(abortCtx))
+		_ = bucket.AbortMultipartUpload(imur,
+			oss.SetHeader(driver115.OssSecurityTokenHeaderName, currentToken.SecurityToken),
+			oss.WithContext(abortCtx))
 		abortCancel()
 		return nil, err
 	}
