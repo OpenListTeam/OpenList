@@ -2,14 +2,15 @@ package fs
 
 import (
 	"context"
+	"path"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"path"
 )
 
 // List files
@@ -40,10 +41,8 @@ func list(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error)
 	}
 
 	om := model.NewObjMerge()
-	if whetherHide(user, meta, path) {
-		om.InitHideReg(meta.Hide)
-	}
 	objs := om.Merge(_objs, virtualFiles...)
+	objs = authz.FilterHidden(user, meta, path, objs)
 	objs, err = filterReadableObjs(objs, user, path, meta)
 	return objs, err
 }
@@ -62,30 +61,9 @@ func filterReadableObjs(objs []model.Obj, user *model.User, reqPath string, pare
 		} else {
 			meta = parentMeta
 		}
-		if common.CanRead(user, meta, objPath) {
+		if authz.CanRead(user, meta, objPath) {
 			result = append(result, obj)
 		}
 	}
 	return result, nil
-}
-
-func whetherHide(user *model.User, meta *model.Meta, path string) bool {
-	// if is admin, don't hide
-	if user == nil || user.CanSeeHides() {
-		return false
-	}
-	// if meta is nil, don't hide
-	if meta == nil {
-		return false
-	}
-	// if meta.Hide is empty, don't hide
-	if meta.Hide == "" {
-		return false
-	}
-	// if meta doesn't apply to sub_folder, don't hide
-	if !common.MetaCoversPath(meta.Path, path, meta.HSub) {
-		return false
-	}
-	// if is guest, hide
-	return true
 }

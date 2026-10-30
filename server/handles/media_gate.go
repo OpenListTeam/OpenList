@@ -7,6 +7,7 @@ import (
 	stdpath "path"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -64,6 +65,10 @@ func mediaUser(c *gin.Context) *model.User {
 // user 为 nil 一律拒绝（fail-closed）：所有调用点都应经过 Auth / embyAuth 拿到用户，
 // 缺失用户说明鉴权链路出了问题，不能默认放行；被禁用的访客同样拒绝。
 func CanUserAccessPath(user *model.User, reqPath string) bool {
+	return canUserAccessPath(user, reqPath, op.GetNearestMeta)
+}
+
+func canUserAccessPath(user *model.User, reqPath string, resolveMeta func(string) (*model.Meta, error)) bool {
 	if user == nil || (user.IsGuest() && user.Disabled) {
 		return false
 	}
@@ -75,12 +80,12 @@ func CanUserAccessPath(user *model.User, reqPath string) bool {
 	if base != "/" && !utils.IsSubPath(base, reqPath) && !utils.PathEqual(base, reqPath) {
 		return false
 	}
-	meta, err := op.GetNearestMeta(reqPath)
+	meta, err := resolveMeta(reqPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return false
 	}
 	// media 播放链路无法携带目录密码，因此受密码保护的目录视为不可访问
-	return common.CanAccess(user, meta, reqPath, "")
+	return authz.CanAccess(user, meta, reqPath, "")
 }
 
 // userPathPrefix 返回用于 SQL 前缀过滤的用户目录，全盘用户返回空串

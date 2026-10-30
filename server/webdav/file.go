@@ -13,12 +13,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -323,7 +323,7 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
+	if !authz.CanWrite(user, srcMeta, srcDir) || !authz.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
 	if _, err = fs.Get(ctx, src, &fs.GetArgs{}); err != nil {
@@ -380,14 +380,14 @@ func copyFiles(ctx context.Context, src, dst string, overwrite bool, depth int) 
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !common.CanRead(user, srcMeta, srcDir) {
+	if !authz.CanRead(user, srcMeta, srcDir) {
 		return http.StatusForbidden, nil
 	}
 	dstMeta, err := op.GetNearestMeta(dstDir)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
 	}
-	if !common.CanWrite(user, dstMeta, dstDir) {
+	if !authz.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
 	srcInfo, err := fs.Get(ctx, src, &fs.GetArgs{})

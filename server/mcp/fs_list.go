@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -48,12 +49,12 @@ func (s *Server) callFSList(c *gin.Context, raw json.RawMessage) (any, *rpcError
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return nil, &rpcError{Code: -32603, Message: err.Error()}
 	}
-	if !common.CanAccess(user, meta, reqPath, args.Password) {
+	if !authz.CanAccess(user, meta, reqPath, args.Password) {
 		return nil, &rpcError{Code: -32003, Message: "password is incorrect or you have no permission"}
 	}
 
-	write := common.CanWrite(user, meta, reqPath)
-	writeContentBypass := common.CanWriteContentBypassUserPerms(meta, reqPath)
+	write := authz.CanWrite(user, meta, reqPath)
+	writeContentBypass := authz.CanWriteContentBypassUserPerms(meta, reqPath)
 	canWriteContentAtPath := write && (user.CanWriteContent() || writeContentBypass)
 	if args.Refresh && !canWriteContentAtPath {
 		return nil, &rpcError{Code: -32003, Message: "refresh without permission"}
@@ -158,14 +159,14 @@ func toObjResp(objs []model.Obj, parent string, encrypt bool) []handles.ObjResp 
 }
 
 func getReadme(meta *model.Meta, path string) string {
-	if meta != nil && common.MetaCoversPath(meta.Path, path, meta.RSub) {
+	if meta != nil && authz.MetaCoversPath(meta.Path, path, meta.RSub) {
 		return meta.Readme
 	}
 	return ""
 }
 
 func getHeader(meta *model.Meta, path string) string {
-	if meta != nil && common.MetaCoversPath(meta.Path, path, meta.HeaderSub) {
+	if meta != nil && authz.MetaCoversPath(meta.Path, path, meta.HeaderSub) {
 		return meta.Header
 	}
 	return ""
@@ -178,5 +179,5 @@ func isEncrypt(meta *model.Meta, path string) bool {
 	if meta == nil || meta.Password == "" {
 		return false
 	}
-	return common.MetaCoversPath(meta.Path, path, meta.PSub)
+	return authz.MetaCoversPath(meta.Path, path, meta.PSub)
 }

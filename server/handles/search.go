@@ -3,6 +3,7 @@ package handles
 import (
 	"path"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -69,7 +70,7 @@ func isSearchNodeAccessible(user *model.User, node model.SearchNode, password st
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return false
 	}
-	return common.CanAccess(user, meta, nodePath, password)
+	return authz.CanAccess(user, meta, nodePath, password)
 }
 
 func nodeToSearchResp(node model.SearchNode) SearchResp {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -22,7 +23,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
 	"github.com/pkg/errors"
 )
@@ -45,7 +45,7 @@ func SeedGenerateNeedsAsync(ctx context.Context, user *model.User, paths []strin
 		if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
 			return false, metaErr
 		}
-		if !common.CanRead(user, meta, fullPath) {
+		if !authz.CanRead(user, meta, fullPath) {
 			return false, errs.PermissionDenied
 		}
 		storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
@@ -386,7 +386,7 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			return nil, nil, err
 		}
-		if !common.CanRead(user, meta, fullPath) {
+		if !authz.CanRead(user, meta, fullPath) {
 			return nil, nil, errs.PermissionDenied
 		}
 		storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
@@ -528,7 +528,7 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 		if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
 			return artifact, metaErr
 		}
-		if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstDir)) || !common.CanWrite(user, meta, dstDir) {
+		if (!user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(meta, dstDir)) || !authz.CanWrite(user, meta, dstDir) {
 			return artifact, errs.PermissionDenied
 		}
 		fileStream := &stream.FileStream{
@@ -601,7 +601,7 @@ func AddSeedGenerateTask(ctx context.Context, user *model.User, params SeedGener
 	t := &SeedGenerateTask{
 		TaskExtension: task.TaskExtension{
 			Creator: user,
-			ApiUrl:  common.GetApiUrl(ctx),
+			ApiUrl:  conf.GetApiUrl(ctx),
 		},
 		params: params,
 	}
