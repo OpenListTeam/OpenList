@@ -42,6 +42,10 @@ const (
 	// grace period during which finished sessions remain queryable.
 	defaultSessionTTL = 30 * time.Minute
 	gcInterval        = time.Minute
+	// supersedeJoinTimeout bounds the wait for a superseded attempt to return.
+	// Teardown is prompt (the context is canceled and the window closed); the
+	// bound only keeps a driver stuck on network I/O from blocking init.
+	supersedeJoinTimeout = 10 * time.Second
 )
 
 var (
@@ -97,6 +101,24 @@ type Session struct {
 }
 
 func (s *Session) touch() { s.lastActive.Store(time.Now().UnixNano()) }
+
+// awaitAttempt blocks until the running pipeline attempt has fully returned,
+// or the timeout elapses. Callers must not hold Manager.mu. It is only a
+// handover barrier: the attempt is already being torn down by terminate.
+func (s *Session) awaitAttempt(timeout time.Duration) {
+	s.mu.Lock()
+	done := s.done
+	s.mu.Unlock()
+	if done == nil {
+		return
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+}
 
 func (s *Session) setStoragePct(p float64) { s.storagePct.Store(math.Float64bits(p)) }
 
@@ -329,6 +351,10 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 			// drop the old session and start fresh
 			m.mu.Unlock()
 			m.terminate(s, errors.New("superseded by a new upload of the same path and size"))
+			// wait for the old attempt to let go of the destination before a
+			// new one starts writing it: two drivers writing the same path
+			// interleave their output
+			s.awaitAttempt(supersedeJoinTimeout)
 			m.mu.Lock()
 		}
 	}

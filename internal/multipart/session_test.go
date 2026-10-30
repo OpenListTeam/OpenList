@@ -703,3 +703,60 @@ func TestDriverPanicFailsTheAttempt(t *testing.T) {
 		t.Fatalf("state = %s, want %s", final.State, StateFailedRetriable)
 	}
 }
+
+// Superseding must hand the destination over: the old attempt has to return
+// before its replacement starts, or two drivers write the same path at once.
+func TestSupersedeWaitsForTheOldAttempt(t *testing.T) {
+	m := setupSessionTest(t)
+	const chunkSize = 1024
+	totalSize := int64(4 * chunkSize)
+	user := testUser()
+
+	var mu sync.Mutex
+	var events []string
+	running := make(chan struct{})
+	replacementStarted := make(chan struct{})
+	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		mu.Lock()
+		first := len(events) == 0
+		events = append(events, "start")
+		mu.Unlock()
+		if !first {
+			close(replacementStarted)
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		close(running)
+		<-ctx.Done()
+		// a real driver needs a moment to unwind before it lets go of the
+		// destination; the handover must cover that window
+		time.Sleep(50 * time.Millisecond)
+		mu.Lock()
+		events = append(events, "old-returned")
+		mu.Unlock()
+		return ctx.Err()
+	})
+
+	if _, _, err := m.Init(initReq(user, totalSize, chunkSize)); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	<-running
+	// same user, path and size without hashes: the old session is superseded
+	again, _, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil {
+		t.Fatalf("superseding Init: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Abort(user, again.ID) })
+	select {
+	case <-replacementStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the replacement attempt never started")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 3 || events[1] != "old-returned" {
+		t.Fatalf("events = %v, want the superseded attempt to return before its replacement starts", events)
+	}
+}
