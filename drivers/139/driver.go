@@ -685,10 +685,116 @@ func (d *Yun139) getPartSize(size int64) int64 {
 	return 100 * utils.MB
 }
 
+// imageSuffixUploadSuffix is appended to the uploaded file name when
+// UseImageSuffixUpload is enabled. The 139 App keeps accepting images for
+// members when the disk quota is full, so uploading the file as "<name>.jpg"
+// and renaming it back afterwards works around a full disk.
+const imageSuffixUploadSuffix = ".jpg"
+
+// imageSuffixUploadStreamer reports "<name>.jpg" as the file name during the
+// upload and remembers the original name for the rename that follows.
+type imageSuffixUploadStreamer struct {
+	model.FileStreamer
+	uploadName string
+	finalName  string
+	// uploadedID is the ID of the uploaded file, recorded by put. It lets the
+	// rename target exactly the uploaded file even when the server had to
+	// resolve a name conflict.
+	uploadedID string
+}
+
+func (s *imageSuffixUploadStreamer) GetName() string {
+	return s.uploadName
+}
+
+// uploadFinalName returns the name the stream must have after the upload.
+// Streams that are uploaded through the image suffix trick report their
+// original name.
+func uploadFinalName(stream model.FileStreamer) string {
+	if s, ok := stream.(*imageSuffixUploadStreamer); ok {
+		return s.finalName
+	}
+	return stream.GetName()
+}
+
+// Put uploads the file. When use_image_suffix_upload is enabled it is uploaded
+// as "<name>.jpg" and renamed back to "<name>" after the upload finished.
 func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	if d.isShare() {
 		return errs.NotImplement
 	}
+	if !d.UseImageSuffixUpload {
+		return d.put(ctx, dstDir, stream, up)
+	}
+	uploadStream := &imageSuffixUploadStreamer{
+		FileStreamer: stream,
+		uploadName:   stream.GetName() + imageSuffixUploadSuffix,
+		finalName:    stream.GetName(),
+	}
+	log.Debugf("[139] image suffix upload: %s => %s", uploadStream.finalName, uploadStream.uploadName)
+	if err := d.put(ctx, dstDir, uploadStream, up); err != nil {
+		return err
+	}
+	return d.restoreImageSuffixName(ctx, dstDir, uploadStream)
+}
+
+// restoreImageSuffixName renames a file uploaded as "<name>.jpg" back to its
+// original name. The uploaded file is looked up by ID when available, and a
+// file that already uses the original name is removed first so the rename
+// cannot conflict.
+func (d *Yun139) restoreImageSuffixName(ctx context.Context, dstDir model.Obj, stream *imageSuffixUploadStreamer) error {
+	var uploaded, existing model.Obj
+	for attempt := 0; attempt < 5 && uploaded == nil; attempt++ {
+		if attempt > 0 {
+			// 给服务器一定时间处理数据，避免无法刷新文件列表
+			time.Sleep(time.Millisecond * 500)
+		}
+		files, err := d.List(ctx, dstDir, model.ListArgs{Refresh: true})
+		if err != nil {
+			return err
+		}
+		uploaded, existing = nil, nil
+		for _, file := range files {
+			if file.IsDir() {
+				continue
+			}
+			matchUploaded := stream.uploadedID != "" && file.GetID() == stream.uploadedID ||
+				stream.uploadedID == "" && file.GetName() == stream.uploadName
+			switch {
+			case matchUploaded:
+				uploaded = file
+			case file.GetName() == stream.finalName:
+				existing = file
+			}
+		}
+	}
+	if uploaded == nil {
+		return fmt.Errorf("uploaded file %s not found in %s after image suffix upload, it may still be stored with the .jpg suffix", stream.uploadName, dstDir.GetPath())
+	}
+	if uploaded.GetName() == stream.finalName {
+		return nil
+	}
+	if existing != nil {
+		log.Debugf("[139] image suffix upload: removing old: %s", existing.GetName())
+		// 删除前重命名旧文件，避免仍旧冲突
+		if err := d.Rename(ctx, existing, existing.GetName()+random.String(4)); err != nil {
+			return err
+		}
+		if err := d.Remove(ctx, existing); err != nil {
+			return err
+		}
+	}
+	log.Debugf("[139] image suffix upload: renaming new: %s => %s", uploaded.GetName(), stream.finalName)
+	return d.Rename(ctx, uploaded, stream.finalName)
+}
+
+func (d *Yun139) put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
+	if d.isShare() {
+		return errs.NotImplement
+	}
+	// finalName is the name the file must end up with; it differs from the
+	// upload name only for streams uploaded through the image suffix trick.
+	finalName := uploadFinalName(stream)
 	// PersonalNew 以及 Group/Family 在非旧流模式时走新上传路径
 	if d.Addition.Type == MetaPersonalNew ||
 		((d.isGroup() || d.isFamily()) && !d.UseOldStreamUpload) {
@@ -759,6 +865,15 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			"type":                 "file",
 			"fileRenameMode":       "auto_rename",
 		}
+		// App 客户端上报的额外字段（对齐移动端 App 的 file/create 请求体）
+		if d.isAppClient() {
+			data["parallelUpload"] = true
+			data["storyVideoFile"] = false
+			data["userRegion"] = base.Json{
+				"cityCode":     "854",
+				"provinceCode": "851",
+			}
+		}
 		// 家庭云和共享群需要额外的参数
 		if d.isGroup() || d.isFamily() {
 			if d.CloudID == "" {
@@ -777,6 +892,9 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		_, err = d.newPost(createPath, data, &resp)
 		if err != nil {
 			return err
+		}
+		if s, ok := stream.(*imageSuffixUploadStreamer); ok {
+			s.uploadedID = resp.Data.FileId
 		}
 
 		// 判断文件是否已存在
@@ -860,11 +978,12 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				return err
 			}
 			// 删除旧文件
+			// 注意：图片后缀上传时冲突文件是原始文件名，而不是上传时使用的 .jpg 名
 			for _, file := range files {
-				if file.GetName() == stream.GetName() {
+				if file.GetName() == finalName {
 					log.Debugf("[139] conflict: removing old: %s", file.GetName())
 					// 删除前重命名旧文件，避免仍旧冲突
-					err = d.Rename(ctx, file, stream.GetName()+random.String(4))
+					err = d.Rename(ctx, file, file.GetName()+random.String(4))
 					if err != nil {
 						return err
 					}
@@ -878,8 +997,8 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			// 重命名新文件
 			for _, file := range files {
 				if file.GetName() == resp.Data.FileName {
-					log.Debugf("[139] conflict: renaming new: %s => %s", file.GetName(), stream.GetName())
-					err = d.Rename(ctx, file, stream.GetName())
+					log.Debugf("[139] conflict: renaming new: %s => %s", file.GetName(), finalName)
+					err = d.Rename(ctx, file, finalName)
 					if err != nil {
 						return err
 					}
@@ -900,11 +1019,12 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			return err
 		}
 		// 删除旧文件
+		// 注意：图片后缀上传时冲突文件是原始文件名，而不是上传时使用的 .jpg 名
 		for _, file := range files {
-			if file.GetName() == stream.GetName() {
+			if file.GetName() == finalName {
 				log.Debugf("[139] conflict: removing old: %s", file.GetName())
 				// 删除前重命名旧文件，避免仍旧冲突
-				err = d.Rename(ctx, file, stream.GetName()+random.String(4))
+				err = d.Rename(ctx, file, file.GetName()+random.String(4))
 				if err != nil {
 					return err
 				}
@@ -968,6 +1088,9 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		}
 		if resp.Data.Result.ResultCode != "0" {
 			return fmt.Errorf("get file upload url failed with result code: %s, message: %s", resp.Data.Result.ResultCode, resp.Data.Result.ResultDesc)
+		}
+		if s, ok := stream.(*imageSuffixUploadStreamer); ok && len(resp.Data.UploadResult.NewContentIDList) > 0 {
+			s.uploadedID = resp.Data.UploadResult.NewContentIDList[0].ContentID
 		}
 
 		size := stream.GetSize()
