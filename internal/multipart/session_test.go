@@ -743,3 +743,94 @@ func TestResumeReceivingByIdentity(t *testing.T) {
 		})
 	}
 }
+
+// An interrupted upload must be able to resume even though an in-place driver
+// has already written its partial output to the destination, but only an init
+// that proves it is the same file may skip the "file exists" check: a failed
+// attempt is picked up by any init for the same path and size.
+func TestResumesSameFile(t *testing.T) {
+	const md5A = "0cc175b9c0f1b6a831c399e269772661"
+	cases := []struct {
+		name          string
+		failed        bool   // the first attempt fails after one chunk
+		firstIdentity string // sent with the first init
+		firstMD5      string
+		againIdentity string // sent with the second init
+		againMD5      string
+		want          bool
+	}{
+		{name: "receiving, same identity", firstIdentity: "fp-a", againIdentity: "fp-a", want: true},
+		{name: "receiving, different identity", firstIdentity: "fp-a", againIdentity: "fp-b"},
+		{name: "receiving, identity dropped", firstIdentity: "fp-a"},
+		{name: "receiving, same hash", firstMD5: md5A, againMD5: md5A, want: true},
+		{name: "failed, same identity", failed: true, firstIdentity: "fp-a", againIdentity: "fp-a", want: true},
+		{name: "failed, different identity", failed: true, firstIdentity: "fp-a", againIdentity: "fp-b"},
+		{name: "failed, nothing proves the file", failed: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := setupSessionTest(t)
+			const chunkSize = 1024
+			totalSize := int64(4 * chunkSize)
+			data := genData(totalSize)
+			user := testUser()
+
+			started := make(chan struct{})
+			var once sync.Once
+			stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+				defer fs.Close()
+				once.Do(func() { close(started) })
+				if tc.failed {
+					if _, err := io.ReadFull(fs, make([]byte, chunkSize)); err != nil {
+						return err
+					}
+					return errors.New("transient storage hiccup")
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			})
+
+			first := withMD5(withIdentity(initReq(user, totalSize, chunkSize), tc.firstIdentity), tc.firstMD5)
+			snap, _, err := m.Init(first)
+			if err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			<-started
+			sendChunk(t, m, user, snap.ID, data, 0, chunkSize)
+			if tc.failed {
+				waitState(t, m, user, snap.ID, StateFailedRetriable)
+			}
+
+			again := withMD5(withIdentity(initReq(user, totalSize, chunkSize), tc.againIdentity), tc.againMD5)
+			if got := m.ResumesSameFile(again); got != tc.want {
+				t.Fatalf("ResumesSameFile = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	t.Run("no session", func(t *testing.T) {
+		m := setupSessionTest(t)
+		if m.ResumesSameFile(withIdentity(initReq(testUser(), 4096, 1024), "fp-a")) {
+			t.Fatal("ResumesSameFile = true without any session")
+		}
+	})
+	t.Run("failed permanently", func(t *testing.T) {
+		m := setupSessionTest(t)
+		user := testUser()
+		stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+			defer fs.Close()
+			return fmt.Errorf("denied: %w", errs.PermissionDenied)
+		})
+
+		req := withIdentity(initReq(user, 4096, 1024), "fp-a")
+		snap, _, err := m.Init(req)
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		waitState(t, m, user, snap.ID, StateFailedPermanent)
+		// Init supersedes such a session with a fresh upload, which must
+		// still meet "file exists"
+		if m.ResumesSameFile(req) {
+			t.Fatal("ResumesSameFile = true for a session Init would supersede")
+		}
+	})
+}

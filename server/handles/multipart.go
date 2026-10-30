@@ -84,12 +84,6 @@ func MultipartInit(c *gin.Context) {
 		}
 	}
 	overwrite := c.GetHeader("Overwrite") != "false"
-	if !overwrite {
-		if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
-			common.ErrorStrResp(c, "file exists", 403)
-			return
-		}
-	}
 	dir, name := stdpath.Split(path)
 	if shouldIgnoreSystemFile(name) {
 		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 403)
@@ -126,7 +120,7 @@ func MultipartInit(c *gin.Context) {
 		common.ErrorStrResp(c, "X-File-Identity is too long", 400)
 		return
 	}
-	snap, resumed, err := multipart.DefaultManager.Init(multipart.InitReq{
+	req := multipart.InitReq{
 		User:      user,
 		Path:      path,
 		Size:      size,
@@ -135,7 +129,16 @@ func MultipartInit(c *gin.Context) {
 		Modified:  getLastModified(c),
 		Hashes:    h,
 		Identity:  identity,
-	})
+	}
+	// an interrupted upload may resume even though in-place drivers have
+	// already written its partial output to the destination
+	if !overwrite && !multipart.DefaultManager.ResumesSameFile(req) {
+		if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
+			common.ErrorStrResp(c, "file exists", 403)
+			return
+		}
+	}
+	snap, resumed, err := multipart.DefaultManager.Init(req)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return

@@ -213,6 +213,30 @@ func qualifiesResume(s *Session, req InitReq) bool {
 	return hashesQualifyResume(s.Hashes, req.Hashes)
 }
 
+// resumes reports whether an init for req picks up s, in state st, instead of
+// superseding it.
+func resumes(s *Session, st State, req InitReq) bool {
+	return st == StateFailedRetriable || (st == StateReceiving && qualifiesResume(s, req))
+}
+
+// ResumesSameFile reports whether Init(req) would resume a session that req
+// proves to be the same file by identity or hashes. That upload owns what sits
+// at the destination (its own partial output on in-place drivers, or a file it
+// was allowed to replace), so "file exists" must not stop the resume. Picking
+// up a failed attempt is no proof: any init for the same path and size does.
+func (m *Manager) ResumesSameFile(req InitReq) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.byID[m.byKey[sessionKey(req.User.ID, req.Path, req.Size)]]
+	if !ok {
+		return false
+	}
+	s.mu.Lock()
+	st := s.state
+	s.mu.Unlock()
+	return resumes(s, st, req) && qualifiesResume(s, req)
+}
+
 // hashesConflict reports whether a hash type sent on both inits differs.
 func hashesConflict(old, new map[*utils.HashType]string) bool {
 	for t, ov := range old {
@@ -346,8 +370,7 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 			// attempt survives except CRCs, and the re-fill CRC check catches
 			// a changed file. A receiving session still holds data, so it only
 			// resumes when the client proves it is the same file.
-			if st == StateFailedRetriable ||
-				(st == StateReceiving && qualifiesResume(s, req)) {
+			if resumes(s, st, req) {
 				m.mu.Unlock()
 				s.touch()
 				return s.Snapshot(), true, nil
