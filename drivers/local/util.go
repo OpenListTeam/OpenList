@@ -457,7 +457,12 @@ func (d *Local) copyForMove(srcPath, dstPath string) error {
 		return d.copySymlinkForMove(srcPath, dstPath)
 	}
 	if info.Mode()&os.ModeNamedPipe != 0 {
-		return copyNamedPipe(dstPath, info.Mode(), os.FileMode(d.mkdirPerm))
+		if err = copyNamedPipe(dstPath, info.Mode(), os.FileMode(d.mkdirPerm)); err != nil {
+			return err
+		}
+		// Some platforms skip named pipes, so keep the source when nothing was created.
+		_, err = os.Lstat(dstPath)
+		return err
 	}
 	if !info.IsDir() {
 		if err = utils.CopyFile(srcPath, dstPath); err != nil {
