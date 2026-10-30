@@ -224,18 +224,25 @@ func copyMutation(ctx context.Context, dstPath, stagePath string, dstBackup *fil
 }
 
 func isSameStorage(src, dstDir string) bool {
+	srcStorage, _, srcErr := op.GetStorageAndActualPath(src)
+	dstStorage, _, dstErr := op.GetStorageAndActualPath(dstDir)
+	if srcErr == nil && dstErr == nil && srcStorage != nil && dstStorage != nil {
+		if s1, s2 := srcStorage.GetStorage(), dstStorage.GetStorage(); s1 != nil && s2 != nil {
+			// Virtual/composite storage drivers manage underlying replicas or chunked directories.
+			// They require source backup to protect against partial/asymmetric operations.
+			if s1.Driver == "Alias" || s2.Driver == "Alias" || s1.Driver == "Chunk" || s2.Driver == "Chunk" {
+				return false
+			}
+			if s1 == s2 && path.Dir(src) == dstDir {
+				return true
+			}
+			return s1 == s2
+		}
+	}
 	if path.Dir(src) == dstDir {
 		return true
 	}
-	srcStorage, _, err := op.GetStorageAndActualPath(src)
-	if err != nil {
-		return false
-	}
-	dstStorage, _, err := op.GetStorageAndActualPath(dstDir)
-	if err != nil {
-		return false
-	}
-	return srcStorage.GetStorage() == dstStorage.GetStorage()
+	return false
 }
 
 func restoreSameStorageMove(ctx context.Context, src, dst, srcDir, dstDir, srcName, dstName string) (bool, error) {
@@ -440,7 +447,8 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
-	if _, err = fs.Get(ctx, src, &fs.GetArgs{}); err != nil {
+	srcInfo, err := fs.Get(ctx, src, &fs.GetArgs{})
+	if err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusNotFound, err
 		}
@@ -466,7 +474,7 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	err = runDeadPropsFileMutation(ctx,
 		func(tx *gorm.DB) error { return moveDeadProps(tx, src, dst) },
 		func() (*fileMutation, error) {
-			sameStorage := isSameStorage(src, dstDir)
+			sameStorage := !srcInfo.IsDir() && isSameStorage(src, dstDir)
 			return moveWithRollback(ctx, src, dst, dstDir, srcDir, srcName, dstName, dstExisted && overwrite, sameStorage)
 		},
 	)
