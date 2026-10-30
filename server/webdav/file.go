@@ -213,35 +213,60 @@ func copyMutation(ctx context.Context, dstPath, stagePath string, dstBackup *fil
 	}
 }
 
-func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string, dstExisted bool) (*fileMutation, error) {
-	// Keep a source copy so a partially completed cross-storage MOVE can be undone.
-	srcBackup, err := newFileBackup(ctx, src, true)
+func isSameStorage(src, dstDir string) bool {
+	if path.Dir(src) == dstDir {
+		return true
+	}
+	srcStorage, _, err := op.GetStorageAndActualPath(src)
 	if err != nil {
-		return nil, err
+		return false
+	}
+	dstStorage, _, err := op.GetStorageAndActualPath(dstDir)
+	if err != nil {
+		return false
+	}
+	return srcStorage.GetStorage() == dstStorage.GetStorage()
+}
+
+func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string, dstExisted, sameStorage bool) (*fileMutation, error) {
+	var srcBackup *fileBackup
+	if !sameStorage {
+		// Keep a source copy so a partially completed cross-storage MOVE can be undone.
+		var err error
+		srcBackup, err = newFileBackup(ctx, src, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var dstBackup *fileBackup
 	if dstExisted {
+		var err error
 		dstBackup, err = newFileBackup(ctx, dst, false)
 		if err != nil {
-			srcBackup.discard(ctx)
+			if srcBackup != nil {
+				srcBackup.discard(ctx)
+			}
 			return nil, err
 		}
 		if !dstBackup.renamed {
 			if err := removeIfExists(ctx, dst); err != nil {
-				mutation := moveMutation(ctx, dst, dstDir, srcName, dstName, srcBackup, dstBackup)
+				mutation := moveMutation(ctx, src, dst, srcDir, dstDir, srcName, dstName, srcBackup, dstBackup)
 				return mutation, errors.WithMessage(err, "failed to remove destination after creating rollback copy")
 			}
 		}
 	}
-	mutation := moveMutation(ctx, dst, dstDir, srcName, dstName, srcBackup, dstBackup)
+	mutation := moveMutation(ctx, src, dst, srcDir, dstDir, srcName, dstName, srcBackup, dstBackup)
 	if err := moveResource(ctx, src, dstDir, srcDir, srcName, dstName); err != nil {
 		return mutation, err
 	}
 	return mutation, nil
 }
 
-func moveMutation(ctx context.Context, dst, dstDir, srcName, dstName string, srcBackup, dstBackup *fileBackup) *fileMutation {
-	paths := []string{srcBackup.backupPath}
+func moveMutation(ctx context.Context, src, dst, srcDir, dstDir, srcName, dstName string, srcBackup, dstBackup *fileBackup) *fileMutation {
+	var paths []string
+	if srcBackup != nil {
+		paths = append(paths, srcBackup.backupPath)
+	}
 	if dstBackup != nil {
 		paths = append(paths, dstBackup.backupPath)
 	}
@@ -250,26 +275,44 @@ func moveMutation(ctx context.Context, dst, dstDir, srcName, dstName string, src
 		rollback: func() error {
 			rollbackCtx := context.WithoutCancel(ctx)
 			var rollbackErrs []error
-			candidates := []string{dst}
-			if srcName != dstName {
-				candidates = append(candidates, path.Join(dstDir, srcName))
-			}
-			for _, candidate := range candidates {
-				if err := removeIfExists(rollbackCtx, candidate); err != nil {
+			if srcBackup != nil {
+				candidates := []string{dst}
+				if srcName != dstName {
+					candidates = append(candidates, path.Join(dstDir, srcName))
+				}
+				for _, candidate := range candidates {
+					if err := removeIfExists(rollbackCtx, candidate); err != nil {
+						rollbackErrs = append(rollbackErrs, err)
+					}
+				}
+				if err := srcBackup.restore(rollbackCtx); err != nil {
 					rollbackErrs = append(rollbackErrs, err)
 				}
+			} else {
+				movedPath := dst
+				if _, err := fs.Get(rollbackCtx, movedPath, &fs.GetArgs{}); err != nil && srcName != dstName {
+					movedPath = path.Join(dstDir, srcName)
+				}
+				if _, err := fs.Get(rollbackCtx, movedPath, &fs.GetArgs{}); err == nil {
+					if err := moveResource(rollbackCtx, movedPath, srcDir, dstDir, path.Base(movedPath), srcName); err != nil {
+						rollbackErrs = append(rollbackErrs, errors.WithMessagef(err, "failed to restore moved object %s back to %s", movedPath, src))
+					}
+				}
 			}
-			if err := srcBackup.restore(rollbackCtx); err != nil {
-				rollbackErrs = append(rollbackErrs, err)
-			}
-			if err := dstBackup.restore(rollbackCtx); err != nil {
-				rollbackErrs = append(rollbackErrs, err)
+			if dstBackup != nil {
+				if err := dstBackup.restore(rollbackCtx); err != nil {
+					rollbackErrs = append(rollbackErrs, err)
+				}
 			}
 			return stderrors.Join(rollbackErrs...)
 		},
 		finalize: func() {
-			srcBackup.discard(ctx)
-			dstBackup.discard(ctx)
+			if srcBackup != nil {
+				srcBackup.discard(ctx)
+			}
+			if dstBackup != nil {
+				dstBackup.discard(ctx)
+			}
 		},
 	}
 }
@@ -352,7 +395,8 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	err = runDeadPropsFileMutation(ctx,
 		func(tx *gorm.DB) error { return moveDeadProps(tx, src, dst) },
 		func() (*fileMutation, error) {
-			return moveWithRollback(ctx, src, dst, dstDir, srcDir, srcName, dstName, dstExisted && overwrite)
+			sameStorage := isSameStorage(src, dstDir)
+			return moveWithRollback(ctx, src, dst, dstDir, srcDir, srcName, dstName, dstExisted && overwrite, sameStorage)
 		},
 	)
 	if err != nil {
