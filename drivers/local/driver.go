@@ -412,9 +412,16 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	fullPath := filepath.Join(dstDir.GetPath(), stream.GetName())
+	fullPath := resolveSymlinkFile(filepath.Join(dstDir.GetPath(), stream.GetName()))
+	perm := os.FileMode(0o666)
+	stat, statErr := os.Stat(fullPath)
+	if statErr == nil {
+		perm = stat.Mode().Perm()
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
 	tempPath := filepath.Join(filepath.Dir(fullPath), ".openlist-upload-"+uuid.NewString())
-	out, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+	out, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
 	if err != nil {
 		return err
 	}
@@ -435,8 +442,8 @@ func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	if err = os.Chtimes(tempPath, stream.ModTime(), stream.ModTime()); err != nil {
 		log.Errorf("[local] failed to change time of %s: %s", fullPath, err)
 	}
-	if stat, statErr := os.Stat(fullPath); statErr == nil {
-		if err = os.Chmod(tempPath, stat.Mode()); err != nil {
+	if statErr == nil {
+		if err = os.Chmod(tempPath, perm); err != nil {
 			return err
 		}
 	}
