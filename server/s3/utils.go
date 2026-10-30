@@ -67,6 +67,14 @@ func isTrailingSlashRequest(ctx context.Context) bool {
 	return value
 }
 
+// requestObjectKey restores the trailing slash that gofakes3 routing removed.
+func requestObjectKey(ctx context.Context, object string) string {
+	if isTrailingSlashRequest(ctx) && !strings.HasSuffix(object, "/") {
+		return object + "/"
+	}
+	return object
+}
+
 func listS3Markers(bucket string) ([]model.S3Marker, error) {
 	if db.GetDb() == nil {
 		return nil, nil

@@ -45,7 +45,9 @@ func directObjectURL(r *http.Request, authPairs map[string]string) (string, bool
 		return "", false
 	}
 	bucketName, objectName, ok := parseObjectPath(r.URL.Path)
-	if !ok {
+	// path.Join would resolve a trailing-slash key to a same-named file, so
+	// leave those keys to the backend's exact-key marker lookup.
+	if !ok || strings.HasSuffix(objectName, "/") {
 		return "", false
 	}
 	bucket, err := getBucketByName(bucketName)

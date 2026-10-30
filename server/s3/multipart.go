@@ -69,6 +69,7 @@ func validateMultipartObject(state *multipartState, bucket, object string) error
 //
 // It implements gofakes3.MultipartBackend.
 func (b *s3Backend) CreateMultipartUpload(ctx context.Context, bucket, object string, meta map[string]string) (gofakes3.UploadID, error) {
+	object = requestObjectKey(ctx, object)
 	if _, err := getBucketByName(bucket); err != nil {
 		return "", err
 	}
@@ -105,6 +106,7 @@ func (b *s3Backend) CreateMultipartUpload(ctx context.Context, bucket, object st
 // contentLength bytes; a short read is reported as ErrIncompleteBody so a
 // truncated client request is never silently stored.
 func (b *s3Backend) UploadPart(ctx context.Context, bucket, object string, uploadID gofakes3.UploadID, partNumber int, contentLength int64, body io.Reader) (string, error) {
+	object = requestObjectKey(ctx, object)
 	if partNumber <= 0 || partNumber > gofakes3.MaxUploadPartNumber {
 		return "", gofakes3.ErrInvalidPart
 	}
@@ -176,6 +178,7 @@ func (b *s3Backend) UploadPart(ctx context.Context, bucket, object string, uploa
 // It implements gofakes3.MultipartBackend. Part ordering and etags are
 // validated against the parts actually received.
 func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object string, uploadID gofakes3.UploadID, input *gofakes3.CompleteMultipartUploadRequest) (gofakes3.VersionID, string, error) {
+	object = requestObjectKey(ctx, object)
 	val, ok := b.uploads.Load(uploadID)
 	if !ok {
 		return "", "", gofakes3.ErrNoSuchUpload
@@ -268,6 +271,7 @@ func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object 
 // It implements gofakes3.MultipartBackend and is idempotent: aborting an
 // unknown upload succeeds so retries do not fail.
 func (b *s3Backend) AbortMultipartUpload(ctx context.Context, bucket, object string, uploadID gofakes3.UploadID) error {
+	object = requestObjectKey(ctx, object)
 	if val, ok := b.uploads.Load(uploadID); ok {
 		if err := validateMultipartObject(val.(*multipartState), bucket, object); err != nil {
 			return err

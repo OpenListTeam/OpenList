@@ -2,12 +2,20 @@ package s3
 
 import (
 	"context"
+	"encoding/json"
+	"encoding/xml"
 	"io"
+	"os"
+	"path/filepath"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/url_tree"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/gofakes3"
 )
 
@@ -218,5 +226,122 @@ func TestS3MarkerCopyETag(t *testing.T) {
 	}
 	if _, err := b.HeadObject(ctx, "mp", destination); err != nil {
 		t.Fatalf("HeadObject copied marker: %v", err)
+	}
+}
+
+func newMarkerHTTPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	handler, err := NewServer(context.Background())
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return server
+}
+
+func doMarkerRequest(t *testing.T, client *http.Client, method, url, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new %s request: %v", method, err)
+	}
+	req.ContentLength = int64(len(body))
+	response, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+	return response
+}
+
+func TestS3MarkerHTTPGetSkipsSameNameFileRedirect(t *testing.T) {
+	ctx := context.Background()
+	mount := "/" + sanitizeTestName(t.Name())
+	addition, err := json.Marshal(map[string]any{
+		"url_structure": "a:1:https://example.com/a",
+	})
+	if err != nil {
+		t.Fatalf("marshal url tree addition: %v", err)
+	}
+	if _, err := op.CreateStorage(ctx, model.Storage{
+		Driver:    "UrlTree",
+		MountPath: mount,
+		Addition:  string(addition),
+	}); err != nil {
+		t.Fatalf("create url tree storage: %+v", err)
+	}
+	if err := op.SaveSettingItem(&model.SettingItem{
+		Key:   conf.S3Buckets,
+		Value: `[{"name":"rd","path":"` + mount + `"}]`,
+	}); err != nil {
+		t.Fatalf("save s3 buckets setting: %+v", err)
+	}
+
+	server := newMarkerHTTPServer(t)
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	file := doMarkerRequest(t, client, http.MethodGet, server.URL+"/rd/a", "")
+	file.Body.Close()
+	if file.StatusCode != http.StatusFound {
+		t.Fatalf("GET file status = %d, want %d", file.StatusCode, http.StatusFound)
+	}
+
+	put := doMarkerRequest(t, client, http.MethodPut, server.URL+"/rd/a/", "")
+	put.Body.Close()
+	if put.StatusCode != http.StatusOK {
+		t.Fatalf("PUT marker status = %d, want %d", put.StatusCode, http.StatusOK)
+	}
+	t.Cleanup(func() { _ = deleteS3Marker("rd", "a/") })
+
+	get := doMarkerRequest(t, client, http.MethodGet, server.URL+"/rd/a/", "")
+	body, readErr := io.ReadAll(get.Body)
+	get.Body.Close()
+	if get.StatusCode != http.StatusOK || readErr != nil || len(body) != 0 {
+		t.Fatalf("GET marker status = %d, location = %q, body = %q, err = %v",
+			get.StatusCode, get.Header.Get("Location"), body, readErr)
+	}
+}
+
+func TestS3MarkerHTTPMultipartKeepsTrailingSlash(t *testing.T) {
+	_, localRoot := setupMultipartBackend(t)
+	server := newMarkerHTTPServer(t)
+	client := http.DefaultClient
+	name := "multipart-http-" + sanitizeTestName(t.Name())
+	url := server.URL + "/mp/" + name + "/"
+
+	create := doMarkerRequest(t, client, http.MethodPost, url+"?uploads", "")
+	var initiated gofakes3.InitiateMultipartUpload
+	decodeErr := xml.NewDecoder(create.Body).Decode(&initiated)
+	create.Body.Close()
+	if create.StatusCode != http.StatusOK || decodeErr != nil {
+		t.Fatalf("initiate status = %d, err = %v", create.StatusCode, decodeErr)
+	}
+
+	part := doMarkerRequest(t, client, http.MethodPut, url+"?partNumber=1&uploadId="+string(initiated.UploadID), "")
+	part.Body.Close()
+	if part.StatusCode != http.StatusOK {
+		t.Fatalf("upload part status = %d, want %d", part.StatusCode, http.StatusOK)
+	}
+
+	complete := doMarkerRequest(t, client, http.MethodPost, url+"?uploadId="+string(initiated.UploadID),
+		"<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"+part.Header.Get("ETag")+"</ETag></Part></CompleteMultipartUpload>")
+	complete.Body.Close()
+	if complete.StatusCode != http.StatusOK {
+		t.Fatalf("complete status = %d, want %d", complete.StatusCode, http.StatusOK)
+	}
+
+	marker, err := getS3Marker("mp", name+"/")
+	if err != nil || marker == nil {
+		t.Fatalf("marker after multipart = %#v, err = %v", marker, err)
+	}
+	if _, err := os.Stat(filepath.Join(localRoot, name)); !os.IsNotExist(err) {
+		t.Fatalf("multipart marker created a storage entry, stat err = %v", err)
+	}
+	head := doMarkerRequest(t, client, http.MethodHead, url, "")
+	head.Body.Close()
+	if head.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD marker status = %d, want %d", head.StatusCode, http.StatusOK)
 	}
 }

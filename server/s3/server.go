@@ -15,7 +15,9 @@ type trailingSlashRequestKey struct{}
 
 func trailingSlashHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut && strings.HasSuffix(r.URL.Path, "/") {
+		// gofakes3 trims the trailing slash from every route except plain PUT,
+		// so record it for the backend to restore the exact object key.
+		if strings.HasSuffix(r.URL.Path, "/") {
 			parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
 			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 				r = r.WithContext(context.WithValue(r.Context(), trailingSlashRequestKey{}, true))
