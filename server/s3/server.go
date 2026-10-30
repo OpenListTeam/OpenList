@@ -6,9 +6,26 @@ import (
 	"context"
 	"math/rand"
 	"net/http"
+	"strings"
 
 	"github.com/OpenListTeam/gofakes3"
 )
+
+type trailingSlashRequestKey struct{}
+
+func trailingSlashHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// gofakes3 trims the trailing slash from every route except plain PUT,
+		// so record it for the backend to restore the exact object key.
+		if strings.HasSuffix(r.URL.Path, "/") {
+			parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
+			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+				r = r.WithContext(context.WithValue(r.Context(), trailingSlashRequestKey{}, true))
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // Make a new S3 Server to serve the remote
 func NewServer(ctx context.Context) (h http.Handler, err error) {
@@ -24,5 +41,5 @@ func NewServer(ctx context.Context) (h http.Handler, err error) {
 		gofakes3.WithIntegrityCheck(true), // Check Content-MD5 if supplied
 	)
 
-	return redirectHandler(rangeStatusHandler(faker.Server()), authPairs), nil
+	return redirectHandler(trailingSlashHandler(rangeStatusHandler(faker.Server())), authPairs), nil
 }

@@ -6,15 +6,20 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"path"
+	"sort"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/gofakes3"
+	"gorm.io/gorm/clause"
 )
 
 type Bucket struct {
@@ -29,7 +34,101 @@ func mapBackendError(err error) error {
 	return err
 }
 
-const emptyObjectName = "ThisIsAnEmptyFolderInTheS3Bucket"
+func s3KeyHash(bucket, key string) string {
+	return model.HashS3MarkerKey(bucket, key)
+}
+
+func getS3Marker(bucket, key string) (*model.S3Marker, error) {
+	if db.GetDb() == nil {
+		return nil, nil
+	}
+	var markers []model.S3Marker
+	if err := db.GetDb().Where("bucket = ? AND key_hash = ?", bucket, s3KeyHash(bucket, key)).Find(&markers).Error; err != nil {
+		return nil, err
+	}
+	for i := range markers {
+		if markers[i].Key == key {
+			return &markers[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func getS3MarkerForRequest(ctx context.Context, bucket, key string) (*model.S3Marker, error) {
+	marker, err := getS3Marker(bucket, key)
+	if err != nil || marker != nil || !isTrailingSlashRequest(ctx) || strings.HasSuffix(key, "/") {
+		return marker, err
+	}
+	return getS3Marker(bucket, key+"/")
+}
+
+func isTrailingSlashRequest(ctx context.Context) bool {
+	value, _ := ctx.Value(trailingSlashRequestKey{}).(bool)
+	return value
+}
+
+// requestObjectKey restores the trailing slash that gofakes3 routing removed.
+func requestObjectKey(ctx context.Context, object string) string {
+	if isTrailingSlashRequest(ctx) && !strings.HasSuffix(object, "/") {
+		return object + "/"
+	}
+	return object
+}
+
+func listS3Markers(bucket string) ([]model.S3Marker, error) {
+	if db.GetDb() == nil {
+		return nil, nil
+	}
+	var markers []model.S3Marker
+	if err := db.GetDb().Where("bucket = ?", bucket).Find(&markers).Error; err != nil {
+		return nil, err
+	}
+	sort.Slice(markers, func(i, j int) bool { return markers[i].Key < markers[j].Key })
+	return markers, nil
+}
+
+func saveS3Marker(marker *model.S3Marker) error {
+	if db.GetDb() == nil {
+		return errs.NotImplement
+	}
+	return db.GetDb().Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key_hash"}},
+		DoUpdates: clause.AssignmentColumns([]string{"key", "metadata", "modified"}),
+	}).Create(marker).Error
+}
+
+func deleteS3Marker(bucket, key string) error {
+	if db.GetDb() == nil {
+		return nil
+	}
+	return db.GetDb().Where("bucket = ? AND key_hash = ? AND key = ?", bucket, s3KeyHash(bucket, key), key).
+		Delete(&model.S3Marker{}).Error
+}
+
+func decodeS3MarkerMetadata(marker *model.S3Marker) map[string]string {
+	metadata := make(map[string]string)
+	if marker != nil && marker.Metadata != "" {
+		_ = json.Unmarshal([]byte(marker.Metadata), &metadata)
+	}
+	if metadata == nil {
+		metadata = make(map[string]string)
+	}
+	return metadata
+}
+
+func s3MarkerMetadata(marker *model.S3Marker, objectName string) map[string]string {
+	metadata := map[string]string{
+		"Content-Disposition": utils.GenerateContentDisposition(path.Base(strings.TrimSuffix(objectName, "/"))),
+		"Content-Type":        utils.GetMimeType(objectName),
+	}
+	for key, value := range decodeS3MarkerMetadata(marker) {
+		metadata[key] = value
+	}
+	if marker != nil {
+		metadata["Last-Modified"] = marker.Modified.Format(timeFormat)
+	}
+	return metadata
+}
 
 func getAndParseBuckets() ([]Bucket, error) {
 	var res []Bucket
