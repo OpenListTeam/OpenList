@@ -465,6 +465,13 @@ func GetBalancedStorage(path string) driver.Driver {
 	}
 }
 
+// StorageCountByPath reports how many storages are mounted at the longest
+// matching mount path prefix of path. More than one means requests are load
+// balanced and a path alone does not identify a single storage.
+func StorageCountByPath(path string) int {
+	return len(getStoragesByPath(utils.FixAndCleanPath(path)))
+}
+
 var detailsG singleflight.Group[*model.StorageDetails]
 
 func GetStorageDetails(ctx context.Context, storage driver.Driver, refresh ...bool) (*model.StorageDetails, error) {

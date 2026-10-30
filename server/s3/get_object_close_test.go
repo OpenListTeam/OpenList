@@ -120,13 +120,22 @@ func TestGetObjectClosesRangeBodyBeforeLink(t *testing.T) {
 	if string(contents) != "body" {
 		t.Fatalf("contents = %q, want body", contents)
 	}
+	// GetObject needs a pass of its own over the object to work out the ETag
+	// when the storage cannot supply one (getObjectHash); that pass opens and
+	// closes its own body and link first. What this test is about is the
+	// response: it must release body then link, once.
+	seen := len(closed)
 	if err := object.Contents.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if got := closed[seen:]; !slices.Equal(got, []string{"body", "link"}) {
+		t.Fatalf("response close order = %v, want [body link] exactly once", got)
+	}
+	seen = len(closed)
 	if err := object.Contents.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(closed, []string{"body", "link"}) {
-		t.Fatalf("close order = %v, want [body link] exactly once", closed)
+	if got := closed[seen:]; len(got) != 0 {
+		t.Fatalf("second Close repeated %v", got)
 	}
 }
