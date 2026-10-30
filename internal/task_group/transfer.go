@@ -64,7 +64,9 @@ func HookAndRemove(ctx context.Context, dstPath string, payloads ...any) {
 				log.Error(errors.WithMessage(err, "failed get src storage"))
 				continue
 			}
-			err = verifyAndRemove(ctx, srcStorage, dstStorage, srcActualPath, dstActualPath)
+			// The destination already holds the moved objects, so skip recycle bins.
+			removeCtx := context.WithValue(ctx, conf.RemovePermanentlyKey, struct{}{})
+			err = verifyAndRemove(removeCtx, srcStorage, dstStorage, srcActualPath, dstActualPath)
 			if err != nil {
 				log.Error(err)
 			}

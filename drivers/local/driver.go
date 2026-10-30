@@ -361,7 +361,7 @@ func (d *Local) Copy(_ context.Context, srcObj, dstDir model.Obj) error {
 
 func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 	var err error
-	if utils.SliceContains([]string{"", "delete permanently"}, d.RecycleBinPath) {
+	if utils.SliceContains([]string{"", "delete permanently"}, d.RecycleBinPath) || ctx.Value(conf.RemovePermanentlyKey) != nil {
 		if obj.IsDir() {
 			err = os.RemoveAll(obj.GetPath())
 		} else {
@@ -388,6 +388,18 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 			dstPath = filepath.Join(recycleBinPath, objName+"_"+time.Now().Format("20060102150405"))
 		}
 		err = os.Rename(objPath, dstPath)
+		if isCrossDeviceError(err) {
+			err = d.copyForMove(objPath, dstPath)
+			if err != nil {
+				_ = os.RemoveAll(dstPath)
+			} else {
+				if obj.IsDir() {
+					err = os.RemoveAll(objPath)
+				} else {
+					err = os.Remove(objPath)
+				}
+			}
+		}
 	}
 	if err != nil {
 		return err
