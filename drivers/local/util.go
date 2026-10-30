@@ -22,6 +22,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/disintegration/imaging"
+	log "github.com/sirupsen/logrus"
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
@@ -459,7 +460,11 @@ func (d *Local) copyForMove(srcPath, dstPath string) error {
 		return copyNamedPipe(dstPath, info.Mode(), os.FileMode(d.mkdirPerm))
 	}
 	if !info.IsDir() {
-		return utils.CopyFile(srcPath, dstPath)
+		if err = utils.CopyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+		preserveModTime(dstPath, info)
+		return nil
 	}
 
 	if err = os.MkdirAll(dstPath, os.FileMode(d.mkdirPerm)); err != nil {
@@ -474,7 +479,17 @@ func (d *Local) copyForMove(srcPath, dstPath string) error {
 			return err
 		}
 	}
-	return os.Chmod(dstPath, info.Mode())
+	if err = os.Chmod(dstPath, info.Mode()); err != nil {
+		return err
+	}
+	preserveModTime(dstPath, info)
+	return nil
+}
+
+func preserveModTime(dstPath string, info os.FileInfo) {
+	if err := os.Chtimes(dstPath, info.ModTime(), info.ModTime()); err != nil {
+		log.Errorf("[local] failed to change time of %s: %s", dstPath, err)
+	}
 }
 
 func (d *Local) copySymlinkForMove(srcPath, dstPath string) error {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
@@ -108,5 +109,44 @@ func TestCopyForMoveHandlesReadOnlyDirectory(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o555 {
 		t.Fatalf("expected destination mode 0555, got %o", info.Mode().Perm())
+	}
+}
+
+func TestCopyForMovePreservesModTime(t *testing.T) {
+	root := t.TempDir()
+	srcPath := filepath.Join(root, "source")
+	dstPath := filepath.Join(root, "recycle", "source")
+	filePath := filepath.Join(srcPath, "data")
+	if err := os.Mkdir(srcPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("data"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	fileTime := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	dirTime := time.Date(2021, 6, 7, 8, 9, 10, 0, time.UTC)
+	if err := os.Chtimes(filePath, fileTime, fileTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(srcPath, dirTime, dirTime); err != nil {
+		t.Fatal(err)
+	}
+
+	driver := &Local{mkdirPerm: 0o755}
+	if err := driver.copyForMove(srcPath, dstPath); err != nil {
+		t.Fatal(err)
+	}
+
+	for path, want := range map[string]time.Time{
+		filepath.Join(dstPath, "data"): fileTime,
+		dstPath:                        dirTime,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.ModTime().Equal(want) {
+			t.Fatalf("expected %s mod time %v, got %v", path, want, info.ModTime())
+		}
 	}
 }
