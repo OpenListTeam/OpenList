@@ -58,31 +58,27 @@ export default async function triage() {
   const result = await response.json()
   const decision = JSON.parse(result.choices[0].message.content)
   const questions = {
-    version: '请提供具体的 OpenList 版本号',
-    driver: '请提供使用的存储驱动名称',
-    reproduction: '请提供能够复现问题的操作步骤',
-    logs: '请提供相关错误日志，提交前请移除密码、Token、私钥等敏感信息',
-    expected_behavior: '请说明期望的功能行为和使用场景',
+    version_not_specific: '请提供完整的 OpenList 版本号，避免仅填写“最新版”或“latest”',
+    driver_unclear: '请说明问题涉及的存储驱动，以及出问题的操作是否通过该驱动进行',
+    reproduction_unclear: '请按顺序描述触发问题的操作，并说明问题是否每次都会发生',
+    expected_actual_unclear: '请说明具体操作的预期结果和实际结果，以及在哪一步出现差异',
+    logs_not_relevant: '请提供执行出错操作时对应的错误日志及必要上下文，提交前请移除密码、Token、私钥等敏感信息',
+    configuration_check_needed: '请核对相关存储和功能配置，并说明已检查的配置项及结果，请勿提交密码、Token、私钥等敏感信息',
+    network_check_needed: '请确认运行 OpenList 的环境能否直接访问对应存储服务，并补充相关网络错误及检查结果',
+    credentials_check_needed: '请通过存储服务官方渠道确认账号状态和授权是否有效，仅反馈检查结果，请勿提交密码、Token 或其他凭据',
+    upstream_check_needed: '请确认同一操作在对应存储服务的官方网页或客户端中是否正常，并补充检查结果',
+    feature_context_unclear: '请说明功能的使用场景、期望行为，以及现有方式有哪些限制',
   }
-  const allowedMissing = {
-    bug: ['version', 'driver', 'reproduction', 'logs'],
-    enhancement: ['expected_behavior'],
-    none: [],
-  }
-  if (!decision || Array.isArray(decision) || Object.keys(decision).length !== 2 ||
-      !['bug', 'enhancement', 'none'].includes(decision.category) ||
-      !Array.isArray(decision.missing) ||
-      decision.missing.length > allowedMissing[decision.category].length ||
-      !decision.missing.every(field => allowedMissing[decision.category].includes(field))) {
+  if (!decision || Array.isArray(decision) || Object.keys(decision).length !== 1 ||
+      !Array.isArray(decision.findings) || decision.findings.length > 3 ||
+      !decision.findings.every(finding => typeof finding === 'string' && Object.hasOwn(questions, finding))) {
     throw new Error('Invalid triage decision')
   }
 
-  if (decision.category !== 'none') {
-    await github(`${issuePath}/labels`, 'POST', { labels: [decision.category] })
-  }
-  if (decision.missing.length) {
-    const body = '为便于维护者进一步了解此 Issue，请补充以下信息：\n\n' +
-      decision.missing.map(field => `- ${questions[field]}`).join('\n')
+  if (decision.findings.length) {
+    const body = '这是自动内容初审，供维护者进一步排查参考，并非最终处理结论。请补充以下信息：\n\n' +
+      decision.findings.map(finding => `- ${questions[finding]}`).join('\n') +
+      '\n\n请直接在当前 Issue 补充，后续由维护者查看。'
     await github(`${issuePath}/comments`, 'POST', { body })
   }
 }
