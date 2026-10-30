@@ -10,6 +10,7 @@ import (
 	stdpath "path"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -18,7 +19,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	ftpserver "github.com/fclairamb/ftpserverlib"
 	"github.com/pkg/errors"
 )
@@ -41,10 +41,10 @@ func uploadAuth(ctx context.Context, path string) error {
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return err
 	}
-	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+	if !user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
 		return errs.PermissionDenied
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		return errs.PermissionDenied
 	}
 	return nil
@@ -110,7 +110,7 @@ func (f *FileUploadProxy) Close() error {
 			_ = fs.Rename(ctx, f.path, dstBase)
 		} else {
 			if name != dstBase {
-				e := fs.Rename(ctx, f.path, dstBase, true)
+				e := fs.Rename(ctx, f.path, dstBase)
 				if e != nil {
 					return
 				}
@@ -206,7 +206,7 @@ func (f *FileUploadWithLengthProxy) write(p []byte) (n int, err error) {
 			Reader:       reader,
 		}
 		go func() {
-			e := fs.PutDirectly(f.ctx, dir, s, true)
+			e := fs.PutDirectly(f.ctx, dir, s)
 			f.errChan <- e
 			close(f.errChan)
 		}()

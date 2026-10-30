@@ -3,7 +3,6 @@ package op
 import (
 	"context"
 	stdpath "path"
-	"sync"
 	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -60,14 +59,12 @@ func RecursivelyList(ctx context.Context, rawPath string, limit rate.Limit, coun
 		}
 		RecursivelyListStorage(ctx, storage, actualPath, limiter, counter)
 	} else {
-		var wg sync.WaitGroup
-		recursivelyListVirtual(ctx, rawPath, limit, counter, &wg)
-		wg.Wait()
+		recursivelyListVirtual(ctx, rawPath, limit, counter)
 	}
 	return nil
 }
 
-func recursivelyListVirtual(ctx context.Context, rawPath string, limit rate.Limit, counter *atomic.Uint64, wg *sync.WaitGroup) {
+func recursivelyListVirtual(ctx context.Context, rawPath string, limit rate.Limit, counter *atomic.Uint64) {
 	objs := GetStorageVirtualFilesByPath(rawPath)
 	if counter != nil {
 		counter.Add(uint64(len(objs)))
@@ -85,13 +82,9 @@ func recursivelyListVirtual(ctx context.Context, rawPath string, limit rate.Limi
 			if limit > .0 {
 				limiter = rate.NewLimiter(limit, 1)
 			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				RecursivelyListStorage(ctx, storage, actualPath, limiter, counter)
-			}()
+			RecursivelyListStorage(ctx, storage, actualPath, limiter, counter)
 		} else {
-			recursivelyListVirtual(ctx, nextPath, limit, counter, wg)
+			recursivelyListVirtual(ctx, nextPath, limit, counter)
 		}
 	}
 }

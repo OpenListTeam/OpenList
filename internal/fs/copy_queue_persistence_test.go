@@ -25,6 +25,7 @@ func TestMigratedCopyTaskRecoversNativeFields(t *testing.T) {
 		"ApiUrl":"http://openlist.test:5244",
 		"src_path":"/folder/file",
 		"dst_path":"/backup",
+		"dst_name":"renamed",
 		"src_storage_mp":"/source",
 		"dst_storage_mp":"/target",
 		"TaskType":0
@@ -48,6 +49,9 @@ func TestMigratedCopyTaskRecoversNativeFields(t *testing.T) {
 	}
 	if task.SrcActualPath != "/folder/file" || task.DstActualPath != "/backup" {
 		t.Fatal("copy paths were not recovered")
+	}
+	if task.DstName != "renamed" {
+		t.Fatalf("destination name was not recovered: %q", task.DstName)
 	}
 
 	_, maxRetry := task.GetRetry()

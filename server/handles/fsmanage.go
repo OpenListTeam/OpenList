@@ -5,6 +5,7 @@ import (
 	stdpath "path"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -41,11 +42,11 @@ func FsMkdir(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
+	if !user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -92,7 +93,7 @@ func FsMove(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, srcMeta, srcDir) {
+	if !authz.CanWrite(user, srcMeta, srcDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -106,7 +107,7 @@ func FsMove(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, dstMeta, dstDir) {
+	if !authz.CanWrite(user, dstMeta, dstDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -145,11 +146,11 @@ func FsMove(c *gin.Context) {
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
-	for i, p := range req.Names {
+	for _, p := range req.Names {
 		if p == "" {
 			continue
 		}
-		t, err := fs.Move(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
+		t, err := fs.Move(c.Request.Context(), p, dstDir)
 		if t != nil {
 			addedTasks = append(addedTasks, t)
 		}
@@ -206,7 +207,7 @@ func FsCopy(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanRead(user, srcMeta, srcDir) {
+	if !authz.CanRead(user, srcMeta, srcDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -220,7 +221,7 @@ func FsCopy(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, dstMeta, dstDir) {
+	if !authz.CanWrite(user, dstMeta, dstDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -261,15 +262,15 @@ func FsCopy(c *gin.Context) {
 	// Create all tasks immediately without any synchronous validation
 	// All validation will be done asynchronously in the background
 	var addedTasks []task.TaskExtensionInfo
-	for i, p := range req.Names {
+	for _, p := range req.Names {
 		if p == "" {
 			continue
 		}
 		var t task.TaskExtensionInfo
 		if req.Merge {
-			t, err = fs.Merge(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
+			t, err = fs.Merge(c.Request.Context(), p, dstDir)
 		} else {
-			t, err = fs.Copy(c.Request.Context(), p, dstDir, len(req.Names) > i+1)
+			t, err = fs.Copy(c.Request.Context(), p, dstDir)
 		}
 		if t != nil {
 			addedTasks = append(addedTasks, t)
@@ -333,7 +334,7 @@ func FsRename(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, parentMeta, parentPath) {
+	if !authz.CanWrite(user, parentMeta, parentPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -398,7 +399,7 @@ func FsRemove(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, meta, reqPath) {
+	if !authz.CanWrite(user, meta, reqPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -456,9 +457,9 @@ func followSeedTransfer(c *gin.Context, operation, srcPath, dstDir string) ([]ta
 		var current task.TaskExtensionInfo
 		switch operation {
 		case "copy":
-			current, err = fs.Copy(c.Request.Context(), sidecarPath, dstDir, true)
+			current, err = fs.Copy(c.Request.Context(), sidecarPath, dstDir)
 		case "move":
-			current, err = fs.Move(c.Request.Context(), sidecarPath, dstDir, true)
+			current, err = fs.Move(c.Request.Context(), sidecarPath, dstDir)
 		default:
 			return nil, fmt.Errorf("unsupported seed sidecar operation %q", operation)
 		}
@@ -483,7 +484,7 @@ func followSeedRename(c *gin.Context, srcPath, newName string) error {
 			continue
 		}
 		suffix := strings.TrimPrefix(sidecarPath, srcPath)
-		if err = fs.Rename(c.Request.Context(), sidecarPath, newName+suffix, true); err != nil {
+		if err = fs.Rename(c.Request.Context(), sidecarPath, newName+suffix); err != nil {
 			return fmt.Errorf("rename seed sidecar %s: %w", sidecarPath, err)
 		}
 	}
@@ -531,7 +532,7 @@ func FsRemoveEmptyDirectory(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanWrite(user, meta, srcDir) {
+	if !authz.CanWrite(user, meta, srcDir) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -616,7 +617,7 @@ func Link(c *gin.Context) {
 	//rawPath := stdpath.Join(user.BasePath, req.Path)
 	// why need not join base_path? because it's always the full path
 	rawPath := req.Path
-	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(rawPath)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return

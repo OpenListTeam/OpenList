@@ -330,19 +330,27 @@ func withDeadPropsTransaction(ctx context.Context, fn func(*gorm.DB) error) erro
 	if database == nil {
 		return errors.New("webdav property database is not initialized")
 	}
-	var transaction *gorm.DB
-	err := database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		transaction = tx
-		var probe int
-		if err := tx.Raw("SELECT 1").Scan(&probe).Error; err != nil {
+	return database.WithContext(ctx).Connection(func(connection *gorm.DB) error {
+		commitAttempted := false
+		err := connection.Transaction(func(tx *gorm.DB) error {
+			var probe int
+			if err := tx.Raw("SELECT 1").Scan(&probe).Error; err != nil {
+				return err
+			}
+			err := fn(tx)
+			commitAttempted = err == nil
 			return err
+		})
+		// A failed SQLite COMMIT can leave its native transaction open even
+		// though database/sql marks the Tx done. Recover on the same connection
+		// before file compensation or another request borrows it from the pool.
+		if err != nil && commitAttempted && ctx.Err() == nil && connection.Dialector.Name() == "sqlite" {
+			if rollbackErr := connection.WithContext(context.WithoutCancel(ctx)).Exec("ROLLBACK").Error; rollbackErr != nil {
+				return fmt.Errorf("%w; SQLite transaction cleanup failed: %w", err, rollbackErr)
+			}
 		}
-		return fn(tx)
+		return err
 	})
-	if err != nil && transaction != nil {
-		_ = transaction.Rollback().Error
-	}
-	return err
 }
 
 func escapeXML(s string) string {

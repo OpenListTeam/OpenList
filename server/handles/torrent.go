@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -399,7 +400,7 @@ func TorrentRapidUpload(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, reqPath)) || !common.CanWrite(user, meta, reqPath) {
+	if (!user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(meta, reqPath)) || !authz.CanWrite(user, meta, reqPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -584,7 +585,7 @@ func GenerateTorrentForPath(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if !common.CanRead(user, meta, reqPath) {
+	if !authz.CanRead(user, meta, reqPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -914,7 +915,7 @@ func ConvertSeed(c *gin.Context) {
 			common.ErrorResp(c, metaErr, 500, true)
 			return
 		}
-		if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstDir)) || !common.CanWrite(user, meta, dstDir) {
+		if (!user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(meta, dstDir)) || !authz.CanWrite(user, meta, dstDir) {
 			common.ErrorResp(c, errs.PermissionDenied, 403)
 			return
 		}
@@ -1136,7 +1137,7 @@ func SeedCapabilities(c *gin.Context) {
 				common.ErrorResp(c, metaErr, 500, true)
 				return
 			}
-			if !common.CanRead(user, meta, fullPath) {
+			if !authz.CanRead(user, meta, fullPath) {
 				common.ErrorResp(c, errs.PermissionDenied, 403)
 				return
 			}
@@ -1208,7 +1209,7 @@ func SeedCapabilities(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstPath)) || !common.CanWrite(user, meta, dstPath) {
+	if (!user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(meta, dstPath)) || !authz.CanWrite(user, meta, dstPath) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -1320,7 +1321,7 @@ func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSi
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return out, err
 	}
-	if !common.CanRead(user, meta, fullPath) {
+	if !authz.CanRead(user, meta, fullPath) {
 		return out, errs.PermissionDenied
 	}
 	storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
@@ -1488,7 +1489,7 @@ func UpdateSeed(c *gin.Context) {
 			common.ErrorResp(c, metaErr, 500, true)
 			return
 		}
-		if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstDir)) || !common.CanWrite(user, meta, dstDir) {
+		if (!user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(meta, dstDir)) || !authz.CanWrite(user, meta, dstDir) {
 			common.ErrorResp(c, errs.PermissionDenied, 403)
 			return
 		}
@@ -1517,7 +1518,7 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return nil, "", "", err
 	}
-	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, fullPath)) || !common.CanWrite(user, meta, fullPath) {
+	if (!user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(meta, fullPath)) || !authz.CanWrite(user, meta, fullPath) {
 		return nil, "", "", errs.PermissionDenied
 	}
 	storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
@@ -1648,7 +1649,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(finalMeta, finalDst)) || !common.CanWrite(user, finalMeta, finalDst) {
+	if (!user.CanWriteContent() && !authz.CanWriteContentBypassUserPerms(finalMeta, finalDst)) || !authz.CanWrite(user, finalMeta, finalDst) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
@@ -1674,7 +1675,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 			continue
 		}
 		srcObjPath := stdpath.Join(transitFullPath, name)
-		_, copyErr := fs.Copy(context.WithValue(c.Request.Context(), conf.NoTaskKey, struct{}{}), srcObjPath, finalDst)
+		copyErr := fs.CopyDirectly(c.Request.Context(), srcObjPath, finalDst)
 		if copyErr != nil {
 			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": copyErr.Error()})
 			continue

@@ -8,13 +8,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
 )
 
@@ -31,7 +31,7 @@ func OpenDownload(ctx context.Context, reqPath string, offset int64) (*FileDownl
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
+	if !authz.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
 		return nil, errs.PermissionDenied
 	}
 
@@ -123,7 +123,7 @@ func Stat(ctx context.Context, path string) (os.FileInfo, error) {
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
+	if !authz.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
 		return nil, errs.PermissionDenied
 	}
 	if ret, err := StatStage(reqPath); !errors.Is(err, errs.ObjectNotFound) {
@@ -147,7 +147,7 @@ func List(ctx context.Context, path string) ([]os.FileInfo, error) {
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
+	if !authz.CanAccess(user, meta, reqPath, ctx.Value(conf.MetaPassKey).(string)) {
 		return nil, errs.PermissionDenied
 	}
 	objs, err := fs.List(ctx, reqPath, &fs.ListArgs{})

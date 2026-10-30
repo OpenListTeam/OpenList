@@ -55,7 +55,7 @@ func directObjectURL(r *http.Request, authPairs map[string]string) (string, bool
 	reqPath := path.Join(bucket.Path, objectName)
 	meta, _ := op.GetNearestMeta(reqPath)
 	ctx := context.WithValue(r.Context(), conf.MetaKey, meta)
-	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(reqPath)
 	if err != nil || common.ShouldProxy(storage, path.Base(reqPath)) {
 		return "", false
 	}

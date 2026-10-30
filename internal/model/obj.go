@@ -3,13 +3,10 @@ package model
 import (
 	"io"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/dlclark/regexp2"
-
 	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/maruel/natural"
@@ -204,8 +201,7 @@ func NewObjMerge() *ObjMerge {
 }
 
 type ObjMerge struct {
-	regs []*regexp2.Regexp
-	set  mapset.Set[string]
+	set mapset.Set[string]
 }
 
 func (om *ObjMerge) Merge(objs []Obj, objs_ ...Obj) []Obj {
@@ -224,20 +220,7 @@ func (om *ObjMerge) insertObjs(objs []Obj, objs_ ...Obj) []Obj {
 }
 
 func (om *ObjMerge) clickObj(obj Obj) bool {
-	for _, reg := range om.regs {
-		if isMatch, _ := reg.MatchString(obj.GetName()); isMatch {
-			return false
-		}
-	}
 	return om.set.Add(obj.GetName())
-}
-
-func (om *ObjMerge) InitHideReg(hides string) {
-	rs := strings.Split(hides, "\n")
-	om.regs = make([]*regexp2.Regexp, 0, len(rs))
-	for _, r := range rs {
-		om.regs = append(om.regs, regexp2.MustCompile(r, regexp2.None))
-	}
 }
 
 func (om *ObjMerge) Reset() {

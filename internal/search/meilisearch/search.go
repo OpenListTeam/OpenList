@@ -33,7 +33,6 @@ type Meilisearch struct {
 	IndexUid             string
 	FilterableAttributes []string
 	SearchableAttributes []string
-	taskQueue            *TaskQueueManager
 }
 
 func (m *Meilisearch) Config() searcher.Config {
@@ -83,48 +82,8 @@ func (m *Meilisearch) Index(ctx context.Context, node model.SearchNode) error {
 }
 
 func (m *Meilisearch) BatchIndex(ctx context.Context, nodes []model.SearchNode) error {
-	documents, err := utils.SliceConvert(nodes, func(src model.SearchNode) (*searchDocument, error) {
-		parentHash := hashPath(src.Parent)
-		nodePath := path.Join(src.Parent, src.Name)
-		nodePathHash := hashPath(nodePath)
-		parentPaths := utils.GetPathHierarchy(src.Parent)
-		parentPathHashes, err := utils.SliceConvert(parentPaths, func(parentPath string) (string, error) {
-			return hashPath(parentPath), nil
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		return &searchDocument{
-			ID:               nodePathHash,
-			ParentHash:       parentHash,
-			ParentPathHashes: parentPathHashes,
-			SearchNode:       src,
-		}, nil
-	})
-	if err != nil {
-		return err
-	}
-
-	// max up to 10,000 documents per batch to reduce error rate while uploading over the Internet
-	_, err = m.Client.Index(m.IndexUid).AddDocumentsInBatchesWithContext(ctx, documents, 10000)
-	if err != nil {
-		return err
-	}
-
-	// documents were uploaded and enqueued for indexing, just return early
-	//// Wait for the task to complete and check
-	//forTask, err := m.Client.WaitForTask(task.TaskUID, meilisearch.WaitParams{
-	//	Context:  ctx,
-	//	Interval: time.Millisecond * 50,
-	//})
-	//if err != nil {
-	//	return err
-	//}
-	//if forTask.Status != meilisearch.TaskStatusSucceeded {
-	//	return fmt.Errorf("BatchIndex failed, task status is %s", forTask.Status)
-	//}
-	return nil
+	_, err := m.batchIndexWithTaskUID(ctx, nodes)
+	return err
 }
 
 func (m *Meilisearch) getDocumentsByParent(ctx context.Context, parent string) ([]*searchDocument, error) {
@@ -210,9 +169,6 @@ func (m *Meilisearch) Del(ctx context.Context, prefix string) error {
 }
 
 func (m *Meilisearch) Release(ctx context.Context) error {
-	if m.taskQueue != nil {
-		m.taskQueue.Stop()
-	}
 	return nil
 }
 
@@ -228,15 +184,6 @@ func (m *Meilisearch) getTaskStatus(ctx context.Context, taskUID int64) (meilise
 		return meilisearch.TaskStatusUnknown, err
 	}
 	return forTask.Status, nil
-}
-
-// EnqueueUpdate enqueues an update task to the task queue
-func (m *Meilisearch) EnqueueUpdate(parent string, objs []model.Obj) {
-	if m.taskQueue == nil {
-		return
-	}
-
-	m.taskQueue.Enqueue(parent, objs)
 }
 
 // batchIndexWithTaskUID indexes documents and returns all taskUIDs

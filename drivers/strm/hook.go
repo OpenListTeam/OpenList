@@ -10,9 +10,9 @@ import (
 	stdpath "path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -20,10 +20,35 @@ import (
 	"github.com/tchap/go-patricia/v2/patricia"
 )
 
-var strmTrie = patricia.NewTrie()
+var (
+	strmTrie   = patricia.NewTrie()
+	strmTrieMu sync.RWMutex
+)
 
 func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 	path = utils.FixAndCleanPath(path)
+	type target struct {
+		driver   *Strm
+		basePath string
+	}
+	var targets []target
+	strmTrieMu.RLock()
+	_ = strmTrie.VisitPrefixes(patricia.Prefix(path), func(needPathPrefix patricia.Prefix, item patricia.Item) error {
+		needPath := string(needPathPrefix)
+		restPath := strings.TrimPrefix(path, needPath)
+		if len(restPath) > 0 && restPath[0] != '/' {
+			return nil
+		}
+		for _, strmDriver := range item.([]*Strm) {
+			targets = append(targets, target{
+				driver:   strmDriver,
+				basePath: stdpath.Join(stdpath.Base(needPath), restPath),
+			})
+		}
+		return nil
+	})
+	strmTrieMu.RUnlock()
+
 	updateLocal := func(driver *Strm, basePath string, objs []model.Obj) {
 		relParent := strings.TrimPrefix(basePath, utils.GetActualMountPath(driver.MountPath))
 		localParentPath := stdpath.Join(driver.SaveStrmLocalPath, relParent)
@@ -38,22 +63,15 @@ func UpdateLocalStrm(ctx context.Context, path string, objs []model.Obj) {
 		deleteExtraFiles(driver, localParentPath, objs)
 	}
 
-	_ = strmTrie.VisitPrefixes(patricia.Prefix(path), func(needPathPrefix patricia.Prefix, item patricia.Item) error {
-		strmDrivers := item.([]*Strm)
-		needPath := string(needPathPrefix)
-		restPath := strings.TrimPrefix(path, needPath)
-		if len(restPath) > 0 && restPath[0] != '/' {
-			return nil
-		}
-		for _, strmDriver := range strmDrivers {
-			strmObjs := strmDriver.convert2strmObjs(ctx, path, objs)
-			updateLocal(strmDriver, stdpath.Join(stdpath.Base(needPath), restPath), strmObjs)
-		}
-		return nil
-	})
+	for _, target := range targets {
+		strmObjs := target.driver.convert2strmObjs(ctx, path, objs)
+		updateLocal(target.driver, target.basePath, strmObjs)
+	}
 }
 
 func InsertStrm(dstPath string, d *Strm) error {
+	strmTrieMu.Lock()
+	defer strmTrieMu.Unlock()
 	prefix := patricia.Prefix(strings.TrimRight(dstPath, "/"))
 	existing := strmTrie.Get(prefix)
 
@@ -73,6 +91,8 @@ func InsertStrm(dstPath string, d *Strm) error {
 }
 
 func RemoveStrm(dstPath string, d *Strm) {
+	strmTrieMu.Lock()
+	defer strmTrieMu.Unlock()
 	prefix := patricia.Prefix(strings.TrimRight(dstPath, "/"))
 	existing := strmTrie.Get(prefix)
 	if existing == nil {
@@ -248,8 +268,4 @@ func getLocalDirsAndFiles(localPath string) ([]string, []string, error) {
 		}
 	}
 	return files, dirs, nil
-}
-
-func init() {
-	op.RegisterObjsUpdateHook(UpdateLocalStrm)
 }

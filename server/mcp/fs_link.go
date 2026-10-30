@@ -9,6 +9,7 @@ import (
 	stdpath "path"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/authz"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -70,7 +71,7 @@ func (s *Server) callFSLink(c *gin.Context, raw json.RawMessage) (any, *rpcError
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return nil, &rpcError{Code: -32603, Message: err.Error()}
 	}
-	if !common.CanAccess(user, meta, reqPath, args.Password) {
+	if !authz.CanAccess(user, meta, reqPath, args.Password) {
 		return nil, &rpcError{Code: -32003, Message: "password is incorrect or you have no permission"}
 	}
 
@@ -85,7 +86,7 @@ func (s *Server) callFSLink(c *gin.Context, raw json.RawMessage) (any, *rpcError
 		return nil, &rpcError{Code: -32003, Message: "path is a directory"}
 	}
 
-	storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	storage, err := fs.GetStorage(reqPath)
 	if err != nil {
 		return nil, &rpcError{Code: -32603, Message: err.Error()}
 	}
