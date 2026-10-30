@@ -9,6 +9,7 @@ import (
 	"os"
 	stdpath "path"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,11 +37,21 @@ const (
 // WindowSlots bounds the per-session disk footprint to WindowSlots*ChunkSize.
 var WindowSlots = 8
 
+// AttemptIdleTimeout releases a pipeline attempt whose driver has been starved
+// of data that long: the client stopped sending, so the attempt stops holding
+// the destination, while the session stays failed_retriable and resumable for
+// the rest of its TTL. Tests shrink it.
+var AttemptIdleTimeout = 10 * time.Minute
+
 const (
 	// defaultSessionTTL is the sliding inactivity timeout; it also serves as the
 	// grace period during which finished sessions remain queryable.
 	defaultSessionTTL = 30 * time.Minute
 	gcInterval        = time.Minute
+	// supersedeJoinTimeout bounds the wait for a superseded attempt to return.
+	// Teardown is prompt (the context is canceled and the window closed); the
+	// bound only keeps a driver stuck on network I/O from blocking init.
+	supersedeJoinTimeout = 10 * time.Second
 )
 
 var (
@@ -49,6 +60,8 @@ var (
 	// errAborted wraps context.Canceled so a driver blocked on the stream sees
 	// the abort as a canceled request and runs its cancellation cleanup.
 	errAborted = fmt.Errorf("multipart upload aborted: %w", context.Canceled)
+	// errAttemptIdle marks an attempt released by AttemptIdleTimeout.
+	errAttemptIdle = errors.New("no data from the client, upload attempt released")
 )
 
 // putFile is the pipeline tail: resolve the storage and run the regular upload
@@ -90,12 +103,33 @@ type Session struct {
 	cancel   context.CancelFunc
 	prevCRCs []uint32
 	prevSet  []bool
+	// released is set when the attempt is let go for idleness; the attempt
+	// turns it into failed_retriable once it has actually returned
+	released error
 
 	storagePct atomic.Uint64 // math.Float64bits of the driver progress (0-100)
 	lastActive atomic.Int64  // unix nano
 }
 
 func (s *Session) touch() { s.lastActive.Store(time.Now().UnixNano()) }
+
+// awaitAttempt blocks until the running pipeline attempt has fully returned,
+// or the timeout elapses. Callers must not hold Manager.mu. It is only a
+// handover barrier: the attempt is already being torn down by terminate.
+func (s *Session) awaitAttempt(timeout time.Duration) {
+	s.mu.Lock()
+	done := s.done
+	s.mu.Unlock()
+	if done == nil {
+		return
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+}
 
 func (s *Session) setStoragePct(p float64) { s.storagePct.Store(math.Float64bits(p)) }
 
@@ -234,17 +268,27 @@ func (m *Manager) ensureGC() {
 }
 
 func (m *Manager) gc() {
-	deadline := time.Now().Add(-m.sessionTTL()).UnixNano()
+	now := time.Now()
+	deadline := now.Add(-m.sessionTTL()).UnixNano()
 	m.mu.Lock()
-	var expired []*Session
+	var expired, live []*Session
 	for _, s := range m.byID {
 		if s.lastActive.Load() < deadline {
 			expired = append(expired, s)
+		} else {
+			live = append(live, s)
 		}
 	}
 	m.mu.Unlock()
 	for _, s := range expired {
 		m.terminate(s, errors.New("multipart upload session expired"))
+	}
+	for _, s := range live {
+		s.mu.Lock()
+		if s.state == StateReceiving && s.released == nil && s.win != nil && s.win.StarvedFor(now) > AttemptIdleTimeout {
+			s.releaseIdleAttemptLocked()
+		}
+		s.mu.Unlock()
 	}
 }
 
@@ -270,6 +314,21 @@ func (s *Session) killAttemptLocked() {
 	}
 	if s.win != nil {
 		_ = s.win.CloseWithError(errAborted)
+	}
+}
+
+// releaseIdleAttemptLocked stops an attempt whose client went silent. The
+// session only becomes failed_retriable (and refillable) once the attempt
+// has returned, so a refill never overlaps the released attempt. The window
+// error wraps context.Canceled, so the driver cleans up as it does for a
+// canceled request. The caller must hold s.mu.
+func (s *Session) releaseIdleAttemptLocked() {
+	s.released = fmt.Errorf("%w after %s: %w", errAttemptIdle, AttemptIdleTimeout, context.Canceled)
+	if s.cancel != nil {
+		s.cancel()
+	}
+	if s.win != nil {
+		_ = s.win.CloseWithError(s.released)
 	}
 }
 
@@ -328,6 +387,10 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 			// drop the old session and start fresh
 			m.mu.Unlock()
 			m.terminate(s, errors.New("superseded by a new upload of the same path and size"))
+			// wait for the old attempt to let go of the destination before a
+			// new one starts writing it: two drivers writing the same path
+			// interleave their output
+			s.awaitAttempt(supersedeJoinTimeout)
 			m.mu.Lock()
 		}
 	}
@@ -379,6 +442,7 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	s.done = done
 	s.state = StateReceiving
 	s.err = nil
+	s.released = nil
 	s.setStoragePct(0)
 
 	fileStream := &stream.FileStream{
@@ -396,9 +460,19 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	dstDir := s.DstDir
 	put := putFile // capture: the seam must not be read after spawn
 	go func() {
-		err := put(ctx, dstDir, fileStream, s.setStoragePct)
-		s.finishAttempt(win, err)
-		close(done)
+		var err error
+		defer func() {
+			// the driver runs on this goroutine, outside gin's Recovery and the
+			// task workers' recover: a panicking driver must fail the upload,
+			// not take the whole server down
+			if r := recover(); r != nil {
+				utils.Log.Errorf("multipart upload pipeline panicked: %v\n%s", r, debug.Stack())
+				err = fmt.Errorf("upload pipeline panicked: %v", r)
+			}
+			s.finishAttempt(win, err)
+			close(done)
+		}()
+		err = put(ctx, dstDir, fileStream, s.setStoragePct)
 	}()
 	return nil
 }
@@ -427,6 +501,12 @@ func (s *Session) finishAttempt(win *Window, err error) {
 		if s.err == nil {
 			s.err = err
 		}
+	case s.released != nil:
+		// released for idleness: retriable whatever the driver made of the
+		// closed stream, and with a reason the client can act on
+		s.state = StateFailedRetriable
+		s.err = s.released
+		s.attempt++
 	case isPermanentPutError(err):
 		s.state = StateFailedPermanent
 		s.err = err
@@ -514,11 +594,15 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 			}
 		}
 		s.mu.Lock()
-		completed := s.state == StateCompleted
+		st, cause := s.state, s.err
 		snap := s.snapshotLocked()
 		s.mu.Unlock()
-		if completed {
+		if st == StateCompleted {
 			return snap, nil
+		}
+		if st != StateReceiving && cause != nil {
+			// the window only closed because the attempt ended; say why
+			return snap, fmt.Errorf("upload failed (%s): %w", st, cause)
 		}
 		return snap, err
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -65,6 +66,12 @@ type Window struct {
 	crcSet []bool
 
 	err error
+
+	// idle detection (see StarvedFor): waitSince is when Read began waiting
+	// for data and is zero while it is not waiting; lastFill is when the last
+	// chunk byte arrived, in unix nanoseconds
+	waitSince time.Time
+	lastFill  atomic.Int64
 }
 
 // Snapshot describes the receiving state, used for status responses and resume.
@@ -207,7 +214,7 @@ func (w *Window) WriteChunk(idx int, r io.Reader) (uint32, error) {
 	w.mu.Unlock()
 
 	h := crc32.NewIEEE()
-	n, err := utils.CopyWithBufferN(io.NewOffsetWriter(f, int64(slot)*w.chunkSize), io.TeeReader(r, h), length)
+	n, err := utils.CopyWithBufferN(io.NewOffsetWriter(f, int64(slot)*w.chunkSize), io.TeeReader(fillReader{r, &w.lastFill}, h), length)
 	if err == nil {
 		// the body must contain exactly one chunk
 		var b [1]byte
@@ -251,10 +258,12 @@ func (w *Window) Read(p []byte) (int, error) {
 	w.mu.Lock()
 	for {
 		if w.err != nil {
+			w.waitSince = time.Time{}
 			w.mu.Unlock()
 			return 0, w.err
 		}
 		if w.readPos >= w.totalSize {
+			w.waitSince = time.Time{}
 			w.mu.Unlock()
 			return 0, io.EOF
 		}
@@ -269,6 +278,7 @@ func (w *Window) Read(p []byte) (int, error) {
 			}
 			off := int64(slot)*w.chunkSize + (w.readPos - chunkStart)
 			f := w.f
+			w.waitSince = time.Time{}
 			w.mu.Unlock()
 
 			read, err := f.ReadAt(p[:n], off)
@@ -295,8 +305,45 @@ func (w *Window) Read(p []byte) (int, error) {
 			}
 			return 0, err
 		}
+		if w.waitSince.IsZero() {
+			w.waitSince = time.Now()
+		}
 		w.cond.Wait()
 	}
+}
+
+// fillReader records when the last chunk byte arrived (see StarvedFor).
+type fillReader struct {
+	r    io.Reader
+	last *atomic.Int64
+}
+
+func (f fillReader) Read(p []byte) (int, error) {
+	n, err := f.r.Read(p)
+	if n > 0 {
+		f.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+// StarvedFor reports how long the reader has been blocked waiting for data
+// while no chunk byte arrived: the time since it began waiting or since the
+// last byte came in, whichever is later. It is zero while the reader is not
+// waiting — a driver busy with the storage is backpressure, not starvation.
+func (w *Window) StarvedFor(now time.Time) time.Duration {
+	w.mu.Lock()
+	since := w.waitSince
+	w.mu.Unlock()
+	if since.IsZero() {
+		return 0
+	}
+	if last := time.Unix(0, w.lastFill.Load()); last.After(since) {
+		since = last
+	}
+	if d := now.Sub(since); d > 0 {
+		return d
+	}
+	return 0
 }
 
 // Close makes all pending and future operations fail with ErrClosed and removes
