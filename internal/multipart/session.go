@@ -9,6 +9,7 @@ import (
 	"os"
 	stdpath "path"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -396,9 +397,19 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	dstDir := s.DstDir
 	put := putFile // capture: the seam must not be read after spawn
 	go func() {
-		err := put(ctx, dstDir, fileStream, s.setStoragePct)
-		s.finishAttempt(win, err)
-		close(done)
+		var err error
+		defer func() {
+			// the driver runs on this goroutine, outside gin's Recovery and the
+			// task workers' recover: a panicking driver must fail the upload,
+			// not take the whole server down
+			if r := recover(); r != nil {
+				utils.Log.Errorf("multipart upload pipeline panicked: %v\n%s", r, debug.Stack())
+				err = fmt.Errorf("upload pipeline panicked: %v", r)
+			}
+			s.finishAttempt(win, err)
+			close(done)
+		}()
+		err = put(ctx, dstDir, fileStream, s.setStoragePct)
 	}()
 	return nil
 }

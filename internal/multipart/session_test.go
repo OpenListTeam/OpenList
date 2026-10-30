@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -665,5 +666,40 @@ func TestInitRejectsBadSize(t *testing.T) {
 	m := setupSessionTest(t)
 	if _, _, err := m.Init(initReq(testUser(), 0, 1024)); err == nil {
 		t.Fatal("Init with size 0: expected error")
+	}
+}
+
+// A panicking driver must fail its upload attempt, not crash the server: the
+// pipeline runs the driver on its own goroutine, outside gin's Recovery and
+// the task workers' recover (see #3201 for such a driver panic).
+func TestDriverPanicFailsTheAttempt(t *testing.T) {
+	m := setupSessionTest(t)
+	const chunkSize = 1024
+	totalSize := int64(2 * chunkSize)
+	data := genData(totalSize)
+	user := testUser()
+
+	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		if _, err := io.ReadAll(fs); err != nil {
+			return err
+		}
+		var result *struct{ FileID string } // the driver got a nil upload result
+		return fmt.Errorf("uploaded %s", result.FileID)
+	})
+
+	snap, _, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	sendChunk(t, m, user, snap.ID, data, 0, chunkSize)
+	sendChunk(t, m, user, snap.ID, data, 1, chunkSize)
+
+	final, err := m.Complete(context.Background(), user, snap.ID)
+	if err == nil || !strings.Contains(err.Error(), "upload pipeline panicked") {
+		t.Fatalf("Complete err = %v, want the recovered panic", err)
+	}
+	if final.State != StateFailedRetriable {
+		t.Fatalf("state = %s, want %s", final.State, StateFailedRetriable)
 	}
 }
