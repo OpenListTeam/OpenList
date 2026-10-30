@@ -638,7 +638,7 @@ func GenerateTorrentForPath(c *gin.Context) {
 	}
 
 	// 读取整个文件
-	rc, err := rangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
+	rc, err := stream.NewResumableReader(c.Request.Context(), rangeReader, obj.GetSize())
 	if err != nil {
 		common.ErrorResp(c, fmt.Errorf("读取文件失败: %w", err), 500)
 		return

@@ -298,12 +298,12 @@ func (ss *SeekableStream) generateReader() error {
 		if ss.rangeReader == nil {
 			return fmt.Errorf("illegal seekableStream")
 		}
-		rc, err := ss.rangeReader.RangeRead(ss.Ctx, http_range.Range{Length: -1})
+		rc, err := NewResumableReader(ss.Ctx, ss.rangeReader, ss.GetSize())
 		if err != nil {
 			return err
 		}
-		ss.Add(rc)
 		ss.Reader = rc
+		ss.Add(rc)
 	}
 	return nil
 }
