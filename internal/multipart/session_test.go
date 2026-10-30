@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -812,5 +813,177 @@ func TestChunkReportsStorageError(t *testing.T) {
 	}
 	if errors.Is(r.err, ErrClosed) || !strings.Contains(r.err.Error(), cause.Error()) {
 		t.Fatalf("chunk error = %q, want it to carry the storage error %q", r.err, cause)
+	}
+}
+
+func setAttemptIdleTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := AttemptIdleTimeout
+	AttemptIdleTimeout = d
+	t.Cleanup(func() { AttemptIdleTimeout = old })
+}
+
+// readAllPut is a driver that consumes the whole stream before succeeding.
+func readAllPut(got chan<- []byte) func(context.Context, string, *stream.FileStream, driver.UpdateProgress) error {
+	return func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		b, err := io.ReadAll(fs)
+		if err != nil {
+			return err
+		}
+		if got != nil {
+			got <- b
+		}
+		return nil
+	}
+}
+
+// An attempt whose client went silent is released after AttemptIdleTimeout,
+// so it stops holding the destination for the whole session TTL; the session
+// becomes failed_retriable and resumes through the refill protocol. The
+// refill must not start before the released attempt has let go.
+func TestIdleAttemptIsReleased(t *testing.T) {
+	m := setupSessionTest(t)
+	setAttemptIdleTimeout(t, 50*time.Millisecond)
+	const chunkSize = 1024
+	totalSize := int64(3 * chunkSize)
+	data := genData(totalSize)
+	user := testUser()
+	got := make(chan []byte, 1)
+	var running, overlaps atomic.Int32
+	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		if running.Add(1) > 1 {
+			overlaps.Add(1)
+		}
+		defer running.Add(-1)
+		b, err := io.ReadAll(fs)
+		if err != nil {
+			time.Sleep(50 * time.Millisecond) // a driver takes a moment to unwind
+			return err
+		}
+		got <- b
+		return nil
+	})
+
+	snap, _, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	sendChunk(t, m, user, snap.ID, data, 0, chunkSize)
+	time.Sleep(100 * time.Millisecond) // the client goes silent
+	m.gc()
+	released := waitState(t, m, user, snap.ID, StateFailedRetriable)
+	if !strings.Contains(released.Error, "no data from the client") {
+		t.Fatalf("released session error = %q, want it to say why", released.Error)
+	}
+
+	// the client comes back and refills from chunk 0
+	again, resumed, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil || !resumed || again.ID != snap.ID {
+		t.Fatalf("re-Init = (id=%s, resumed=%v, err=%v), want the released session resumed", again.ID, resumed, err)
+	}
+	for idx := 0; idx < 3; idx++ {
+		sendChunk(t, m, user, snap.ID, data, idx, chunkSize)
+	}
+	final, err := m.Complete(context.Background(), user, snap.ID)
+	if err != nil || final.State != StateCompleted {
+		t.Fatalf("Complete after refill = (%s, %v), want completed", final.State, err)
+	}
+	if b := <-got; !bytes.Equal(b, data) {
+		t.Fatal("the refilled upload delivered different content")
+	}
+	if n := overlaps.Load(); n != 0 {
+		t.Fatalf("the refill attempt overlapped the released one %d time(s)", n)
+	}
+}
+
+// tricklingReader yields one byte per read, every interval.
+type tricklingReader struct {
+	data     []byte
+	interval time.Duration
+}
+
+func (r *tricklingReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(r.interval)
+	p[0] = r.data[0]
+	r.data = r.data[1:]
+	return 1, nil
+}
+
+// A slow client that keeps sending is not idle, however long one chunk takes.
+func TestSlowClientIsNotReleased(t *testing.T) {
+	m := setupSessionTest(t)
+	setAttemptIdleTimeout(t, 50*time.Millisecond)
+	const chunkSize = 32
+	totalSize := int64(2 * chunkSize)
+	data := genData(totalSize)
+	user := testUser()
+	stubPut(t, readAllPut(nil))
+
+	snap, _, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	sent := make(chan error, 1)
+	go func() {
+		_, err := m.Chunk(user, snap.ID, 0, &tricklingReader{data: chunkOf(data, 0, chunkSize), interval: 10 * time.Millisecond})
+		sent <- err
+	}()
+	for i := 0; i < 12; i++ { // ~240ms of a 320ms trickle
+		time.Sleep(20 * time.Millisecond)
+		m.gc()
+		if s, err := m.Status(user, snap.ID); err != nil || s.State != StateReceiving {
+			t.Fatalf("a client that was still sending got released (state %s, err %v)", s.State, err)
+		}
+	}
+	if err := <-sent; err != nil {
+		t.Fatalf("trickled chunk: %v", err)
+	}
+	sendChunk(t, m, user, snap.ID, data, 1, chunkSize)
+	if _, err := m.Complete(context.Background(), user, snap.ID); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+}
+
+// A storage that is slow to consume is backpressure, not an idle client:
+// chunks parked behind a full window must not get the attempt released.
+func TestBackpressureIsNotIdle(t *testing.T) {
+	m := setupSessionTest(t)
+	setAttemptIdleTimeout(t, 50*time.Millisecond)
+	const chunkSize = 1024
+	slots := WindowSlots
+	totalSize := int64((slots + 2) * chunkSize)
+	data := genData(totalSize)
+	user := testUser()
+	release := make(chan struct{})
+	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		<-release // the storage is busy and not reading yet
+		_, err := io.ReadAll(fs)
+		return err
+	})
+
+	snap, _, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	for idx := 0; idx < slots; idx++ {
+		sendChunk(t, m, user, snap.ID, data, idx, chunkSize)
+	}
+	time.Sleep(100 * time.Millisecond)
+	m.gc()
+	if s, err := m.Status(user, snap.ID); err != nil || s.State != StateReceiving {
+		t.Fatalf("an attempt waiting on the storage got released (state %s, err %v)", s.State, err)
+	}
+	close(release)
+	for idx := slots; idx < slots+2; idx++ {
+		sendChunk(t, m, user, snap.ID, data, idx, chunkSize)
+	}
+	if _, err := m.Complete(context.Background(), user, snap.ID); err != nil {
+		t.Fatalf("Complete: %v", err)
 	}
 }

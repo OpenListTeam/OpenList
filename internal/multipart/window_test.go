@@ -525,3 +525,60 @@ func TestCRCsSurviveClose(t *testing.T) {
 		t.Fatal("chunk 1 crc should not be set")
 	}
 }
+
+// StarvedFor measures how long the reader has waited for data no client is
+// sending: it starts when Read blocks, restarts with every byte that arrives,
+// and is zero while the reader is not waiting.
+func TestWindowStarvedFor(t *testing.T) {
+	const chunkSize = 64
+	w := newTestWindow(t, chunkSize, 2*chunkSize, 2)
+	if d := w.StarvedFor(time.Now()); d != 0 {
+		t.Fatalf("StarvedFor before any read = %v, want 0", d)
+	}
+	read := make(chan struct{})
+	go func() {
+		buf := make([]byte, chunkSize)
+		_, _ = io.ReadFull(w, buf)
+		close(read)
+	}()
+	waitFor(t, "the blocked reader to be reported as starved", func() bool { return w.StarvedFor(time.Now()) > 0 })
+	if d := w.StarvedFor(time.Now().Add(time.Hour)); d < time.Hour {
+		t.Fatalf("StarvedFor an hour later = %v, want at least 1h", d)
+	}
+
+	// a chunk trickling in keeps the reader fed: starvation restarts with
+	// every byte received
+	pr, pw := io.Pipe()
+	written := make(chan error, 1)
+	go func() {
+		_, err := w.WriteChunk(0, pr)
+		written <- err
+	}()
+	time.Sleep(30 * time.Millisecond)
+	if _, err := pw.Write([]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "starvation to restart after a byte arrived", func() bool { return w.StarvedFor(time.Now()) < 20*time.Millisecond })
+	if _, err := pw.Write(make([]byte, chunkSize-1)); err != nil {
+		t.Fatal(err)
+	}
+	_ = pw.Close()
+	if err := <-written; err != nil {
+		t.Fatalf("WriteChunk: %v", err)
+	}
+	<-read
+	if d := w.StarvedFor(time.Now()); d != 0 {
+		t.Fatalf("StarvedFor while the reader is not waiting = %v, want 0", d)
+	}
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}

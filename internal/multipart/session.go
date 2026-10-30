@@ -37,6 +37,12 @@ const (
 // WindowSlots bounds the per-session disk footprint to WindowSlots*ChunkSize.
 var WindowSlots = 8
 
+// AttemptIdleTimeout releases a pipeline attempt whose driver has been starved
+// of data that long: the client stopped sending, so the attempt stops holding
+// the destination, while the session stays failed_retriable and resumable for
+// the rest of its TTL. Tests shrink it.
+var AttemptIdleTimeout = 10 * time.Minute
+
 const (
 	// defaultSessionTTL is the sliding inactivity timeout; it also serves as the
 	// grace period during which finished sessions remain queryable.
@@ -54,6 +60,8 @@ var (
 	// errAborted wraps context.Canceled so a driver blocked on the stream sees
 	// the abort as a canceled request and runs its cancellation cleanup.
 	errAborted = fmt.Errorf("multipart upload aborted: %w", context.Canceled)
+	// errAttemptIdle marks an attempt released by AttemptIdleTimeout.
+	errAttemptIdle = errors.New("no data from the client, upload attempt released")
 )
 
 // putFile is the pipeline tail: resolve the storage and run the regular upload
@@ -95,6 +103,9 @@ type Session struct {
 	cancel   context.CancelFunc
 	prevCRCs []uint32
 	prevSet  []bool
+	// released is set when the attempt is let go for idleness; the attempt
+	// turns it into failed_retriable once it has actually returned
+	released error
 
 	storagePct atomic.Uint64 // math.Float64bits of the driver progress (0-100)
 	lastActive atomic.Int64  // unix nano
@@ -257,17 +268,27 @@ func (m *Manager) ensureGC() {
 }
 
 func (m *Manager) gc() {
-	deadline := time.Now().Add(-m.sessionTTL()).UnixNano()
+	now := time.Now()
+	deadline := now.Add(-m.sessionTTL()).UnixNano()
 	m.mu.Lock()
-	var expired []*Session
+	var expired, live []*Session
 	for _, s := range m.byID {
 		if s.lastActive.Load() < deadline {
 			expired = append(expired, s)
+		} else {
+			live = append(live, s)
 		}
 	}
 	m.mu.Unlock()
 	for _, s := range expired {
 		m.terminate(s, errors.New("multipart upload session expired"))
+	}
+	for _, s := range live {
+		s.mu.Lock()
+		if s.state == StateReceiving && s.released == nil && s.win != nil && s.win.StarvedFor(now) > AttemptIdleTimeout {
+			s.releaseIdleAttemptLocked()
+		}
+		s.mu.Unlock()
 	}
 }
 
@@ -293,6 +314,21 @@ func (s *Session) killAttemptLocked() {
 	}
 	if s.win != nil {
 		_ = s.win.CloseWithError(errAborted)
+	}
+}
+
+// releaseIdleAttemptLocked stops an attempt whose client went silent. The
+// session only becomes failed_retriable (and refillable) once the attempt
+// has returned, so a refill never overlaps the released attempt. The window
+// error wraps context.Canceled, so the driver cleans up as it does for a
+// canceled request. The caller must hold s.mu.
+func (s *Session) releaseIdleAttemptLocked() {
+	s.released = fmt.Errorf("%w after %s: %w", errAttemptIdle, AttemptIdleTimeout, context.Canceled)
+	if s.cancel != nil {
+		s.cancel()
+	}
+	if s.win != nil {
+		_ = s.win.CloseWithError(s.released)
 	}
 }
 
@@ -406,6 +442,7 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	s.done = done
 	s.state = StateReceiving
 	s.err = nil
+	s.released = nil
 	s.setStoragePct(0)
 
 	fileStream := &stream.FileStream{
@@ -464,6 +501,12 @@ func (s *Session) finishAttempt(win *Window, err error) {
 		if s.err == nil {
 			s.err = err
 		}
+	case s.released != nil:
+		// released for idleness: retriable whatever the driver made of the
+		// closed stream, and with a reason the client can act on
+		s.state = StateFailedRetriable
+		s.err = s.released
+		s.attempt++
 	case isPermanentPutError(err):
 		s.state = StateFailedPermanent
 		s.err = err
