@@ -73,3 +73,26 @@ jobs:
                 issue_number: context.issue.number
               });
             }
+
+  triage:
+    needs: auto-reply
+    if: github.event.sender.type != 'Bot' && !startsWith(github.event.issue.title, '[Announcements]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Triage issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOM_API_BASE_URL: ${{ secrets.CUSTOM_API_BASE_URL }}
+          CUSTOM_API_KEY: ${{ secrets.CUSTOM_API_KEY }}
+          CUSTOM_API_MODEL: ${{ secrets.CUSTOM_API_MODEL }}
+        run: |
+          node --input-type=module -e 'import triage from "./.github/issue-triage/triage.mjs"
+          await triage()'
