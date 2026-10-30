@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
@@ -148,5 +149,32 @@ func TestCopyForMovePreservesModTime(t *testing.T) {
 		if !info.ModTime().Equal(want) {
 			t.Fatalf("expected %s mod time %v, got %v", path, want, info.ModTime())
 		}
+	}
+}
+
+func TestRemovePermanentlySkipsRecycleBin(t *testing.T) {
+	root := t.TempDir()
+	storageRoot := filepath.Join(root, "storage")
+	recycleBin := filepath.Join(root, "recycle")
+	if err := os.Mkdir(storageRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	filePath := filepath.Join(storageRoot, "data")
+	if err := os.WriteFile(filePath, []byte("data"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	driver := &Local{Addition: Addition{RecycleBinPath: recycleBin}}
+	driver.RootFolderPath = storageRoot
+	ctx := context.WithValue(context.Background(), conf.RemovePermanentlyKey, struct{}{})
+	if err := driver.Remove(ctx, &model.Object{Path: filePath, Name: "data"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected source to be removed, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(recycleBin, "data")); !os.IsNotExist(err) {
+		t.Fatalf("expected no recycle bin copy, got %v", err)
 	}
 }

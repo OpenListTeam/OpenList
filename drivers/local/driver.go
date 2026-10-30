@@ -361,7 +361,7 @@ func (d *Local) Copy(_ context.Context, srcObj, dstDir model.Obj) error {
 
 func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 	var err error
-	if utils.SliceContains([]string{"", "delete permanently"}, d.RecycleBinPath) {
+	if utils.SliceContains([]string{"", "delete permanently"}, d.RecycleBinPath) || ctx.Value(conf.RemovePermanentlyKey) != nil {
 		if obj.IsDir() {
 			err = os.RemoveAll(obj.GetPath())
 		} else {
