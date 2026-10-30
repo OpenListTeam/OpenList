@@ -1,6 +1,8 @@
 package smb
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path"
 	"regexp"
@@ -20,18 +22,23 @@ const (
 	// staging files older than this belong to an upload that can no longer
 	// finish (the process was killed); List reclaims them
 	staleStagingAge = 24 * time.Hour
-	// fixed probe names in the staging form: hidden like any staging file,
-	// and reused, so a server that cannot remove them does not collect more
-	probeSource = stagingPrefix + "probe00000000000"
-	probeTarget = stagingPrefix + "probe00000000001"
 )
 
 // How uploads are published, learned on the first upload after Init.
 const (
 	publishUnknown int32 = iota
+	// write a staging file and rename it over the destination
 	publishStaged
+	// the server cannot rename over a file: write the destination in place
 	publishInPlace
+	// nor overwrite one in place: only ever create new files
+	publishNewOnly
 )
+
+// errCannotReplace refuses an overwrite the server would botch: Samba with
+// vfs_streams_xattr on a filesystem without xattr support truncates a file
+// before refusing to overwrite it.
+var errCannotReplace = errors.New("the SMB server cannot replace existing files, so the existing file was left as it was")
 
 var stagingRe = regexp.MustCompile(`^\.openlist-upload-[A-Za-z0-9]{16}$`)
 
@@ -42,41 +49,57 @@ func stagingName() string { return stagingPrefix + random.String(16) }
 // prefix stays visible and is never reclaimed.
 func isStaging(name string) bool { return stagingRe.MatchString(name) }
 
-// stagedUploads reports whether uploads can be staged and published by a
-// rename over the destination. The first upload after Init probes the
-// server in its own directory; a server that cannot rename over an existing
-// file (e.g. Samba with vfs_streams_xattr on a filesystem without xattrs)
-// gets in-place writes instead, as before, minus any removal on failure.
-func (d *SMB) stagedUploads(dir string) bool {
+// publishModeFor returns how uploads are published. The first upload after
+// Init probes the server in its own directory. A server that cannot rename
+// over an existing file gets in-place writes instead, as before minus any
+// removal on failure; one that cannot overwrite in place either only gets
+// new files.
+func (d *SMB) publishModeFor(dir string) int32 {
 	if mode := d.publishMode.Load(); mode != publishUnknown {
-		return mode == publishStaged
+		return mode
 	}
 	d.probeMu.Lock()
 	defer d.probeMu.Unlock()
 	if mode := d.publishMode.Load(); mode != publishUnknown {
-		return mode == publishStaged
+		return mode
 	}
-	mode := publishStaged
-	if err := d.probeAtomicPublish(dir); err != nil {
+	mode, err := d.probePublish(dir)
+	switch mode {
+	case publishUnknown:
+		// could not even create the probe files here: decide on a later upload
+		return publishInPlace
+	case publishInPlace:
 		utils.Log.Warnf("[smb] the server cannot replace a file by renaming over it, uploads write in place: %v", err)
-		mode = publishInPlace
+	case publishNewOnly:
+		utils.Log.Warnf("[smb] the server can neither rename over nor overwrite an existing file, uploads only create new files: %v", err)
 	}
 	d.publishMode.Store(mode)
-	return mode == publishStaged
+	return mode
 }
 
-func (d *SMB) probeAtomicPublish(dir string) error {
-	src, dst := path.Join(dir, probeSource), path.Join(dir, probeTarget)
+// probePublish finds out how the server can replace a file, with two staging
+// files in dir: hidden, and left for List to reclaim if the server keeps them.
+func (d *SMB) probePublish(dir string) (int32, error) {
+	src, dst := path.Join(dir, stagingName()), path.Join(dir, stagingName())
+	defer func() {
+		_ = d.fs.Remove(dst)
+		_ = d.fs.Remove(src)
+	}()
 	for _, name := range []string{src, dst} {
-		f, err := d.fs.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
+		f, err := d.fs.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666)
 		if err != nil {
-			_ = d.fs.Remove(src)
-			return err
+			return publishUnknown, err
 		}
 		_ = f.Close()
 	}
-	err := d.fs.Rename(src, dst)
-	_ = d.fs.Remove(dst)
-	_ = d.fs.Remove(src)
-	return err
+	renameErr := d.fs.Rename(src, dst)
+	if renameErr == nil {
+		return publishStaged, nil
+	}
+	f, err := d.fs.OpenFile(dst, os.O_RDWR|os.O_TRUNC, 0o666)
+	if err != nil {
+		return publishNewOnly, fmt.Errorf("%w; %w", renameErr, err)
+	}
+	_ = f.Close()
+	return publishInPlace, renameErr
 }

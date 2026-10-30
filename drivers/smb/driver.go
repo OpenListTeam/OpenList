@@ -20,7 +20,7 @@ import (
 
 type SMB struct {
 	lastConnTime atomic.Int64
-	publishMode  atomic.Int32 // see stagedUploads
+	publishMode  atomic.Int32 // see publishModeFor
 	probeMu      sync.Mutex
 	model.Storage
 	Addition
@@ -196,13 +196,22 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	}
 	dir := dstDir.GetPath()
 	fullPath := filepath.Join(dir, stream.GetName())
+	mode := d.publishModeFor(dir)
 	target, flag := fullPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC
-	if d.stagedUploads(dir) {
+	switch mode {
+	case publishStaged:
 		target, flag = filepath.Join(dir, stagingName()), os.O_RDWR|os.O_CREATE|os.O_EXCL
+	case publishNewOnly:
+		flag = os.O_RDWR | os.O_CREATE | os.O_EXCL
 	}
 	out, err := d.fs.OpenFile(target, flag, 0o666)
 	if err != nil {
 		d.cleanLastConnTime()
+		if mode == publishNewOnly {
+			if _, serr := d.fs.Stat(fullPath); serr == nil {
+				return errCannotReplace
+			}
+		}
 		return err
 	}
 	d.updateLastConnTime()

@@ -295,3 +295,29 @@ func TestIntegrationOpenDestinationFailsCleanly(t *testing.T) {
 		}
 	}
 }
+
+// Whatever the server supports, an overwrite either replaces the file or
+// leaves the previous version as it was. Samba with vfs_streams_xattr on a
+// filesystem without xattr support truncates a file before refusing to
+// overwrite it, so such a server must not be asked to overwrite at all.
+func TestIntegrationOverwriteNeverDestroysPrevious(t *testing.T) {
+	d, dir := integrationDriver(t)
+	old := []byte("previous version")
+	if err := d.Put(context.Background(), &model.Object{Path: dir}, fileStream("f.bin", bytes.NewReader(old), int64(len(old))), func(float64) {}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body := []byte("new version, longer than the previous one")
+	putErr := d.Put(context.Background(), &model.Object{Path: dir}, fileStream("f.bin", bytes.NewReader(body), int64(len(body))), func(float64) {})
+	got, err := readFile(t, d, path.Join(dir, "f.bin"))
+	if err != nil {
+		t.Fatalf("destination gone: %v", err)
+	}
+	want := body
+	if putErr != nil {
+		t.Logf("server cannot replace files: %v", putErr)
+		want = old
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("destination = %q, want %q (put err %v)", got, want, putErr)
+	}
+}
