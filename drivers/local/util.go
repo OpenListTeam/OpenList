@@ -27,6 +27,25 @@ import (
 
 const thumbPrefix = "openlist_thumb_"
 
+// resolveSymlinkFile follows symlinks like os.Create does, including dangling ones.
+func resolveSymlinkFile(path string) string {
+	for range 255 {
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			return path
+		}
+		dst, err := os.Readlink(path)
+		if err != nil {
+			return path
+		}
+		if !filepath.IsAbs(dst) {
+			dst = filepath.Join(filepath.Dir(path), dst)
+		}
+		path = dst
+	}
+	return path
+}
+
 func isSymlinkDir(f fs.FileInfo, path string) bool {
 	if f.Mode()&os.ModeSymlink == os.ModeSymlink ||
 		(runtime.GOOS == "windows" && f.Mode()&os.ModeIrregular == os.ModeIrregular) { // os.ModeIrregular is Junction bit in Windows
