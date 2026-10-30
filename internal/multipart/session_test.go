@@ -667,3 +667,79 @@ func TestInitRejectsBadSize(t *testing.T) {
 		t.Fatal("Init with size 0: expected error")
 	}
 }
+
+func withIdentity(req InitReq, identity string) InitReq {
+	req.Identity = identity
+	return req
+}
+
+func withMD5(req InitReq, md5 string) InitReq {
+	if md5 != "" {
+		req.Hashes = map[*utils.HashType]string{utils.MD5: md5}
+	}
+	return req
+}
+
+// The identity fingerprint is what lets a reload resume: it is sent whether or
+// not the user asked for a rapid upload, unlike the file hashes.
+func TestResumeReceivingByIdentity(t *testing.T) {
+	cases := []struct {
+		name          string
+		first, second string
+		// MD5 sent with the first and the second init; empty sends none
+		firstMD5, secondMD5 string
+		wantSameResume      bool
+	}{
+		{name: "matching identity resumes", first: "fp-a", second: "fp-a", wantSameResume: true},
+		{name: "different identity starts fresh", first: "fp-a", second: "fp-b"},
+		{name: "identity dropped starts fresh", first: "fp-a", second: ""},
+		{name: "identity added starts fresh", first: "", second: "fp-b"},
+		{name: "no identity falls back to hashes", firstMD5: "same-file", secondMD5: "same-file", wantSameResume: true},
+		// the identity covers only part of the content: hashes both sides
+		// sent must still agree, or a file changed in the middle is spliced
+		{name: "matching identity with conflicting hashes starts fresh", first: "fp-a", second: "fp-a", firstMD5: "file-v1", secondMD5: "file-v2"},
+		{name: "matching identity with matching hashes resumes", first: "fp-a", second: "fp-a", firstMD5: "same-file", secondMD5: "same-file", wantSameResume: true},
+		{name: "no identity and no hashes never resumes", first: "", second: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := setupSessionTest(t)
+			const chunkSize = 1024
+			totalSize := int64(4 * chunkSize)
+			data := genData(totalSize)
+			user := testUser()
+
+			started := make(chan struct{})
+			var once sync.Once // a superseding Init starts a second pipeline
+			stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+				defer fs.Close()
+				once.Do(func() { close(started) })
+				<-ctx.Done()
+				return ctx.Err()
+			})
+
+			base := initReq(user, totalSize, chunkSize)
+			snap, _, err := m.Init(withMD5(withIdentity(base, tc.first), tc.firstMD5))
+			if err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			<-started
+			sendChunk(t, m, user, snap.ID, data, 0, chunkSize)
+
+			again, resumed, err := m.Init(withMD5(withIdentity(base, tc.second), tc.secondMD5))
+			if err != nil {
+				t.Fatalf("re-Init: %v", err)
+			}
+			if tc.wantSameResume {
+				if !resumed || again.ID != snap.ID {
+					t.Fatalf("re-Init = (id=%s, resumed=%v), want the same session resumed", again.ID, resumed)
+				}
+				if len(again.Received) == 0 {
+					t.Fatal("resumed session reports nothing received, so the client re-uploads everything")
+				}
+			} else if resumed || again.ID == snap.ID {
+				t.Fatalf("re-Init = (id=%s, resumed=%v), want a fresh session", again.ID, resumed)
+			}
+		})
+	}
+}

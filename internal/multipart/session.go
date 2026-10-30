@@ -79,6 +79,7 @@ type Session struct {
 	Mimetype  string
 	Modified  time.Time
 	Hashes    map[*utils.HashType]string
+	Identity  string // opaque client fingerprint, see qualifiesResume
 	Creator   *model.User
 
 	mu       sync.Mutex
@@ -160,6 +161,7 @@ type InitReq struct {
 	Mimetype  string
 	Modified  time.Time
 	Hashes    map[*utils.HashType]string
+	Identity  string
 }
 
 // Manager owns all live sessions. Sessions are in-memory only (aligned with
@@ -193,11 +195,37 @@ func sessionKey(userID uint, path string, size int64) string {
 	return fmt.Sprintf("%d|%s|%d", userID, path, size)
 }
 
+// qualifiesResume reports whether the client proved it is re-uploading the
+// file a live session already holds data for. Path+size alone is NOT enough —
+// buffered chunks of a different same-sized file would be silently mixed into
+// the result. Note this guards against accidents, not against an adversary:
+// sessions are per-user (see sessionKey and Manager.get), so the worst a
+// client can do is splice its own upload, which it could equally do by
+// uploading the spliced file directly.
+func qualifiesResume(s *Session, req InitReq) bool {
+	// unlike the file hashes, the identity fingerprint is sent regardless of
+	// whether rapid upload was requested. It is opaque and may cover only part
+	// of the content (the web client hashes the first and last MiB), so a hash
+	// both sides sent must still agree
+	if s.Identity != "" || req.Identity != "" {
+		return s.Identity != "" && s.Identity == req.Identity && !hashesConflict(s.Hashes, req.Hashes)
+	}
+	return hashesQualifyResume(s.Hashes, req.Hashes)
+}
+
+// hashesConflict reports whether a hash type sent on both inits differs.
+func hashesConflict(old, new map[*utils.HashType]string) bool {
+	for t, ov := range old {
+		if nv, ok := new[t]; ok && nv != ov {
+			return true
+		}
+	}
+	return false
+}
+
 // hashesQualifyResume reports whether two hash sets prove the client is
 // re-uploading the same file: they must share at least one hash type and
-// agree on every shared one. Path+size alone is NOT enough to resume into a
-// receiving session — buffered chunks of a different same-sized file would be
-// silently mixed into the result.
+// agree on every shared one.
 func hashesQualifyResume(old, new map[*utils.HashType]string) bool {
 	shared := false
 	for t, ov := range old {
@@ -317,9 +345,9 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 			// failed_retriable resumes unconditionally: nothing of the old
 			// attempt survives except CRCs, and the re-fill CRC check catches
 			// a changed file. A receiving session still holds data, so it only
-			// resumes when hashes prove it is the same file.
+			// resumes when the client proves it is the same file.
 			if st == StateFailedRetriable ||
-				(st == StateReceiving && hashesQualifyResume(s.Hashes, req.Hashes)) {
+				(st == StateReceiving && qualifiesResume(s, req)) {
 				m.mu.Unlock()
 				s.touch()
 				return s.Snapshot(), true, nil
@@ -344,6 +372,7 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 		Mimetype:  req.Mimetype,
 		Modified:  req.Modified,
 		Hashes:    req.Hashes,
+		Identity:  req.Identity,
 		Creator:   req.User,
 		state:     StateReceiving,
 	}

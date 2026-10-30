@@ -19,7 +19,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const multipartMinChunkSize = int64(1) << 20 // 1MB
+const (
+	multipartMinChunkSize = int64(1) << 20 // 1MB
+	// X-File-Identity is stored per session, so bound what a client can pin
+	multipartMaxIdentityLen = 256
+)
 
 // multipartChunkSize resolves the effective chunk size. The admin setting is
 // the ceiling: a client may suggest a smaller chunk via X-Chunk-Size but never
@@ -115,6 +119,13 @@ func MultipartInit(c *gin.Context) {
 	if len(mimetype) == 0 {
 		mimetype = utils.GetMimeType(name)
 	}
+	// opaque to the server: it only ever compares it with the value the
+	// session was created with, to decide whether resuming is safe
+	identity := c.GetHeader("X-File-Identity")
+	if len(identity) > multipartMaxIdentityLen {
+		common.ErrorStrResp(c, "X-File-Identity is too long", 400)
+		return
+	}
 	snap, resumed, err := multipart.DefaultManager.Init(multipart.InitReq{
 		User:      user,
 		Path:      path,
@@ -123,6 +134,7 @@ func MultipartInit(c *gin.Context) {
 		Mimetype:  mimetype,
 		Modified:  getLastModified(c),
 		Hashes:    h,
+		Identity:  identity,
 	})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
