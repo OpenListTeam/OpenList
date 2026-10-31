@@ -2,11 +2,13 @@ package handles
 
 import (
 	"context"
+	"io"
 	"mime"
 	"net/url"
 	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/directupload"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -107,8 +109,63 @@ func FsGetDirectUploadInfo(c *gin.Context) {
 			common.ErrorStrResp(c, "file exists", 403)
 			return
 		}
+		if errors.Is(err, errs.NotImplement) {
+			// the driver has no direct upload path for this storage or policy,
+			// report "not available" instead of an error so the client can
+			// fall back to a regular upload
+			common.SuccessResp(c, nil)
+			return
+		}
 		common.ErrorResp(c, err, 500)
 		return
 	}
 	common.SuccessResp(c, directUploadInfo)
+}
+
+type FsCompleteDirectUploadReq struct {
+	Token string   `json:"token"`
+	ETags []string `json:"etags"`
+}
+
+// FsCompleteDirectUpload finalizes a client-side upload that was announced by
+// /fs/get_direct_upload_info. The client reports the part ETags it collected
+// while uploading straight to the storage, and the driver takes care of the
+// multipart completion and of any storage-specific callback.
+func FsCompleteDirectUpload(c *gin.Context) {
+	var req FsCompleteDirectUploadReq
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	token := req.Token
+	if token == "" {
+		// the URL handed out by the driver carries the token in its query
+		token = c.Query("token")
+	}
+	if token == "" {
+		common.ErrorStrResp(c, "missing upload token", 400)
+		return
+	}
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	session, err := directupload.Get(token, user.ID)
+	if err != nil {
+		if errors.Is(err, directupload.ErrNotOwner) {
+			common.ErrorResp(c, err, 403)
+			return
+		}
+		common.ErrorResp(c, err, 404)
+		return
+	}
+	if err = session.Finish(c.Request.Context(), req.ETags); err != nil {
+		// keep the session so the client can retry the completion
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	directupload.Delete(token)
+	// The payload never reached this server, so the cached listing of the
+	// destination directory has to be dropped for the new file to show up.
+	if storage, actualPath, err := op.GetStorageAndActualPath(session.Path); err == nil {
+		op.Cache.DeleteDirectory(storage, stdpath.Dir(actualPath))
+	}
+	common.SuccessResp(c, nil)
 }
