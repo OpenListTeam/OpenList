@@ -243,7 +243,7 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 
 func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if d.ReadConflictPolicy == AllRWP && !args.Redirect {
-		files, err := d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllRWP))
+		files, err := d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllRWP), false)
 		if err != nil {
 			return nil, err
 		}
