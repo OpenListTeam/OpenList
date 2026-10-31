@@ -186,7 +186,7 @@ require (
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
 	github.com/taruti/bytepool v0.0.0-20160310082835-5e3a9ea56543 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	go4.org v0.0.0-20260112195520-a5071408f32f
+	go4.org v0.0.0-20261028031214-ed6929a230fe
 	resty.dev/v3 v3.0.0-beta.2 // indirect
 )
 
