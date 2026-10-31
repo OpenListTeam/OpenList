@@ -47,7 +47,6 @@ func OpenDownload(ctx context.Context, reqPath string, offset int64) (*FileDownl
 		Ctx: ctx,
 	}, link)
 	if err != nil {
-		_ = link.Close()
 		return nil, err
 	}
 	reader, err := stream.NewReadAtSeeker(ss, offset)
