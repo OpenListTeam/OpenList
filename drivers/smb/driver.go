@@ -83,13 +83,8 @@ func (d *SMB) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		return nil, err
 	}
 	d.updateLastConnTime()
-	mFile := &stream.RateLimitFile{
-		File:    remoteFile,
-		Limiter: stream.ServerDownloadLimit,
-		Ctx:     ctx,
-	}
 	return &model.Link{
-		RangeReader:      stream.GetRangeReaderFromMFile(file.GetSize(), mFile),
+		RangeReader:      stream.NewBufferedRangeReader(remoteFile, file.GetSize()),
 		SyncClosers:      utils.NewSyncClosers(remoteFile),
 		RequireReference: true,
 	}, nil
