@@ -9,6 +9,74 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Google Workspace source MIME types.
+const (
+	mimeTypeGoogleDoc      = "application/vnd.google-apps.document"
+	mimeTypeGoogleSheet    = "application/vnd.google-apps.spreadsheet"
+	mimeTypeGoogleSlides   = "application/vnd.google-apps.presentation"
+	mimeTypeGoogleDrawing  = "application/vnd.google-apps.drawing"
+	mimeTypeGoogleScript   = "application/vnd.google-apps.script"
+	mimeTypeGoogleFolder   = "application/vnd.google-apps.folder"
+	mimeTypeGoogleShortcut = "application/vnd.google-apps.shortcut"
+	mimeTypeGoogleForm     = "application/vnd.google-apps.form"
+	mimeTypeGoogleSite     = "application/vnd.google-apps.site"
+	mimeTypeGoogleMap      = "application/vnd.google-apps.map"
+	mimeTypeGoogleVid      = "application/vnd.google-apps.vid"
+	mimeTypeGoogleJam      = "application/vnd.google-apps.jam"
+	// Third-party shortcut created by a Drive app; the app must handle the download.
+	mimeTypeGoogleDriveSDK = "application/vnd.google-apps.drive-sdk"
+)
+
+// Export target MIME types.
+const (
+	mimeTypeDocx       = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	mimeTypeXlsx       = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	mimeTypePptx       = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	mimeTypePDF        = "application/pdf"
+	mimeTypeScriptJSON = "application/vnd.google-apps.script+json"
+)
+
+// exportFormat pairs a files.export target MIME type with the file extension
+// that should be appended to the downloaded filename.
+type exportFormat struct {
+	MIME      string
+	Extension string
+}
+
+// googleWorkspaceExports maps exportable Google Workspace source MIME types to their
+// files.export target format.
+var googleWorkspaceExports = map[string]exportFormat{
+	mimeTypeGoogleDoc:     {MIME: mimeTypeDocx, Extension: ".docx"},
+	mimeTypeGoogleSheet:   {MIME: mimeTypeXlsx, Extension: ".xlsx"},
+	mimeTypeGoogleSlides:  {MIME: mimeTypePptx, Extension: ".pptx"},
+	mimeTypeGoogleDrawing: {MIME: mimeTypePDF, Extension: ".pdf"},
+	mimeTypeGoogleScript:  {MIME: mimeTypeScriptJSON, Extension: ".json"},
+}
+
+var googleWorkspaceUnsupported = map[string]string{
+	mimeTypeGoogleFolder:   "folders cannot be downloaded",
+	mimeTypeGoogleShortcut: "shortcuts must be resolved before downloading",
+	mimeTypeGoogleDriveSDK: "third-party shortcuts cannot be downloaded directly",
+
+	// Forms, Sites, Vids, and Jamboard require the files.download
+	// long-running-operation flow, which this driver does not implement.
+	mimeTypeGoogleForm: "requires the files.download long-running-operation flow, which this driver does not implement",
+	mimeTypeGoogleSite: "requires the files.download long-running-operation flow, which this driver does not implement",
+	mimeTypeGoogleVid:  "requires the files.download long-running-operation flow, which this driver does not implement",
+	mimeTypeGoogleJam:  "requires the files.download long-running-operation flow, which this driver does not implement",
+
+	// Google My Maps has no supported download/export strategy implemented here.
+	mimeTypeGoogleMap: "no supported download/export strategy is implemented for Google My Maps",
+}
+
+// FileMeta holds the fields we need from a files.get metadata response inside Link().
+type FileMeta struct {
+	MimeType     string `json:"mimeType"`
+	Capabilities struct {
+		CanDownload bool `json:"canDownload"`
+	} `json:"capabilities"`
+}
+
 type TokenError struct {
 	Error            string `json:"error"`
 	ErrorDescription string `json:"error_description"`
