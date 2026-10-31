@@ -217,7 +217,7 @@ func (d *OnedriveAPP) getDrive(ctx context.Context) (*DriveResp, error) {
 	var resp DriveResp
 	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
 		req.SetContext(ctx)
-	}, &resp, true)
+	}, &resp)
 	if err != nil {
 		return nil, err
 	}
