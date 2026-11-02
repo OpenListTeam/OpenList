@@ -2,8 +2,12 @@ package _139
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding"
+	"encoding/binary"
 	"encoding/xml"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"path"
@@ -685,10 +689,196 @@ func (d *Yun139) getPartSize(size int64) int64 {
 	return 100 * utils.MB
 }
 
+// imageSuffixUploadSuffix is appended to the uploaded file name when
+// UseImageSuffixUpload is enabled. The 139 App keeps accepting images for
+// members when the disk quota is full, so uploading the file as "<name>.jpg"
+// and renaming it back afterwards works around a full disk.
+const imageSuffixUploadSuffix = ".jpg"
+
+// imageSuffixUploadStreamer reports "<name>.jpg" as the file name during the
+// upload and remembers the original name for the rename that follows.
+type imageSuffixUploadStreamer struct {
+	model.FileStreamer
+	uploadName string
+	finalName  string
+	// uploadedID is the ID of the uploaded file, recorded by put. It lets the
+	// rename target exactly the uploaded file even when the server had to
+	// resolve a name conflict.
+	uploadedID string
+}
+
+func (s *imageSuffixUploadStreamer) GetName() string {
+	return s.uploadName
+}
+
+// uploadFinalName returns the name the stream must have after the upload.
+// Streams that are uploaded through the image suffix trick report their
+// original name.
+func uploadFinalName(stream model.FileStreamer) string {
+	if s, ok := stream.(*imageSuffixUploadStreamer); ok {
+		return s.finalName
+	}
+	return stream.GetName()
+}
+
+// Put uploads the file. When use_image_suffix_upload is enabled it is uploaded
+// as "<name>.jpg" and renamed back to "<name>" after the upload finished.
 func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	if d.isShare() {
 		return errs.NotImplement
 	}
+	if !d.UseImageSuffixUpload {
+		return d.put(ctx, dstDir, stream, up)
+	}
+	uploadStream := &imageSuffixUploadStreamer{
+		FileStreamer: stream,
+		uploadName:   stream.GetName() + imageSuffixUploadSuffix,
+		finalName:    stream.GetName(),
+	}
+	log.Debugf("[139] image suffix upload: %s => %s", uploadStream.finalName, uploadStream.uploadName)
+	if err := d.put(ctx, dstDir, uploadStream, up); err != nil {
+		return err
+	}
+	return d.restoreImageSuffixName(ctx, dstDir, uploadStream)
+}
+
+// isImageSuffixUploadTarget reports whether file is the result of this upload.
+// The create response normally provides a file ID, which is authoritative. When
+// it is missing, a name match alone is not trusted: a leftover "<name>.jpg"
+// from an earlier attempt has the same name, so the size must match as well.
+func isImageSuffixUploadTarget(file model.Obj, stream *imageSuffixUploadStreamer, uploadSize int64) bool {
+	if stream.uploadedID != "" {
+		return file.GetID() == stream.uploadedID
+	}
+	return file.GetName() == stream.uploadName && file.GetSize() == uploadSize
+}
+
+// findImageSuffixUpload keeps the current upload separate from any old file
+// that already uses the original name. ambiguous is true when the file ID is
+// unavailable and more than one file could be this upload, in which case the
+// caller must not guess.
+func findImageSuffixUpload(files []model.Obj, stream *imageSuffixUploadStreamer, uploadSize int64) (uploaded, existing model.Obj, ambiguous bool) {
+	matches := 0
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		if isImageSuffixUploadTarget(file, stream, uploadSize) {
+			uploaded = file
+			matches++
+			continue
+		}
+		if file.GetName() == stream.finalName {
+			existing = file
+		}
+	}
+	return uploaded, existing, matches > 1
+}
+
+// restoreImageSuffixName renames the identified "<name>.jpg" upload back to
+// its original name and only removes an old conflicting file afterwards.
+func (d *Yun139) restoreImageSuffixName(ctx context.Context, dstDir model.Obj, stream *imageSuffixUploadStreamer) error {
+	var uploaded, existing model.Obj
+	var ambiguous bool
+	for attempt := 0; attempt < 5 && uploaded == nil; attempt++ {
+		if attempt > 0 {
+			// 给服务器一定时间处理数据，避免无法刷新文件列表
+			time.Sleep(time.Millisecond * 500)
+		}
+		files, err := d.List(ctx, dstDir, model.ListArgs{Refresh: true})
+		if err != nil {
+			return err
+		}
+		uploaded, existing, ambiguous = findImageSuffixUpload(files, stream, stream.GetSize())
+		if ambiguous {
+			return fmt.Errorf("multiple files match the image suffix upload of %s in %s and no file id was returned; refusing to rename", stream.uploadName, dstDir.GetPath())
+		}
+	}
+	if uploaded == nil {
+		return fmt.Errorf("uploaded file %s not found in %s after image suffix upload, it may still be stored with the .jpg suffix", stream.uploadName, dstDir.GetPath())
+	}
+	if uploaded.GetName() == stream.finalName {
+		return nil
+	}
+	if existing != nil {
+		log.Debugf("[139] image suffix upload: removing old: %s", existing.GetName())
+		// 删除前重命名旧文件，避免仍旧冲突
+		if err := d.Rename(ctx, existing, existing.GetName()+random.String(4)); err != nil {
+			return err
+		}
+		if err := d.Remove(ctx, existing); err != nil {
+			return err
+		}
+	}
+	log.Debugf("[139] image suffix upload: renaming new: %s => %s", uploaded.GetName(), stream.finalName)
+	return d.Rename(ctx, uploaded, stream.finalName)
+}
+
+func initialUploadPartInfos(partInfos []PartInfo) []PartInfo {
+	if len(partInfos) > 100 {
+		return partInfos[:100]
+	}
+	return partInfos
+}
+
+func addAppParallelHashContexts(file io.ReaderAt, partInfos []PartInfo) error {
+	h := sha256.New()
+	buf := make([]byte, 1024*1024)
+	var offset int64
+
+	for i := range partInfos {
+		if i == 0 {
+			partInfos[i].ParallelHashCtx = nil
+		} else {
+			if offset%64 != 0 {
+				return fmt.Errorf("139 App upload part offset %d is not aligned to a 64-byte SHA-256 block", offset)
+			}
+			state, err := sha256Midstate(h)
+			if err != nil {
+				return err
+			}
+			partInfos[i].ParallelHashCtx = &ParallelHashCtx{H: state, PartOffset: offset}
+		}
+
+		part := io.NewSectionReader(file, offset, partInfos[i].PartSize)
+		written, err := io.CopyBuffer(h, part, buf)
+		if err != nil {
+			return fmt.Errorf("hash 139 App upload part %d: %w", i+1, err)
+		}
+		if written != partInfos[i].PartSize {
+			return fmt.Errorf("hash 139 App upload part %d: read %d bytes, expected %d", i+1, written, partInfos[i].PartSize)
+		}
+		offset += partInfos[i].PartSize
+	}
+	return nil
+}
+
+func sha256Midstate(h hash.Hash) ([]uint32, error) {
+	marshaler, ok := h.(encoding.BinaryMarshaler)
+	if !ok {
+		return nil, fmt.Errorf("SHA-256 state does not support binary marshaling")
+	}
+	state, err := marshaler.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("marshal SHA-256 state: %w", err)
+	}
+	if len(state) < 4+8*4 {
+		return nil, fmt.Errorf("unexpected SHA-256 state length %d", len(state))
+	}
+	regs := make([]uint32, 8)
+	for i := range regs {
+		regs[i] = binary.BigEndian.Uint32(state[4+i*4 : 8+i*4])
+	}
+	return regs, nil
+}
+
+func (d *Yun139) put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
+	if d.isShare() {
+		return errs.NotImplement
+	}
+	// finalName is the name the file must end up with; it differs from the
+	// upload name only for streams uploaded through the image suffix trick.
+	finalName := uploadFinalName(stream)
 	// PersonalNew 以及 Group/Family 在非旧流模式时走新上传路径
 	if d.Addition.Type == MetaPersonalNew ||
 		((d.isGroup() || d.isFamily()) && !d.UseOldStreamUpload) {
@@ -706,9 +896,10 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		}
 
 		var err error
+		var cachedFile model.File
 		fullHash := stream.GetHash().GetHash(utils.SHA256)
 		if len(fullHash) != utils.SHA256.Width {
-			_, fullHash, err = streamPkg.CacheFullAndHash(stream, &up, utils.SHA256)
+			cachedFile, fullHash, err = streamPkg.CacheFullAndHash(stream, &up, utils.SHA256)
 			if err != nil {
 				return err
 			}
@@ -719,6 +910,23 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		part := int64(1)
 		if size > partSize {
 			part = (size + partSize - 1) / partSize
+		}
+		if d.isAppClient() && part > 1 {
+			if partSize%64 != 0 {
+				return fmt.Errorf("139 App upload part size %d must be a multiple of 64 bytes", partSize)
+			}
+			if cachedFile == nil {
+				cachedFile = stream.GetFile()
+			}
+			if cachedFile == nil {
+				cachedFile, err = stream.CacheFullAndWriter(nil, nil)
+				if err != nil {
+					return fmt.Errorf("cache file for 139 App parallel upload: %w", err)
+				}
+			}
+			if cachedFile == nil {
+				return fmt.Errorf("139 App parallel upload requires a seekable cached file")
+			}
 		}
 
 		// 生成所有 partInfos
@@ -733,18 +941,22 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			partInfo := PartInfo{
 				PartNumber: partNumber,
 				PartSize:   byteSize,
-				ParallelHashCtx: ParallelHashCtx{
+				ParallelHashCtx: &ParallelHashCtx{
 					PartOffset: start,
 				},
 			}
 			partInfos = append(partInfos, partInfo)
 		}
-
-		// 筛选出前 100 个 partInfos
-		firstPartInfos := partInfos
-		if len(firstPartInfos) > 100 {
-			firstPartInfos = firstPartInfos[:100]
+		if d.isAppClient() {
+			partInfos[0].ParallelHashCtx = nil
+			if part > 1 {
+				if err := addAppParallelHashContexts(cachedFile, partInfos); err != nil {
+					return err
+				}
+			}
 		}
+
+		firstPartInfos := initialUploadPartInfos(partInfos)
 
 		// 创建任务，获取上传信息和前100个分片的上传地址
 		data := base.Json{
@@ -758,6 +970,15 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			"name":                 stream.GetName(),
 			"type":                 "file",
 			"fileRenameMode":       "auto_rename",
+		}
+		// App 客户端上报的额外字段（对齐移动端 App 的 file/create 请求体）
+		if d.isAppClient() {
+			data["parallelUpload"] = true
+			data["storyVideoFile"] = false
+			data["userRegion"] = base.Json{
+				"cityCode":     "854",
+				"provinceCode": "851",
+			}
 		}
 		// 家庭云和共享群需要额外的参数
 		if d.isGroup() || d.isFamily() {
@@ -777,6 +998,9 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		_, err = d.newPost(createPath, data, &resp)
 		if err != nil {
 			return err
+		}
+		if s, ok := stream.(*imageSuffixUploadStreamer); ok {
+			s.uploadedID = resp.Data.FileId
 		}
 
 		// 判断文件是否已存在
@@ -809,7 +1033,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			}
 
 			// 如果还有剩余分片，分批获取上传地址并上传
-			for i := 100; i < len(partInfos); i += 100 {
+			for i := len(firstPartInfos); i < len(partInfos); i += 100 {
 				end := min(i+100, len(partInfos))
 				batchPartInfos := partInfos[i:end]
 				moredata := base.Json{
@@ -860,11 +1084,12 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				return err
 			}
 			// 删除旧文件
+			// 注意：图片后缀上传时冲突文件是原始文件名，而不是上传时使用的 .jpg 名
 			for _, file := range files {
-				if file.GetName() == stream.GetName() {
+				if file.GetName() == finalName {
 					log.Debugf("[139] conflict: removing old: %s", file.GetName())
 					// 删除前重命名旧文件，避免仍旧冲突
-					err = d.Rename(ctx, file, stream.GetName()+random.String(4))
+					err = d.Rename(ctx, file, file.GetName()+random.String(4))
 					if err != nil {
 						return err
 					}
@@ -878,8 +1103,8 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			// 重命名新文件
 			for _, file := range files {
 				if file.GetName() == resp.Data.FileName {
-					log.Debugf("[139] conflict: renaming new: %s => %s", file.GetName(), stream.GetName())
-					err = d.Rename(ctx, file, stream.GetName())
+					log.Debugf("[139] conflict: renaming new: %s => %s", file.GetName(), finalName)
+					err = d.Rename(ctx, file, finalName)
 					if err != nil {
 						return err
 					}
@@ -900,11 +1125,12 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			return err
 		}
 		// 删除旧文件
+		// 注意：图片后缀上传时冲突文件是原始文件名，而不是上传时使用的 .jpg 名
 		for _, file := range files {
-			if file.GetName() == stream.GetName() {
+			if file.GetName() == finalName {
 				log.Debugf("[139] conflict: removing old: %s", file.GetName())
 				// 删除前重命名旧文件，避免仍旧冲突
-				err = d.Rename(ctx, file, stream.GetName()+random.String(4))
+				err = d.Rename(ctx, file, file.GetName()+random.String(4))
 				if err != nil {
 					return err
 				}
@@ -968,6 +1194,9 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		}
 		if resp.Data.Result.ResultCode != "0" {
 			return fmt.Errorf("get file upload url failed with result code: %s, message: %s", resp.Data.Result.ResultCode, resp.Data.Result.ResultDesc)
+		}
+		if s, ok := stream.(*imageSuffixUploadStreamer); ok && len(resp.Data.UploadResult.NewContentIDList) > 0 {
+			s.uploadedID = resp.Data.UploadResult.NewContentIDList[0].ContentID
 		}
 
 		size := stream.GetSize()
