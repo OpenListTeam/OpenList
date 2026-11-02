@@ -69,7 +69,7 @@ func MakeDir(ctx context.Context, path string) error {
 }
 
 func Move(ctx context.Context, srcPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
-	req, err := transfer(ctx, move, srcPath, dstDirPath, skipHook...)
+	req, err := transfer(ctx, move, srcPath, dstDirPath, "", skipHook...)
 	if err != nil {
 		log.Errorf("failed move %s to %s: %+v", srcPath, dstDirPath, err)
 	}
@@ -77,15 +77,24 @@ func Move(ctx context.Context, srcPath, dstDirPath string, skipHook ...bool) (ta
 }
 
 func Copy(ctx context.Context, srcObjPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
-	res, err := transfer(ctx, copy, srcObjPath, dstDirPath, skipHook...)
+	res, err := transfer(ctx, copy, srcObjPath, dstDirPath, "", skipHook...)
 	if err != nil {
 		log.Errorf("failed copy %s to %s: %+v", srcObjPath, dstDirPath, err)
 	}
 	return res, err
 }
 
+// CopyTo copies a file or directory to dstDirPath using dstName as its name.
+func CopyTo(ctx context.Context, srcObjPath, dstDirPath, dstName string, skipHook ...bool) (task.TaskExtensionInfo, error) {
+	res, err := transfer(ctx, copy, srcObjPath, dstDirPath, dstName, skipHook...)
+	if err != nil {
+		log.Errorf("failed copy %s to %s as %s: %+v", srcObjPath, dstDirPath, dstName, err)
+	}
+	return res, err
+}
+
 func Merge(ctx context.Context, srcObjPath, dstDirPath string, skipHook ...bool) (task.TaskExtensionInfo, error) {
-	res, err := transfer(ctx, merge, srcObjPath, dstDirPath, skipHook...)
+	res, err := transfer(ctx, merge, srcObjPath, dstDirPath, "", skipHook...)
 	if err != nil {
 		log.Errorf("failed merge %s to %s: %+v", srcObjPath, dstDirPath, err)
 	}

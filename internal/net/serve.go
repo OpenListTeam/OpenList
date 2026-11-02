@@ -268,7 +268,6 @@ var unsafeProxyHeaders = map[string]struct{}{
 	"x-real-ip":           {},
 }
 
-
 func ProcessHeader(origin, override http.Header) http.Header {
 	result := http.Header{}
 	// client header
@@ -345,9 +344,13 @@ func HttpClient() *http.Client {
 }
 
 func NewHttpClient() *http.Client {
+	insecureSkipVerify := false
+	if conf.Conf != nil {
+		insecureSkipVerify = conf.Conf.TlsInsecureSkipVerify
+	}
 	transport := &http.Transport{
 		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
 	}
 
 	SetProxyIfConfigured(transport)

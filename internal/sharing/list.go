@@ -2,8 +2,10 @@ package sharing
 
 import (
 	"context"
+	"net/url"
 	stdpath "path"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -16,11 +18,8 @@ func list(ctx context.Context, sid, path string, args model.SharingListArgs) (*m
 	if err != nil {
 		return nil, nil, errors.WithStack(errs.SharingNotFound)
 	}
-	if !sharing.Valid() {
-		return sharing, nil, errors.WithStack(errs.InvalidSharing)
-	}
-	if !sharing.Verify(args.Pwd) {
-		return sharing, nil, errors.WithStack(errs.WrongShareCode)
+	if err = op.CheckSharing(args.ClientIP, args.Pwd, sharing); err != nil {
+		return sharing, nil, err
 	}
 	path = utils.FixAndCleanPath(path)
 	if len(sharing.Files) == 1 || path != "/" {
@@ -35,6 +34,14 @@ func list(ctx context.Context, sid, path string, args model.SharingListArgs) (*m
 		}
 		var objs []model.Obj
 		if storage != nil {
+			query := url.Values{"type": {"thumb"}}
+			if sharing.Pwd != "" {
+				query.Set("pwd", sharing.Pwd)
+			}
+			ctx = context.WithValue(ctx, conf.ThumbnailBaseURLKey, &url.URL{
+				Path:     stdpath.Join("/sd", sid, path),
+				RawQuery: query.Encode(),
+			})
 			objs, err = op.List(ctx, storage, actualPath, model.ListArgs{
 				Refresh: args.Refresh,
 				ReqPath: stdpath.Join(sid, path),

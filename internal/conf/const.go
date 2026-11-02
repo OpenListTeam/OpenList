@@ -60,6 +60,16 @@ const (
 	HandleHookRateLimit     = "handle_hook_rate_limit"
 	IgnoreSystemFiles       = "ignore_system_files"
 
+	// transfer seeds
+	SeedSiteURL             = "seed_site_url"
+	SeedDefaultMatrix       = "seed_default_matrix"
+	SeedFormatPolicies      = "seed_format_policies"
+	SeedDefaultFormat       = "seed_default_format"
+	SeedSingleDirectPreview = "seed_single_direct_preview"
+	SeedCASDirectAccess     = "seed_cas_direct_access"
+	SeedAutoGeneratePolicy  = "seed_auto_generate_policy"
+	SeedDefaultTrackers     = "seed_default_trackers"
+
 	// index
 	SearchIndex     = "search_index"
 	AutoUpdateIndex = "auto_update_index"
@@ -165,8 +175,67 @@ const (
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
-	MultipartEnabled                      = "multipart_enabled"
-	MultipartChunkSize                    = "multipart_chunk_size"
+
+	// media
+	MediaTMDBKey           = "media_tmdb_key"
+	MediaTMDBAPIURL        = "media_tmdb_api_url"
+	MediaDiscogsToken      = "media_discogs_token"
+	MediaDiscogsAPIURL     = "media_discogs_api_url"
+	MediaThumbnailMode     = "media_thumbnail_mode"
+	MediaThumbnailPath     = "media_thumbnail_path"
+	MediaStoreThumbnail    = "media_store_thumbnail"
+	MediaScrapeConcurrency = "media_scrape_concurrency"
+	MediaScrapeLanguage    = "media_scrape_language"  // 首选刮削语言（TMDB / Google Books）
+	MediaBookSource        = "media_book_source"      // 书籍刮削源：douban/google/openlibrary
+	MediaGoogleBooksKey    = "media_google_books_key" // Google Books API Key（可选）
+	MediaDownloadCover     = "media_download_cover"   // 是否把远程封面下载到本地存储
+
+	// media library master switch & protocol switches
+	MediaEnabled             = "media_enabled"               // 媒体库总开关（PUBLIC，前端据此显示/隐藏）
+	MediaEmbyEnabled         = "media_emby_enabled"          // Emby 兼容 API 开关
+	MediaSubsonicEnabled     = "media_subsonic_enabled"      // OpenSubsonic API 开关
+	MediaSubsonicProxyStream = "media_subsonic_proxy_stream" // Subsonic 播放是否强制代理（兼容不跟随 302 的客户端）
+	MediaSubsonicAllowPwd    = "media_subsonic_allow_password_auth" // Subsonic 是否允许 u+p 使用 OpenList 登录密码认证（默认关闭）
+	MediaProxyCover          = "media_proxy_cover"           // 是否通过服务端代理外部封面（TMDB/豆瓣等）
+	MediaCoverGateway        = "media_cover_gateway"         // 封面代理直连失败时是否回退第三方图片网关（wsrv.nl，默认关闭）
+	MediaStrmOnScan          = "media_strm_on_scan"          // 扫描完成后自动生成 STRM
+	MediaStrmSameDir         = "media_strm_same_dir"         // STRM 是否与媒体文件同目录（同名 .strm）
+	MediaStrmPath            = "media_strm_path"             // STRM 输出目录（VFS 路径，仅在指定目录模式下使用）
+	MediaStrmOverwrite       = "media_strm_overwrite"        // 生成 STRM 时是否覆盖已存在文件
+	MediaStrmTemplate        = "media_strm_template"         // STRM 内容模板
+
+	// transcode (云端/本地 FFmpeg 转码)
+	TranscodeEnabled            = "transcode_enabled"              // 总开关，默认关
+	TranscodeMinSizeGB          = "transcode_min_size_gb"          // 文件大于多少 GB 才转码
+	TranscodeMinBitrateMbps     = "transcode_min_bitrate_mbps"     // 视频码率高于多少 Mbps 才转码（0=不限）
+	TranscodeSourceCodecs       = "transcode_source_codecs"        // 仅对这些源编码进行转码
+	TranscodeSourceExtensions   = "transcode_source_extensions"    // 仅对这些后缀进行转码
+	TranscodeOutputFormat       = "transcode_output_format"        // 输出封装格式 hls/dash/mp4
+	TranscodeOutputCodec        = "transcode_output_codec"         // 重新编码的视频编码
+	TranscodeOutputBitrate      = "transcode_output_bitrate"       // 输出视频码率，例如 4000k
+	TranscodeOutputAudioCodec   = "transcode_output_audio_codec"   // 输出音频编码
+	TranscodeOutputAudioBitrate = "transcode_output_audio_bitrate" // 输出音频码率，例如 160k
+	TranscodeOutputResolution   = "transcode_output_resolution"    // 输出分辨率上限
+	TranscodeSegmentDuration    = "transcode_segment_duration"     // HLS 切片时长(秒)
+	TranscodeHWAccel            = "transcode_hwaccel"              // 硬件加速类型 none/auto/nvenc/qsv/vaapi/amf/videotoolbox
+	TranscodeFFmpegPath         = "transcode_ffmpeg_path"          // 自定义 ffmpeg 可执行路径
+	TranscodeFFprobePath        = "transcode_ffprobe_path"         // 自定义 ffprobe 可执行路径
+	TranscodeRunMode            = "transcode_run_mode"             // local / remote / hybrid
+	TranscodeWorkerSecret       = "transcode_worker_secret"        // 远程 Worker 共享密钥
+	TranscodeCachePath          = "transcode_cache_path"           // 切片缓存目录
+	TranscodeCacheMaxGB         = "transcode_cache_max_gb"         // 缓存最大占用，超出 LRU 淘汰
+	TranscodeJobTimeoutMin      = "transcode_job_timeout_min"      // 单个任务超时分钟
+	TranscodeLocalConcurrency   = "transcode_local_concurrency"    // 本地内置 worker 并发数(run_mode=local/hybrid 时生效)
+	TranscodeIdleTimeoutSec     = "transcode_idle_timeout_sec"     // 播放端无请求多少秒后自动停止转码（默认90秒）
+	// === 智能 chunk 调度相关 ===
+	TranscodeChunkDurationSec    = "transcode_chunk_duration_sec"    // 每个 chunk 时长(秒)，将整个视频分成多个 chunk 按需转码（默认60秒）
+	TranscodeMaxChunkConcurrency = "transcode_max_chunk_concurrency" // 单个 Job 最多同时运行的 chunk 数（默认2）
+	TranscodeChunkIdleSec        = "transcode_chunk_idle_sec"        // chunk 多久没被访问就 kill ffmpeg 释放资源（默认60秒）
+	TranscodeChunkPrefetch       = "transcode_chunk_prefetch"        // 当前 chunk 转码进度过半时，是否预启动下一个 chunk（默认true）
+
+	// multipart upload (from main)
+	MultipartEnabled   = "multipart_enabled"
+	MultipartChunkSize = "multipart_chunk_size"
 )
 
 const (
@@ -198,4 +267,6 @@ const (
 	SharingIDKey
 	SkipHookKey
 	DirectUploadContentTypeKey
+	SkipNoOverwriteKey
+	ThumbnailBaseURLKey
 )
