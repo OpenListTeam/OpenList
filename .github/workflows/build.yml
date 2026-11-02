@@ -10,6 +10,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 媒体库相关的安全/配额/迁移测试单独跑一次，不必跟随 7 个构建目标重复执行
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: "1.27.3"
+
+      - name: Go test
+        run: go test ./internal/db/... ./internal/transcode/... ./internal/media/...
+
   build:
     strategy:
       matrix:
@@ -33,7 +49,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: "1.27.1"
+          go-version: "1.27.3"
 
       - name: Setup web
         run: bash build.sh dev web

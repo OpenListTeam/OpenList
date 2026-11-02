@@ -29,6 +29,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -82,10 +83,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, err = h.handleUnlock(brw, r)
 		case "PROPFIND":
 			status, err = h.handlePropfind(brw, r)
-			// if there is a error for PROPFIND, we should be as an empty folder to the client
-			if err != nil {
-				status = http.StatusNotFound
-			}
 		case "PROPPATCH":
 			status, err = h.handleProppatch(brw, r)
 		}
@@ -119,14 +116,64 @@ func (h *Handler) lock(now time.Time, root string) (token string, status int, er
 	return token, 0, nil
 }
 
+func ifETagConditionsMatch(ctx context.Context, ls LockSystem, name string, conditions []Condition) (bool, error) {
+	var obj model.Obj
+	objLoaded, objMissing := false, false
+	for _, condition := range conditions {
+		if condition.ETag == "" {
+			continue
+		}
+		if !objLoaded {
+			var err error
+			obj, err = fs.Get(ctx, name, &fs.GetArgs{})
+			objLoaded = true
+			if err != nil {
+				if !errs.IsObjectNotFound(err) {
+					return false, err
+				}
+				objMissing = true
+			}
+		}
+		matches := false
+		if !objMissing {
+			etag, err := findETag(ctx, ls, name, obj)
+			if err != nil {
+				return false, err
+			}
+			matches = etag == condition.ETag
+		}
+		if condition.Not {
+			matches = !matches
+		}
+		if !matches {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func positiveTokenConditions(conditions []Condition) []Condition {
+	ret := make([]Condition, 0, len(conditions))
+	for _, condition := range conditions {
+		if condition.Token != "" && !condition.Not {
+			ret = append(ret, condition)
+		}
+	}
+	return ret
+}
+
+func hasNegatedTokenCondition(conditions []Condition) bool {
+	for _, condition := range conditions {
+		if condition.Token != "" && condition.Not {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func(), status int, err error) {
 	hdr := r.Header.Get("If")
 	if hdr == "" {
-		// An empty If header means that the client hasn't previously created locks.
-		// Even if this client doesn't care about locks, we still need to check that
-		// the resources aren't locked by another client, so we create temporary
-		// locks that would conflict with another client's locks. These temporary
-		// locks are unlocked at the end of the HTTP request.
 		now, srcToken, dstToken := time.Now(), "", ""
 		if src != "" {
 			srcToken, status, err = h.lock(now, src)
@@ -143,7 +190,6 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 				return nil, status, err
 			}
 		}
-
 		return func() {
 			if dstToken != "" {
 				h.LockSystem.Unlock(now, dstToken)
@@ -158,7 +204,9 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 	if !ok {
 		return nil, http.StatusBadRequest, errInvalidIfHeader
 	}
-	// ih is a disjunction (OR) of ifLists, so any ifList will do.
+	ctx := r.Context()
+	user, _ := ctx.Value(conf.UserKey).(*model.User)
+	etagMismatch, hasNegatedToken := false, false
 	for _, l := range ih.lists {
 		lsrc := l.resourceTag
 		if lsrc == "" {
@@ -175,8 +223,23 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 			if err != nil {
 				return nil, status, err
 			}
+			if user != nil {
+				lsrc, err = user.JoinPath(lsrc)
+				if err != nil {
+					return nil, http.StatusForbidden, err
+				}
+			}
 		}
-		release, err = h.LockSystem.Confirm(time.Now(), lsrc, dst, l.conditions...)
+		matches, err := ifETagConditionsMatch(ctx, h.LockSystem, lsrc, l.conditions)
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+		if !matches {
+			etagMismatch = true
+			continue
+		}
+		hasNegatedToken = hasNegatedToken || hasNegatedTokenCondition(l.conditions)
+		release, err = h.LockSystem.Confirm(time.Now(), lsrc, dst, positiveTokenConditions(l.conditions)...)
 		if err == ErrConfirmationFailed {
 			continue
 		}
@@ -185,10 +248,28 @@ func (h *Handler) confirmLocks(r *http.Request, src, dst string) (release func()
 		}
 		return release, 0, nil
 	}
-	// Section 10.4.1 says that "If this header is evaluated and all state lists
-	// fail, then the request must fail with a 412 (Precondition Failed) status."
-	// We follow the spec even though the cond_put_corrupt_token test case from
-	// the litmus test warns on seeing a 412 instead of a 423 (Locked).
+	if etagMismatch || !hasNegatedToken {
+		return nil, http.StatusPreconditionFailed, ErrLocked
+	}
+
+	// Litmus expects a corrupt token paired with Not <DAV:no-lock> on an
+	// actively locked resource to report the lock conflict.
+	now := time.Now()
+	for _, name := range []string{src, dst} {
+		if name == "" {
+			continue
+		}
+		token, lockStatus, lockErr := h.lock(now, name)
+		if lockErr == ErrLocked {
+			return nil, lockStatus, lockErr
+		}
+		if lockErr != nil {
+			return nil, lockStatus, lockErr
+		}
+		if unlockErr := h.LockSystem.Unlock(now, token); unlockErr != nil {
+			return nil, http.StatusInternalServerError, unlockErr
+		}
+	}
 	return nil, http.StatusPreconditionFailed, ErrLocked
 }
 
@@ -212,9 +293,7 @@ func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) (status 
 		}
 	}
 	w.Header().Set("Allow", allow)
-	// http://www.webdav.org/specs/rfc4918.html#dav.compliance.classes
 	w.Header().Set("DAV", "1, 2")
-	// http://msdn.microsoft.com/en-au/library/cc250217.aspx
 	w.Header().Set("MS-Author-Via", "DAV")
 	return 0, nil
 }
@@ -295,12 +374,6 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if err != nil {
 		return status, err
 	}
-	release, status, err := h.confirmLocks(r, reqPath, "")
-	if err != nil {
-		return status, err
-	}
-	defer release()
-
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
 	if !user.CanRemove() {
@@ -310,18 +383,29 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	release, status, err := h.confirmLocks(r, reqPath, "")
+	if err != nil {
+		return status, err
+	}
+	defer release()
 	// TODO: return MultiStatus where appropriate.
 
 	// "godoc os RemoveAll" says that "If the path does not exist, RemoveAll
 	// returns nil (no error)." WebDAV semantics are that it should return a
 	// "404 Not Found". We therefore have to Stat before we RemoveAll.
-	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
-		if errs.IsObjectNotFound(err) {
+	parentPath := path.Dir(reqPath)
+	if _, err := fs.List(ctx, parentPath, &fs.ListArgs{Refresh: true, NoLog: true}); err != nil {
+		if errs.IsNotFoundError(err) {
 			return http.StatusNotFound, err
 		}
 		return http.StatusMethodNotAllowed, err
 	}
-	parentPath := path.Dir(reqPath)
+	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
+		if errs.IsNotFoundError(err) {
+			return http.StatusNotFound, err
+		}
+		return http.StatusMethodNotAllowed, err
+	}
 	parentMeta, err := op.GetNearestMeta(parentPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
@@ -329,8 +413,14 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	if !common.CanWrite(user, parentMeta, parentPath) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
-	if err := fs.Remove(ctx, reqPath); err != nil {
-		return http.StatusMethodNotAllowed, err
+	removeErr, transactionErr := removeResourceWithDeadProps(ctx, reqPath, func() error {
+		return fs.Remove(ctx, reqPath)
+	})
+	if removeErr != nil {
+		return http.StatusMethodNotAllowed, removeErr
+	}
+	if transactionErr != nil {
+		return http.StatusInternalServerError, transactionErr
 	}
 	//fs.ClearCache(path.Dir(reqPath))
 	return http.StatusNoContent, nil
@@ -350,17 +440,19 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if reqPath == "" {
 		return http.StatusMethodNotAllowed, nil
 	}
-	release, status, err := h.confirmLocks(r, reqPath, "")
-	if err != nil {
-		return status, err
-	}
-	defer release()
+	// TODO(rost): Support the If-Match, If-None-Match headers? See bradfitz'
+	// comments in http.checkEtag.
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	release, status, err := h.confirmLocks(r, reqPath, "")
+	if err != nil {
+		return status, err
+	}
+	defer release()
 	size := r.ContentLength
 	if size < 0 {
 		sizeStr := r.Header.Get("X-File-Size")
@@ -382,6 +474,16 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 		return http.StatusForbidden, errs.IgnoredSystemFile
 	}
 	parentPath := path.Dir(reqPath)
+	parent, err := fs.Get(ctx, parentPath, &fs.GetArgs{})
+	if err != nil {
+		if errs.IsNotFoundError(err) {
+			return http.StatusConflict, err
+		}
+		return http.StatusInternalServerError, err
+	}
+	if !parent.IsDir() {
+		return http.StatusConflict, errs.NotFolder
+	}
 	parentMeta, err := op.GetNearestMeta(parentPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err
@@ -455,18 +557,17 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	if err != nil {
 		return status, err
 	}
-	release, status, err := h.confirmLocks(r, reqPath, "")
-	if err != nil {
-		return status, err
-	}
-	defer release()
-
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	release, status, err := h.confirmLocks(r, reqPath, "")
+	if err != nil {
+		return status, err
+	}
+	defer release()
 
 	if r.ContentLength > 0 {
 		return http.StatusUnsupportedMediaType, nil
@@ -476,15 +577,21 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	//405 (Method Not Allowed) - MKCOL can only be executed on an unmapped URL
 	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err == nil {
 		return http.StatusMethodNotAllowed, err
+	} else if !errs.IsNotFoundError(err) {
+		return http.StatusInternalServerError, err
 	}
 	// RFC 4918 9.3.1
 	// 409 (Conflict) The server MUST NOT create those intermediate collections automatically.
 	parentPath := path.Dir(reqPath)
-	if _, err := fs.Get(ctx, parentPath, &fs.GetArgs{}); err != nil {
-		if errs.IsObjectNotFound(err) {
+	parent, err := fs.Get(ctx, parentPath, &fs.GetArgs{})
+	if err != nil {
+		if errs.IsNotFoundError(err) {
 			return http.StatusConflict, err
 		}
-		return http.StatusMethodNotAllowed, err
+		return http.StatusInternalServerError, err
+	}
+	if !parent.IsDir() {
+		return http.StatusConflict, errs.NotFolder
 	}
 	parentMeta, err := op.GetNearestMeta(parentPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
@@ -569,7 +676,7 @@ func (h *Handler) handleCopyMove(w http.ResponseWriter, r *http.Request) (status
 				return http.StatusBadRequest, errInvalidDepth
 			}
 		}
-		return copyFiles(ctx, src, dst, r.Header.Get("Overwrite") != "F")
+		return copyFiles(ctx, src, dst, r.Header.Get("Overwrite") != "F", depth)
 	}
 
 	release, status, err := h.confirmLocks(r, src, dst)
@@ -649,11 +756,18 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 		if !common.CanWrite(user, meta, reqPath) {
 			return http.StatusForbidden, errs.PermissionDenied
 		}
+		if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
+			if !errs.IsObjectNotFound(err) {
+				return http.StatusInternalServerError, err
+			}
+			created = true
+		}
 		ld = LockDetails{
 			Root:      reqPath,
 			Duration:  duration,
 			OwnerXML:  li.Owner.InnerXML,
 			ZeroDepth: depth == 0,
+			Shared:    li.Shared != nil,
 		}
 		token, err = h.LockSystem.Create(now, ld)
 		if err != nil {
@@ -779,43 +893,44 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 
 	mw := multistatusWriter{w: w}
 
-	walkFn := func(reqPath string, info model.Obj, err error) error {
-		if err != nil {
-			return err
-		}
-		var pstats []Propstat
-		if pf.Propname != nil {
-			pnames, err := propnames(ctx, h.LockSystem, info)
-			if err != nil {
-				return err
+	err = withDeadPropsTransaction(ctx, func(tx *gorm.DB) error {
+		walkFn := func(currentPath string, info model.Obj, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
 			}
-			pstat := Propstat{Status: http.StatusOK}
-			for _, xmlname := range pnames {
-				pstat.Props = append(pstat.Props, Property{XMLName: xmlname})
+			var pstats []Propstat
+			if pf.Propname != nil {
+				pnames, err := propnames(tx, currentPath, info)
+				if err != nil {
+					return err
+				}
+				pstat := Propstat{Status: http.StatusOK}
+				for _, xmlname := range pnames {
+					pstat.Props = append(pstat.Props, Property{XMLName: xmlname})
+				}
+				pstats = append(pstats, pstat)
+			} else if pf.Allprop != nil {
+				pstats, walkErr = allprop(tx, ctx, h.LockSystem, currentPath, info, pf.Prop)
+			} else {
+				pstats, walkErr = props(tx, ctx, h.LockSystem, currentPath, info, pf.Prop)
 			}
-			pstats = append(pstats, pstat)
-		} else if pf.Allprop != nil {
-			pstats, err = allprop(ctx, h.LockSystem, info, pf.Prop)
-		} else {
-			pstats, err = props(ctx, h.LockSystem, info, pf.Prop)
+			if walkErr != nil {
+				return walkErr
+			}
+			href := path.Join(h.Prefix, strings.TrimPrefix(currentPath, user.BasePath))
+			if href != "/" && info.IsDir() {
+				href += "/"
+			}
+			return mw.write(makePropstatResponse(href, pstats))
 		}
-		if err != nil {
-			return err
-		}
-		href := path.Join(h.Prefix, strings.TrimPrefix(reqPath, user.BasePath))
-		if href != "/" && info.IsDir() {
-			href += "/"
-		}
-		return mw.write(makePropstatResponse(href, pstats))
-	}
 
-	walkErr := walkFS(ctx, depth, reqPath, fi, walkFn)
-	closeErr := mw.close()
-	if walkErr != nil {
-		return http.StatusInternalServerError, walkErr
-	}
-	if closeErr != nil {
-		return http.StatusInternalServerError, closeErr
+		if walkErr := walkFS(ctx, depth, reqPath, fi, walkFn); walkErr != nil {
+			return walkErr
+		}
+		return mw.close()
+	})
+	if err != nil {
+		return http.StatusInternalServerError, err
 	}
 	return 0, nil
 }
@@ -825,18 +940,17 @@ func (h *Handler) handleProppatch(w http.ResponseWriter, r *http.Request) (statu
 	if err != nil {
 		return status, err
 	}
-	release, status, err := h.confirmLocks(r, reqPath, "")
-	if err != nil {
-		return status, err
-	}
-	defer release()
-
 	ctx := r.Context()
 	user := ctx.Value(conf.UserKey).(*model.User)
 	reqPath, err = user.JoinPath(reqPath)
 	if err != nil {
 		return http.StatusForbidden, err
 	}
+	release, status, err := h.confirmLocks(r, reqPath, "")
+	if err != nil {
+		return status, err
+	}
+	defer release()
 	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		return http.StatusInternalServerError, err

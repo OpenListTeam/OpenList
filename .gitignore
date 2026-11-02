@@ -28,6 +28,7 @@ output/
 /tmp/
 /log/
 /lang/
+/imgs/
 /daemon/
 /public/dist/*
 !/public/dist/README.md

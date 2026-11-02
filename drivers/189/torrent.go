@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
@@ -15,12 +14,8 @@ import (
 
 // GenerateTorrent 根据上传过程中收集的哈希信息生成包含 CAS 扩展的 torrent 文件
 func GenerateTorrent(fileName string, fileSize int64, fileMD5 string, sliceMD5s []string, sliceSize int64, pieceHashes []byte) ([]byte, error) {
-	// 计算 sliceMD5
-	sliceMD5 := fileMD5
-	if len(sliceMD5s) > 1 {
-		joined := strings.Join(sliceMD5s, "\n")
-		sliceMD5 = strings.ToUpper(torrent.GetMD5Str(joined))
-	}
+	// 计算 sliceMD5（统一走规范实现）
+	sliceMD5 := torrent.SliceMD5FromPieces(sliceMD5s, fileMD5)
 
 	t := torrent.NewTorrent(fileName, fileSize, fileMD5)
 	t.Info.PieceLength = sliceSize
@@ -30,7 +25,7 @@ func GenerateTorrent(fileName string, fileSize int64, fileMD5 string, sliceMD5s 
 		SliceMD5:  sliceMD5,
 		SliceMD5s: sliceMD5s,
 		SliceSize: sliceSize,
-		Cloud:     "189",
+		Cloud:     torrent.Cloud189,
 	})
 
 	return t.Encode()
@@ -95,7 +90,7 @@ func ComputeTorrentFromReader(reader io.Reader, fileName string, fileSize int64,
 		sliceSize = torrent.DefaultPieceSize
 	}
 
-	hw := torrent.NewHashWriter(sliceSize, sliceSize)
+	hw := torrent.NewHashWriter(sliceSize, sliceSize, fileSize)
 
 	buf := make([]byte, 32*1024)
 	for {
