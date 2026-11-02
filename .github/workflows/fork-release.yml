@@ -1,19 +1,14 @@
-name: Fork Release
+name: Fork Beta Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to build, for example v4.1.0-139.1"
-        required: true
-        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -22,6 +17,7 @@ permissions:
 env:
   GO_VERSION: "1.27.3"
   BINARY_NAME: "openlist"
+  RELEASE_TAG: "beta"
 
 jobs:
   build:
@@ -67,12 +63,11 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          VERSION: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p dist
           ldflags="-s -w \
-            -X github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION} \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.Version=beta \
             -X github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=${GITHUB_SHA::7} \
             -X github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             -X github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling"
@@ -81,11 +76,9 @@ jobs:
           ls -l dist
 
       - name: Package archive
-        env:
-          VERSION: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          name="openlist-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          name="openlist-beta-${{ matrix.goos }}-${{ matrix.goarch }}"
           mkdir -p "pkg/${name}" out
           cp "dist/${BINARY_NAME}${{ matrix.ext }}" "pkg/${name}/"
           cp LICENSE README.md "pkg/${name}/"
@@ -104,7 +97,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publish release assets
+    name: Publish beta release assets
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -114,19 +107,24 @@ jobs:
           path: out
           merge-multiple: true
 
-      - name: Create or update release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          name: ${{ inputs.tag || github.ref_name }}
-          target_commitish: ${{ github.sha }}
-          files: out/*
-          generate_release_notes: true
-          draft: false
-          prerelease: false
+      - name: Create or update beta release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+          title="Beta (rolling)"
+          notes="Rolling beta build from ${GITHUB_SHA::7} at $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release edit "${tag}" --title "${title}" --notes "${notes}" --prerelease
+          else
+            gh release create "${tag}" --title "${title}" --notes "${notes}" --prerelease --target "${GITHUB_SHA}"
+          fi
+          gh release upload "${tag}" out/* --clobber
 
   docker:
-    name: Publish Docker image
+    name: Publish beta Docker image
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -145,12 +143,10 @@ jobs:
         run: bash build.sh dev web
 
       - name: Prepare build context
-        env:
-          VERSION: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           ldflags="-s -w \
-            -X github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION} \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.Version=beta \
             -X github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=${GITHUB_SHA::7} \
             -X github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             -X github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling"
@@ -196,8 +192,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        env:
-          VERSION: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
@@ -205,7 +199,6 @@ jobs:
             --platform linux/amd64,linux/arm64 \
             --file ctx/Dockerfile \
             --push \
-            --tag "${image}:${VERSION}" \
-            --tag "${image}:latest" \
+            --tag "${image}:beta" \
             --tag "${image}:sha-${GITHUB_SHA::7}" \
             ctx
