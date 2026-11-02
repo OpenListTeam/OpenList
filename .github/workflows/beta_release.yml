@@ -24,7 +24,7 @@ jobs:
 
       - name: Create or update ref
         id: create-or-update-ref
-        uses: ovsds/create-or-update-ref-action@1157b2991820188d5a8e6f22656775d1d171f762 # v1
+        uses: ovsds/create-or-update-ref-action@f66e3f24fa250e50da7d3e599bae67bc3f749a5e # v1
         with:
           ref: tags/beta
           sha: ${{ github.sha }}
@@ -51,7 +51,7 @@ jobs:
           gh release upload beta "CHANGELOG.md" --clobber
 
       - name: Upload assets to github artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: beta changelog
           path: ${{ github.workspace }}/CHANGELOG.md
@@ -185,7 +185,7 @@ jobs:
           echo "cleaned_target=$CLEANED_TARGET" >> $GITHUB_ENV
 
       - name: Upload assets to github artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: beta builds for ${{ env.cleaned_target }}
           path: ${{ github.workspace }}/build/compress/*
