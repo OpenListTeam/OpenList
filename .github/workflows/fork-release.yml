@@ -1,0 +1,211 @@
+name: Fork Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build, for example v4.1.0-139.1"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  GO_VERSION: "1.27.3"
+  BINARY_NAME: "openlist"
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Fetch frontend assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash build.sh dev web
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ldflags="-s -w \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION} \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=${GITHUB_SHA::7} \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling"
+          CGO_ENABLED=0 go build -trimpath -tags jsoniter -ldflags "${ldflags}" \
+            -o "dist/${BINARY_NAME}${{ matrix.ext }}" .
+          ls -l dist
+
+      - name: Package archive
+        env:
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          name="openlist-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p "pkg/${name}" out
+          cp "dist/${BINARY_NAME}${{ matrix.ext }}" "pkg/${name}/"
+          cp LICENSE README.md "pkg/${name}/"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            (cd pkg && zip -qr "../out/${name}.zip" "${name}")
+          else
+            (cd pkg && tar -czf "../out/${name}.tar.gz" "${name}")
+          fi
+          ls -l out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: out/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+  docker:
+    name: Publish Docker image
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Fetch frontend assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash build.sh dev web
+
+      - name: Prepare build context
+        env:
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ldflags="-s -w \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION} \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=${GITHUB_SHA::7} \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            -X github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling"
+          mkdir -p ctx
+          for arch in amd64 arm64; do
+            mkdir -p "ctx/linux/${arch}"
+            CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" go build -trimpath -tags jsoniter \
+              -ldflags "${ldflags}" -o "ctx/linux/${arch}/${BINARY_NAME}" .
+          done
+          cp entrypoint.sh ctx/entrypoint.sh
+          cat > ctx/Dockerfile <<'EOF'
+          FROM openlistteam/openlist-base-image:base
+          ARG USER=openlist
+          ARG UID=1001
+          ARG GID=1001
+          ARG TARGETARCH
+          WORKDIR /opt/openlist/
+          RUN addgroup -g ${GID} ${USER} && \
+              adduser -D -u ${UID} -G ${USER} ${USER} && \
+              mkdir -p /opt/openlist/data
+          COPY --chmod=755 --chown=${UID}:${GID} linux/${TARGETARCH}/openlist ./
+          COPY --chmod=755 --chown=${UID}:${GID} entrypoint.sh /entrypoint.sh
+          USER ${USER}
+          RUN /entrypoint.sh version
+          ENV UMASK=022
+          VOLUME /opt/openlist/data/
+          EXPOSE 5244 5245
+          CMD [ "/entrypoint.sh" ]
+          EOF
+          find ctx -maxdepth 3 -type f | sort
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        env:
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file ctx/Dockerfile \
+            --push \
+            --tag "${image}:${VERSION}" \
+            --tag "${image}:latest" \
+            --tag "${image}:sha-${GITHUB_SHA::7}" \
+            ctx
