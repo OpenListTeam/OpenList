@@ -228,13 +228,14 @@ type QueryGroupContentListResp struct {
 }
 
 type ParallelHashCtx struct {
-	PartOffset int64 `json:"partOffset"`
+	H          []uint32 `json:"h,omitempty"`
+	PartOffset int64    `json:"partOffset"`
 }
 
 type PartInfo struct {
-	PartNumber      int64           `json:"partNumber"`
-	PartSize        int64           `json:"partSize"`
-	ParallelHashCtx ParallelHashCtx `json:"parallelHashCtx"`
+	PartNumber      int64            `json:"partNumber"`
+	PartSize        int64            `json:"partSize"`
+	ParallelHashCtx *ParallelHashCtx `json:"parallelHashCtx,omitempty"`
 }
 
 type PersonalThumbnail struct {

@@ -1173,7 +1173,10 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 			return fmt.Errorf("invalid PartNumber %d: index out of bounds (partInfos length: %d)", uploadPartInfo.PartNumber, len(partInfos))
 		}
 		partSize := partInfos[index].PartSize
-		offset := partInfos[index].ParallelHashCtx.PartOffset
+		offset := int64(0)
+		if partInfos[index].ParallelHashCtx != nil {
+			offset = partInfos[index].ParallelHashCtx.PartOffset
+		}
 		log.Debugf("[139] uploading part %+v/%+v", index, len(partInfos))
 
 		rd, getErr := ss.GetSectionReader(offset, partSize)
