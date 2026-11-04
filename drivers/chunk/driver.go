@@ -9,6 +9,7 @@ import (
 	stdpath "path"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -30,6 +31,9 @@ type Chunk struct {
 	Addition
 	staging    driver.StagingInUse
 	publishing driver.KeyedMutex
+	// what the remote does with folder renames (folderRename*), found out by
+	// the first staged upload
+	folderRename atomic.Int32
 }
 
 func (d *Chunk) Config() driver.Config {
@@ -48,6 +52,8 @@ func (d *Chunk) Init(ctx context.Context) error {
 		return errors.New("chunk folder prefix must not be empty")
 	}
 	d.RemotePath = utils.FixAndCleanPath(d.RemotePath)
+	// an edited storage keeps its driver, and its remote may be another one
+	d.folderRename.Store(folderRenameUnknown)
 	return nil
 }
 
@@ -500,25 +506,14 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		}
 		return d.dropOtherForm(ctx, remoteStorage, parent, name, true)
 	}
-	if !canRename(remoteStorage) {
-		// nothing to publish with: write the parts in place, in turn with other
-		// uploads of the file, and never remove the chunk folder on failure
-		unlock, err := d.publishing.Lock(ctx, stdpath.Join(parent, name))
-		if err != nil {
-			return err
-		}
-		defer unlock()
-		if _, err := d.previousChunked(ctx, remoteStorage, parent, name); err != nil {
-			return err
-		}
-		if err := d.putParts(ctx, remoteStorage, stdpath.Join(parent, name), file, up); err != nil {
-			return err
-		}
-		return d.dropOtherForm(ctx, remoteStorage, parent, file.GetName(), false)
+	staging, release, err := d.stage(ctx, remoteStorage, parent)
+	if err != nil {
+		return err
 	}
-	staging := stdpath.Join(parent, driver.StagingName(d.GetStorage()))
+	if staging == "" {
+		return d.putInPlace(ctx, remoteStorage, parent, name, file, up)
+	}
 	// released after the staging folder is moved into place or removed
-	release := d.staging.Hold(staging)
 	defer release()
 	if err := d.putParts(ctx, remoteStorage, staging, file, up); err != nil {
 		_ = op.Remove(context.WithoutCancel(ctx), remoteStorage, staging)
@@ -538,7 +533,7 @@ func (d *Chunk) putParts(ctx context.Context, remoteStorage driver.Driver, dir s
 		for ht, value := range file.GetHash().All() {
 			_ = op.Put(skipHookCtx, remoteStorage, dir, &stream.FileStream{
 				Obj: &model.Object{
-					Name:     fmt.Sprintf("hash_%s_%s%s", ht.Name, value, d.CustomExt),
+					Name:     d.hashMarkerName(ht, value),
 					Size:     1,
 					Modified: file.ModTime(),
 				},
@@ -580,6 +575,19 @@ func (d *Chunk) putParts(ctx context.Context, remoteStorage driver.Driver, dir s
 
 func (d *Chunk) getPartName(part int) string {
 	return fmt.Sprintf("%d%s", part, d.CustomExt)
+}
+
+func (d *Chunk) hashMarkerName(ht *utils.HashType, value string) string {
+	return fmt.Sprintf("hash_%s_%s%s", ht.Name, value, d.CustomExt)
+}
+
+// partCount returns how many parts putParts stores a file of size in.
+func (d *Chunk) partCount(size int64) int {
+	full := int(size / d.PartSize)
+	if size%d.PartSize == 0 && full > 0 {
+		return full
+	}
+	return full + 1
 }
 
 func (d *Chunk) GetDetails(ctx context.Context) (*model.StorageDetails, error) {

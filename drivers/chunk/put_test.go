@@ -41,6 +41,7 @@ func TestMain(m *testing.M) {
 	}
 	conf.Conf = conf.DefaultConfig(dir)
 	db.Init(dB)
+	registerTestRemotes()
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
@@ -61,6 +62,12 @@ func newChunkStorage(t *testing.T) (driver.Driver, string) {
 // JSON object members such as `"chunk_large_file_only":true`.
 func newChunkStorageWith(t *testing.T, extra string) (driver.Driver, string) {
 	t.Helper()
+	return newChunkStorageOver(t, "Local", extra)
+}
+
+// newChunkStorageOver is newChunkStorageWith on a remote of the given driver.
+func newChunkStorageOver(t *testing.T, remoteDriver, extra string) (driver.Driver, string) {
+	t.Helper()
 	if extra != "" {
 		extra = "," + extra
 	}
@@ -69,7 +76,7 @@ func newChunkStorageWith(t *testing.T, extra string) (driver.Driver, string) {
 	localMount, chunkMount := fmt.Sprintf("/chunk-remote-%d", n), fmt.Sprintf("/chunk-%d", n)
 	ctx := context.Background()
 	localID, err := op.CreateStorage(ctx, model.Storage{
-		Driver:    "Local",
+		Driver:    remoteDriver,
 		MountPath: localMount,
 		Addition:  fmt.Sprintf(`{"root_folder_path":%q,"show_hidden":true}`, root),
 	})

@@ -2,6 +2,7 @@ package chunk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	stdpath "path"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -35,6 +37,116 @@ func canRename(storage driver.Driver) bool {
 		return true
 	}
 	return false
+}
+
+// Chunk.folderRename
+const (
+	folderRenameUnknown int32 = iota
+	folderRenameWorks
+	folderRenameRefused
+)
+
+// stage returns a staging folder for an upload into parent, kept out of
+// listings until release is called, or "" when the remote cannot move a folder
+// into place, so the upload has to be written in place. A remote may implement
+// Rename and still refuse folders (Lanzou): the first staged upload finds out
+// with a folder of its own, creating its staging folder and moving it to a
+// second staging name, which it then uses.
+func (d *Chunk) stage(ctx context.Context, remoteStorage driver.Driver, parent string) (staging string, release func(), err error) {
+	if !canRename(remoteStorage) || d.folderRename.Load() == folderRenameRefused {
+		return "", nil, nil
+	}
+	staging = stdpath.Join(parent, driver.StagingName(d.GetStorage()))
+	release = d.staging.Hold(staging)
+	if d.folderRename.Load() == folderRenameWorks {
+		return staging, release, nil
+	}
+	if err := op.MakeDir(ctx, remoteStorage, staging); err != nil {
+		release()
+		return "", nil, err
+	}
+	movedName := driver.StagingName(d.GetStorage())
+	moved := stdpath.Join(parent, movedName)
+	releaseMoved := d.staging.Hold(moved)
+	err = renameOnRemote(ctx, remoteStorage, staging, movedName)
+	if err == nil {
+		d.folderRename.Store(folderRenameWorks)
+		release()
+		return moved, releaseMoved, nil
+	}
+	if errors.Is(err, errs.NotSupport) || errors.Is(err, errs.NotImplement) {
+		d.folderRename.Store(folderRenameRefused)
+		err = nil
+	}
+	rctx := context.WithoutCancel(ctx)
+	_ = op.Remove(rctx, remoteStorage, staging)
+	_ = op.Remove(rctx, remoteStorage, moved)
+	release()
+	releaseMoved()
+	return "", nil, err
+}
+
+// putInPlace writes the parts of file straight into its chunk folder, on a
+// remote that cannot move a staging folder into place. Uploads of the file
+// take turns, so nothing else writes the folder meanwhile. A failed upload
+// removes the folder: some parts of the previous version may be replaced by
+// then, and what is left must list neither as a mix of both versions nor as
+// the start of the new one. A successful one removes what is left of the
+// previous version.
+func (d *Chunk) putInPlace(ctx context.Context, remoteStorage driver.Driver, parent, name string, file model.FileStreamer, up driver.UpdateProgress) error {
+	dir := stdpath.Join(parent, name)
+	unlock, err := d.publishing.Lock(ctx, dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, err := d.previousChunked(ctx, remoteStorage, parent, name); err != nil {
+		return err
+	}
+	if err := d.putParts(ctx, remoteStorage, dir, file, up); err != nil {
+		_ = op.Remove(context.WithoutCancel(ctx), remoteStorage, dir)
+		return err
+	}
+	if err := d.dropStale(ctx, remoteStorage, dir, file); err != nil {
+		return err
+	}
+	return d.dropOtherForm(ctx, remoteStorage, parent, file.GetName(), false)
+}
+
+// dropStale removes what a previous version left in the chunk folder dir that
+// file, just written into it in place, did not replace: parts past its last
+// one, and hash markers of other content.
+func (d *Chunk) dropStale(ctx context.Context, remoteStorage driver.Driver, dir string, file model.FileStreamer) error {
+	rctx := context.WithoutCancel(ctx)
+	objs, err := op.ListFresh(rctx, remoteStorage, dir)
+	if err != nil {
+		return err
+	}
+	parts := d.partCount(file.GetSize())
+	markers := make(map[string]bool)
+	if d.StoreHash {
+		for ht, value := range file.GetHash().All() {
+			markers[d.hashMarkerName(ht, value)] = true
+		}
+	}
+	for _, o := range objs {
+		if o.IsDir() {
+			continue
+		}
+		var stale bool
+		if strings.HasPrefix(o.GetName(), "hash_") {
+			stale = !markers[o.GetName()]
+		} else if idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt)); err == nil {
+			stale = idx >= parts
+		}
+		if !stale {
+			continue
+		}
+		if err := op.Remove(rctx, remoteStorage, stdpath.Join(dir, o.GetName())); err != nil {
+			return fmt.Errorf("uploaded, but %s of the previous version could not be removed: %w", o.GetName(), err)
+		}
+	}
+	return nil
 }
 
 // backupName names the previous version of name while its replacement moves
