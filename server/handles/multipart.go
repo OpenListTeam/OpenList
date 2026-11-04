@@ -130,9 +130,14 @@ func MultipartInit(c *gin.Context) {
 		Hashes:    h,
 		Identity:  identity,
 	}
-	// an interrupted upload may resume even though in-place drivers have
-	// already written its partial output to the destination
-	if !overwrite && !multipart.DefaultManager.ResumesSameFile(req) {
+	if !overwrite {
+		// an interrupted upload resumes even though in-place drivers have
+		// already written its partial output to the destination; anything
+		// else is a new upload and must not replace an existing file
+		if snap, ok := multipart.DefaultManager.ResumeSameFile(req); ok {
+			common.SuccessResp(c, MultipartInitResp{SessionSnapshot: snap, Resumed: true})
+			return
+		}
 		if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
 			common.ErrorStrResp(c, "file exists", 403)
 			return

@@ -219,22 +219,36 @@ func resumes(s *Session, st State, req InitReq) bool {
 	return st == StateFailedRetriable || (st == StateReceiving && qualifiesResume(s, req))
 }
 
-// ResumesSameFile reports whether Init(req) would resume a session that req
-// proves to be the same file by identity or hashes. That upload owns what sits
-// at the destination (its own partial output on in-place drivers, or a file it
-// was allowed to replace), so "file exists" must not stop the resume. Picking
-// up a failed attempt is no proof: any init for the same path and size does.
-func (m *Manager) ResumesSameFile(req InitReq) bool {
+// ResumeSameFile resumes the session for req's user, path and size if its
+// upload attempt is still running and req proves it is the same file by
+// identity or hashes, and reports whether it did. Resuming continues that
+// upload, whose destination was checked when it started, and an upload that is
+// never interrupted is not checked again before it finishes either: a client
+// that refuses to overwrite may skip "file exists" for this resume, and only
+// for it. That matters for in-place drivers, which write the destination from
+// the first chunk on, so the check would refuse the resume over the upload's
+// own partial output. Deciding and resuming in one step keeps a session that
+// completes or goes away in between from turning the skipped check into a
+// fresh upload. A session whose attempt is over does not qualify: resuming it
+// starts a new attempt that writes the destination afresh, and whatever is
+// there by then may be another file.
+func (m *Manager) ResumeSameFile(req InitReq) (SessionSnapshot, bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	s, ok := m.byID[m.byKey[sessionKey(req.User.ID, req.Path, req.Size)]]
 	if !ok {
-		return false
+		m.mu.Unlock()
+		return SessionSnapshot{}, false
 	}
 	s.mu.Lock()
-	st := s.state
+	live := s.state == StateReceiving && s.win != nil && !s.win.Closed()
 	s.mu.Unlock()
-	return resumes(s, st, req) && qualifiesResume(s, req)
+	if !live || !qualifiesResume(s, req) {
+		m.mu.Unlock()
+		return SessionSnapshot{}, false
+	}
+	m.mu.Unlock()
+	s.touch()
+	return s.Snapshot(), true
 }
 
 // hashesConflict reports whether a hash type sent on both inits differs.
