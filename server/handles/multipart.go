@@ -125,10 +125,19 @@ func MultipartInit(c *gin.Context) {
 		Hashes:    h,
 	})
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		common.ErrorResp(c, err, multipartInitErrCode(err))
 		return
 	}
 	common.SuccessResp(c, MultipartInitResp{SessionSnapshot: snap, Resumed: resumed})
+}
+
+// multipartInitErrCode: 409 asks the client to retry an init shortly, as an
+// earlier upload is still letting go of the destination.
+func multipartInitErrCode(err error) int {
+	if errors.Is(err, multipart.ErrPreviousUploadRunning) {
+		return 409
+	}
+	return 500
 }
 
 // MultipartChunk ingests one chunk. Chunks are idempotent and may be sent

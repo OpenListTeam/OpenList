@@ -393,7 +393,15 @@ func TestInitResume(t *testing.T) {
 		t.Fatalf("resumed received = %v, want [[2,2]]", again.Received)
 	}
 
-	// a different size is a different upload
+	if _, err := m.Find(user, "/local/test.bin", totalSize); err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if _, err := m.Find(user, "/local/nope.bin", totalSize); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("Find miss err = %v, want ErrSessionNotFound", err)
+	}
+
+	// a different size is a different file, which replaces the upload in
+	// progress: one upload writes a destination at a time
 	other, resumed, err := m.Init(initReq(user, totalSize+1, chunkSize))
 	if err != nil || resumed || other.ID == snap.ID {
 		t.Fatalf("different-size Init = (id=%s, resumed=%v, err=%v)", other.ID, resumed, err)
@@ -401,12 +409,11 @@ func TestInitResume(t *testing.T) {
 	m.mu.Lock()
 	sessions = append(sessions, m.byID[other.ID])
 	m.mu.Unlock()
-
-	if _, err := m.Find(user, "/local/test.bin", totalSize); err != nil {
-		t.Fatalf("Find: %v", err)
+	if _, err := m.Find(user, "/local/test.bin", totalSize); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("Find of the replaced upload err = %v, want ErrSessionNotFound", err)
 	}
-	if _, err := m.Find(user, "/local/nope.bin", totalSize); !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("Find miss err = %v, want ErrSessionNotFound", err)
+	if _, err := m.Find(user, "/local/test.bin", totalSize+1); err != nil {
+		t.Fatalf("Find: %v", err)
 	}
 
 	// without hashes, path+size cannot prove identity against a receiving
@@ -705,63 +712,6 @@ func TestDriverPanicFailsTheAttempt(t *testing.T) {
 	}
 }
 
-// Superseding must hand the destination over: the old attempt has to return
-// before its replacement starts, or two drivers write the same path at once.
-func TestSupersedeWaitsForTheOldAttempt(t *testing.T) {
-	m := setupSessionTest(t)
-	const chunkSize = 1024
-	totalSize := int64(4 * chunkSize)
-	user := testUser()
-
-	var mu sync.Mutex
-	var events []string
-	running := make(chan struct{})
-	replacementStarted := make(chan struct{})
-	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
-		defer fs.Close()
-		mu.Lock()
-		first := len(events) == 0
-		events = append(events, "start")
-		mu.Unlock()
-		if !first {
-			close(replacementStarted)
-			<-ctx.Done()
-			return ctx.Err()
-		}
-		close(running)
-		<-ctx.Done()
-		// a real driver needs a moment to unwind before it lets go of the
-		// destination; the handover must cover that window
-		time.Sleep(50 * time.Millisecond)
-		mu.Lock()
-		events = append(events, "old-returned")
-		mu.Unlock()
-		return ctx.Err()
-	})
-
-	if _, _, err := m.Init(initReq(user, totalSize, chunkSize)); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	<-running
-	// same user, path and size without hashes: the old session is superseded
-	again, _, err := m.Init(initReq(user, totalSize, chunkSize))
-	if err != nil {
-		t.Fatalf("superseding Init: %v", err)
-	}
-	t.Cleanup(func() { _ = m.Abort(user, again.ID) })
-	select {
-	case <-replacementStarted:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the replacement attempt never started")
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(events) != 3 || events[1] != "old-returned" {
-		t.Fatalf("events = %v, want the superseded attempt to return before its replacement starts", events)
-	}
-}
-
 // When the storage fails, a chunk caught in flight by the closing window must
 // report the storage's error, not the generic "window closed" (#3309).
 func TestChunkReportsStorageError(t *testing.T) {
@@ -985,5 +935,272 @@ func TestBackpressureIsNotIdle(t *testing.T) {
 	}
 	if _, err := m.Complete(context.Background(), user, snap.ID); err != nil {
 		t.Fatalf("Complete: %v", err)
+	}
+}
+
+func setSupersedeJoinTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := supersedeJoinTimeout
+	supersedeJoinTimeout = d
+	t.Cleanup(func() { supersedeJoinTimeout = old })
+}
+
+// attemptLog records when pipeline attempts start and return, and how many
+// write the destination at once.
+type attemptLog struct {
+	mu     sync.Mutex
+	events []string
+	active int
+	peak   int
+	n      int
+}
+
+func (l *attemptLog) start() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.n++
+	l.active++
+	l.peak = max(l.peak, l.active)
+	l.events = append(l.events, fmt.Sprintf("start#%d", l.n))
+	return l.n
+}
+
+func (l *attemptLog) end(n int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.active--
+	l.events = append(l.events, fmt.Sprintf("return#%d", n))
+}
+
+func (l *attemptLog) snapshot() ([]string, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.events...), l.peak
+}
+
+func (l *attemptLog) waitFor(t *testing.T, event string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		events, _ := l.snapshot()
+		for _, e := range events {
+			if e == event {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no %s in %v", event, events)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// stubSlowFirstAttempt makes the first attempt hold on to the destination
+// until release is called, after its cancellation unless deaf, as a driver
+// still unwinding or stuck on I/O would. Later attempts return once canceled.
+func stubSlowFirstAttempt(t *testing.T, log *attemptLog, deaf bool) (running <-chan struct{}, release func()) {
+	t.Helper()
+	started := make(chan struct{})
+	gate := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		n := log.start()
+		defer log.end(n)
+		if n == 1 {
+			close(started)
+			if !deaf {
+				<-ctx.Done()
+			}
+			<-gate
+			return ctx.Err()
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	return started, release
+}
+
+// The key of a superseded session stays taken until its attempt returns: an
+// init arriving meanwhile waits too, instead of starting an upload next to it.
+func TestSupersedeKeepsTheKeyUntilTheOldAttemptReturns(t *testing.T) {
+	m := setupSessionTest(t)
+	const chunkSize = 1024
+	totalSize := int64(4 * chunkSize)
+	user := testUser()
+	var log attemptLog
+	running, release := stubSlowFirstAttempt(t, &log, false)
+
+	if _, _, err := m.Init(initReq(user, totalSize, chunkSize)); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	<-running
+	// two more inits of the same path and size, neither proving the same file
+	type result struct {
+		snap SessionSnapshot
+		err  error
+	}
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			snap, _, err := m.Init(initReq(user, totalSize, chunkSize))
+			results <- result{snap, err}
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	if events, _ := log.snapshot(); len(events) != 1 {
+		t.Fatalf("events = %v while the superseded attempt still runs, want no new attempt", events)
+	}
+	release()
+	var ids []string
+	for range 2 {
+		r := <-results
+		if r.err != nil {
+			t.Fatalf("Init: %v", r.err)
+		}
+		ids = append(ids, r.snap.ID)
+	}
+	t.Cleanup(func() {
+		for _, id := range ids {
+			_ = m.Abort(user, id)
+		}
+	})
+	log.waitFor(t, "start#3") // every attempt started, so the peak is final
+	if events, peak := log.snapshot(); peak != 1 {
+		t.Fatalf("events = %v: %d attempts wrote the destination at once", events, peak)
+	}
+	// the later init superseded the earlier one: a single session holds the key
+	found, err := m.Find(user, "/local/test.bin", totalSize)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	var live int
+	for _, id := range ids {
+		if _, err := m.Status(user, id); err == nil {
+			live++
+			if id != found.ID {
+				t.Fatalf("live session %s does not hold the key (%s does)", id, found.ID)
+			}
+		}
+	}
+	if live != 1 {
+		t.Fatalf("%d live sessions for one path and size, want 1", live)
+	}
+}
+
+// An init gives up with a retriable error rather than start next to an attempt
+// that ignores its cancellation, and the key stays taken for the next init
+// until that attempt returns.
+func TestSupersedeGivesUpWhileTheOldAttemptRuns(t *testing.T) {
+	m := setupSessionTest(t)
+	setSupersedeJoinTimeout(t, 100*time.Millisecond)
+	const chunkSize = 1024
+	totalSize := int64(4 * chunkSize)
+	user := testUser()
+	var log attemptLog
+	running, release := stubSlowFirstAttempt(t, &log, true)
+
+	if _, _, err := m.Init(initReq(user, totalSize, chunkSize)); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	<-running
+	for range 2 {
+		if snap, _, err := m.Init(initReq(user, totalSize, chunkSize)); !errors.Is(err, ErrPreviousUploadRunning) {
+			_ = m.Abort(user, snap.ID)
+			t.Fatalf("Init = %v, want ErrPreviousUploadRunning", err)
+		}
+	}
+	if events, _ := log.snapshot(); len(events) != 1 {
+		t.Fatalf("events = %v, want no attempt next to the running one", events)
+	}
+	release()
+	log.waitFor(t, "return#1")
+	snap, _, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil {
+		t.Fatalf("Init once the old attempt returned: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Abort(user, snap.ID) })
+	log.waitFor(t, "start#2")
+	if events, peak := log.snapshot(); peak != 1 {
+		t.Fatalf("events = %v: %d attempts wrote the destination at once", events, peak)
+	}
+	// and nothing is left holding a key
+	deadline := time.Now().Add(time.Second)
+	for {
+		m.mu.Lock()
+		n := len(m.retiring)
+		m.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d sessions still retiring after their attempts returned", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// One upload writes a destination at a time, whatever its size or user: an init
+// that does not resume supersedes every other session for the same path, and
+// starts only once their attempts let go of the destination. Otherwise a
+// dropped or abandoned upload of another size, cleaning up after its cancel,
+// could delete the file that replaced it.
+func TestOneUploadPerDestination(t *testing.T) {
+	const chunkSize = 1024
+	for _, tc := range []struct {
+		name  string
+		abort bool        // the client cancels the first upload first
+		user  *model.User // who starts the second upload
+	}{
+		{name: "aborted, other size", abort: true},
+		{name: "live, other size"},
+		{name: "live, other user", user: &model.User{ID: 8, Username: "other"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := setupSessionTest(t)
+			user := testUser()
+			var log attemptLog
+			running, release := stubSlowFirstAttempt(t, &log, false)
+
+			first, _, err := m.Init(initReq(user, 4*chunkSize, chunkSize))
+			if err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			<-running
+			if tc.abort {
+				if err := m.Abort(user, first.ID); err != nil {
+					t.Fatalf("Abort: %v", err)
+				}
+			}
+			second := user
+			size := int64(3 * chunkSize)
+			if tc.user != nil {
+				second, size = tc.user, 4*chunkSize
+			}
+			done := make(chan SessionSnapshot, 1)
+			go func() {
+				snap, _, err := m.Init(initReq(second, size, chunkSize))
+				if err != nil {
+					t.Errorf("Init: %v", err)
+				}
+				done <- snap
+			}()
+			time.Sleep(100 * time.Millisecond)
+			if events, _ := log.snapshot(); len(events) != 1 {
+				t.Fatalf("events = %v while the first upload's attempt still runs, want no new attempt", events)
+			}
+			if _, err := m.Status(user, first.ID); !errors.Is(err, ErrSessionNotFound) {
+				t.Fatalf("Status of the first upload = %v, want it superseded", err)
+			}
+			release()
+			snap := <-done
+			t.Cleanup(func() { _ = m.Abort(second, snap.ID) })
+			log.waitFor(t, "start#2")
+			if events, peak := log.snapshot(); peak != 1 {
+				t.Fatalf("events = %v: %d attempts wrote the destination at once", events, peak)
+			}
+		})
 	}
 }

@@ -48,11 +48,13 @@ const (
 	// grace period during which finished sessions remain queryable.
 	defaultSessionTTL = 30 * time.Minute
 	gcInterval        = time.Minute
-	// supersedeJoinTimeout bounds the wait for a superseded attempt to return.
-	// Teardown is prompt (the context is canceled and the window closed); the
-	// bound only keeps a driver stuck on network I/O from blocking init.
-	supersedeJoinTimeout = 10 * time.Second
 )
+
+// supersedeJoinTimeout bounds the wait for a superseded attempt to return.
+// Teardown is prompt (the context is canceled and the window closed); the
+// bound only keeps a driver stuck on network I/O from blocking init. Tests
+// shrink it.
+var supersedeJoinTimeout = 10 * time.Second
 
 var (
 	ErrSessionNotFound = errors.New("multipart upload session not found")
@@ -60,6 +62,9 @@ var (
 	// errAborted wraps context.Canceled so a driver blocked on the stream sees
 	// the abort as a canceled request and runs its cancellation cleanup.
 	errAborted = fmt.Errorf("multipart upload aborted: %w", context.Canceled)
+	// ErrPreviousUploadRunning refuses an init while an earlier attempt still
+	// runs and may write the same destination; retry shortly.
+	ErrPreviousUploadRunning = errors.New("a previous upload to this path is still stopping, retry shortly")
 	// errAttemptIdle marks an attempt released by AttemptIdleTimeout.
 	errAttemptIdle = errors.New("no data from the client, upload attempt released")
 )
@@ -113,21 +118,22 @@ type Session struct {
 
 func (s *Session) touch() { s.lastActive.Store(time.Now().UnixNano()) }
 
-// awaitAttempt blocks until the running pipeline attempt has fully returned,
-// or the timeout elapses. Callers must not hold Manager.mu. It is only a
-// handover barrier: the attempt is already being torn down by terminate.
-func (s *Session) awaitAttempt(timeout time.Duration) {
+// awaitAttempt blocks until the running pipeline attempt has fully returned
+// and reports whether it did before ctx ended. Callers must not hold
+// Manager.mu. It is only a handover barrier: the attempt is already being torn
+// down by terminate.
+func (s *Session) awaitAttempt(ctx context.Context) bool {
 	s.mu.Lock()
 	done := s.done
 	s.mu.Unlock()
 	if done == nil {
-		return
+		return true
 	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
 	select {
 	case <-done:
-	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
@@ -200,9 +206,15 @@ type InitReq struct {
 // upload tasks not being persisted); a restart drops them and the ring files
 // are swept on the next start.
 type Manager struct {
-	mu     sync.Mutex
-	byID   map[string]*Session
-	byKey  map[string]string
+	mu    sync.Mutex
+	byID  map[string]*Session
+	byKey map[string]string
+	// dropped sessions whose attempt has not returned yet, by destination
+	// path: such an attempt may still write the destination, so no new upload
+	// of that path starts until it returns
+	retiring map[string]map[*Session]struct{}
+	// destination paths an Init is working on, see lockPath
+	inits  map[string]chan struct{}
 	gcOnce sync.Once
 	ttl    time.Duration // 0 means defaultSessionTTL; tests shrink it per instance
 }
@@ -292,16 +304,51 @@ func (m *Manager) gc() {
 	}
 }
 
-// terminate aborts a session (if still receiving) and drops it from the maps.
+// terminate aborts a session (unless it already finished) and drops it from
+// the maps. An attempt that has not returned yet keeps the destination taken
+// until it does: up to then it may still write it.
 func (m *Manager) terminate(s *Session, cause error) {
 	s.mu.Lock()
-	if s.state == StateReceiving {
+	if s.state == StateReceiving || s.state == StateFailedRetriable {
+		// a dropped session must not start another attempt either
 		s.state = StateAborted
 		s.err = cause
 	}
 	s.killAttemptLocked()
+	done := s.done
 	s.mu.Unlock()
-	m.remove(s)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeLocked(s)
+	if done == nil || isClosed(done) {
+		return
+	}
+	if m.retiring == nil {
+		m.retiring = make(map[string]map[*Session]struct{})
+	}
+	if m.retiring[s.Path] == nil {
+		m.retiring[s.Path] = make(map[*Session]struct{})
+	}
+	m.retiring[s.Path][s] = struct{}{}
+	go func() {
+		<-done
+		m.mu.Lock()
+		delete(m.retiring[s.Path], s)
+		if len(m.retiring[s.Path]) == 0 {
+			delete(m.retiring, s.Path)
+		}
+		m.mu.Unlock()
+	}()
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 // killAttemptLocked stops the running pipeline attempt: the context cancel
@@ -335,6 +382,10 @@ func (s *Session) releaseIdleAttemptLocked() {
 func (m *Manager) remove(s *Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.removeLocked(s)
+}
+
+func (m *Manager) removeLocked(s *Session) {
 	delete(m.byID, s.ID)
 	key := sessionKey(s.Creator.ID, s.Path, s.Size)
 	if m.byKey[key] == s.ID {
@@ -367,6 +418,16 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 	}
 	key := sessionKey(req.User.ID, req.Path, req.Size)
 
+	// waiting for another init of the same destination and for old attempts to
+	// let go of it share one bound
+	ctx, cancel := context.WithTimeout(context.Background(), supersedeJoinTimeout)
+	defer cancel()
+	unlock, err := m.lockPath(ctx, req.Path)
+	if err != nil {
+		return SessionSnapshot{}, false, err
+	}
+	defer unlock()
+
 	m.mu.Lock()
 	if id, ok := m.byKey[key]; ok {
 		if s, ok := m.byID[id]; ok {
@@ -383,18 +444,35 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 				s.touch()
 				return s.Snapshot(), true, nil
 			}
-			// finished session, or same path+size without proof of identity:
-			// drop the old session and start fresh
-			m.mu.Unlock()
-			m.terminate(s, errors.New("superseded by a new upload of the same path and size"))
-			// wait for the old attempt to let go of the destination before a
-			// new one starts writing it: two drivers writing the same path
-			// interleave their output
-			s.awaitAttempt(supersedeJoinTimeout)
-			m.mu.Lock()
+		}
+	}
+	// a new upload: every other session for this destination makes way for it,
+	// whatever its size or user (a finished session, the same path and size
+	// without proof of identity, another file altogether)
+	var others []*Session
+	for _, s := range m.byID {
+		if s.Path == req.Path {
+			others = append(others, s)
 		}
 	}
 	m.mu.Unlock()
+	for _, s := range others {
+		m.terminate(s, errors.New("superseded by a new upload of the same path"))
+	}
+	m.mu.Lock()
+	old := make([]*Session, 0, len(m.retiring[req.Path]))
+	for s := range m.retiring[req.Path] {
+		old = append(old, s)
+	}
+	m.mu.Unlock()
+	// wait for old attempts to let go of the destination before a new one
+	// starts writing it: two drivers writing the same path interleave their
+	// output, and an old one may clean up after the new one
+	for _, s := range old {
+		if !s.awaitAttempt(ctx) {
+			return SessionSnapshot{}, false, ErrPreviousUploadRunning
+		}
+	}
 
 	dstDir, name := stdpath.Split(req.Path)
 	s := &Session{
@@ -426,6 +504,37 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 	m.byKey[key] = s.ID
 	m.mu.Unlock()
 	return snap, false, nil
+}
+
+// lockPath makes the calling Init the only one working on a destination path
+// until unlock is called, so deciding to start an upload and starting it
+// cannot interleave with another init of the same destination. It gives up
+// with ErrPreviousUploadRunning once ctx ends.
+func (m *Manager) lockPath(ctx context.Context, key string) (unlock func(), err error) {
+	for {
+		m.mu.Lock()
+		busy, ok := m.inits[key]
+		if !ok {
+			if m.inits == nil {
+				m.inits = make(map[string]chan struct{})
+			}
+			mine := make(chan struct{})
+			m.inits[key] = mine
+			m.mu.Unlock()
+			return func() {
+				m.mu.Lock()
+				delete(m.inits, key)
+				m.mu.Unlock()
+				close(mine)
+			}, nil
+		}
+		m.mu.Unlock()
+		select {
+		case <-busy:
+		case <-ctx.Done():
+			return nil, ErrPreviousUploadRunning
+		}
+	}
 }
 
 // startAttemptLocked builds a fresh window and spawns the pipeline goroutine.
