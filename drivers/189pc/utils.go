@@ -1619,7 +1619,10 @@ func (y *Cloud189PC) OldUploadCommit(ctx context.Context, fileCommitUrl string, 
 //  1. initMultiUpload（仅传 lazyCheck=1）
 //  2. checkTransSecond（用 fileMd5 + sliceMd5 检查云端是否已存在文件数据）
 //  3. commitMultiUploadFile（提交并返回文件对象）
-func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, fileMD5 string, sliceMD5s []string, sliceSize int64, overwrite bool) (model.Obj, error) {
+//
+// sliceMD5 是旧版 .cas 载荷里的现成摘要，sliceMD5s 是逐片列表；列表优先，
+// 因为它是可以独立校验的原始数据，摘要可以由列表重新算出来。
+func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, fileMD5 string, sliceMD5 string, sliceMD5s []string, sliceSize int64, overwrite bool) (model.Obj, error) {
 	isFamily := y.isFamily()
 
 	// 统一 MD5 为大写（天翼云盘要求大写）
@@ -1631,7 +1634,7 @@ func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fil
 	}
 
 	// 计算 sliceMd5（与上传时一致的算法）
-	sliceMd5Hex := fileMD5Upper
+	sliceMd5Hex := ""
 	if len(sliceMD5s) > 1 {
 		upperSliceMD5s := make([]string, len(sliceMD5s))
 		for i, s := range sliceMD5s {
@@ -1640,6 +1643,12 @@ func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fil
 		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(upperSliceMD5s, "\n")))
 	} else if len(sliceMD5s) == 1 {
 		sliceMd5Hex = strings.ToUpper(sliceMD5s[0])
+	}
+	if sliceMd5Hex == "" {
+		sliceMd5Hex = strings.ToUpper(sliceMD5)
+	}
+	if sliceMd5Hex == "" {
+		sliceMd5Hex = fileMD5Upper
 	}
 
 	fullUrl := "https://upload.cloud.189.cn"

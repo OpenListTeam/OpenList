@@ -257,3 +257,55 @@ func TestBuildSeedRapidUploadRequestHandlesNil(t *testing.T) {
 		t.Fatalf("buildSeedRapidUploadRequest(nil) = %#v, want nil", req)
 	}
 }
+
+// TestBuildSeedFileRapidUploadRequestKeepsCASHashMatrix guards the 189 秒传
+// regression: CAS seeds only carry MD5 slices, so rebuilding the request through
+// a torrent container (which requires SHA-1 piece hashes) dropped every hash and
+// answered "target driver cannot reuse the available hashes" without ever
+// sending a request to the drive.
+func TestBuildSeedFileRapidUploadRequestKeepsCASHashMatrix(t *testing.T) {
+	const (
+		md5Hex   = "0123456789abcdef0123456789abcdef"
+		sliceMD5 = "fedcba9876543210fedcba9876543210"
+	)
+	seed := torrent.NewSeed("cas-seed", "test", torrent.DefaultPieceSize)
+	seed.Files = []torrent.SeedFile{{
+		Path: "movies/a.bin",
+		Size: torrent.DefaultPieceSize + 1,
+		Hashes: torrent.SeedHashes{
+			MD5:    md5Hex,
+			Pieces: &torrent.SeedPieceHashes{MD5: []string{md5Hex, sliceMD5}},
+		},
+		CASSliceMD5: sliceMD5,
+		CASCloud:    torrent.Cloud189,
+	}}
+
+	// The torrent container really is unavailable for this seed; the rapid
+	// upload request must not depend on it.
+	if _, err := torrent.EncodeSeed(seed, "torrent"); err == nil {
+		t.Fatal("EncodeSeed(cas -> torrent) succeeded, the regression guard no longer applies")
+	}
+
+	req := buildSeedFileRapidUploadRequest(seed, seed.Files[0], nil)
+	if req == nil {
+		t.Fatal("buildSeedFileRapidUploadRequest() rejected a CAS seed file")
+	}
+	if req.Name != "a.bin" {
+		t.Fatalf("request name = %q, want %q", req.Name, "a.bin")
+	}
+	if req.Size != seed.Files[0].Size {
+		t.Fatalf("request size = %d, want %d", req.Size, seed.Files[0].Size)
+	}
+	if req.SliceSize != torrent.DefaultPieceSize {
+		t.Fatalf("request slice size = %d, want %d", req.SliceSize, torrent.DefaultPieceSize)
+	}
+	if req.SliceMD5 != strings.ToUpper(sliceMD5) {
+		t.Fatalf("request slice MD5 = %q, want %q", req.SliceMD5, strings.ToUpper(sliceMD5))
+	}
+	if len(req.SliceMD5s) != 2 || !strings.EqualFold(req.SliceMD5s[1], sliceMD5) {
+		t.Fatalf("request slice MD5s = %#v, want 2 entries ending with %q", req.SliceMD5s, sliceMD5)
+	}
+	if got := req.Whole.GetHash(utils.MD5); !strings.EqualFold(got, md5Hex) {
+		t.Fatalf("request whole MD5 = %q, want %q", got, md5Hex)
+	}
+}

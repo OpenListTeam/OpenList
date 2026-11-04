@@ -72,7 +72,7 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	}
 
 	// 复用统一的 CAS 秒传核心实现
-	respObj, err := y.rapidUploadByCAS(ctx, dstDir, fileName, fileSize, fileMD5, sliceMD5s, cas.SliceSize, overwrite)
+	respObj, err := y.rapidUploadByCAS(ctx, dstDir, fileName, fileSize, fileMD5, cas.SliceMD5, sliceMD5s, cas.SliceSize, overwrite)
 	if err != nil {
 		utils.Log.Errorf("[RapidUpload] 秒传失败: fileMD5=%s, err=%v", fileMD5, err)
 		return nil, err

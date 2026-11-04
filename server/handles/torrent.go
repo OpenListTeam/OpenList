@@ -113,6 +113,53 @@ func buildSeedRapidUploadRequest(t *torrent.Torrent, open func() (model.FileStre
 	return req
 }
 
+// buildSeedFileRapidUploadRequest builds a rapid-upload request for exactly one
+// seed file, straight from the seed's hash matrix.
+//
+// It must not go through a torrent container: EncodeSeed(format="torrent")
+// requires SHA-1 piece hashes, which CAS seeds (MD5 + slice MD5s) never carry,
+// so the old round trip rejected every 189-style 秒传 before any request was
+// sent. Reading the seed file directly also keeps the drive's own slice size
+// and legacy slice digest intact.
+//
+// open lazily provides the file content and may be nil.
+func buildSeedFileRapidUploadRequest(seed *torrent.Seed, file torrent.SeedFile, open func() (model.FileStreamer, error)) *driver.SeedRapidUploadRequest {
+	if seed == nil || file.Size < 0 {
+		return nil
+	}
+	name := stdpath.Base(file.Path)
+	if name == "" || name == "." || name == ".." {
+		return nil
+	}
+	wholeHashes := make(map[*utils.HashType]string)
+	if file.Hashes.MD5 != "" {
+		wholeHashes[utils.MD5] = strings.ToUpper(file.Hashes.MD5)
+	}
+	if file.Hashes.SHA1 != "" {
+		wholeHashes[utils.SHA1] = strings.ToUpper(file.Hashes.SHA1)
+	}
+	if file.Hashes.SHA256 != "" {
+		wholeHashes[utils.SHA256] = strings.ToUpper(file.Hashes.SHA256)
+	}
+	if file.Hashes.GCID != "" {
+		wholeHashes[hash_extend.GCID] = strings.ToUpper(file.Hashes.GCID)
+	}
+	req := &driver.SeedRapidUploadRequest{
+		Name:      name,
+		Size:      file.Size,
+		SliceSize: seed.PieceSize,
+		SliceMD5:  strings.ToUpper(file.CASSliceMD5),
+		Open:      open,
+	}
+	if file.Hashes.Pieces != nil {
+		req.SliceMD5s = file.Hashes.Pieces.MD5
+		req.SliceSHA1s = file.Hashes.Pieces.SHA1
+	}
+	req.Whole = &utils.HashInfo{}
+	*req.Whole = utils.NewHashInfoByMap(wholeHashes)
+	return req
+}
+
 // seedFileSupportsRapidUpload reports whether a seed file carries enough hash
 // metadata for the given rapid-upload driver to attempt an instant upload.
 func seedFileSupportsRapidUpload(uploader driver.SeedRapidUploader, file torrent.SeedFile) bool {
@@ -1836,21 +1883,14 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			// Report 用的是「第几个文件」，从 1 开始；用下标会让第一个文件显示 0/N、进度条不动
 			progress.Report(i+1, len(pending), name, "正在保存")
 		}
+		var rapidErr error
 		if rapidUploader != nil && seedFileSupportsRapidUpload(rapidUploader, file) {
-			one := *seed
-			one.Name = name
-			one.Files = []torrent.SeedFile{file}
-			if len(seed.Files) != 1 {
-				one.GlobalPieces = nil
-			}
-			if data, encodeErr := torrent.EncodeSeed(&one, "torrent"); encodeErr == nil {
-				if t, decErr := torrent.Decode(data); decErr == nil {
-					if rapidReq := buildSeedRapidUploadRequest(t, seedContentOpener(seed, file, ctx)); rapidReq != nil {
-						if obj, rapidErr := rapidUploader.RapidUploadByHashes(ctx, dstDir, rapidReq, req.Overwrite); rapidErr == nil {
-							results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
-							continue
-						}
-					}
+			if rapidReq := buildSeedFileRapidUploadRequest(seed, file, seedContentOpener(seed, file, ctx)); rapidReq != nil {
+				var obj model.Obj
+				obj, rapidErr = rapidUploader.RapidUploadByHashes(ctx, dstDir, rapidReq, req.Overwrite)
+				if rapidErr == nil {
+					results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
+					continue
 				}
 			}
 		}
@@ -1858,7 +1898,13 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			return results, driverName, mountPath, err
 		}
 		if rapidOnly {
-			results = append(results, gin.H{"path": file.Path, "name": name, "method": "unavailable", "error": "target driver cannot reuse the available hashes"})
+			// 带上真实失败原因：只说「不能再利用哈希」会把「云端没有该文件」和
+			// 「请求根本没发出去」混成同一个错误，无法定位
+			reason := "target driver cannot reuse the available hashes"
+			if rapidErr != nil {
+				reason = fmt.Sprintf("%s: %v", reason, rapidErr)
+			}
+			results = append(results, gin.H{"path": file.Path, "name": name, "method": "unavailable", "error": reason})
 			continue
 		}
 		source := firstUsableSeedSource(file)
