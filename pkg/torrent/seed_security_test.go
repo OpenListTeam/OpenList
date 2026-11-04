@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -152,5 +153,65 @@ func TestDecodeSeedRejectsUnknownFormat(t *testing.T) {
 	}
 	if _, err := DecodeSeed(data, "does-not-exist", DefaultParseLimits()); err == nil {
 		t.Fatal("DecodeSeed() accepted an unknown format")
+	}
+}
+
+func TestValidateGlobalPieces(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Seed)
+	}{
+		{"wrong count", func(s *Seed) { s.GlobalPieces = s.GlobalPieces[:1] }},
+		{"wrong width", func(s *Seed) { s.GlobalPieces[0] = strings.Repeat("a", 32) }},
+		{"non hex", func(s *Seed) { s.GlobalPieces[0] = strings.Repeat("z", 40) }},
+		{"conflicting file pieces", func(s *Seed) { s.GlobalPieces[0] = strings.Repeat("a", 40) }},
+		{"zero total", func(s *Seed) { s.Files[0].Size = 0; s.Files[0].Hashes.Pieces = nil }},
+		{"total overflow", func(s *Seed) {
+			s.Files[0].Size = int64(^uint64(0) >> 1)
+			s.Files[0].Hashes.Pieces = nil
+			s.Files = append(s.Files, SeedFile{Path: "extra.bin", Size: 1})
+		}},
+		{"maximum total wrong count", func(s *Seed) {
+			s.Files[0].Size = int64(^uint64(0) >> 1)
+			s.Files[0].Hashes.Pieces = nil
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seed := testSeed()
+			seed.GlobalPieces = append([]string(nil), seed.Files[0].Hashes.Pieces.SHA1...)
+			tc.mutate(seed)
+			if err := ValidateSeed(seed, DefaultParseLimits()); err == nil {
+				t.Fatal("ValidateSeed accepted invalid global SHA1 pieces")
+			}
+			if diags := DiagnoseConversion(seed, "torrent"); len(diags) == 0 {
+				t.Fatal("invalid global pieces bypassed conversion diagnosis")
+			}
+			data, err := json.Marshal(seed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := DecodeOSS(data, DefaultParseLimits()); err == nil {
+				t.Fatal("DecodeOSS accepted untrusted invalid global pieces")
+			}
+		})
+	}
+}
+
+func TestGlobalPiecesAgreeWithAlignedFilesAfterCrossing(t *testing.T) {
+	const piece = int64(16 * 1024)
+	seed := NewSeed("crossing", "OpenList", piece)
+	seed.GlobalPieces = []string{strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)}
+	seed.Files = []SeedFile{
+		{Path: "a.bin", Size: piece / 2},
+		{Path: "b.bin", Size: piece / 2},
+		{Path: "c.bin", Size: piece + 1, Hashes: SeedHashes{Pieces: &SeedPieceHashes{SHA1: append([]string(nil), seed.GlobalPieces[1:]...)}}},
+	}
+	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
+		t.Fatalf("valid aligned final file rejected: %v", err)
+	}
+	seed.Files[2].Hashes.Pieces.SHA1[0] = strings.Repeat("d", 40)
+	if err := ValidateSeed(seed, DefaultParseLimits()); err == nil {
+		t.Fatal("aligned file conflict after a crossing boundary was accepted")
 	}
 }
