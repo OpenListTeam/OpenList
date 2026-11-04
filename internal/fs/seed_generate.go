@@ -571,6 +571,14 @@ func buildSeedGroup(
 		if outputPath == "" {
 			return artifact, nil
 		}
+		// 产物与源文件同名时写盘会覆盖源文件（例如从 xxx.mp4.cas 生成 .cas），
+		// 用户既丢了原始种子，又得到一个只描述元数据的种子。宁可失败也不静默覆盖。
+		target := stdpath.Join(outputPath, fileName)
+		for _, source := range entries {
+			if stdpath.Clean(source.FullPath) == stdpath.Clean(target) {
+				return artifact, fmt.Errorf("seed output %s would overwrite its own source file", target)
+			}
+		}
 		dstDir, err := user.JoinPath(outputPath)
 		if err != nil {
 			return artifact, err
