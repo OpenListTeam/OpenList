@@ -1,9 +1,9 @@
 package quark_open
 
 import (
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
 type Resp struct {
@@ -58,7 +58,6 @@ func fileToObj(f File) *model.ObjThumb {
 			Modified: time.UnixMilli(f.UpdatedAt),
 			IsFolder: f.FileType == "0",
 			Ctime:    time.UnixMilli(f.CreatedAt),
-			HashInfo: utils.NewHashInfo(utils.SHA1, f.ContentHash),
 		},
 		Thumbnail: model.Thumbnail{Thumbnail: f.ThumbnailURL},
 	}
