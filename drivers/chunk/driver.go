@@ -87,6 +87,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 	chunkSizes := []int64{-1}
 	h := make(map[*utils.HashType]string)
 	var first model.Obj
+	gap := false
 	for _, o := range chunkObjs {
 		if o.IsDir() {
 			continue
@@ -102,7 +103,12 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 			continue
 		}
 		idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
-		if err != nil {
+		if err != nil || idx < 0 {
+			continue
+		}
+		if idx >= len(chunkObjs) {
+			// numbered past the entries there are: a part before it is missing
+			gap = true
 			continue
 		}
 		totalSize += o.GetSize()
@@ -123,7 +129,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 	reqDir, _ := stdpath.Split(path)
 	// a folder without a complete set of parts is no file of this name: List
 	// shows it as a folder under its own name, and Get finds it by that name
-	if chunkSizes[0] == -1 {
+	if gap || chunkSizes[0] == -1 {
 		return nil, errs.ObjectNotFound
 	}
 	for i, l := 1, len(chunkSizes)-1; i < l; i++ {
@@ -195,6 +201,7 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					chunkSizes := []int64{-1}
 					h := make(map[*utils.HashType]string)
 					var first model.Obj
+					gap := false
 					for _, o := range chunkObjs {
 						if o.IsDir() {
 							continue
@@ -210,7 +217,13 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 							continue
 						}
 						idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
-						if err != nil {
+						if err != nil || idx < 0 {
+							continue
+						}
+						if idx >= len(chunkObjs) {
+							// numbered past the entries there are: a part
+							// before it is missing
+							gap = true
 							continue
 						}
 						totalSize += o.GetSize()
@@ -229,7 +242,7 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 						}
 					}
 					// 文件块不完整时，返回文件夹对象
-					if chunkSizes[0] == -1 {
+					if gap || chunkSizes[0] == -1 {
 						result[resultIdx] = &model.Object{
 							Name:     rawName,
 							Size:     obj.GetSize(),

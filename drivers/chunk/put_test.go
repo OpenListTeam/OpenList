@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -465,6 +467,61 @@ func TestChunkOverwriteAcrossTheThreshold(t *testing.T) {
 	}
 	if _, err := os.Stat(lookalike); err != nil {
 		t.Fatalf("a user's file named like a chunk folder was removed: %v", err)
+	}
+}
+
+// Entries of a chunk folder that are not part indexes, a negative number among
+// them, are no parts: listing or getting the file must not crash on them.
+func TestChunkIgnoresEntriesThatAreNoPartIndex(t *testing.T) {
+	d, root := newChunkStorage(t)
+	dir := filepath.Join(root, "[openlist_chunk]x.bin")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"0": "ab", "-1": "zz", "notes": "n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if names := listNames(t, d); len(names) != 1 || names[0] != "x.bin" {
+		t.Fatalf("listing = %v, want [x.bin]", names)
+	}
+	obj, err := op.Get(context.Background(), d, "/x.bin")
+	if err != nil || obj.GetSize() != 2 {
+		t.Fatalf("Get = %v, %v; want the 2-byte file", obj, err)
+	}
+}
+
+// A part number is the remote's word. One beyond the number of entries leaves
+// a gap, so the folder holds no file, and nothing is allocated up to it: the
+// largest number crashed the server, and a large one took gigabytes.
+func TestChunkAllocatesNothingForHugePartNumbers(t *testing.T) {
+	for _, idx := range []string{"9223372036854775807", "1000000000"} {
+		d, root := newChunkStorage(t)
+		dir := filepath.Join(root, "[openlist_chunk]huge")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range map[string][]byte{"0": content(testPartSize, 'a'), idx: []byte("x")} {
+			if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		names := listNames(t, d)
+		_, getErr := op.Get(context.Background(), d, "/huge")
+		runtime.ReadMemStats(&after)
+		if grown := after.TotalAlloc - before.TotalAlloc; grown > 64<<20 {
+			t.Errorf("part %s: reading the folder allocated %d bytes", idx, grown)
+		}
+		if len(names) != 1 || names[0] != "[openlist_chunk]huge" {
+			t.Errorf("part %s: listing = %v, want the folder under its own name", idx, names)
+		}
+		if !errs.IsObjectNotFound(getErr) {
+			t.Errorf("part %s: Get = %v, want not found", idx, getErr)
+		}
 	}
 }
 
