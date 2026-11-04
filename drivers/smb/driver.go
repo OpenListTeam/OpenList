@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -22,6 +21,7 @@ type SMB struct {
 	lastConnTime atomic.Int64
 	publishMode  atomic.Int32 // see publishModeFor
 	probeMu      sync.Mutex
+	staging      driver.StagingInUse
 	model.Storage
 	Addition
 	fs *smb2.Share
@@ -63,12 +63,15 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	d.updateLastConnTime()
 	files := make([]model.Obj, 0, len(rawFiles))
 	for _, f := range rawFiles {
-		if isStaging(f.Name()) {
-			// an upload in progress; reclaim the ones a killed process left
-			if time.Since(f.ModTime()) > staleStagingAge {
-				_ = d.fs.Remove(path.Join(fullPath, f.Name()))
+		if !f.IsDir() {
+			if created, ok := driver.StagingCreated(d.GetStorage(), f.Name()); ok {
+				// an upload in progress; reclaim the ones a killed process left
+				p := path.Join(fullPath, f.Name())
+				if d.staging.Reclaimable(p, created, f.ModTime()) {
+					_ = d.fs.Remove(p)
+				}
+				continue
 			}
-			continue
 		}
 		file := model.Object{
 			Path:     path.Join(fullPath, f.Name()),
@@ -200,7 +203,11 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	target, flag := fullPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC
 	switch mode {
 	case publishStaged:
-		target, flag = filepath.Join(dir, stagingName()), os.O_RDWR|os.O_CREATE|os.O_EXCL
+		name := driver.StagingName(d.GetStorage())
+		target, flag = filepath.Join(dir, name), os.O_RDWR|os.O_CREATE|os.O_EXCL
+		// released after the staging file is renamed or removed
+		release := d.staging.Hold(path.Join(dir, name))
+		defer release()
 	case publishNewOnly:
 		flag = os.O_RDWR | os.O_CREATE | os.O_EXCL
 	}

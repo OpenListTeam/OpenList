@@ -224,20 +224,24 @@ func TestIntegrationFailedOverwriteKeepsPrevious(t *testing.T) {
 	}
 }
 
-// Staging files never show up in listings, stale ones are reclaimed, and a
-// user's look-alike file is left alone.
+// Staging files never show up in listings, and the ones an upload left
+// behind long ago are reclaimed. One that started long ago but is still being
+// written stays, and so does a user's look-alike file.
 func TestIntegrationListHidesAndReapsStaging(t *testing.T) {
 	d, dir := integrationDriver(t)
-	fresh, stale := path.Join(dir, stagingName()), path.Join(dir, stagingName())
+	st := d.GetStorage()
+	past := time.Now().Add(-driver.StaleStagingAge - time.Hour)
+	fresh := path.Join(dir, driver.StagingName(st))
+	stale := path.Join(dir, driver.StagingNameAt(st, past))
+	busy := path.Join(dir, driver.StagingNameAt(st, past))
 	lookalike := path.Join(dir, ".openlist-upload-notes.txt")
-	for _, p := range []string{fresh, stale, lookalike} {
+	for _, p := range []string{fresh, stale, busy, lookalike} {
 		f, err := d.fs.Create(p)
 		if err != nil {
 			t.Fatalf("create %s: %v", p, err)
 		}
 		_ = f.Close()
 	}
-	past := time.Now().Add(-staleStagingAge - time.Hour)
 	if err := d.fs.Chtimes(stale, past, past); err != nil {
 		t.Fatalf("age %s: %v", stale, err)
 	}
@@ -252,8 +256,10 @@ func TestIntegrationListHidesAndReapsStaging(t *testing.T) {
 	if len(listed) != 1 || listed[0] != ".openlist-upload-notes.txt" {
 		t.Fatalf("listing = %v, want only the user's look-alike file", listed)
 	}
-	if _, err := d.fs.Stat(fresh); err != nil {
-		t.Fatalf("a running upload's staging file was reclaimed: %v", err)
+	for _, p := range []string{fresh, busy} {
+		if _, err := d.fs.Stat(p); err != nil {
+			t.Fatalf("a running upload's staging file was reclaimed: %v", err)
+		}
 	}
 	if _, err := d.fs.Stat(stale); err == nil {
 		t.Fatal("a stale staging file was not reclaimed")
@@ -290,7 +296,7 @@ func TestIntegrationOpenDestinationFailsCleanly(t *testing.T) {
 		t.Fatalf("destination = %q, want %q (put err %v)", got, want, putErr)
 	}
 	for _, name := range dirEntries(t, d, dir) {
-		if strings.HasPrefix(name, stagingPrefix) {
+		if strings.HasPrefix(name, driver.StagingPrefix) {
 			t.Fatalf("staging file %s left behind (put err %v)", name, putErr)
 		}
 	}
@@ -319,5 +325,54 @@ func TestIntegrationOverwriteNeverDestroysPrevious(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("destination = %q, want %q (put err %v)", got, want, putErr)
+	}
+}
+
+// Only this storage's staging files are hidden and reclaimed. A user's
+// look-alike file and any directory stay listed however old they are: a chunk
+// storage layered on this share stages its uploads in directories.
+func TestIntegrationListKeepsEntriesNamedLikeStaging(t *testing.T) {
+	d, dir := integrationDriver(t)
+	file := path.Join(dir, ".openlist-upload-0123456789abcdef")
+	f, err := d.fs.Create(file)
+	if err != nil {
+		t.Fatalf("create %s: %v", file, err)
+	}
+	_ = f.Close()
+	past := time.Now().Add(-25 * time.Hour)
+	// another storage's staging file, e.g. a second mount of this share
+	other := path.Join(dir, driver.StagingNameAt(&model.Storage{ID: d.GetStorage().ID + 1}, past))
+	f, err = d.fs.Create(other)
+	if err != nil {
+		t.Fatalf("create %s: %v", other, err)
+	}
+	_ = f.Close()
+	sub := path.Join(dir, ".openlist-upload-ABCDEFGHabcdefgh")
+	staged := path.Join(dir, driver.StagingNameAt(d.GetStorage(), past))
+	for _, p := range []string{sub, staged} {
+		if err := d.fs.Mkdir(p, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+	}
+	for _, p := range []string{file, other, sub, staged} {
+		if err := d.fs.Chtimes(p, past, past); err != nil {
+			t.Fatalf("age %s: %v", p, err)
+		}
+	}
+	objs, err := d.List(context.Background(), &model.Object{Path: dir}, model.ListArgs{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var listed []string
+	for _, o := range objs {
+		listed = append(listed, o.GetName())
+	}
+	if len(listed) != 4 {
+		t.Fatalf("listing = %v, want all four entries", listed)
+	}
+	for _, p := range []string{file, other, sub, staged} {
+		if _, err := d.fs.Stat(p); err != nil {
+			t.Fatalf("a listing removed %s: %v", p, err)
+		}
 	}
 }

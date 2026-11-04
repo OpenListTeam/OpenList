@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -256,45 +257,81 @@ func listNames(t *testing.T, d driver.Driver) []string {
 	return names
 }
 
-// Staging folders never show up in listings, and stale ones are reclaimed.
+// Staging folders never show up in listings, and the ones an upload left
+// behind long ago are reclaimed. One that started long ago but is still being
+// written stays, and so does a new one on a remote whose folder times never
+// change. What this storage did not stage stays listed: another storage's
+// staging folder, and a file, which this storage never stages.
 func TestChunkListHidesStaging(t *testing.T) {
 	d, root := newChunkStorage(t)
-	fresh := filepath.Join(root, ".openlist-upload-FreshFreshFresh1")
-	stale := filepath.Join(root, ".openlist-upload-StaleStaleStale1")
-	for _, dir := range []string{fresh, stale} {
+	st := d.GetStorage()
+	past := time.Now().Add(-driver.StaleStagingAge - time.Hour)
+	fresh := filepath.Join(root, driver.StagingName(st))
+	stale := filepath.Join(root, driver.StagingNameAt(st, past))
+	busy := filepath.Join(root, driver.StagingNameAt(st, past))
+	other := filepath.Join(root, driver.StagingNameAt(&model.Storage{ID: st.ID + 1}, past))
+	file := filepath.Join(root, driver.StagingNameAt(st, past))
+	for _, dir := range []string{fresh, stale, busy, other} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	past := time.Now().Add(-25 * time.Hour)
-	if err := os.Chtimes(stale, past, past); err != nil {
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	for _, p := range []string{fresh, stale, other, file} {
+		if err := os.Chtimes(p, past, past); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(root, "visible.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if names := listNames(t, d); len(names) != 1 || names[0] != "visible.txt" {
-		t.Fatalf("listing = %v, want [visible.txt]", names)
+	want := []string{filepath.Base(other), filepath.Base(file), "visible.txt"}
+	sort.Strings(want)
+	if names := listNames(t, d); !slices.Equal(names, want) {
+		t.Fatalf("listing = %v, want %v", names, want)
 	}
-	if _, err := os.Stat(fresh); err != nil {
-		t.Fatalf("a running upload's staging folder was reclaimed: %v", err)
+	for _, p := range []string{fresh, busy, other, file} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s was reclaimed: %v", filepath.Base(p), err)
+		}
 	}
 	if _, err := os.Stat(stale); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("a stale staging folder was not reclaimed: %v", err)
 	}
 }
 
-// A user's own entries that merely start with the staging prefix stay.
-func TestChunkListKeepsLookalikeUserFolder(t *testing.T) {
+// A user's own entries stay listed and untouched whatever their names look
+// like: staging folders are recognized by a tag only this server computes for
+// this storage, never by name and age alone.
+func TestChunkListKeepsUserEntriesNamedLikeStaging(t *testing.T) {
 	d, root := newChunkStorage(t)
-	if err := os.MkdirAll(filepath.Join(root, ".openlist-upload-notes"), 0o755); err != nil {
+	folder := filepath.Join(root, ".openlist-upload-0123456789abcdef")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".openlist-upload-AbCdEfGh01234567.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(folder, "notes.txt"), []byte("mine"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{".openlist-upload-AbCdEfGh01234567.txt", ".openlist-upload-notes"}
-	if names := listNames(t, d); len(names) != 2 || names[0] != want[0] || names[1] != want[1] {
+	file := filepath.Join(root, ".openlist-upload-ABCDEFGHabcdefgh")
+	if err := os.WriteFile(file, []byte("mine too"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-25 * time.Hour)
+	for _, p := range []string{folder, file} {
+		if err := os.Chtimes(p, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{filepath.Base(file), filepath.Base(folder)}
+	sort.Strings(want)
+	if names := listNames(t, d); !slices.Equal(names, want) {
 		t.Fatalf("listing = %v, want %v", names, want)
+	}
+	for _, p := range []string{filepath.Join(folder, "notes.txt"), file} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("a listing removed %s: %v", p, err)
+		}
 	}
 }

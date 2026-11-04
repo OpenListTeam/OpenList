@@ -28,6 +28,7 @@ import (
 type Chunk struct {
 	model.Storage
 	Addition
+	staging driver.StagingInUse
 }
 
 func (d *Chunk) Config() driver.Config {
@@ -174,14 +175,15 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			break
 		}
 		rawName := obj.GetName()
-		if isStaging(rawName) {
-			// an upload in progress; reclaim the ones a killed process left
-			if isStaleStaging(obj) {
-				_ = op.Remove(ctx, remoteStorage, stdpath.Join(remoteActualDir, rawName))
-			}
-			continue
-		}
 		if obj.IsDir() {
+			if created, ok := driver.StagingCreated(d.GetStorage(), rawName); ok {
+				// an upload in progress; reclaim the ones a killed process left
+				p := stdpath.Join(remoteActualDir, rawName)
+				if d.staging.Reclaimable(p, created, obj.ModTime()) {
+					_ = op.Remove(ctx, remoteStorage, p)
+				}
+				continue
+			}
 			if name, ok := strings.CutPrefix(rawName, d.ChunkPrefix); ok {
 				resultIdx := len(result)
 				result = append(result, nil)
@@ -481,12 +483,15 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		// a chunk folder another upload may own by now
 		return d.putParts(ctx, remoteStorage, stdpath.Join(parent, name), file, up)
 	}
-	staging := stdpath.Join(parent, stagingName())
+	staging := stdpath.Join(parent, driver.StagingName(d.GetStorage()))
+	// released after the staging folder is moved into place or removed
+	release := d.staging.Hold(staging)
+	defer release()
 	if err := d.putParts(ctx, remoteStorage, staging, file, up); err != nil {
 		_ = op.Remove(context.WithoutCancel(ctx), remoteStorage, staging)
 		return err
 	}
-	return publish(ctx, remoteStorage, parent, staging, name)
+	return d.publish(ctx, remoteStorage, parent, staging, name)
 }
 
 // putParts uploads the hash markers and the parts of file into dir.
