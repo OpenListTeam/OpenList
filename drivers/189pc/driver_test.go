@@ -1,10 +1,14 @@
 package _189pc
 
 import (
+	"errors"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 )
 
 func TestFamilyTransferTempNamePreservesExtension(t *testing.T) {
@@ -28,6 +32,24 @@ func TestFamilyTransferTempNamePreservesExtension(t *testing.T) {
 				t.Fatalf("temporary name extension = %q, want %q", ext, tt.want)
 			}
 		})
+	}
+}
+
+// TestIsDayFlowOverLimited 天翼把当日流量用尽作为 HTTP 200 的业务错误码返回，
+// 只能按错误码文本识别；识别不出来就只能在批量秒传里逐个文件重复失败。
+func TestIsDayFlowOverLimited(t *testing.T) {
+	quota := &RespErr{Code: "UserDayFlowOverLimited", Msg: "sessionKey=abc,data flow is out"}
+	if !isDayFlowOverLimited(fmt.Errorf("initMultiUpload 失败: %w", quota)) {
+		t.Fatal("UserDayFlowOverLimited was not recognized through the error chain")
+	}
+	if isDayFlowOverLimited(&RespErr{Code: "InvalidSessionKey"}) {
+		t.Fatal("an unrelated business error must not be treated as a quota error")
+	}
+	if isDayFlowOverLimited(nil) {
+		t.Fatal("nil error must not be treated as a quota error")
+	}
+	if !errors.Is(wrapDayFlowOverLimit(quota), errs.DailyFlowLimitExceeded) {
+		t.Fatal("quota errors must be detectable with errors.Is")
 	}
 }
 

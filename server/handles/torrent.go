@@ -1902,9 +1902,17 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			// 「请求根本没发出去」混成同一个错误，无法定位
 			reason := "target driver cannot reuse the available hashes"
 			if rapidErr != nil {
-				reason = fmt.Sprintf("%s: %v", reason, rapidErr)
+				reason = fmt.Sprintf("rapid upload failed: %v", rapidErr)
 			}
 			results = append(results, gin.H{"path": file.Path, "name": name, "method": "unavailable", "error": reason})
+			// 账号当日流量用尽是账号级状态：同批其余文件必然同样失败，
+			// 一次性标完，不再逐个打服务端
+			if rapidErr != nil && errors.Is(rapidErr, errs.DailyFlowLimitExceeded) {
+				for _, rest := range pending[i+1:] {
+					results = append(results, gin.H{"path": rest.Path, "name": stdpath.Base(rest.Path), "method": "unavailable", "error": reason})
+				}
+				break
+			}
 			continue
 		}
 		source := firstUsableSeedSource(file)

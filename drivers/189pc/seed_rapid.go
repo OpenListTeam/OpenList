@@ -2,6 +2,8 @@ package _189pc
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -44,6 +46,11 @@ func (d *Cloud189PC) RapidUploadByHashes(ctx context.Context, dstDir model.Obj, 
 			return obj, nil
 		}
 		casErr = err
+		// 当日流量用尽是账号级状态：旧接口同样是「建上传会话」，
+		// 再试一次只会再报同样的错
+		if isDayFlowOverLimited(err) {
+			return nil, wrapDayFlowOverLimit(err)
+		}
 	}
 
 	stream := driver.NewSeedHashStream(req)
@@ -51,9 +58,36 @@ func (d *Cloud189PC) RapidUploadByHashes(ctx context.Context, dstDir model.Obj, 
 	if err != nil {
 		// CAS 的报错更具体（云端不存在 / 分片不匹配），失败时优先上报它
 		if casErr != nil {
-			return nil, casErr
+			return nil, wrapRapidUploadError(casErr)
 		}
-		return nil, err
+		return nil, wrapRapidUploadError(err)
 	}
 	return obj, nil
+}
+
+// wrapRapidUploadError 把账号级限流翻译成可判断、可读的错误
+func wrapRapidUploadError(err error) error {
+	if isDayFlowOverLimited(err) {
+		return wrapDayFlowOverLimit(err)
+	}
+	return err
+}
+
+func wrapDayFlowOverLimit(err error) error {
+	return errs.NewErr(errs.DailyFlowLimitExceeded,
+		"天翼云盘账号当日上传流量已用尽，需等次日重置或更换账号/开通会员（%v）", err)
+}
+
+// isDayFlowOverLimited reports whether the drive refused the request because the
+// account's daily upload/transfer flow is exhausted (UserDayFlowOverLimited).
+// 天翼把这类业务错误放在 HTTP 200 的响应体里，只能按错误码文本判断。
+func isDayFlowOverLimited(err error) bool {
+	var respErr *RespErr
+	if !errors.As(err, &respErr) {
+		return false
+	}
+	text := strings.ToLower(strings.Join([]string{
+		respErr.Code, respErr.Msg, respErr.Message, respErr.ErrorMsg, respErr.ResMessage,
+	}, " "))
+	return strings.Contains(text, "userdayflowoverlimited") || strings.Contains(text, "flow is out")
 }
