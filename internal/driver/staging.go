@@ -1,12 +1,14 @@
 package driver
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,4 +124,59 @@ func (u *StagingInUse) Reclaimable(path string, created, modified time.Time) boo
 		last = modified
 	}
 	return time.Since(last) > StaleStagingAge
+}
+
+// KeyedMutex runs work on one key at a time, such as the uploads of one
+// destination. Keys that differ only in case are one key: many storages (SMB
+// shares, the default Windows and macOS file systems) take such names for one
+// file, and two files that are not one only take turns. The zero value is
+// ready to use.
+type KeyedMutex struct {
+	mu    sync.Mutex
+	locks map[string]*keyedLock
+}
+
+type keyedLock struct {
+	held chan struct{} // holds a token while the lock is taken
+	refs int
+}
+
+// Lock takes the lock of key. It gives up with ctx's error once ctx ends, also
+// when ctx ends just as the lock comes free: the work of a canceled upload
+// must not start.
+func (k *KeyedMutex) Lock(ctx context.Context, key string) (unlock func(), err error) {
+	key = strings.ToLower(key)
+	k.mu.Lock()
+	if k.locks == nil {
+		k.locks = make(map[string]*keyedLock)
+	}
+	l := k.locks[key]
+	if l == nil {
+		l = &keyedLock{held: make(chan struct{}, 1)}
+		k.locks[key] = l
+	}
+	l.refs++
+	k.mu.Unlock()
+	drop := func() {
+		k.mu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(k.locks, key)
+		}
+		k.mu.Unlock()
+	}
+	select {
+	case l.held <- struct{}{}:
+	case <-ctx.Done():
+		drop()
+		return nil, ctx.Err()
+	}
+	unlock = func() {
+		<-l.held
+		drop()
+	}
+	if err := ctx.Err(); err != nil {
+		unlock()
+		return nil, err
+	}
+	return unlock, nil
 }

@@ -122,6 +122,22 @@ func stagingLeftovers(t *testing.T, root string) []string {
 	return names
 }
 
+// backupLeftovers lists the previous versions an overwrite left on the remote.
+func backupLeftovers(t *testing.T, root string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), backupInfix) {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
+
 func content(n int, b byte) []byte { return bytes.Repeat([]byte{b}, n) }
 
 // testReader serves data, optionally pausing once at pauseAt until released,
@@ -241,6 +257,9 @@ func TestChunkOverwriteWithFewerPartsLeavesNoStaleParts(t *testing.T) {
 	if obj.GetSize() != int64(len(smaller)) {
 		t.Fatalf("size = %d, want %d", obj.GetSize(), len(smaller))
 	}
+	if left := backupLeftovers(t, root); len(left) != 0 {
+		t.Fatalf("previous version left behind: %v", left)
+	}
 }
 
 func listNames(t *testing.T, d driver.Driver) []string {
@@ -333,5 +352,97 @@ func TestChunkListKeepsUserEntriesNamedLikeStaging(t *testing.T) {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("a listing removed %s: %v", p, err)
 		}
+	}
+}
+
+// When the new version cannot be moved into place and the previous one cannot
+// be put back either, the previous version is kept where the user can see it,
+// the error says where, and no listing reclaims it however old it is.
+func TestChunkKeepsUnrestorableBackup(t *testing.T) {
+	d, root := newChunkStorage(t)
+	ctx := context.Background()
+	old := content(3*testPartSize, 'a')
+	if err := putFile(ctx, d, "doc.bin", bytes.NewReader(old), int64(len(old))); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	orig := renameOnRemote
+	t.Cleanup(func() { renameOnRemote = orig })
+	boom := errors.New("remote went away")
+	renameOnRemote = func(ctx context.Context, storage driver.Driver, srcPath, dstName string) error {
+		// moving the new version in, and putting the previous one back
+		if dstName == "[openlist_chunk]doc.bin" {
+			return boom
+		}
+		return orig(ctx, storage, srcPath, dstName)
+	}
+	err := putFile(ctx, d, "doc.bin", bytes.NewReader(content(2*testPartSize, 'b')), 2*testPartSize)
+	if !errors.Is(err, boom) {
+		t.Fatalf("overwrite returned %v, want %v", err, boom)
+	}
+	renameOnRemote = orig
+
+	entries, err2 := os.ReadDir(root)
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	var backup string
+	var all []string
+	for _, e := range entries {
+		all = append(all, e.Name())
+		if name, ok := strings.CutPrefix(e.Name(), "[openlist_chunk]doc.bin"); ok && name != "" {
+			backup = e.Name()
+		}
+	}
+	if backup == "" {
+		t.Fatalf("the previous version is gone; remote holds %v", all)
+	}
+	shown := strings.TrimPrefix(backup, "[openlist_chunk]")
+	if !strings.Contains(err.Error(), shown) {
+		t.Fatalf("error %q does not say the previous version was kept as %s", err, shown)
+	}
+	past := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(filepath.Join(root, backup), past, past); err != nil {
+		t.Fatal(err)
+	}
+	if names := listNames(t, d); !slices.Contains(names, shown) {
+		t.Fatalf("listing = %v, want it to show the kept previous version %s", names, shown)
+	}
+	if got := readChunked(t, root, shown); !bytes.Equal(got, old) {
+		t.Fatalf("kept previous version is damaged or gone (len %d)", len(got))
+	}
+	if left := stagingLeftovers(t, root); len(left) != 0 {
+		t.Fatalf("staging left behind: %v", left)
+	}
+}
+
+// On a remote that takes names differing only in case for one, as the default
+// macOS and Windows file systems do, an overwrite under another case replaces
+// the file instead of failing to move the new version in.
+func TestChunkOverwriteUnderAnotherCase(t *testing.T) {
+	d, root := newChunkStorage(t)
+	probe := filepath.Join(root, "CaseProbe")
+	if err := os.WriteFile(probe, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := os.Stat(filepath.Join(root, "caseprobe"))
+	if err := os.Remove(probe); err != nil {
+		t.Fatal(err)
+	}
+	if err != nil {
+		t.Skip("needs a file system that ignores case")
+	}
+	ctx := context.Background()
+	if err := putFile(ctx, d, "report.bin", bytes.NewReader(content(2*testPartSize, 'a')), 2*testPartSize); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body := content(3*testPartSize, 'b')
+	if err := putFile(ctx, d, "REPORT.BIN", bytes.NewReader(body), int64(len(body))); err != nil {
+		t.Fatalf("overwrite under another case: %v", err)
+	}
+	if got := readChunked(t, root, "REPORT.BIN"); !bytes.Equal(got, body) {
+		t.Fatalf("the file holds %d bytes, want the %d just written", len(got), len(body))
+	}
+	if left := append(backupLeftovers(t, root), stagingLeftovers(t, root)...); len(left) != 0 {
+		t.Fatalf("left behind: %v", left)
 	}
 }

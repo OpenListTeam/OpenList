@@ -129,6 +129,29 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 	return objs, nil
 }
 
+// ListFresh lists path straight from the storage, for a caller that has to
+// see what is there now: List may answer from the cache, or share a listing
+// already under way, and either may predate a change the caller must not miss.
+// Nothing is cached.
+func ListFresh(ctx context.Context, storage driver.Driver, path string) ([]model.Obj, error) {
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	dir, err := GetUnwrap(ctx, storage, utils.FixAndCleanPath(path))
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed get dir")
+	}
+	if !dir.IsDir() {
+		return nil, errors.WithStack(errs.NotFolder)
+	}
+	files, err := storage.List(ctx, dir, model.ListArgs{Refresh: true})
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to list objs")
+	}
+	wrapObjsName(storage, files)
+	return files, nil
+}
+
 // Get object from list of files
 func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj ...bool) (model.Obj, error) {
 	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {

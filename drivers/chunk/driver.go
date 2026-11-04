@@ -28,7 +28,8 @@ import (
 type Chunk struct {
 	model.Storage
 	Addition
-	staging driver.StagingInUse
+	staging    driver.StagingInUse
+	publishing driver.KeyedMutex
 }
 
 func (d *Chunk) Config() driver.Config {
@@ -176,9 +177,13 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		}
 		rawName := obj.GetName()
 		if obj.IsDir() {
+			p := stdpath.Join(remoteActualDir, rawName)
+			if d.staging.Held(p) {
+				// the version an upload in progress is replacing
+				continue
+			}
 			if created, ok := driver.StagingCreated(d.GetStorage(), rawName); ok {
 				// an upload in progress; reclaim the ones a killed process left
-				p := stdpath.Join(remoteActualDir, rawName)
 				if d.staging.Reclaimable(p, created, obj.ModTime()) {
 					_ = op.Remove(ctx, remoteStorage, p)
 				}
