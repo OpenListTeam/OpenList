@@ -52,6 +52,16 @@ var storageSeq atomic.Int64
 // storage on top of it, and returns the chunk driver and the local root.
 func newChunkStorage(t *testing.T) (driver.Driver, string) {
 	t.Helper()
+	return newChunkStorageWith(t, "")
+}
+
+// newChunkStorageWith is newChunkStorage with extra chunk settings, given as
+// JSON object members such as `"chunk_large_file_only":true`.
+func newChunkStorageWith(t *testing.T, extra string) (driver.Driver, string) {
+	t.Helper()
+	if extra != "" {
+		extra = "," + extra
+	}
 	n := storageSeq.Add(1)
 	root := t.TempDir()
 	localMount, chunkMount := fmt.Sprintf("/chunk-remote-%d", n), fmt.Sprintf("/chunk-%d", n)
@@ -67,7 +77,7 @@ func newChunkStorage(t *testing.T) (driver.Driver, string) {
 	chunkID, err := op.CreateStorage(ctx, model.Storage{
 		Driver:    "Chunk",
 		MountPath: chunkMount,
-		Addition:  fmt.Sprintf(`{"remote_path":%q,"part_size":%d,"show_hidden":true,"num_list_workers":2}`, localMount, testPartSize),
+		Addition:  fmt.Sprintf(`{"remote_path":%q,"part_size":%d,"show_hidden":true,"num_list_workers":2%s}`, localMount, testPartSize, extra),
 	})
 	if err != nil {
 		t.Fatalf("create chunk storage: %v", err)
@@ -412,6 +422,49 @@ func TestChunkKeepsUnrestorableBackup(t *testing.T) {
 	}
 	if left := stagingLeftovers(t, root); len(left) != 0 {
 		t.Fatalf("staging left behind: %v", left)
+	}
+}
+
+// With ChunkLargeFileOnly, an overwrite across the threshold replaces the
+// previous version whichever way it was stored: no second entry is left, and
+// Get serves the new content. A user's own entry that only shares the name of
+// the other form stays.
+func TestChunkOverwriteAcrossTheThreshold(t *testing.T) {
+	d, root := newChunkStorageWith(t, `"chunk_large_file_only":true`)
+	ctx := context.Background()
+	small, large := content(500, 'a'), content(3*testPartSize, 'b')
+	check := func(want []byte) {
+		t.Helper()
+		if names := listNames(t, d); len(names) != 1 || names[0] != "f.bin" {
+			t.Fatalf("listing = %v, want [f.bin]", names)
+		}
+		obj, err := op.Get(ctx, d, "/f.bin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if obj.GetSize() != int64(len(want)) {
+			t.Fatalf("Get reports %d bytes, want %d", obj.GetSize(), len(want))
+		}
+	}
+	for _, body := range [][]byte{small, large, small} {
+		if err := putFile(ctx, d, "f.bin", bytes.NewReader(body), int64(len(body))); err != nil {
+			t.Fatalf("upload of %d bytes: %v", len(body), err)
+		}
+		check(body)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "f.bin")); err != nil || !bytes.Equal(got, small) {
+		t.Fatalf("whole file = %d bytes, %v", len(got), err)
+	}
+	// a plain file named like a chunk folder is not one
+	lookalike := filepath.Join(root, "[openlist_chunk]g.bin")
+	if err := os.WriteFile(lookalike, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := putFile(ctx, d, "g.bin", bytes.NewReader(small), int64(len(small))); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if _, err := os.Stat(lookalike); err != nil {
+		t.Fatalf("a user's file named like a chunk folder was removed: %v", err)
 	}
 }
 

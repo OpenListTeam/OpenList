@@ -121,23 +121,14 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 	}
 	reqDir, _ := stdpath.Split(path)
-	// 文件块不完整时，返回文件夹对象
+	// a folder without a complete set of parts is no file of this name: List
+	// shows it as a folder under its own name, and Get finds it by that name
 	if chunkSizes[0] == -1 {
-		return &model.Object{
-			Path:     stdpath.Join(reqDir, chunkName),
-			Name:     chunkName,
-			IsFolder: true,
-			Modified: d.Modified,
-		}, nil
+		return nil, errs.ObjectNotFound
 	}
 	for i, l := 1, len(chunkSizes)-1; i < l; i++ {
 		if chunkSizes[i] == 0 {
-			return &model.Object{
-				Path:     stdpath.Join(reqDir, chunkName),
-				Name:     chunkName,
-				IsFolder: true,
-				Modified: d.Modified,
-			}, nil
+			return nil, errs.ObjectNotFound
 		}
 	}
 	objRes := chunkObject{
@@ -478,15 +469,39 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	if err != nil {
 		return err
 	}
-	if (d.Thumbnail && dstDir.GetName() == ".thumbnails") || (d.ChunkLargeFileOnly && file.GetSize() <= d.PartSize) {
+	if d.Thumbnail && dstDir.GetName() == ".thumbnails" {
 		return op.Put(ctx, remoteStorage, stdpath.Join(remoteActualPath, dstDir.GetPath()), file, up)
 	}
 	parent := stdpath.Join(remoteActualPath, dstDir.GetPath())
 	name := d.ChunkPrefix + file.GetName()
+	if d.ChunkLargeFileOnly && file.GetSize() <= d.PartSize {
+		// written whole, in turn with other uploads of the file, as dropping
+		// the chunked form must not hit a version written meanwhile
+		unlock, err := d.publishing.Lock(ctx, stdpath.Join(parent, name))
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		if err := op.Put(ctx, remoteStorage, parent, file, up); err != nil {
+			return err
+		}
+		return d.dropOtherForm(ctx, remoteStorage, parent, name, true)
+	}
 	if !canRename(remoteStorage) {
-		// nothing to publish with: write the parts in place, but never remove
-		// a chunk folder another upload may own by now
-		return d.putParts(ctx, remoteStorage, stdpath.Join(parent, name), file, up)
+		// nothing to publish with: write the parts in place, in turn with other
+		// uploads of the file, and never remove the chunk folder on failure
+		unlock, err := d.publishing.Lock(ctx, stdpath.Join(parent, name))
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		if _, err := d.previousChunked(ctx, remoteStorage, parent, name); err != nil {
+			return err
+		}
+		if err := d.putParts(ctx, remoteStorage, stdpath.Join(parent, name), file, up); err != nil {
+			return err
+		}
+		return d.dropOtherForm(ctx, remoteStorage, parent, file.GetName(), false)
 	}
 	staging := stdpath.Join(parent, driver.StagingName(d.GetStorage()))
 	// released after the staging folder is moved into place or removed

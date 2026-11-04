@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	stdpath "path"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -76,6 +77,82 @@ func present(ctx context.Context, remoteStorage driver.Driver, dir, name string)
 	return obj != nil, err
 }
 
+// isChunkedFile reports whether obj, found at path on the remote, is a folder
+// that List shows as a chunked file: part 0 and every part before the last one
+// present. Any other entry of that name belongs to the user.
+func (d *Chunk) isChunkedFile(ctx context.Context, remoteStorage driver.Driver, obj model.Obj, path string) (bool, error) {
+	if !obj.IsDir() {
+		return false, nil
+	}
+	objs, err := op.ListFresh(ctx, remoteStorage, path)
+	if err != nil {
+		return false, err
+	}
+	sizes := make(map[int]int64)
+	last := -1
+	for _, o := range objs {
+		if o.IsDir() || strings.HasPrefix(o.GetName(), "hash_") {
+			continue
+		}
+		idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
+		if err != nil || idx < 0 {
+			continue
+		}
+		sizes[idx] = o.GetSize()
+		last = max(last, idx)
+	}
+	if _, ok := sizes[0]; !ok {
+		return false, nil
+	}
+	for i := 1; i < last; i++ {
+		if sizes[i] == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// previousChunked tells what the remote holds at a chunk folder's name:
+// nothing (false), or the previous version as a chunked file (true). Anything
+// else there is the user's own and refuses the upload, untouched.
+func (d *Chunk) previousChunked(ctx context.Context, remoteStorage driver.Driver, parent, name string) (bool, error) {
+	obj, err := lookup(ctx, remoteStorage, parent, name)
+	if err != nil || obj == nil {
+		return false, err
+	}
+	ok, err := d.isChunkedFile(ctx, remoteStorage, obj, stdpath.Join(parent, name))
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, fmt.Errorf("the remote holds %s, which is not a chunked file, so it was left as it was", name)
+	}
+	return true, nil
+}
+
+// dropOtherForm removes the previous version of a file that a successful upload
+// stored the other way, across ChunkLargeFileOnly's threshold: whole while the
+// new one is chunked (folder false), or chunked while the new one is whole
+// (folder true). Left in place, the file would be listed twice, and Get
+// prefers the whole one. Only a whole file, or a folder holding a chunked
+// file, is that form. The caller holds the destination's publish lock.
+func (d *Chunk) dropOtherForm(ctx context.Context, remoteStorage driver.Driver, parent, other string, folder bool) error {
+	rctx := context.WithoutCancel(ctx)
+	obj, err := lookup(rctx, remoteStorage, parent, other)
+	if err != nil || obj == nil || obj.IsDir() != folder {
+		return err
+	}
+	if folder {
+		if ok, err := d.isChunkedFile(rctx, remoteStorage, obj, stdpath.Join(parent, other)); err != nil || !ok {
+			return err
+		}
+	}
+	if err := op.Remove(rctx, remoteStorage, stdpath.Join(parent, other)); err != nil {
+		return fmt.Errorf("uploaded, but the previous version stored as %s could not be removed: %w", other, err)
+	}
+	return nil
+}
+
 // publish moves a fully uploaded staging folder into place as name, keeping the
 // previous version apart until the new one is in. A remote may rename by
 // copying part by part, so a failed move can leave either side half done:
@@ -93,7 +170,7 @@ func (d *Chunk) publish(ctx context.Context, remoteStorage driver.Driver, parent
 		return err
 	}
 	defer unlock()
-	had, err := present(ctx, remoteStorage, parent, name)
+	had, err := d.previousChunked(ctx, remoteStorage, parent, name)
 	if err != nil {
 		_ = op.Remove(rctx, remoteStorage, staging)
 		return err
@@ -133,5 +210,5 @@ func (d *Chunk) publish(ctx context.Context, remoteStorage driver.Driver, parent
 			utils.Log.Warnf("[chunk] uploaded %s, but the previous version is left as %s: %v", dst, backup, err)
 		}
 	}
-	return nil
+	return d.dropOtherForm(ctx, remoteStorage, parent, strings.TrimPrefix(name, d.ChunkPrefix), false)
 }
