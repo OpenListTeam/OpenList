@@ -2,11 +2,13 @@ package op
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	stdpath "path"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -15,6 +17,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -638,7 +641,11 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 	return errors.WithStack(err)
 }
 
-func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file model.FileStreamer, up driver.UpdateProgress) error {
+// overwriteTurns lets Put upload a file to a storage that cannot overwrite it
+// one upload at a time.
+var overwriteTurns driver.KeyedMutex
+
+func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file model.FileStreamer, up driver.UpdateProgress) (err error) {
 	defer func() {
 		if err := file.Close(); err != nil {
 			log.Errorf("failed to close file streamer, %v", err)
@@ -656,8 +663,18 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	// if file exist and size = 0, delete it
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	dstPath := stdpath.Join(dstDirPath, file.GetName())
-	tempName := file.GetName() + ".openlist_to_delete"
+	tempName := movedAsideName(file.GetName())
 	tempPath := stdpath.Join(dstDirPath, tempName)
+	if storage.Config().NoOverwriteUpload && ctx.Value(conf.SkipNoOverwriteKey) == nil {
+		// the uploads of a file take turns from looking for the old obj to
+		// settling it: one finishing while another has the old obj aside would
+		// be renamed over by its restore
+		unlock, err := overwriteTurns.Lock(ctx, Key(storage, dstPath))
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
 	fi, err := GetUnwrap(ctx, storage, dstPath)
 	if err == nil {
 		if fi.GetSize() == 0 {
@@ -671,6 +688,15 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			if err != nil {
 				return err
 			}
+			// from here on, whatever ends the upload settles the old obj. A
+			// panic ends it with no error set, and must not read as success
+			defer func() {
+				if r := recover(); r != nil {
+					_ = settleOldObj(ctx, storage, dstDirPath, file.GetName(), tempPath, errors.Errorf("upload panicked: %v", r))
+					panic(r)
+				}
+				err = settleOldObj(ctx, storage, dstDirPath, file.GetName(), tempPath, err)
+			}()
 		} else {
 			file.SetExist(fi)
 		}
@@ -730,31 +756,65 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		}
 	}
 	log.Debugf("put file [%s] done", file.GetName())
-	if storage.Config().NoOverwriteUpload && fi != nil && fi.GetSize() > 0 {
-		// a canceled upload (client gone, multipart abort or expiry) is exactly
-		// when the old obj has to come back, so do not reuse its context
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-		defer cancel()
-		if err != nil {
-			// upload failed, recover old obj, unless another upload has taken
-			// its name meanwhile: the newer file wins, the old obj stays aside
-			_, getErr := GetUnwrap(rctx, storage, dstPath)
-			switch {
-			case errs.IsObjectNotFound(getErr):
-				if err := Rename(rctx, storage, tempPath, file.GetName()); err != nil {
-					log.Errorf("failed recover old obj: %+v", err)
-				}
-			case getErr == nil:
-				log.Warnf("keep old obj as %s: %s was uploaded again meanwhile", tempPath, dstPath)
-			default:
-				log.Errorf("failed recover old obj: %+v", getErr)
-			}
-		} else {
-			// upload success, remove old obj
-			err = Remove(rctx, storage, tempPath)
+	return errors.WithStack(err)
+}
+
+// movedAsideName names the old obj of name while Put uploads its replacement.
+// The random suffix makes it a name nothing else has, also nothing this server
+// has not seen yet: what has the usual one may be an old obj an earlier upload
+// had to leave aside, and some drivers delete what a rename lands on as a
+// duplicate. The name stays within the 255 bytes most storages allow.
+func movedAsideName(name string) string {
+	suffix := ".openlist_to_delete." + random.String(8)
+	if limit := 255 - len(suffix); len(name) > limit {
+		for limit > 0 && !utf8.RuneStart(name[limit]) {
+			limit--
+		}
+		name = name[:limit]
+	}
+	return name + suffix
+}
+
+// settleOldObj ends the life of an old obj Put moved aside to tempPath: removed
+// once the upload succeeded, moved back otherwise. A canceled upload (client
+// gone, multipart abort or expiry) is exactly when it has to come back, so the
+// upload's context is not reused. It returns the upload's outcome, and where
+// the old obj stays when it cannot come back: its name is random.
+func settleOldObj(ctx context.Context, storage driver.Driver, dir, name, tempPath string, uploadErr error) error {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	if uploadErr == nil {
+		// upload success, remove old obj
+		return Remove(rctx, storage, tempPath)
+	}
+	// upload failed, recover old obj, unless another upload has taken its name
+	// meanwhile: the newer file wins, the old obj stays aside
+	taken, err := nameTaken(rctx, storage, dir, name)
+	if err == nil && taken {
+		err = errors.Errorf("%s was uploaded again meanwhile", name)
+	}
+	if err == nil {
+		err = Rename(rctx, storage, tempPath, name)
+	}
+	if err != nil {
+		log.Warnf("keep old obj as %s: %+v", tempPath, err)
+		return fmt.Errorf("%w; the original was kept as %s: %w", uploadErr, stdpath.Base(tempPath), err)
+	}
+	return uploadErr
+}
+
+// nameTaken reports whether dir holds name now.
+func nameTaken(ctx context.Context, storage driver.Driver, dir, name string) (bool, error) {
+	objs, err := ListFresh(ctx, storage, dir)
+	if err != nil {
+		return false, err
+	}
+	for _, obj := range objs {
+		if obj.GetName() == name {
+			return true, nil
 		}
 	}
-	return errors.WithStack(err)
+	return false, nil
 }
 
 func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url string) error {

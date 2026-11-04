@@ -3,9 +3,11 @@ package op_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -26,16 +28,24 @@ type noOverwriteStorage struct {
 	// whilePutting runs inside Put before it waits, e.g. to let another
 	// upload take the name meanwhile
 	whilePutting func()
+	// cached lets op cache this storage's listings
+	cached bool
 }
+
+// noOverwriteSeq numbers the test storages. op caches listings, and lets
+// uploads take turns, by mount path: a mount path made of a storage's address
+// is taken again once the storage is collected, and the new one then got an
+// earlier test's cached listing.
+var noOverwriteSeq atomic.Int64
 
 func newNoOverwriteStorage(files map[string]int64) *noOverwriteStorage {
 	d := &noOverwriteStorage{files: files, putting: make(chan struct{})}
-	d.SetStorage(model.Storage{MountPath: "/" + strings.ReplaceAll(fmt.Sprintf("%p", d), "0x", "no-overwrite-")})
+	d.SetStorage(model.Storage{MountPath: fmt.Sprintf("/no-overwrite-%d", noOverwriteSeq.Add(1))})
 	return d
 }
 
 func (d *noOverwriteStorage) Config() driver.Config {
-	return driver.Config{Name: "NoOverwriteTest", NoOverwriteUpload: true, NoCache: true, LocalSort: true}
+	return driver.Config{Name: "NoOverwriteTest", NoOverwriteUpload: true, NoCache: !d.cached, LocalSort: true}
 }
 func (d *noOverwriteStorage) GetAddition() driver.Additional { return &struct{}{} }
 func (d *noOverwriteStorage) Init(context.Context) error     { return nil }
@@ -93,11 +103,17 @@ func (d *noOverwriteStorage) Put(ctx context.Context, dstDir model.Obj, file mod
 	return ctx.Err()
 }
 
+// movedAside matches the name Put moves an original aside to.
+var movedAside = regexp.MustCompile(`\.openlist_to_delete\.[0-9A-Za-z]{8}$`)
+
+// listing lists the files as name=size, with the original moved aside listed
+// as <name>.openlist_to_delete.*.
 func (d *noOverwriteStorage) listing() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var entries []string
 	for name, size := range d.files {
+		name = movedAside.ReplaceAllString(name, ".openlist_to_delete.*")
 		entries = append(entries, fmt.Sprintf("%s=%d", name, size))
 	}
 	sort.Strings(entries)
@@ -141,7 +157,58 @@ func TestPutDoesNotRestoreOverNewerUpload(t *testing.T) {
 		d.mu.Unlock()
 	}
 	cancelPendingOverwrite(t, d)
-	if got := d.listing(); got != "report.pdf.openlist_to_delete=100, report.pdf=200" {
+	if got := d.listing(); got != "report.pdf.openlist_to_delete.*=100, report.pdf=200" {
 		t.Fatalf("storage holds [%s], want the newer upload kept and the original left aside", got)
+	}
+}
+
+// panickingPut is a noOverwriteStorage whose driver panics while uploading.
+type panickingPut struct{ *noOverwriteStorage }
+
+func (d *panickingPut) Put(context.Context, model.Obj, model.FileStreamer, driver.UpdateProgress) error {
+	panic("driver bug")
+}
+
+// A driver that panics did not upload anything: the original comes back. The
+// panic ended Put with no error set, which read as a success, so the original
+// was removed.
+func TestPutRestoresOriginalWhenTheUploadPanics(t *testing.T) {
+	base := newNoOverwriteStorage(map[string]int64{"report.pdf": 100})
+	d := &panickingPut{base}
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("the panic did not reach the caller")
+			}
+		}()
+		file := &stream.FileStream{Obj: &model.Object{Name: "report.pdf", Size: 50}, Reader: strings.NewReader("")}
+		_ = op.Put(context.Background(), d, "/", file, nil)
+	}()
+	if got := base.listing(); got != "report.pdf=100" {
+		t.Fatalf("storage holds [%s], want the original restored as [report.pdf=100]", got)
+	}
+}
+
+// The original moves aside under a name of its own, which nothing else has.
+// The usual one may hold an original an earlier upload had to leave aside,
+// here or on another server since this one cached the folder, and renaming
+// over it lost what it held (some drivers delete it as a duplicate).
+func TestPutMovesTheOriginalAsideUnderANameOfItsOwn(t *testing.T) {
+	for _, pastCache := range []bool{false, true} {
+		d := newNoOverwriteStorage(map[string]int64{"report.pdf": 100})
+		if pastCache {
+			d.cached = true
+			d.GetStorage().CacheExpiration = 60
+			if _, err := op.List(context.Background(), d, "/", model.ListArgs{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		d.mu.Lock()
+		d.files["report.pdf.openlist_to_delete"] = 777
+		d.mu.Unlock()
+		cancelPendingOverwrite(t, d)
+		if got := d.listing(); got != "report.pdf.openlist_to_delete=777, report.pdf=100" {
+			t.Fatalf("left past the cache %v: storage holds [%s], want both files as they were", pastCache, got)
+		}
 	}
 }
