@@ -1913,7 +1913,11 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			progress.Report(i+1, len(pending), name, "正在保存")
 		}
 		var rapidErr error
-		if rapidUploader != nil && seedFileSupportsRapidUpload(rapidUploader, file) {
+		if rapidUploader != nil && fs.IsSeedContainerName(name) {
+			// 种子描述的是种子文件本身（常见于对 .cas 再生成种子），秒传只会再造一个
+			// 同名 .cas；直接说明原因，别再往云端写垃圾对象
+			rapidErr = fmt.Errorf("该种子描述的是种子文件本身（%s），不是它里面的内容；请改用描述目标文件的那个种子", name)
+		} else if rapidUploader != nil && seedFileSupportsRapidUpload(rapidUploader, file) {
 			if rapidReq := buildSeedFileRapidUploadRequest(seed, file, seedContentOpener(seed, file, ctx)); rapidReq != nil {
 				var obj model.Obj
 				obj, rapidErr = rapidUploader.RapidUploadByHashes(ctx, dstDir, rapidReq, req.Overwrite)

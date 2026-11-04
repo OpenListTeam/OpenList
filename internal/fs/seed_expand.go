@@ -28,7 +28,9 @@ var seedContainerExts = map[string]struct{}{
 	".oss": {}, ".torrent": {}, ".cas": {},
 }
 
-func isSeedContainerName(name string) bool {
+// IsSeedContainerName reports whether name is a transfer-seed container
+// (.oss/.torrent/.cas/.cas.torrent) rather than real content.
+func IsSeedContainerName(name string) bool {
 	lower := strings.ToLower(name)
 	if strings.HasSuffix(lower, ".cas.torrent") {
 		return true
@@ -99,7 +101,7 @@ func ExpandSeedSources(ctx context.Context, user *model.User, paths []string, pr
 			}
 			continue
 		}
-		if isSeedContainerName(obj.GetName()) {
+		if IsSeedContainerName(obj.GetName()) {
 			return nil, fmt.Errorf("%s 本身是种子文件，不能再用来生成种子（产物会与源文件同名并覆盖它）；请选择它描述的文件", requestedPath)
 		}
 		raw = append(raw, rawSeedEntry{
@@ -213,7 +215,7 @@ func walkSeedDir(ctx context.Context, user *model.User, requestedDir, fullDir, r
 		}
 		// 目录里常和正片放在一起的 .cas/.oss/.torrent 是种子元数据，
 		// 不是要打包的内容，跳过即可（否则生成的种子包含自己的元数据）
-		if isSeedContainerName(name) {
+		if IsSeedContainerName(name) {
 			continue
 		}
 		*out = append(*out, rawSeedEntry{

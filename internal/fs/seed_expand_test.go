@@ -143,8 +143,8 @@ func TestIsSeedContainerName(t *testing.T) {
 		"a.cast":            false,
 		"cas":               false,
 	} {
-		if got := isSeedContainerName(name); got != want {
-			t.Fatalf("isSeedContainerName(%q) = %v, want %v", name, got, want)
+		if got := IsSeedContainerName(name); got != want {
+			t.Fatalf("IsSeedContainerName(%q) = %v, want %v", name, got, want)
 		}
 	}
 }
