@@ -245,9 +245,26 @@ func isSameStorage(src, dstDir string) bool {
 	return false
 }
 
+// ensurePathFree reports whether a rollback may write to name. It only rules
+// out a name that is already taken: a writer claiming the name between this
+// probe and the write is still overwritten, and closing that window needs an
+// atomic no-replace rename the driver interface does not offer. Only a missing
+// object counts as free, so a failed lookup cannot become an overwrite.
+func ensurePathFree(ctx context.Context, name string) error {
+	if _, err := fs.Get(ctx, name, &fs.GetArgs{}); err == nil {
+		return errors.Errorf("rollback target %s is occupied by another object", name)
+	} else if !errs.IsObjectNotFound(err) {
+		return errors.WithMessagef(err, "cannot determine whether %s is free", name)
+	}
+	return nil
+}
+
 func restoreSameStorageMove(ctx context.Context, src, dst, srcDir, dstDir, srcName, dstName string) (bool, error) {
 	if srcDir == dstDir {
 		if _, err := fs.Get(ctx, dst, &fs.GetArgs{}); err == nil {
+			if err := ensurePathFree(ctx, src); err != nil {
+				return false, errors.WithMessagef(err, "keeping %s and %s untouched", src, dst)
+			}
 			if err := fs.Rename(ctx, dst, srcName); err != nil {
 				return false, errors.WithMessagef(err, "failed to rename %s back to %s", dst, srcName)
 			}
@@ -262,10 +279,14 @@ func restoreSameStorageMove(ctx context.Context, src, dst, srcDir, dstDir, srcNa
 	currentDstPath := dst
 	if srcName != dstName {
 		if _, err := fs.Get(ctx, dst, &fs.GetArgs{}); err == nil {
+			intermediate := path.Join(dstDir, srcName)
+			if err := ensurePathFree(ctx, intermediate); err != nil {
+				return false, errors.WithMessagef(err, "keeping %s and %s untouched", intermediate, dst)
+			}
 			if err := fs.Rename(ctx, dst, srcName); err != nil {
 				return false, errors.WithMessagef(err, "failed to rename %s to %s in %s", dst, srcName, dstDir)
 			}
-			currentDstPath = path.Join(dstDir, srcName)
+			currentDstPath = intermediate
 		} else {
 			intermediate := path.Join(dstDir, srcName)
 			if _, err := fs.Get(ctx, intermediate, &fs.GetArgs{}); err == nil {
@@ -275,6 +296,9 @@ func restoreSameStorageMove(ctx context.Context, src, dst, srcDir, dstDir, srcNa
 	}
 
 	if _, err := fs.Get(ctx, currentDstPath, &fs.GetArgs{}); err == nil {
+		if err := ensurePathFree(ctx, src); err != nil {
+			return false, errors.WithMessagef(err, "keeping %s and %s untouched", src, currentDstPath)
+		}
 		if _, err := fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), currentDstPath, srcDir); err != nil {
 			return false, errors.WithMessagef(err, "failed to move %s back to %s", currentDstPath, srcDir)
 		}
@@ -316,11 +340,9 @@ func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, ds
 	}
 	mutation := moveMutation(ctx, src, dst, srcDir, dstDir, srcName, dstName, srcBackup, dstBackup)
 	if err := moveResource(ctx, src, dstDir, srcDir, srcName, dstName, func() { mutation.moved = true }); err != nil {
-		if sameStorage && !mutation.moved {
-			if _, getErr := fs.Get(context.WithoutCancel(ctx), src, &fs.GetArgs{}); getErr == nil {
-				removeIfExists(context.WithoutCancel(ctx), dst)
-			}
-		}
+		// The destination may have been claimed by another writer after the
+		// existence check, so a surviving source does not prove that anything
+		// at dst belongs to this MOVE. Leave it alone rather than delete it.
 		return mutation, err
 	}
 	mutation.moved = true
