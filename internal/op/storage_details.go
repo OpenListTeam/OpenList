@@ -30,10 +30,11 @@ type detailsState struct {
 	failed     bool
 }
 
-// A task owns the mount's slot until GetDetails actually exits, including
-// after its context expires. Its result is immutable once done is closed.
+// A task owns the mount's slot until GetDetails actually exits or a lifecycle
+// change invalidates the mount. Its result is immutable once done is closed.
 type detailsTask struct {
 	ctx        context.Context
+	cancel     context.CancelFunc
 	done       chan struct{}
 	storage    driver.Driver
 	key        string
@@ -51,6 +52,10 @@ var (
 )
 
 func invalidateStorageDetailsLocked(key string) {
+	if task := detailsTasks[key]; task != nil {
+		task.cancel()
+		delete(detailsTasks, key)
+	}
 	delete(detailsStates, key)
 	Cache.detailCache.Delete(key)
 }
@@ -152,10 +157,11 @@ func prepareStorageDetails(ctx context.Context, storage driver.Driver, refresh b
 		}
 	}
 	if task := detailsTasks[key]; task != nil {
-		if !task.validLocked() {
-			return nil, nil, errs.StorageNotInit
+		if task.validLocked() {
+			return task, nil, nil
 		}
-		return task, nil, nil
+		task.cancel()
+		delete(detailsTasks, key)
 	}
 	if !refresh && cache && state != nil && state.failed {
 		return nil, nil, errs.StorageNotInit
@@ -167,11 +173,11 @@ func prepareStorageDetails(ctx context.Context, storage driver.Driver, refresh b
 	}
 	taskCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	task := &detailsTask{
-		ctx: taskCtx, done: make(chan struct{}), storage: storage,
+		ctx: taskCtx, cancel: cancel, done: make(chan struct{}), storage: storage,
 		key: key, generation: state.generation,
 	}
 	detailsTasks[key] = task
-	go task.run(wd, cancel, cache, ttl)
+	go task.run(wd, cache, ttl)
 	return task, nil, nil
 }
 
@@ -182,8 +188,8 @@ func (task *detailsTask) validLocked() bool {
 	return state != nil && state.generation == task.generation && ok && registered == task.storage
 }
 
-func (task *detailsTask) run(wd driver.WithDetails, cancel context.CancelFunc, cache bool, ttl time.Duration) {
-	defer cancel()
+func (task *detailsTask) run(wd driver.WithDetails, cache bool, ttl time.Duration) {
+	defer task.cancel()
 	ret, err := callStorageDetails(task.ctx, wd, task.key)
 	detailsLock.Lock()
 	defer detailsLock.Unlock()

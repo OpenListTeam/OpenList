@@ -286,8 +286,12 @@ func TestStorageDetailsStaleProbeIsDiscardedAfterChange(t *testing.T) {
 	d := newDetailsDriver(t, 1000)
 	started, release := d.block(1000)
 	defer release()
+	oldTask, _, err := prepareStorageDetails(context.Background(), d, false, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
 	old := make(chan *model.StorageDetails, 1)
-	go func() { v, _ := GetStorageDetails(context.Background(), d); old <- v }()
+	go func() { v, _ := oldTask.wait(context.Background()); old <- v }()
 	waitStarted(t, started)
 
 	end := beginStorageDetailsChange(d.MountPath)
@@ -296,13 +300,11 @@ func TestStorageDetailsStaleProbeIsDiscardedAfterChange(t *testing.T) {
 	}
 	d.setTotal(2000) // the "reinitialized" driver
 	end()
-	if _, err := GetStorageDetails(context.Background(), d, true); !errors.Is(err, errs.StorageNotInit) {
-		t.Fatalf("old actual call must keep its slot through a lifecycle change: %v", err)
-	}
-	if d.calls.Load() != 1 {
-		t.Fatal("lifecycle change started an overlapping call")
-	}
+	// Even while the stale probe from the previous generation remains blocked,
+	// the reinitialized mount can start a new probe in the new generation.
+	mustTotal(t, d, false, 2000)
 	release()
+	waitStarted(t, oldTask.done)
 	if val := <-old; val != nil {
 		t.Fatalf("stale result returned: %+v", val)
 	}
@@ -731,8 +733,12 @@ func TestStorageDetailsLifecycle(t *testing.T) {
 			mustTotal(t, d, false, 1000)
 			started, release := d.block(1000)
 			defer release()
+			oldTask, _, err := prepareStorageDetails(context.Background(), d, true, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
 			old := make(chan struct{})
-			go func() { defer close(old); _, _ = GetStorageDetails(context.Background(), d, true) }()
+			go func() { defer close(old); _, _ = oldTask.wait(context.Background()) }()
 			waitStarted(t, started)
 
 			updated := d.Storage
@@ -743,7 +749,9 @@ func TestStorageDetailsLifecycle(t *testing.T) {
 			if err := UpdateStorage(context.Background(), updated); err != nil {
 				t.Fatal(err)
 			}
+			mustTotal(t, d, false, 2000)
 			release()
+			waitStarted(t, oldTask.done)
 			<-old
 			mustTotal(t, d, false, 2000)
 			if rename {
@@ -787,18 +795,19 @@ func TestStorageDetailsLifecycle(t *testing.T) {
 			replacement := &detailsDriver{Storage: d.Storage}
 			replacement.setTotal(2000)
 			storagesMap.Store(d.MountPath, replacement)
-			if _, err := GetStorageDetails(context.Background(), replacement); !errors.Is(err, errs.StorageNotInit) {
-				t.Fatalf("replacement overlapped a retired actual call: %v", err)
-			}
+			// While the old driver's GetDetails remains blocked, a replacement
+			// driver mounted at the same path must be able to probe and cache
+			// its own capacity independently.
+			mustTotal(t, replacement, false, 2000)
 			release()
 			waitStarted(t, task.done)
 			if val, _ := task.wait(context.Background()); val != nil {
 				t.Fatal("removed driver's result escaped")
 			}
-			if _, exists := Cache.detailCache.Get(d.MountPath); exists {
-				t.Fatal("removed driver's result was cached")
-			}
 			mustTotal(t, replacement, false, 2000)
+			if replacement.calls.Load() != 1 {
+				t.Fatalf("retired task overwrote replacement cache; calls=%d", replacement.calls.Load())
+			}
 		})
 	}
 }
