@@ -55,28 +55,34 @@ const (
 	DefaultMaxSeedFiles = 100000
 )
 
-// CASSliceSize 返回天翼云(189)对给定文件大小使用的分片大小。
+// CASSliceSize 返回天翼云(189)上传时对该文件大小使用的分片大小。
 //
-// 天翼的分片大小由文件大小唯一决定，与调用方配置无关：10MiB / 20MiB，
-// 更大的文件按 1999 片上限向上取 10MiB 的整数倍（至少 5 倍）。
-// 因此「可配置分片大小」对 CAS 没有意义，seed.PieceSize 不该决定 CAS 切法。
-func CASSliceSize(fileSize int64) int64 {
-	if fileSize > DefaultPieceSize*2*999 {
-		ratio := math.Max(math.Ceil(float64(fileSize)/1999/float64(DefaultPieceSize)), 5)
-		return int64(ratio) * DefaultPieceSize
+// 这正是 189pc 上传链路（drivers/189pc/help.go 的 partSize）的逐字实现：
+// 分片大小只由文件大小决定，10MiB / 20MiB，更大的文件按 1999 片上限向上取
+// 10MiB 的整数倍（至少 5 倍）。上传、秒传、种子生成三处必须使用同一个值，
+// 否则计算出的 sliceMd5 与云端存储的摘要对不上。
+func CASSliceSize(size int64) int64 {
+	const DEFAULT = 1024 * 1024 * 10 // 10MiB
+	if size > DEFAULT*2*999 {
+		return int64(math.Max(math.Ceil((float64(size)/1999)/float64(DEFAULT)), 5) * DEFAULT)
 	}
-	if fileSize > DefaultPieceSize*999 {
-		return DefaultPieceSize * 2
+	if size > DEFAULT*999 {
+		return DEFAULT * 2 // 20MiB
 	}
-	return DefaultPieceSize
+	return DEFAULT
 }
 
-// expectedCASPartCount 返回按给定分片大小切分后的分片数。
+// expectedCASPartCount 返回 189 上传循环对该文件切出的分片数：
+// size <= sliceSize 时只有 1 片，其余为 ceil(size/sliceSize)
+// （与 drivers/189pc fastUpload 的 count 计算完全一致）。
 func expectedCASPartCount(fileSize, sliceSize int64) int64 {
 	if fileSize <= 0 || sliceSize <= 0 {
 		return 0
 	}
-	return (fileSize-1)/sliceSize + 1
+	if fileSize <= sliceSize {
+		return 1
+	}
+	return (fileSize + sliceSize - 1) / sliceSize
 }
 
 // CASPartCount 返回按天翼规则（CASSliceSize）切分后的分片数。

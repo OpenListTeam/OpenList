@@ -3,29 +3,55 @@ package torrent
 import (
 	"encoding/base64"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 )
 
-// TestCASSliceSizeMatches189Rule 天翼的分片大小只由文件大小决定：
-// 10MiB / 20MiB，更大的文件按 1999 片上限向上取 10MiB 的整数倍（至少 5 倍）。
-// 用户配置的 piece size 不参与这个判断。
-func TestCASSliceSizeMatches189Rule(t *testing.T) {
-	cases := []struct{ size, want int64 }{
-		{0, DefaultPieceSize},
-		{1, DefaultPieceSize},
-		{DefaultPieceSize, DefaultPieceSize},
-		{DefaultPieceSize*999 + 1, DefaultPieceSize * 2},
-		{DefaultPieceSize * 2 * 999, DefaultPieceSize * 2},
-		{DefaultPieceSize*2*999 + 1, DefaultPieceSize * 5},
+// test189PartSize 是 drivers/189pc 上传链路 partSize 的逐字副本，只用于对照，
+// 保证 CAS 的分片大小与 189 实际使用的分片大小完全一致（不允许有第二种解释）。
+func test189PartSize(size int64) int64 {
+	const DEFAULT = 1024 * 1024 * 10 // 10MiB
+	if size > DEFAULT*2*999 {
+		return int64(math.Max(math.Ceil((float64(size)/1999)/float64(DEFAULT)), 5) * DEFAULT)
 	}
-	for _, c := range cases {
-		if got := CASSliceSize(c.size); got != c.want {
-			t.Fatalf("CASSliceSize(%d) = %d, want %d", c.size, got, c.want)
+	if size > DEFAULT*999 {
+		return DEFAULT * 2 // 20MiB
+	}
+	return DEFAULT
+}
+
+// TestCASSliceSizeMatches189UploadRule 分片大小必须与 189 上传完全一致：
+// 同一份字节在上传时按 partSize 切片，秒传时按 CASSliceSize 提交，
+// 两者只要有一个边界不同，sliceMd5 就对不上云端。
+func TestCASSliceSizeMatches189UploadRule(t *testing.T) {
+	const tenMiB = 10 * 1024 * 1024
+	sizes := []int64{
+		0, 1, tenMiB - 1, tenMiB, tenMiB + 1,
+		tenMiB*999 - 1, tenMiB * 999, tenMiB*999 + 1,
+		tenMiB*2*999 - 1, tenMiB * 2 * 999, tenMiB*2*999 + 1,
+		50 << 30, 100 << 30, 1 << 40, 4 << 40,
+	}
+	for _, size := range sizes {
+		if got, want := CASSliceSize(size), test189PartSize(size); got != want {
+			t.Fatalf("CASSliceSize(%d) = %d, 189 partSize = %d", size, got, want)
 		}
 	}
-	if got := CASPartCount(DefaultPieceSize + 1); got != 2 {
-		t.Fatalf("CASPartCount(10MiB+1) = %d, want 2", got)
+}
+
+// TestCASPartCountMatches189UploadLoop 分片数量与 189 上传循环一致：
+// size <= sliceSize 时只有 1 片，其余为 ceil(size/sliceSize)。
+func TestCASPartCountMatches189UploadLoop(t *testing.T) {
+	const tenMiB = 10 * 1024 * 1024
+	for _, size := range []int64{1, tenMiB - 1, tenMiB, tenMiB + 1, tenMiB*999 + 1, 3 * tenMiB, 100 << 30} {
+		sliceSize := test189PartSize(size)
+		want := int64(1)
+		if size > sliceSize {
+			want = (size + sliceSize - 1) / sliceSize
+		}
+		if got := CASPartCount(size); got != want {
+			t.Fatalf("CASPartCount(%d) = %d, 189 upload loop = %d", size, got, want)
+		}
 	}
 }
 
