@@ -22,6 +22,7 @@ type SMB struct {
 	publishMode  atomic.Int32 // see publishModeFor
 	probeMu      sync.Mutex
 	staging      driver.StagingInUse
+	inPlace      driver.KeyedMutex // uploads of a file written in place take turns
 	model.Storage
 	Addition
 	fs *smb2.Share
@@ -208,6 +209,14 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 		// released after the staging file is renamed or removed
 		release := d.staging.Hold(path.Join(dir, name))
 		defer release()
+	case publishInPlace:
+		// in turn with other uploads of the file, so that what a failed one
+		// removes is all its own
+		unlock, err := d.inPlace.Lock(ctx, fullPath)
+		if err != nil {
+			return err
+		}
+		defer unlock()
 	case publishNewOnly:
 		flag = os.O_RDWR | os.O_CREATE | os.O_EXCL
 	}
@@ -224,8 +233,10 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	d.updateLastConnTime()
 	defer func() {
 		_ = out.Close()
-		// never remove the destination: another upload may own it by now
-		if err != nil && target != fullPath {
+		// remove what this upload wrote: its staging file, never a destination
+		// another upload may own by now, or the file it created, or cut short
+		// to write in place in its turn, which must not pass for the file
+		if err != nil {
 			_ = d.fs.Remove(target)
 		}
 	}()

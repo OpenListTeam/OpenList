@@ -376,3 +376,23 @@ func TestIntegrationListKeepsEntriesNamedLikeStaging(t *testing.T) {
 		}
 	}
 }
+
+// On a server that cannot rename over a file, uploads write the destination in
+// place, which cuts the previous version short as the upload begins. A failed
+// one then leaves no file: the start of the new content must not pass for it.
+func TestIntegrationInPlaceFailedUploadLeavesNoFile(t *testing.T) {
+	d, dir := integrationDriver(t)
+	d.publishMode.Store(publishInPlace)
+	old := []byte("previous version")
+	if err := d.Put(context.Background(), &model.Object{Path: dir}, fileStream("f.bin", bytes.NewReader(old), int64(len(old))), func(float64) {}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	boom := errors.New("client went away")
+	r := &pausingReader{data: bytes.Repeat([]byte("n"), 1<<20), failAt: 64 << 10, failErr: boom}
+	if err := d.Put(context.Background(), &model.Object{Path: dir}, fileStream("f.bin", r, 1<<20), func(float64) {}); !errors.Is(err, boom) {
+		t.Fatalf("overwrite returned %v, want %v", err, boom)
+	}
+	if names := dirEntries(t, d, dir); len(names) != 0 {
+		t.Fatalf("directory holds %v after the failed upload, want nothing", names)
+	}
+}

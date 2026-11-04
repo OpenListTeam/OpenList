@@ -34,9 +34,8 @@ var errCannotReplace = errors.New("the SMB server cannot replace existing files,
 
 // publishModeFor returns how uploads are published. The first upload after
 // Init probes the server in its own directory. A server that cannot rename
-// over an existing file gets in-place writes instead, as before minus any
-// removal on failure; one that cannot overwrite in place either only gets
-// new files.
+// over an existing file gets in-place writes instead, one upload of a file at
+// a time; one that cannot overwrite in place either only gets new files.
 func (d *SMB) publishModeFor(dir string) int32 {
 	if mode := d.publishMode.Load(); mode != publishUnknown {
 		return mode
