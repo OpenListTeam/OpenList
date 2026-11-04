@@ -1,11 +1,15 @@
 package handles
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
@@ -255,6 +259,67 @@ func TestBuildSeedRapidUploadRequestRejectsMultiFile(t *testing.T) {
 func TestBuildSeedRapidUploadRequestHandlesNil(t *testing.T) {
 	if req := buildSeedRapidUploadRequest(nil, nil); req != nil {
 		t.Fatalf("buildSeedRapidUploadRequest(nil) = %#v, want nil", req)
+	}
+}
+
+// TestSeedRapidUploadBlockerRejectsSeedOfSeed 锁住「秒传一个描述自身的种子」这个坑：
+// 从 .cas 再生成 .cas 时载荷里的 name 就是 .cas 本身，秒传只会在目标目录再造一个
+// 同名 .cas，用户看到的就是「秒传没成功，只多了一个 cas 文件」。
+// TestLegacyCASToRapidRequestKeepsVideoName 端到端锁「名字」：五字段 .cas
+// （只带 md5 + sliceMd5）解析出的文件名必须是视频本身，秒传请求也用它，
+// 绝不能变成种子文档的名字。
+func TestLegacyCASToRapidRequestKeepsVideoName(t *testing.T) {
+	const payload = `{"name":"师兄啊师兄.S01E166.2023.2160p.H265.HQ.mp4","size":3047921944,` +
+		`"md5":"8DDEF8D30B87D9421CE1AC41C2A25BA3","sliceMd5":"07954EF61C1F1A512E5ADC3B0352BE07",` +
+		`"create_time":"1793774205"}`
+	seed, err := torrent.DecodeCAS([]byte(payload), torrent.DefaultParseLimits())
+	if err != nil {
+		t.Fatalf("DecodeCAS() error = %v", err)
+	}
+	if len(seed.Files) != 1 {
+		t.Fatalf("file count = %d, want 1", len(seed.Files))
+	}
+	req := buildSeedFileRapidUploadRequest(seed, seed.Files[0], nil)
+	if req == nil {
+		t.Fatal("buildSeedFileRapidUploadRequest() rejected a legacy CAS file")
+	}
+	if req.Name != "师兄啊师兄.S01E166.2023.2160p.H265.HQ.mp4" {
+		t.Fatalf("rapid upload name = %q, want the video name", req.Name)
+	}
+	if req.Size != 3047921944 {
+		t.Fatalf("rapid upload size = %d, want 3047921944", req.Size)
+	}
+	if req.SliceSize != torrent.CASSliceSize(3047921944) {
+		t.Fatalf("rapid upload slice size = %d, want %d", req.SliceSize, torrent.CASSliceSize(3047921944))
+	}
+	if req.SliceMD5 != "07954EF61C1F1A512E5ADC3B0352BE07" {
+		t.Fatalf("rapid upload slice MD5 = %q", req.SliceMD5)
+	}
+	if len(req.SliceMD5s) != 0 {
+		t.Fatalf("legacy CAS must not invent per-slice hashes: %#v", req.SliceMD5s)
+	}
+	if seedFileSupportsRapidUpload(stubRapidUploader{}, seed.Files[0]) != true {
+		t.Fatal("whole-file MD5 alone must be enough to attempt rapid upload")
+	}
+}
+
+// stubRapidUploader 只实现能力探测需要的两个方法。
+type stubRapidUploader struct{}
+
+func (stubRapidUploader) RapidUploadByHashes(context.Context, model.Obj, *driver.SeedRapidUploadRequest, bool) (model.Obj, error) {
+	return nil, errs.NotImplement
+}
+func (stubRapidUploader) RapidHashAlgos() []utils.HashType { return []utils.HashType{*utils.MD5} }
+func (stubRapidUploader) RapidHashNeedsPieces() bool       { return true }
+
+func TestSeedRapidUploadBlockerRejectsSeedOfSeed(t *testing.T) {
+	if got := seedRapidUploadBlocker(torrent.SeedFile{Path: "movies/a.mp4"}); got != "" {
+		t.Fatalf("regular file was blocked from rapid upload: %q", got)
+	}
+	for _, path := range []string{"a.mp4.cas", "dir/a.oss", "a.torrent", "a.cas.torrent"} {
+		if got := seedRapidUploadBlocker(torrent.SeedFile{Path: path}); got == "" {
+			t.Fatalf("%s should be blocked from rapid upload", path)
+		}
 	}
 }
 

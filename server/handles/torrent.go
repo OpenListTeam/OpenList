@@ -165,6 +165,20 @@ func buildSeedFileRapidUploadRequest(seed *torrent.Seed, file torrent.SeedFile, 
 	return req
 }
 
+// seedRapidUploadBlocker returns why rapid upload must be skipped for this seed
+// file ("" means it may be attempted).
+//
+// 种子可以描述任意文件，包括另一个种子容器：拿 .cas 再生成 .cas 时，载荷里的
+// name 就是 .cas 自己。这类种子秒传上去只会在目标目录再造一个同名 .cas，
+// 看起来像「秒传成功但只有一个 cas 文件」，所以先拦下来。
+func seedRapidUploadBlocker(file torrent.SeedFile) string {
+	name := stdpath.Base(file.Path)
+	if !fs.IsSeedContainerName(name) {
+		return ""
+	}
+	return fmt.Sprintf("该种子描述的是种子文件本身（%s），不是它里面的内容；请改用描述目标文件的那个种子", name)
+}
+
 // seedFileSupportsRapidUpload reports whether a seed file carries enough hash
 // metadata for the given rapid-upload driver to attempt an instant upload.
 func seedFileSupportsRapidUpload(uploader driver.SeedRapidUploader, file torrent.SeedFile) bool {
@@ -1913,17 +1927,17 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			progress.Report(i+1, len(pending), name, "正在保存")
 		}
 		var rapidErr error
-		if rapidUploader != nil && fs.IsSeedContainerName(name) {
-			// 种子描述的是种子文件本身（常见于对 .cas 再生成种子），秒传只会再造一个
-			// 同名 .cas；直接说明原因，别再往云端写垃圾对象
-			rapidErr = fmt.Errorf("该种子描述的是种子文件本身（%s），不是它里面的内容；请改用描述目标文件的那个种子", name)
-		} else if rapidUploader != nil && seedFileSupportsRapidUpload(rapidUploader, file) {
-			if rapidReq := buildSeedFileRapidUploadRequest(seed, file, seedContentOpener(seed, file, ctx)); rapidReq != nil {
-				var obj model.Obj
-				obj, rapidErr = rapidUploader.RapidUploadByHashes(ctx, dstDir, rapidReq, req.Overwrite)
-				if rapidErr == nil {
-					results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
-					continue
+		if rapidUploader != nil {
+			if blocker := seedRapidUploadBlocker(file); blocker != "" {
+				rapidErr = errors.New(blocker)
+			} else if seedFileSupportsRapidUpload(rapidUploader, file) {
+				if rapidReq := buildSeedFileRapidUploadRequest(seed, file, seedContentOpener(seed, file, ctx)); rapidReq != nil {
+					var obj model.Obj
+					obj, rapidErr = rapidUploader.RapidUploadByHashes(ctx, dstDir, rapidReq, req.Overwrite)
+					if rapidErr == nil {
+						results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
+						continue
+					}
 				}
 			}
 		}
