@@ -1166,6 +1166,54 @@ func TestChunkRejectsNegativeIndex(t *testing.T) {
 	sendChunk(t, m, user, snap.ID, genData(2048), 0, 1024)
 }
 
+// A refilled chunk whose content changed is refused before the driver can read
+// it: storage that finishes on those bytes would otherwise keep the wrong file,
+// and its success would be reported over the refusal.
+func TestRefillWithChangedChunkNeverReachesStorage(t *testing.T) {
+	m := setupSessionTest(t)
+	const chunkSize = 1024
+	totalSize := int64(chunkSize)
+	data := genData(totalSize)
+	changed := bytes.Repeat([]byte{'x'}, chunkSize)
+	user := testUser()
+
+	var attempt atomic.Int32
+	stored := make(chan []byte, 1)
+	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		if attempt.Add(1) == 1 {
+			if _, err := io.ReadFull(fs, make([]byte, chunkSize)); err != nil {
+				return err
+			}
+			return errors.New("transient storage hiccup")
+		}
+		b, err := io.ReadAll(fs)
+		stored <- b
+		return err
+	})
+	snap, _, err := m.Init(initReq(user, totalSize, chunkSize))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	sendChunk(t, m, user, snap.ID, data, 0, chunkSize)
+	waitState(t, m, user, snap.ID, StateFailedRetriable)
+
+	if _, err := m.Chunk(user, snap.ID, 0, bytes.NewReader(changed)); err == nil {
+		t.Fatal("a changed chunk was accepted")
+	}
+	select {
+	case b := <-stored:
+		if len(b) != 0 {
+			t.Fatalf("%d bytes of the changed chunk reached storage", len(b))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refill attempt never ended")
+	}
+	if got, err := m.Complete(context.Background(), user, snap.ID); err == nil || got.State == StateCompleted {
+		t.Fatalf("Complete = %s, %v; want the upload refused", got.State, err)
+	}
+}
+
 // One upload writes a destination at a time, whatever its size or user: an init
 // that does not resume supersedes every other session for the same path, and
 // starts only once their attempts let go of the destination. Otherwise a
@@ -1224,6 +1272,62 @@ func TestOneUploadPerDestination(t *testing.T) {
 			log.waitFor(t, "start#2")
 			if events, peak := log.snapshot(); peak != 1 {
 				t.Fatalf("events = %v: %d attempts wrote the destination at once", events, peak)
+			}
+		})
+	}
+}
+
+// A failed session hands its hashes to the next attempt, and a driver may
+// finish from those alone (rapid upload) without reading a byte, so only an
+// init describing the file with the same hashes resumes it.
+func TestFailedSessionResumesOnlyForTheSameHashes(t *testing.T) {
+	const hashA = "0123456789abcdef0123456789abcdef"
+	const hashB = "fedcba9876543210fedcba9876543210"
+	cases := []struct {
+		name   string
+		hashes map[*utils.HashType]string
+		resume bool
+	}{
+		{"same hashes", map[*utils.HashType]string{utils.MD5: hashA}, true},
+		{"other hashes", map[*utils.HashType]string{utils.MD5: hashB}, false},
+		{"no hashes", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := setupSessionTest(t)
+			user := testUser()
+			var attempts atomic.Int32
+			got := make(chan string, 1)
+			stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+				defer fs.Close()
+				if attempts.Add(1) == 1 {
+					return errors.New("transient storage failure")
+				}
+				got <- fs.GetHash().GetHash(utils.MD5)
+				return nil
+			})
+			req := initReq(user, 4, 4)
+			req.Hashes = map[*utils.HashType]string{utils.MD5: hashA}
+			first, _, err := m.Init(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitState(t, m, user, first.ID, StateFailedRetriable)
+			req.Hashes = tc.hashes
+			again, resumed, err := m.Init(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resumed != tc.resume || (again.ID == first.ID) != tc.resume {
+				t.Fatalf("re-Init resumed=%v (same session %v), want %v", resumed, again.ID == first.ID, tc.resume)
+			}
+			if resumed {
+				if _, err := m.Chunk(user, again.ID, 0, bytes.NewReader([]byte("aaaa"))); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if h, want := <-got, tc.hashes[utils.MD5]; h != want {
+				t.Fatalf("storage got md5 %q, want the one this init sent %q", h, want)
 			}
 		})
 	}

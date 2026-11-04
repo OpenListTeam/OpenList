@@ -257,6 +257,19 @@ func hashesQualifyResume(old, new map[*utils.HashType]string) bool {
 	return shared
 }
 
+// sameHashes reports whether both inits sent exactly the same hashes.
+func sameHashes(a, b map[*utils.HashType]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for t, av := range a {
+		if bv, ok := b[t]; !ok || bv != av {
+			return false
+		}
+	}
+	return true
+}
+
 // StartGC sweeps ring files orphaned by a previous run and starts the expiry
 // loop. It is called at server startup so orphans are reclaimed even if no
 // multipart upload ever happens again; Init also calls it, so embedders that
@@ -438,11 +451,14 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 			s.mu.Lock()
 			st := s.state
 			s.mu.Unlock()
-			// failed_retriable resumes unconditionally: nothing of the old
-			// attempt survives except CRCs, and the re-fill CRC check catches
-			// a changed file. A receiving session still holds data, so it only
-			// resumes when hashes prove it is the same file.
-			if st == StateFailedRetriable ||
+			// failed_retriable needs no proof: nothing of the old attempt
+			// survives except CRCs, and the re-fill CRC check catches a changed
+			// file. But the next attempt hands storage the session's hashes,
+			// and a driver may finish from those alone (rapid upload), so the
+			// init must describe the file with the same ones. A receiving
+			// session still holds data, so it only resumes when hashes prove
+			// it is the same file.
+			if (st == StateFailedRetriable && sameHashes(s.Hashes, req.Hashes)) ||
 				(st == StateReceiving && hashesQualifyResume(s.Hashes, req.Hashes)) {
 				m.mu.Unlock()
 				s.touch()
@@ -548,6 +564,8 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	if err != nil {
 		return err
 	}
+	// a refill must resend what the failed attempt received, unchanged
+	win.ExpectCRCs(s.prevCRCs, s.prevSet)
 	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), conf.UserKey, s.Creator))
 	done := make(chan struct{})
 	s.win = win
@@ -603,8 +621,14 @@ func (s *Session) finishAttempt(win *Window, err error) {
 	if s.win == win {
 		s.win = nil
 	}
-	s.prevCRCs, s.prevSet = crcs, set
+	s.prevCRCs, s.prevSet = mergeCRCs(s.prevCRCs, s.prevSet, crcs, set)
 	switch {
+	case s.state == StateFailedPermanent:
+		// a chunk failed validation: whatever the driver made of the stream,
+		// it is not the client's file
+		if s.err == nil {
+			s.err = err
+		}
 	case err == nil:
 		s.state = StateCompleted
 		s.err = nil
@@ -628,6 +652,25 @@ func (s *Session) finishAttempt(win *Window, err error) {
 		s.err = err
 		s.attempt++
 	}
+}
+
+// mergeCRCs adds the checksums an attempt recorded to those of earlier
+// attempts: every chunk any of them received keeps guarding a refill, also
+// when a later attempt failed before getting that far.
+func mergeCRCs(crcs []uint32, set []bool, add []uint32, addSet []bool) ([]uint32, []bool) {
+	if len(set) < len(addSet) {
+		grownSet := make([]bool, len(addSet))
+		copy(grownSet, set)
+		grown := make([]uint32, len(addSet))
+		copy(grown, crcs)
+		crcs, set = grown, grownSet
+	}
+	for i, ok := range addSet {
+		if ok {
+			crcs[i], set[i] = add[i], true
+		}
+	}
+	return crcs, set
 }
 
 func isPermanentPutError(err error) bool {
@@ -686,14 +729,18 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 		return snap, fmt.Errorf("session is %s: %w", s.state, s.err)
 	}
 	win := s.win
-	var prevCRC uint32
-	hasPrev := false
-	if idx < len(s.prevSet) && s.prevSet[idx] {
-		prevCRC, hasPrev = s.prevCRCs[idx], true
-	}
 	s.mu.Unlock()
 
-	crc, err := win.WriteChunk(idx, body)
+	_, err = win.WriteChunk(idx, body)
+	if errors.Is(err, ErrChunkChanged) {
+		err := fmt.Errorf("chunk %d content changed between attempts, aborting", idx)
+		s.mu.Lock()
+		s.state = StateFailedPermanent
+		s.err = err
+		s.killAttemptLocked()
+		s.mu.Unlock()
+		return s.Snapshot(), err
+	}
 	if err != nil {
 		// A closed window means the pipeline ended while this chunk was in
 		// flight — rapid upload makes this the NORMAL case: the driver
@@ -722,15 +769,6 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 			return snap, fmt.Errorf("upload failed (%s): %w", st, cause)
 		}
 		return snap, err
-	}
-	if hasPrev && crc != prevCRC {
-		err := fmt.Errorf("chunk %d content changed between attempts, aborting", idx)
-		s.mu.Lock()
-		s.state = StateFailedPermanent
-		s.err = err
-		s.killAttemptLocked()
-		s.mu.Unlock()
-		return s.Snapshot(), err
 	}
 	return s.Snapshot(), nil
 }

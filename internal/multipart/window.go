@@ -30,6 +30,9 @@ var (
 	// frontier after waiting WindowWaitTimeout; the client should back off and
 	// resend it later (flow control, not a failure).
 	ErrOutOfWindow = errors.New("chunk is out of the receiving window")
+	// ErrChunkChanged means a chunk differs from what an earlier attempt
+	// received for the same index; the reader never saw it.
+	ErrChunkChanged = errors.New("chunk content changed between attempts")
 	// ErrTooManyChunks refuses a declared size with more chunks than a chunk
 	// index can number.
 	ErrTooManyChunks = errors.New("file has more chunks than an upload can number")
@@ -68,6 +71,9 @@ type Window struct {
 
 	crcs   []uint32
 	crcSet []bool
+	// checksums an earlier attempt recorded, see ExpectCRCs
+	expect    []uint32
+	expectSet []bool
 
 	err error
 
@@ -263,15 +269,31 @@ func (w *Window) WriteChunk(idx int, r io.Reader) (uint32, error) {
 		w.slotChunk[slot] = -1
 		return 0, err
 	}
+	sum := h.Sum32()
+	if idx < len(w.expectSet) && w.expectSet[idx] && sum != w.expect[idx] {
+		// never hand a changed chunk to the reader: storage that finished on
+		// it would keep a file that is neither the old nor the new one
+		w.slotState[slot] = slotFree
+		w.slotChunk[slot] = -1
+		w.cond.Broadcast()
+		return sum, fmt.Errorf("chunk %d: %w", idx, ErrChunkChanged)
+	}
 	w.slotState[slot] = slotReady
 	if grow := idx + 1 - len(w.crcs); grow > 0 {
 		w.crcs = append(w.crcs, make([]uint32, grow)...)
 		w.crcSet = append(w.crcSet, make([]bool, grow)...)
 	}
-	w.crcs[idx] = h.Sum32()
+	w.crcs[idx] = sum
 	w.crcSet[idx] = true
 	w.cond.Broadcast()
-	return w.crcs[idx], nil
+	return sum, nil
+}
+
+// ExpectCRCs makes WriteChunk refuse a chunk whose checksum differs from the
+// one an earlier attempt recorded for it, before the reader can see it. Call
+// it before the window is shared.
+func (w *Window) ExpectCRCs(crcs []uint32, set []bool) {
+	w.expect, w.expectSet = crcs, set
 }
 
 // Read serves the reassembled stream in order, blocking until the next chunk
