@@ -105,6 +105,7 @@ type Session struct {
 	attempt  int
 	win      *Window
 	done     chan struct{}
+	end      *attemptEnd // how the attempt behind done ended, once it did
 	cancel   context.CancelFunc
 	prevCRCs []uint32
 	prevSet  []bool
@@ -114,6 +115,14 @@ type Session struct {
 
 	storagePct atomic.Uint64 // math.Float64bits of the driver progress (0-100)
 	lastActive atomic.Int64  // unix nano
+}
+
+// attemptEnd records how one pipeline attempt ended. finishAttempt fills it
+// in before the attempt's done channel closes; a chunk sent to that attempt
+// reports it even when a later attempt has started meanwhile.
+type attemptEnd struct {
+	state State
+	err   error
 }
 
 func (s *Session) touch() { s.lastActive.Store(time.Now().UnixNano()) }
@@ -591,6 +600,7 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	s.win = win
 	s.cancel = cancel
 	s.done = done
+	s.end = &attemptEnd{}
 	s.state = StateReceiving
 	s.err = nil
 	s.released = nil
@@ -672,6 +682,10 @@ func (s *Session) finishAttempt(win *Window, err error) {
 		s.err = err
 		s.attempt++
 	}
+	// no other attempt starts before this one is recorded as ended
+	if s.end != nil {
+		s.end.state, s.end.err = s.state, s.err
+	}
 }
 
 // mergeCRCs adds the checksums an attempt recorded to those of earlier
@@ -730,9 +744,9 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 	case StateReceiving:
 	case StateFailedRetriable:
 		if idx != 0 {
-			snap := s.snapshotLocked()
+			snap, cause := s.snapshotLocked(), s.err
 			s.mu.Unlock()
-			return snap, fmt.Errorf("upload attempt failed, resend from chunk 0 to retry: %w", s.err)
+			return snap, fmt.Errorf("upload attempt failed, resend from chunk 0 to retry: %w", cause)
 		}
 		if err := m.startAttemptLocked(s); err != nil {
 			snap := s.snapshotLocked()
@@ -744,11 +758,11 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 		s.mu.Unlock()
 		return snap, nil // idempotent: stragglers after rapid-upload/finish succeed
 	default:
-		snap := s.snapshotLocked()
+		snap, st, cause := s.snapshotLocked(), s.state, s.err
 		s.mu.Unlock()
-		return snap, fmt.Errorf("session is %s: %w", s.state, s.err)
+		return snap, fmt.Errorf("session is %s: %w", st, cause)
 	}
-	win := s.win
+	win, done, end := s.win, s.done, s.end
 	s.mu.Unlock()
 
 	_, err = win.WriteChunk(idx, touchingReader{body, s})
@@ -769,16 +783,18 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 		// wait for the verdict instead of racing it, then absorb the chunk
 		// idempotently if the upload in fact succeeded.
 		if errors.Is(err, ErrClosed) || errors.Is(err, context.Canceled) {
-			s.mu.Lock()
-			done := s.done
-			s.mu.Unlock()
 			select {
 			case <-done:
 			case <-time.After(10 * time.Second): // pipeline teardown is µs-scale; never expected
 			}
 		}
 		s.mu.Lock()
+		// the verdict of the attempt this chunk was sent to: a later attempt
+		// may have started and ended meanwhile
 		st, cause := s.state, s.err
+		if end != nil && end.state != "" {
+			st, cause = end.state, end.err
+		}
 		snap := s.snapshotLocked()
 		s.mu.Unlock()
 		if st == StateCompleted {
