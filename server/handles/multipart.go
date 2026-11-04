@@ -137,6 +137,9 @@ func multipartInitErrCode(err error) int {
 	if errors.Is(err, multipart.ErrPreviousUploadRunning) {
 		return 409
 	}
+	if errors.Is(err, multipart.ErrTooManyChunks) {
+		return 400
+	}
 	return 500
 }
 

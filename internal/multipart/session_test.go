@@ -1142,6 +1142,30 @@ func TestSupersedeGivesUpWhileTheOldAttemptRuns(t *testing.T) {
 	}
 }
 
+// A negative chunk index is the client's mistake. It must be refused, not
+// panic while the session lock is held: that would wedge the session and,
+// through it, every later init of the same file and the garbage collector.
+func TestChunkRejectsNegativeIndex(t *testing.T) {
+	m := setupSessionTest(t)
+	user := testUser()
+	stubPut(t, readAllPut(nil))
+	snap, _, err := m.Init(initReq(user, 2048, 1024))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Abort(user, snap.ID) })
+	refused := make(chan error, 1)
+	go func() { // a panic here ends the test binary at once
+		_, err := m.Chunk(user, snap.ID, -1, bytes.NewReader(nil))
+		refused <- err
+	}()
+	if err := <-refused; err == nil {
+		t.Fatal("Chunk(-1) succeeded")
+	}
+	// the session still takes chunks
+	sendChunk(t, m, user, snap.ID, genData(2048), 0, 1024)
+}
+
 // One upload writes a destination at a time, whatever its size or user: an init
 // that does not resume supersedes every other session for the same path, and
 // starts only once their attempts let go of the destination. Otherwise a

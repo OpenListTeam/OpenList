@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -29,6 +30,9 @@ var (
 	// frontier after waiting WindowWaitTimeout; the client should back off and
 	// resend it later (flow control, not a failure).
 	ErrOutOfWindow = errors.New("chunk is out of the receiving window")
+	// ErrTooManyChunks refuses a declared size with more chunks than a chunk
+	// index can number.
+	ErrTooManyChunks = errors.New("file has more chunks than an upload can number")
 )
 
 // WindowWaitTimeout bounds how long WriteChunk blocks waiting for its slot.
@@ -90,6 +94,11 @@ func NewWindow(dir, id string, chunkSize, totalSize int64, slots int) (*Window, 
 	if chunkSize <= 0 || totalSize <= 0 || slots <= 0 {
 		return nil, fmt.Errorf("invalid window params: chunkSize=%d totalSize=%d slots=%d", chunkSize, totalSize, slots)
 	}
+	// counted before anything is created for it
+	total, err := chunkCount(totalSize, chunkSize)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -98,7 +107,6 @@ func NewWindow(dir, id string, chunkSize, totalSize int64, slots int) (*Window, 
 	if err != nil {
 		return nil, err
 	}
-	total := int((totalSize + chunkSize - 1) / chunkSize)
 	w := &Window{
 		f:         f,
 		path:      path,
@@ -108,14 +116,27 @@ func NewWindow(dir, id string, chunkSize, totalSize int64, slots int) (*Window, 
 		slots:     slots,
 		slotState: make([]uint8, slots),
 		slotChunk: make([]int, slots),
-		crcs:      make([]uint32, total),
-		crcSet:    make([]bool, total),
+		// crcs and crcSet grow as chunks arrive: the declared size alone
+		// must not allocate anything per chunk
 	}
 	for i := range w.slotChunk {
 		w.slotChunk[i] = -1
 	}
 	w.cond = sync.NewCond(&w.mu)
 	return w, nil
+}
+
+// chunkCount is the number of chunks of chunkSize that totalSize bytes take,
+// counted without overflowing. More than a chunk index can number are refused.
+func chunkCount(totalSize, chunkSize int64) (int, error) {
+	n := totalSize / chunkSize
+	if totalSize%chunkSize != 0 {
+		n++
+	}
+	if n > math.MaxInt32 {
+		return 0, fmt.Errorf("%d bytes in chunks of %d: %w", totalSize, chunkSize, ErrTooManyChunks)
+	}
+	return int(n), nil
 }
 
 func (w *Window) TotalChunks() int { return w.total }
@@ -243,6 +264,10 @@ func (w *Window) WriteChunk(idx int, r io.Reader) (uint32, error) {
 		return 0, err
 	}
 	w.slotState[slot] = slotReady
+	if grow := idx + 1 - len(w.crcs); grow > 0 {
+		w.crcs = append(w.crcs, make([]uint32, grow)...)
+		w.crcSet = append(w.crcSet, make([]bool, grow)...)
+	}
 	w.crcs[idx] = h.Sum32()
 	w.crcSet[idx] = true
 	w.cond.Broadcast()
@@ -419,8 +444,9 @@ func (w *Window) Snapshot() Snapshot {
 }
 
 // CRCs returns a copy of the per-chunk CRC32 table and which entries are set.
-// It remains readable after Close, so the session can compare re-filled chunks
-// against a previous attempt.
+// The table ends after the last chunk received; any chunk past its end was
+// never received. It remains readable after Close, so the session can compare
+// re-filled chunks against a previous attempt.
 func (w *Window) CRCs() ([]uint32, []bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

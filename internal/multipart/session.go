@@ -416,6 +416,10 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 	if req.ChunkSize <= 0 {
 		return SessionSnapshot{}, false, fmt.Errorf("invalid chunk size %d", req.ChunkSize)
 	}
+	// refused before any upload of the path makes way for it
+	if _, err := chunkCount(req.Size, req.ChunkSize); err != nil {
+		return SessionSnapshot{}, false, err
+	}
 	key := sessionKey(req.User.ID, req.Path, req.Size)
 
 	// waiting for another init of the same destination and for old attempts to
@@ -651,6 +655,10 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 	s, err := m.get(user, id)
 	if err != nil {
 		return SessionSnapshot{}, err
+	}
+	if idx < 0 {
+		// refused before anything is looked up by it under the session lock
+		return s.Snapshot(), fmt.Errorf("chunk index %d out of range", idx)
 	}
 	s.touch()
 
