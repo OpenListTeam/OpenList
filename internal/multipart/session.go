@@ -630,8 +630,11 @@ func (m *Manager) Complete(ctx context.Context, user *model.User, id string) (Se
 		s.mu.Lock()
 		st := s.state
 		done := s.done
+		// a closed window holds no chunks any more: its attempt is ending,
+		// so wait for the verdict instead of counting. Count first: a window
+		// still open after the count was open during it
 		if st == StateReceiving && s.win != nil {
-			if ws := s.win.Snapshot(); ws.ReceivedBytes < s.Size {
+			if ws := s.win.Snapshot(); ws.ReceivedBytes < s.Size && !s.win.Closed() {
 				snap := s.snapshotLocked()
 				s.mu.Unlock()
 				return snap, fmt.Errorf("cannot complete: %d of %d bytes received", ws.ReceivedBytes, s.Size)

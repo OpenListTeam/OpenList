@@ -380,6 +380,14 @@ func (w *Window) CloseWithError(sticky error) error {
 	return err
 }
 
+// Closed reports whether the window stopped taking chunks: its upload attempt
+// is over or being torn down.
+func (w *Window) Closed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.err != nil
+}
+
 // Snapshot reports the receiving state for status responses and resume discovery.
 func (w *Window) Snapshot() Snapshot {
 	w.mu.Lock()
