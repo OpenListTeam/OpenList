@@ -83,7 +83,7 @@ func wrapRapidUploadError(err error) error {
 
 func wrapDayFlowOverLimit(err error) error {
 	return errs.NewErr(errs.DailyFlowLimitExceeded,
-		"天翼云盘账号当日上传流量已用尽，需等次日重置或更换账号/开通会员（%v）", err)
+		"the 189 account has used up its daily upload flow; retry after the daily reset or switch account/membership (%v)", err)
 }
 
 // isDayFlowOverLimited reports whether the drive refused the request because the

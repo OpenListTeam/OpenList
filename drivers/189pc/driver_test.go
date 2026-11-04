@@ -58,7 +58,7 @@ func TestCASSliceDigestPrefersFinalDigest(t *testing.T) {
 // 只能按错误码文本识别；识别不出来就只能在批量秒传里逐个文件重复失败。
 func TestIsDayFlowOverLimited(t *testing.T) {
 	quota := &RespErr{Code: "UserDayFlowOverLimited", Msg: "sessionKey=abc,data flow is out"}
-	if !isDayFlowOverLimited(fmt.Errorf("initMultiUpload 失败: %w", quota)) {
+	if !isDayFlowOverLimited(fmt.Errorf("initMultiUpload failed: %w", quota)) {
 		t.Fatal("UserDayFlowOverLimited was not recognized through the error chain")
 	}
 	if isDayFlowOverLimited(&RespErr{Code: "InvalidSessionKey"}) {

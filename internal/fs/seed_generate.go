@@ -456,7 +456,7 @@ func buildSeedGroup(
 			return nil, nil, err
 		}
 		if params.OnStage != nil {
-			params.OnStage(fmt.Sprintf("正在计算哈希 %d/%d: %s", index+1, len(entries), stdpath.Base(entry.SeedPath)))
+			params.OnStage(fmt.Sprintf("hashing %d/%d: %s", index+1, len(entries), stdpath.Base(entry.SeedPath)))
 		}
 		requestedPath := entry.Requested
 		fullPath := entry.FullPath
@@ -556,7 +556,7 @@ func buildSeedGroup(
 	// 哈希读完，先把进度推到位，再进入编码阶段
 	progress.reportNow()
 	if params.OnStage != nil {
-		params.OnStage("正在生成种子文件")
+		params.OnStage("generating seed files")
 	}
 	createdShares := make([]string, 0, len(seed.Files))
 	keepCreatedShares := false
@@ -750,7 +750,7 @@ func (t *SeedGenerateTask) Run() error {
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	t.SetProgress(0)
-	t.setStatus("正在准备")
+	t.setStatus("preparing")
 	defer func() { t.SetEndTime(time.Now()) }()
 
 	params := t.params

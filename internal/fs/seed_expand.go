@@ -102,7 +102,7 @@ func ExpandSeedSources(ctx context.Context, user *model.User, paths []string, pr
 			continue
 		}
 		if IsSeedContainerName(obj.GetName()) {
-			return nil, fmt.Errorf("%s 本身是种子文件，不能再用来生成种子（产物会与源文件同名并覆盖它）；请选择它描述的文件", requestedPath)
+			return nil, fmt.Errorf("%s is a transfer seed file: generating a seed from it would overwrite the source file; select the file it describes instead", requestedPath)
 		}
 		raw = append(raw, rawSeedEntry{
 			requested: requestedPath,
