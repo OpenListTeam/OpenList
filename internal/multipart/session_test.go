@@ -1214,6 +1214,51 @@ func TestRefillWithChangedChunkNeverReachesStorage(t *testing.T) {
 	}
 }
 
+// A session stays alive while its client waits in Complete for storage to
+// finish, however long that takes. Expiry is for sessions nothing happens to
+// (TestExpiry).
+func TestActivityKeepsSessionAlive(t *testing.T) {
+	m := setupSessionTest(t)
+	m.ttl = 100 * time.Millisecond
+	user := testUser()
+	release := make(chan struct{})
+	stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+		defer fs.Close()
+		if _, err := io.ReadAll(fs); err != nil {
+			return err
+		}
+		select { // every byte is in; storage keeps working on them
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	snap, _, err := m.Init(initReq(user, 64, 64))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	stop, swept := make(chan struct{}), make(chan struct{})
+	go func() { // the periodic sweep, far more often than usual
+		defer close(swept)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(5 * time.Millisecond):
+				m.gc()
+			}
+		}
+	}()
+	defer func() { close(stop); <-swept }()
+	sendChunk(t, m, user, snap.ID, genData(64), 0, 64)
+	time.AfterFunc(400*time.Millisecond, func() { close(release) })
+	got, err := m.Complete(context.Background(), user, snap.ID)
+	if err != nil || got.State != StateCompleted {
+		t.Fatalf("Complete = %s, %v; want completed", got.State, err)
+	}
+}
+
 // One upload writes a destination at a time, whatever its size or user: an init
 // that does not resume supersedes every other session for the same path, and
 // starts only once their attempts let go of the destination. Otherwise a

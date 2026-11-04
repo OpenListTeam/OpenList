@@ -137,7 +137,27 @@ func (s *Session) awaitAttempt(ctx context.Context) bool {
 	}
 }
 
-func (s *Session) setStoragePct(p float64) { s.storagePct.Store(math.Float64bits(p)) }
+// setStoragePct records the driver's progress, which keeps the session alive
+// while storage works on bytes the client already sent.
+func (s *Session) setStoragePct(p float64) {
+	s.storagePct.Store(math.Float64bits(p))
+	s.touch()
+}
+
+// touchingReader keeps a session alive while the bytes of a chunk arrive, so a
+// slow client is not mistaken for a gone one halfway through a chunk.
+type touchingReader struct {
+	r io.Reader
+	s *Session
+}
+
+func (t touchingReader) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if n > 0 {
+		t.s.touch()
+	}
+	return n, err
+}
 
 // Snapshot is the wire representation of a session used by all endpoints.
 type SessionSnapshot struct {
@@ -731,7 +751,7 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 	win := s.win
 	s.mu.Unlock()
 
-	_, err = win.WriteChunk(idx, body)
+	_, err = win.WriteChunk(idx, touchingReader{body, s})
 	if errors.Is(err, ErrChunkChanged) {
 		err := fmt.Errorf("chunk %d content changed between attempts, aborting", idx)
 		s.mu.Lock()
@@ -799,10 +819,8 @@ func (m *Manager) Complete(ctx context.Context, user *model.User, id string) (Se
 		if st != StateReceiving {
 			break
 		}
-		select {
-		case <-done:
-		case <-ctx.Done():
-			return s.Snapshot(), ctx.Err()
+		if err := m.awaitVerdict(ctx, s, done); err != nil {
+			return s.Snapshot(), err
 		}
 	}
 	s.touch()
@@ -815,6 +833,23 @@ func (m *Manager) Complete(ctx context.Context, user *model.User, id string) (Se
 		return snap, nil
 	}
 	return snap, fmt.Errorf("upload failed (%s): %w", st, serr)
+}
+
+// awaitVerdict waits for the attempt to end. The client waiting meanwhile
+// keeps the session alive, however long storage takes.
+func (m *Manager) awaitVerdict(ctx context.Context, s *Session, done <-chan struct{}) error {
+	tick := time.NewTicker(max(m.sessionTTL()/3, time.Millisecond))
+	defer tick.Stop()
+	for {
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+			s.touch()
+		}
+	}
 }
 
 // Status looks a session up by id.
