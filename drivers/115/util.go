@@ -141,6 +141,7 @@ func (d *Pan115) rapidUpload(fileSize int64, fileName, dirID, preID, fileID stri
 	form.Set("sig", d.client.GenerateSignature(fileID, target))
 
 	signKey, signVal := "", ""
+	decryptRetryCount := 0
 	for retry := true; retry; {
 		t := driver115.NowMilli()
 
@@ -172,11 +173,16 @@ func (d *Pan115) rapidUpload(fileSize int64, fileName, dirID, preID, fileID stri
 			return nil, err
 		}
 		data := resp.RawBody()
-		defer data.Close()
 		if bodyBytes, err = io.ReadAll(data); err != nil {
+			_ = data.Close()
 			return nil, err
 		}
+		_ = data.Close()
 		if decrypted, err = ecdhCipher.Decrypt(bodyBytes); err != nil {
+			decryptRetryCount++
+			if decryptRetryCount < 3 {
+				continue
+			}
 			return nil, err
 		}
 		if err = driver115.CheckErr(json.Unmarshal(decrypted, &result), &result, resp); err != nil {

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	stdpath "path"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -41,6 +43,67 @@ func makeJoined(sdb []model.SharingDB) []model.Sharing {
 
 var sharingCache = cache.NewMemCache(cache.WithShards[*model.Sharing](8))
 var sharingG singleflight.Group[*model.Sharing]
+var sharingAccessCache = cache.NewMemCache[struct{}]()
+
+const sharingAccessCountDelay = 30 * time.Minute
+
+func sharingAccessKey(id, ip string) string {
+	return id + ":" + ip
+}
+
+var sharingAccessG singleflight.Group[struct{}]
+
+func validateSharing(pwd string, s *model.Sharing) error {
+	if !s.Usable() {
+		return errors.WithStack(errs.InvalidSharing)
+	}
+	if !s.Verify(pwd) {
+		return errors.WithStack(errs.WrongShareCode)
+	}
+	return nil
+}
+
+func CheckSharing(ip, pwd string, s *model.Sharing) error {
+	if err := validateSharing(pwd, s); err != nil {
+		return err
+	}
+	key := sharingAccessKey(s.ID, ip)
+	if s.LimitReached() && !sharingAccessCache.Exists(key) {
+		_, err, _ := sharingAccessG.Do(key, func() (struct{}, error) {
+			return struct{}{}, nil
+		})
+		if err != nil {
+			return err
+		}
+		if !sharingAccessCache.Exists(key) {
+			return errors.WithStack(errs.InvalidSharing)
+		}
+	}
+	return nil
+}
+
+func AccessSharing(ip, pwd string, s *model.Sharing) error {
+	if err := validateSharing(pwd, s); err != nil {
+		return err
+	}
+	key := sharingAccessKey(s.ID, ip)
+	_, err, _ := sharingAccessG.Do(key, func() (struct{}, error) {
+		if sharingAccessCache.Exists(key) {
+			return struct{}{}, nil
+		}
+		ok, err := db.TakeSharingSlot(s.ID)
+		if err != nil {
+			return struct{}{}, err
+		}
+		if !ok {
+			return struct{}{}, errors.WithStack(errs.InvalidSharing)
+		}
+		sharingCache.Del(s.ID)
+		sharingAccessCache.Set(key, struct{}{}, cache.WithEx[struct{}](sharingAccessCountDelay))
+		return struct{}{}, nil
+	})
+	return err
+}
 
 func GetSharingById(id string, refresh ...bool) (*model.Sharing, error) {
 	if !utils.IsBool(refresh...) {
