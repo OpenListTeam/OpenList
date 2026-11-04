@@ -214,9 +214,13 @@ func qualifiesResume(s *Session, req InitReq) bool {
 }
 
 // resumes reports whether an init for req picks up s, in state st, instead of
-// superseding it.
+// superseding it. A failed session needs no proof, but keeps its identity for
+// the next attempt, and a later init proving that identity resumes whatever
+// that attempt received: an init with another identity, or none where the
+// session has one, starts a new session instead.
 func resumes(s *Session, st State, req InitReq) bool {
-	return st == StateFailedRetriable || (st == StateReceiving && qualifiesResume(s, req))
+	return (st == StateFailedRetriable && s.Identity == req.Identity) ||
+		(st == StateReceiving && qualifiesResume(s, req))
 }
 
 // ResumeSameFile resumes the session for req's user, path and size if its
@@ -380,10 +384,10 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 			s.mu.Lock()
 			st := s.state
 			s.mu.Unlock()
-			// failed_retriable resumes unconditionally: nothing of the old
-			// attempt survives except CRCs, and the re-fill CRC check catches
-			// a changed file. A receiving session still holds data, so it only
-			// resumes when the client proves it is the same file.
+			// failed_retriable needs no proof: nothing of the old attempt
+			// survives except CRCs, and the re-fill CRC check catches a changed
+			// file. A receiving session still holds data, so it only resumes
+			// when the client proves it is the same file (see resumes).
 			if resumes(s, st, req) {
 				m.mu.Unlock()
 				s.touch()

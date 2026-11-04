@@ -844,3 +844,49 @@ func TestResumeSameFile(t *testing.T) {
 		})
 	}
 }
+
+// A failed session keeps its identity for the next attempt, and an init
+// proving that identity later resumes whatever the attempt received by then.
+// Only an init with the same identity may resume it: another file would have
+// its chunks resumed as the first one's.
+func TestFailedSessionResumesOnlyForTheSameIdentity(t *testing.T) {
+	cases := []struct {
+		name     string
+		identity string
+		resume   bool
+	}{
+		{"same identity", "file-a", true},
+		{"other identity", "file-b", false},
+		{"no identity", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := setupSessionTest(t)
+			user := testUser()
+			var attempts atomic.Int32
+			stubPut(t, func(ctx context.Context, dst string, fs *stream.FileStream, up driver.UpdateProgress) error {
+				defer fs.Close()
+				if attempts.Add(1) == 1 {
+					return errors.New("transient storage failure")
+				}
+				_, err := io.Copy(io.Discard, fs)
+				return err
+			})
+			req := withIdentity(initReq(user, 2048, 1024), "file-a")
+			first, _, err := m.Init(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = m.Abort(user, first.ID) })
+			waitState(t, m, user, first.ID, StateFailedRetriable)
+			again, resumed, err := m.Init(withIdentity(req, tc.identity))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = m.Abort(user, again.ID) })
+			if resumed != tc.resume || (again.ID == first.ID) != tc.resume {
+				t.Fatalf("re-Init resumed=%v (same session %v), want %v", resumed, again.ID == first.ID, tc.resume)
+			}
+		})
+	}
+}
