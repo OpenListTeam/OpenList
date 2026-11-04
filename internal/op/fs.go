@@ -676,6 +676,12 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		defer unlock()
 	}
 	fi, err := GetUnwrap(ctx, storage, dstPath)
+	if err == nil && fi.IsDir() {
+		// no previous version of the file: replacing it would remove the
+		// folder with everything in it, and many storages list folders with
+		// size 0, which reads as an empty file below
+		return errors.WithMessagef(errs.NotFile, "a folder already exists at %s", dstPath)
+	}
 	if err == nil {
 		if fi.GetSize() == 0 {
 			err = Remove(ctx, storage, dstPath)

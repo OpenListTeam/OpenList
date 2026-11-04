@@ -2,6 +2,7 @@ package op_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -30,6 +32,8 @@ type noOverwriteStorage struct {
 	whilePutting func()
 	// cached lets op cache this storage's listings
 	cached bool
+	// folders lists the names that are folders
+	folders map[string]bool
 }
 
 // noOverwriteSeq numbers the test storages. op caches listings, and lets
@@ -62,7 +66,7 @@ func (d *noOverwriteStorage) List(ctx context.Context, dir model.Obj, args model
 	defer d.mu.Unlock()
 	var objs []model.Obj
 	for name, size := range d.files {
-		objs = append(objs, &model.Object{ID: name, Path: "/" + name, Name: name, Size: size})
+		objs = append(objs, &model.Object{ID: name, Path: "/" + name, Name: name, Size: size, IsFolder: d.folders[name]})
 	}
 	return objs, nil
 }
@@ -159,6 +163,28 @@ func TestPutDoesNotRestoreOverNewerUpload(t *testing.T) {
 	cancelPendingOverwrite(t, d)
 	if got := d.listing(); got != "report.pdf.openlist_to_delete.*=100, report.pdf=200" {
 		t.Fatalf("storage holds [%s], want the newer upload kept and the original left aside", got)
+	}
+}
+
+// A folder may have the name of the file being uploaded. It is no previous
+// version of that file: the upload is refused and the folder left alone. Put
+// took a folder listed with size 0 (SMB, most cloud drives) for an empty file
+// and removed it with everything in it, and moved a larger one aside to remove
+// it once the upload succeeded.
+func TestPutRefusesToReplaceAFolder(t *testing.T) {
+	for _, size := range []int64{0, 4096} {
+		d := newNoOverwriteStorage(map[string]int64{"report": size})
+		d.folders = map[string]bool{"report": true}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		file := &stream.FileStream{Obj: &model.Object{Name: "report", Size: 50}, Reader: strings.NewReader("")}
+		err := op.Put(ctx, d, "/", file, nil)
+		cancel()
+		if !errors.Is(err, errs.NotFile) {
+			t.Errorf("folder of size %d: Put = %v, want errs.NotFile", size, err)
+		}
+		if got, want := d.listing(), fmt.Sprintf("report=%d", size); got != want {
+			t.Errorf("folder of size %d: storage holds [%s], want [%s] untouched", size, got, want)
+		}
 	}
 }
 
