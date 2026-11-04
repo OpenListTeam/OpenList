@@ -367,16 +367,6 @@ type embyAuthResult struct {
 	ServerId    string
 }
 
-// embyPublicUserDto 登录前展示的用户信息。
-// Emby 客户端依赖 /Users/Public 渲染用户选择列表，返回空数组会跳过登录界面。
-type embyPublicUserDto struct {
-	Name            string
-	ServerId        string
-	Id              string
-	HasPassword     bool
-	PrimaryImageTag string
-}
-
 // ==================== 基础工具 ====================
 
 func embyServerID() string {
@@ -502,6 +492,29 @@ func embyResolveUserID(idStr string) (uint, bool) {
 	return 0, false
 }
 
+// embyUserConfiguration Emby UserConfiguration 的默认值。
+// 严格类型的客户端会直接读 Configuration 里的字段，缺键即 null，
+// 所以这里按官方结构给全默认值，而不是空 map。
+func embyUserConfiguration() map[string]any {
+	return map[string]any{
+		"AudioLanguagePreference":    "",
+		"PlayDefaultAudioTrack":      true,
+		"SubtitleLanguagePreference": "",
+		"DisplayMissingEpisodes":     false,
+		"GroupedFolders":             []string{},
+		"SubtitleMode":               "Default",
+		"DisplayCollectionsView":     false,
+		"EnableLocalPassword":        false,
+		"OrderedViews":               []string{},
+		"LatestItemsExcludes":        []string{},
+		"MyMediaExcludes":            []string{},
+		"HidePlayedInLatest":         true,
+		"RememberAudioSelections":    true,
+		"RememberSubtitleSelections": true,
+		"EnableNextEpisodeAutoPlay":  true,
+	}
+}
+
 func embyUserDtoOf(u *model.User) *embyUserDto {
 	// Emby 客户端的 PlayAccessValidation 会直接读取 Policy.EnableMediaPlayback，
 	// 缺失即判定为禁止播放，并弹出 "Playback of this content is currently restricted"。
@@ -544,7 +557,7 @@ func embyUserDtoOf(u *model.User) *embyUserDto {
 		Id:                    embyUserGUID(u.ID),
 		HasPassword:           u.PwdHash != "",
 		HasConfiguredPassword: u.PwdHash != "",
-		Configuration:         map[string]any{},
+		Configuration:         embyUserConfiguration(),
 		Policy:                policy,
 		IsAdministrator:       u.IsAdmin(),
 		IsDisabled:            u.Disabled,
@@ -1068,22 +1081,21 @@ func embyCompleteAuth(c *gin.Context, user *model.User, pw string) {
 	})
 }
 
-// embyPublicUsers 匿名可访问，只返回登录界面需要的公开字段，
-// 不包含权限、策略、是否管理员等敏感信息。
+// embyPublicUsers 匿名可访问的用户选择列表。
+//
+// 必须返回完整的 UserDto（含 Policy / Configuration）：Emby 客户端的
+// /Users/Public 结果会直接被当作 UserDto 使用，缺对象字段时严格类型的客户端
+// （Flutter/Dart 的 `user['Policy'] as Map`）会抛 null 异常并中断渲染（issue #3301）。
+// 之前这里只给 5 个标量字段，而登录接口给的是完整结构，两边不一致。
 func embyPublicUsers(c *gin.Context) {
-	out := make([]*embyPublicUserDto, 0)
+	out := make([]*embyUserDto, 0)
 	users, _, err := op.GetUsers(1, -1)
 	if err == nil {
 		for i := range users {
 			if users[i].IsGuest() || users[i].Disabled {
 				continue
 			}
-			out = append(out, &embyPublicUserDto{
-				Name:        users[i].Username,
-				ServerId:    embyServerID(),
-				Id:          embyUserGUID(users[i].ID),
-				HasPassword: users[i].PwdHash != "",
-			})
+			out = append(out, embyUserDtoOf(&users[i]))
 		}
 	}
 	c.JSON(200, out)

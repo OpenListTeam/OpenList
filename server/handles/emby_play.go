@@ -115,9 +115,9 @@ func embyPlaybackInfo(c *gin.Context, lib *embyLibrary, id string) {
 		subtitleIndex = &lyricsIndex
 	}
 	source := embyMediaSource{
-		Protocol:                   "Http",
-		Id:                         id,
-		ItemId:                     id,
+		Protocol: "Http",
+		Id:       id,
+		ItemId:   id,
 		// Emby Theater 在本地播放时会把 Path 直接交给 mpv；
 		// 填文件系统路径会让 mpv 去开本机不存在的文件（一直转圈/Playback Error），
 		// 这里填可播放的 HTTP 流地址。
@@ -233,19 +233,16 @@ func embyImage(c *gin.Context, id string, segs []string, allowAnon bool) {
 	serveEmbyCover(c, mediaItem)
 }
 
-// episodeSourceItem 按 ep-<itemID>-<num> 在库内定位剧集所属条目，不做权限校验。
-// 仅用于封面这类匿名可访问的资源，播放与条目详情仍走 findEpisode 的权限校验。
+// episodeSourceItem 按 ep-<itemID>-<season>-<num>（兼容旧的两段格式）在库内
+// 定位剧集所属条目，不做权限校验。仅用于封面这类匿名可访问的资源，
+// 播放与条目详情仍走 findEpisode 的权限校验。
 func (l *embyLibrary) episodeSourceItem(id string) (*model.MediaItem, bool) {
-	parts := strings.Split(strings.TrimPrefix(id, "ep-"), "-")
-	if len(parts) != 2 {
-		return nil, false
-	}
-	n, err := strconv.ParseUint(parts[0], 10, 64)
-	if err != nil {
+	itemID, _, _, ok := parseEpisodeID(id)
+	if !ok {
 		return nil, false
 	}
 	for i := range l.videos {
-		if l.videos[i].ID == uint(n) {
+		if l.videos[i].ID == itemID {
 			return &l.videos[i], true
 		}
 	}
@@ -631,10 +628,8 @@ func embyRefreshItem(c *gin.Context, id string) {
 		n, _ := strconv.ParseUint(id[3:], 10, 64)
 		itemID = uint(n)
 	case strings.HasPrefix(id, "ep-"):
-		parts := strings.Split(id, "-")
-		if len(parts) == 3 {
-			n, _ := strconv.ParseUint(parts[1], 10, 64)
-			itemID = uint(n)
+		if n, _, _, ok := parseEpisodeID(id); ok {
+			itemID = n
 		}
 	case strings.HasPrefix(id, "sr-"):
 		if s := lib.seriesByKey(strings.TrimPrefix(id, "sr-")); s != nil && len(s.Items) > 0 {
