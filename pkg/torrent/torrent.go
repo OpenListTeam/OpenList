@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"path"
 	"sort"
@@ -53,6 +54,67 @@ const (
 	// DefaultMaxSeedFiles bounds file-list fan-out in untrusted seeds.
 	DefaultMaxSeedFiles = 100000
 )
+
+// CASSliceSize 返回天翼云(189)对给定文件大小使用的分片大小。
+//
+// 天翼的分片大小由文件大小唯一决定，与调用方配置无关：10MiB / 20MiB，
+// 更大的文件按 1999 片上限向上取 10MiB 的整数倍（至少 5 倍）。
+// 因此「可配置分片大小」对 CAS 没有意义，seed.PieceSize 不该决定 CAS 切法。
+func CASSliceSize(fileSize int64) int64 {
+	if fileSize > DefaultPieceSize*2*999 {
+		ratio := math.Max(math.Ceil(float64(fileSize)/1999/float64(DefaultPieceSize)), 5)
+		return int64(ratio) * DefaultPieceSize
+	}
+	if fileSize > DefaultPieceSize*999 {
+		return DefaultPieceSize * 2
+	}
+	return DefaultPieceSize
+}
+
+// expectedCASPartCount 返回按给定分片大小切分后的分片数。
+func expectedCASPartCount(fileSize, sliceSize int64) int64 {
+	if fileSize <= 0 || sliceSize <= 0 {
+		return 0
+	}
+	return (fileSize-1)/sliceSize + 1
+}
+
+// CASPartCount 返回按天翼规则（CASSliceSize）切分后的分片数。
+func CASPartCount(fileSize int64) int64 {
+	return expectedCASPartCount(fileSize, CASSliceSize(fileSize))
+}
+
+// CASUniformSliceSize 返回所有文件共用的 CAS 分片大小。
+// 文件跨过分片档位（10MiB/20MiB…）时没有共用值，返回 false。
+// 种子级 piece_size 只能存一个值，只有共用时逐片哈希才能挂到种子上。
+func CASUniformSliceSize(files []SeedFile) (int64, bool) {
+	if len(files) == 0 {
+		return 0, false
+	}
+	size := CASSliceSize(files[0].Size)
+	for _, file := range files[1:] {
+		if CASSliceSize(file.Size) != size {
+			return 0, false
+		}
+	}
+	return size, true
+}
+
+// DropInconsistentCASParts 丢弃与给定分片大小对不上的逐片 MD5。
+//
+// 逐片列表只是附加信息，判重只看最终摘要（CASSliceMD5），所以切法不符时
+// 直接丢掉比留一份误导数据更安全。
+func (f *SeedFile) DropInconsistentCASParts(sliceSize int64) {
+	if f.Hashes.Pieces == nil {
+		return
+	}
+	if int64(len(f.Hashes.Pieces.MD5)) != expectedCASPartCount(f.Size, sliceSize) {
+		f.Hashes.Pieces.MD5 = nil
+	}
+	if len(f.Hashes.Pieces.MD5) == 0 && len(f.Hashes.Pieces.SHA1) == 0 && len(f.Hashes.Pieces.SHA256) == 0 {
+		f.Hashes.Pieces = nil
+	}
+}
 
 // Seed describes the portable OpenList sharing seed contract.
 type Seed struct {
@@ -124,31 +186,41 @@ type SeedSource struct {
 }
 
 // CASFileEntry describes one file inside a multi-file .cas payload.
+//
+// sliceMd5 是「最终分片摘要」，也就是云端真正拿来做判重的那个值；
+// 逐片 MD5 只是可选的附加信息（partsMd5），旧文件把它写在 slice_md5s 里。
 type CASFileEntry struct {
-	Name       string   `json:"name"`
-	Size       int64    `json:"size"`
-	MD5        string   `json:"md5"`
-	SliceMD5   string   `json:"sliceMd5"`
-	CreateTime string   `json:"create_time"`
-	SliceMD5s  []string `json:"slice_md5s,omitempty"`
-	SliceSize  int64    `json:"slice_size,omitempty"`
+	Name       string `json:"name"`
+	Size       int64  `json:"size"`
+	MD5        string `json:"md5"`
+	SliceMD5   string `json:"sliceMd5"`
+	CreateTime string `json:"create_time"`
+	// PartsMD5 每个分片的 MD5（大写十六进制）。分片规则由文件大小决定，
+	// 见 CASSliceSize；缺省时仅凭 sliceMd5 也能秒传。
+	PartsMD5 []string `json:"partsMd5,omitempty"`
+	// SliceMD5s 旧版字段名，含义同 PartsMD5，只读兼容。
+	SliceMD5s []string `json:"slice_md5s,omitempty"`
+	SliceSize int64    `json:"slice_size,omitempty"`
 	// Cloud 标识该 CAS 条目所属的云盘类型（如 "189"）；留空视为 189。
 	Cloud string `json:"cloud,omitempty"`
 }
 
 // CASPayload matches the reference .cas JSON payload. The five legacy fields
 // describe a single file (byte-for-byte compatible with the reference project);
-// the optional "files" array extends it to multi-file seeds, slice_md5s/slice_size
+// the optional "files" array extends it to multi-file seeds, partsMd5/slice_size
 // preserve per-piece MD5, and comment preserves sharing metadata.
 type CASPayload struct {
-	Comment    string   `json:"comment,omitempty"`
-	Name       string   `json:"name"`
-	Size       int64    `json:"size"`
-	MD5        string   `json:"md5"`
-	SliceMD5   string   `json:"sliceMd5"`
-	CreateTime string   `json:"create_time"`
-	SliceMD5s  []string `json:"slice_md5s,omitempty"`
-	SliceSize  int64    `json:"slice_size,omitempty"`
+	Comment    string `json:"comment,omitempty"`
+	Name       string `json:"name"`
+	Size       int64  `json:"size"`
+	MD5        string `json:"md5"`
+	SliceMD5   string `json:"sliceMd5"`
+	CreateTime string `json:"create_time"`
+	// PartsMD5 每个分片的 MD5（大写十六进制），可选。
+	PartsMD5 []string `json:"partsMd5,omitempty"`
+	// SliceMD5s 旧版字段名，含义同 PartsMD5，只读兼容。
+	SliceMD5s []string `json:"slice_md5s,omitempty"`
+	SliceSize int64    `json:"slice_size,omitempty"`
 	// Cloud 标识该 CAS 载荷所属的云盘类型（如 "189"）；留空视为 189。
 	Cloud string         `json:"cloud,omitempty"`
 	Files []CASFileEntry `json:"files,omitempty"`
@@ -886,26 +958,38 @@ func DecodeOSS(data []byte, limits ParseLimits) (*Seed, error) {
 	return &seed, nil
 }
 
-// buildCASFileEntry computes the reference-compatible five fields for one file,
-// preserving the per-piece MD5 list and piece size when available.
+// buildCASFileEntry computes the reference-compatible fields for one file.
+//
+// sliceMd5 写的是「最终分片摘要」——天翼判重时真正比较的就是这个值；逐片 MD5
+// 只是可选的附加信息（partsMd5）。分片大小由文件大小唯一决定（CASSliceSize），
+// 与 seed.PieceSize 无关；手里的逐片哈希若是按别的切法算的，写进去只会误导，
+// 这里直接省略——凭 sliceMd5 一样能秒传。
 func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 	if file.Hashes.MD5 == "" {
 		return CASFileEntry{}, fmt.Errorf("CAS requires a whole-file MD5 for %s", file.Path)
 	}
-	var sliceMD5s []string
-	if file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
-		sliceMD5s = upperStrings(file.Hashes.Pieces.MD5)
+	sliceSize := pieceSize
+	if file.CASCloud == "" || file.CASCloud == Cloud189 {
+		sliceSize = CASSliceSize(file.Size)
 	}
-	// Prefer an explicitly supplied legacy slice MD5; otherwise derive it with
-	// the canonical rule so the value written here cannot drift from the one
-	// the hash-generation side computes.
+	if sliceSize <= 0 {
+		sliceSize = DefaultPieceSize
+	}
+	var parts []string
+	if file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
+		candidate := upperStrings(file.Hashes.Pieces.MD5)
+		if int64(len(candidate)) == expectedCASPartCount(file.Size, sliceSize) {
+			parts = candidate
+		}
+	}
+	// 显式给出的最终摘要优先；缺省时才用逐片列表推（旧文件只有前者）
 	sliceMD5 := strings.ToUpper(file.CASSliceMD5)
-	if sliceMD5 == "" && len(sliceMD5s) > 0 && pieceSize == DefaultPieceSize {
-		sliceMD5 = SliceMD5FromPieces(sliceMD5s, file.Hashes.MD5)
+	if sliceMD5 == "" && len(parts) > 0 {
+		sliceMD5 = SliceMD5FromPieces(parts, file.Hashes.MD5)
 	}
 	if sliceMD5 == "" {
-		if file.Size > DefaultPieceSize {
-			return CASFileEntry{}, fmt.Errorf("CAS requires a legacy slice MD5 or complete 10 MiB MD5 pieces for %s", file.Path)
+		if file.Size > sliceSize {
+			return CASFileEntry{}, fmt.Errorf("CAS requires a final slice MD5 or complete per-slice MD5s for %s", file.Path)
 		}
 		sliceMD5 = strings.ToUpper(file.Hashes.MD5)
 	}
@@ -913,18 +997,11 @@ func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 	if createTime == "" {
 		createTime = fmt.Sprintf("%d", time.Now().Unix())
 	}
-	entry := CASFileEntry{
+	return CASFileEntry{
 		Name: path.Base(file.Path), Size: file.Size, MD5: strings.ToUpper(file.Hashes.MD5),
-		SliceMD5: sliceMD5, CreateTime: createTime, Cloud: file.CASCloud,
-	}
-	if len(sliceMD5s) > 0 {
-		entry.SliceMD5s = sliceMD5s
-		entry.SliceSize = pieceSize
-		if entry.SliceSize <= 0 {
-			entry.SliceSize = DefaultPieceSize
-		}
-	}
-	return entry, nil
+		SliceMD5: sliceMD5, CreateTime: createTime,
+		PartsMD5: parts, SliceSize: sliceSize, Cloud: file.CASCloud,
+	}, nil
 }
 
 // EncodeCAS writes the reference-compatible base64 encoded JSON payload. A
@@ -946,7 +1023,7 @@ func EncodeCAS(seed *Seed) ([]byte, error) {
 		payload = CASPayload{
 			Name: entry.Name, Size: entry.Size, MD5: entry.MD5,
 			SliceMD5: entry.SliceMD5, CreateTime: entry.CreateTime,
-			SliceMD5s: entry.SliceMD5s, SliceSize: entry.SliceSize, Cloud: entry.Cloud,
+			PartsMD5: entry.PartsMD5, SliceSize: entry.SliceSize, Cloud: entry.Cloud,
 		}
 	} else {
 		entries := make([]CASFileEntry, 0, len(seed.Files))
@@ -990,55 +1067,70 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 	}
 	seed := NewSeed(payload.Name, "OpenList CAS", DefaultPieceSize)
 	seed.Comment = payload.Comment
-	if len(payload.Files) > 0 {
-		// Multi-file extension.
-		if len(payload.Files) > limits.MaxFiles {
-			return nil, fmt.Errorf("CAS seed exceeds %d files", limits.MaxFiles)
+	entries := payload.Files
+	if len(entries) == 0 {
+		entries = []CASFileEntry{{
+			Name: payload.Name, Size: payload.Size, MD5: payload.MD5,
+			SliceMD5: payload.SliceMD5, CreateTime: payload.CreateTime,
+			PartsMD5: payload.PartsMD5, SliceMD5s: payload.SliceMD5s,
+			SliceSize: payload.SliceSize, Cloud: payload.Cloud,
+		}}
+	} else if len(entries) > limits.MaxFiles {
+		return nil, fmt.Errorf("CAS seed exceeds %d files", limits.MaxFiles)
+	}
+	// 种子里的 piece_size 是文件级分片规则的载体：189 由文件大小唯一决定，
+	// 其它云盘才信任载荷里声明的 slice_size。
+	seed.PieceSize = casEntrySliceSize(entries[0])
+	for _, entry := range entries {
+		file, err := casEntryToSeedFile(entry)
+		if err != nil {
+			return nil, err
 		}
-		for _, entry := range payload.Files {
-			file, err := casEntryToSeedFile(entry.Name, entry.Size, entry.MD5, entry.SliceMD5, entry.CreateTime, entry.SliceMD5s, entry.Cloud)
-			if err != nil {
-				return nil, err
-			}
-			if entry.SliceSize > 0 {
-				seed.PieceSize = entry.SliceSize
-			}
-			seed.Files = append(seed.Files, file)
-		}
-		return seed, ValidateSeed(seed, limits)
+		// 逐片哈希只在切法对得上时保留，否则只留最终摘要（判重够用）
+		file.DropInconsistentCASParts(seed.PieceSize)
+		seed.Files = append(seed.Files, file)
 	}
-	file, err := casEntryToSeedFile(payload.Name, payload.Size, payload.MD5, payload.SliceMD5, payload.CreateTime, payload.SliceMD5s, payload.Cloud)
-	if err != nil {
-		return nil, err
-	}
-	if payload.SliceSize > 0 {
-		seed.PieceSize = payload.SliceSize
-	}
-	seed.Files = []SeedFile{file}
 	return seed, ValidateSeed(seed, limits)
 }
 
+// casEntrySliceSize 返回一条 CAS 条目应使用的分片大小。
+func casEntrySliceSize(entry CASFileEntry) int64 {
+	if entry.Cloud == "" || entry.Cloud == Cloud189 {
+		if size := CASSliceSize(entry.Size); size > 0 {
+			return size
+		}
+	}
+	if entry.SliceSize > 0 {
+		return entry.SliceSize
+	}
+	return DefaultPieceSize
+}
+
 // casEntryToSeedFile converts a CAS payload entry into a SeedFile, restoring the
-// per-piece MD5 list when it is present.
-func casEntryToSeedFile(name string, size int64, md5Hex, sliceMD5Hex, createTime string, sliceMD5s []string, cloud string) (SeedFile, error) {
-	if name == "" || size < 0 || !validHexHash(md5Hex, 32) {
+// per-piece MD5 list when it is present (partsMd5, or the legacy slice_md5s).
+func casEntryToSeedFile(entry CASFileEntry) (SeedFile, error) {
+	if entry.Name == "" || entry.Size < 0 || !validHexHash(entry.MD5, 32) {
 		return SeedFile{}, fmt.Errorf("invalid CAS payload")
 	}
-	sliceMD5 := sliceMD5Hex
+	sliceMD5 := entry.SliceMD5
 	if sliceMD5 == "" {
-		sliceMD5 = md5Hex
+		sliceMD5 = entry.MD5
 	}
 	if !validHexHash(sliceMD5, 32) {
 		return SeedFile{}, fmt.Errorf("invalid CAS sliceMd5")
 	}
-	file := SeedFile{
-		Path: name, Size: size, CASCreateTime: createTime,
-		CASSliceMD5: strings.ToLower(sliceMD5),
-		CASCloud:    cloud,
-		Hashes:      SeedHashes{MD5: strings.ToLower(md5Hex)},
+	parts := entry.PartsMD5
+	if len(parts) == 0 {
+		parts = entry.SliceMD5s
 	}
-	if len(sliceMD5s) > 0 {
-		file.Hashes.Pieces = &SeedPieceHashes{MD5: lowerStrings(sliceMD5s)}
+	file := SeedFile{
+		Path: entry.Name, Size: entry.Size, CASCreateTime: entry.CreateTime,
+		CASSliceMD5: strings.ToLower(sliceMD5),
+		CASCloud:    entry.Cloud,
+		Hashes:      SeedHashes{MD5: strings.ToLower(entry.MD5)},
+	}
+	if len(parts) > 0 {
+		file.Hashes.Pieces = &SeedPieceHashes{MD5: lowerStrings(parts)}
 	}
 	return file, nil
 }
@@ -1281,10 +1373,16 @@ func DiagnoseConversion(seed *Seed, format string) []string {
 		for _, file := range seed.Files {
 			if file.Hashes.MD5 == "" {
 				diagnostics = append(diagnostics, file.Path+": missing whole-file MD5")
+				continue
 			}
-			if file.Size > DefaultPieceSize && file.CASSliceMD5 == "" &&
-				(seed.PieceSize != DefaultPieceSize || file.Hashes.Pieces == nil || len(file.Hashes.Pieces.MD5) == 0) {
-				diagnostics = append(diagnostics, file.Path+": missing legacy slice MD5 or complete 10 MiB MD5 pieces")
+			// 分片大小由文件大小决定，只有超过一片的文件才必须有最终摘要
+			sliceSize := CASSliceSize(file.Size)
+			if file.Size <= sliceSize || file.CASSliceMD5 != "" {
+				continue
+			}
+			if file.Hashes.Pieces == nil ||
+				int64(len(file.Hashes.Pieces.MD5)) != expectedCASPartCount(file.Size, sliceSize) {
+				diagnostics = append(diagnostics, file.Path+": missing final slice MD5 or complete per-slice MD5s")
 			}
 		}
 	case "oss":
@@ -1351,21 +1449,25 @@ func TorrentFromSeed(seed *Seed) (*Torrent, []string) {
 	}
 	if len(seed.Files) == 1 {
 		file := seed.Files[0]
+		cloud := file.CASCloud
+		if cloud == "" {
+			cloud = Cloud189
+		}
+		sliceSize := seed.PieceSize
+		if cloud == Cloud189 {
+			sliceSize = CASSliceSize(file.Size)
+		}
+		if sliceSize <= 0 {
+			sliceSize = DefaultPieceSize
+		}
 		if file.Hashes.MD5 != "" && file.CASSliceMD5 != "" {
-			cloud := file.CASCloud
-			if cloud == "" {
-				cloud = Cloud189
-			}
 			t.CAS = &CASInfo{
 				FileMD5: strings.ToUpper(file.Hashes.MD5), SliceMD5: strings.ToUpper(file.CASSliceMD5),
-				SliceSize: DefaultPieceSize, Cloud: cloud,
+				SliceSize: sliceSize, Cloud: cloud,
 			}
-		} else if file.Hashes.MD5 != "" && seed.PieceSize == DefaultPieceSize && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
-			cloud := file.CASCloud
-			if cloud == "" {
-				cloud = Cloud189
-			}
-			t.CAS = BuildCASInfoFromMD5sWithCloud(file.Hashes.MD5, upperStrings(file.Hashes.Pieces.MD5), DefaultPieceSize, cloud)
+		} else if file.Hashes.MD5 != "" && file.Hashes.Pieces != nil &&
+			int64(len(file.Hashes.Pieces.MD5)) == expectedCASPartCount(file.Size, sliceSize) {
+			t.CAS = BuildCASInfoFromMD5sWithCloud(file.Hashes.MD5, upperStrings(file.Hashes.Pieces.MD5), sliceSize, cloud)
 		}
 	}
 	return t, nil

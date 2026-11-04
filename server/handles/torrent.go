@@ -144,10 +144,15 @@ func buildSeedFileRapidUploadRequest(seed *torrent.Seed, file torrent.SeedFile, 
 	if file.Hashes.GCID != "" {
 		wholeHashes[hash_extend.GCID] = strings.ToUpper(file.Hashes.GCID)
 	}
+	// 189 的分片大小由文件大小唯一决定，seed.PieceSize 只在其它云盘才有效
+	sliceSize := seed.PieceSize
+	if file.CASCloud == "" || file.CASCloud == torrent.Cloud189 {
+		sliceSize = torrent.CASSliceSize(file.Size)
+	}
 	req := &driver.SeedRapidUploadRequest{
 		Name:      name,
 		Size:      file.Size,
-		SliceSize: seed.PieceSize,
+		SliceSize: sliceSize,
 		SliceMD5:  strings.ToUpper(file.CASSliceMD5),
 		Open:      open,
 	}
@@ -1600,7 +1605,9 @@ func validateSeedSource(src torrent.SeedSource) error {
 }
 
 // rehashSeedFile reads one server-side file and recomputes its whole and piece hashes.
-func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSize int64) (torrent.SeedFile, error) {
+// cas 为 true 时忽略传入的 pieceSize，改用 CASSliceSize(size)：CAS 的分片由文件大小
+// 唯一决定，用户配置对它无效；同时回填最终分片摘要。
+func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSize int64, cas bool) (torrent.SeedFile, error) {
 	var out torrent.SeedFile
 	fullPath, err := user.JoinPath(sourcePath)
 	if err != nil {
@@ -1638,6 +1645,9 @@ func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSi
 		return out, err
 	}
 	defer rc.Close()
+	if cas {
+		pieceSize = torrent.CASSliceSize(obj.GetSize())
+	}
 	hasher := torrent.NewHashWriter(pieceSize, pieceSize, obj.GetSize())
 	n, copyErr := io.Copy(hasher, io.LimitReader(rc, obj.GetSize()+1))
 	if copyErr != nil {
@@ -1651,7 +1661,11 @@ func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSi
 	if !obj.ModTime().IsZero() {
 		modified = obj.ModTime().UTC().Format(time.RFC3339)
 	}
-	return hasher.BuildSeedFile(stdpath.Base(sourcePath), modified), nil
+	out = hasher.BuildSeedFile(stdpath.Base(sourcePath), modified)
+	if cas {
+		out.CASSliceMD5 = strings.ToLower(hasher.GetSliceMD5(out.Hashes.MD5))
+	}
+	return out, nil
 }
 
 // UpdateSeed edits seed metadata and optionally recalculates hashes from server files.
@@ -1729,6 +1743,7 @@ func UpdateSeed(c *gin.Context) {
 			return
 		}
 		seed.PieceSize = pieceSize
+		casFormat := format == "cas"
 		matrix := normalizedSeedMatrix(req.HashMatrix, []string{format})
 		recalcMap := make(map[string]string, len(req.RecalcFiles))
 		for _, rf := range req.RecalcFiles {
@@ -1740,12 +1755,18 @@ func UpdateSeed(c *gin.Context) {
 			common.ErrorStrResp(c, "recalculate requires at least one source_path", 400)
 			return
 		}
+		if casFormat {
+			// CAS 分片由文件大小唯一决定；所有文件同档时把种子级 piece_size 对齐过去
+			if size, ok := torrent.CASUniformSliceSize(seed.Files); ok {
+				seed.PieceSize = size
+			}
+		}
 		for i := range seed.Files {
 			srcPath, ok := recalcMap[seed.Files[i].Path]
 			if !ok {
 				continue
 			}
-			rehashed, rehashErr := rehashSeedFile(c, user, srcPath, pieceSize)
+			rehashed, rehashErr := rehashSeedFile(c, user, srcPath, pieceSize, casFormat)
 			if rehashErr != nil {
 				common.ErrorResp(c, rehashErr, 400)
 				return
@@ -1753,10 +1774,18 @@ func UpdateSeed(c *gin.Context) {
 			rehashed.Path = seed.Files[i].Path
 			rehashed.Comment = seed.Files[i].Comment
 			rehashed.Sources = seed.Files[i].Sources
-			rehashed.CASSliceMD5 = ""
 			rehashed.CASCreateTime = ""
+			if !casFormat {
+				rehashed.CASSliceMD5 = ""
+			}
 			applySeedMatrix(&rehashed, matrix)
 			seed.Files[i] = rehashed
+		}
+		if casFormat {
+			// 多个文件跨过分片档位时种子只能存一种切法，其余文件只留最终摘要
+			for i := range seed.Files {
+				seed.Files[i].DropInconsistentCASParts(seed.PieceSize)
+			}
 		}
 		// 重算得到的是逐文件独立 pieces，不能再当整包 pieces 复用
 		seed.GlobalPieces = nil

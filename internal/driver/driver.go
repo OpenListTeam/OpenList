@@ -237,9 +237,10 @@ type SeedRapidUploadRequest struct {
 	SliceSize int64
 	// SliceMD5s is the ordered per-slice MD5 list (used by 189pc-style CAS).
 	SliceMD5s []string
-	// SliceMD5 is the legacy digest of the whole slice list (uppercase MD5 of
-	// the "\n"-joined slice MD5s). Legacy .cas payloads carry only this value
-	// without the per-slice list; drivers may use it as-is.
+	// SliceMD5 is the final slice digest (uppercase MD5 of the "\n"-joined
+	// slice MD5s) that the provider actually compares during dedup. It is
+	// authoritative: .cas payloads normally carry only this value, and drivers
+	// should use it as-is instead of recomputing from SliceMD5s.
 	SliceMD5 string
 	// SliceSHA1s is the ordered per-slice SHA1 list (used by SHA1-piece drives).
 	SliceSHA1s []string

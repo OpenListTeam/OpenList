@@ -8,6 +8,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
@@ -35,13 +36,9 @@ func (d *Cloud189PC) RapidUploadByHashes(ctx context.Context, dstDir model.Obj, 
 
 	var casErr error
 	if req.SliceMD5 != "" || len(req.SliceMD5s) > 0 {
-		// 只有旧载荷的现成摘要时，种子里没有可信的分片大小，
-		// 交给驱动按文件大小推导（天翼的分片大小随文件大小变化）
-		sliceSize := req.SliceSize
-		if len(req.SliceMD5s) == 0 {
-			sliceSize = 0
-		}
-		obj, err := d.rapidUploadByCAS(ctx, dstDir, req.Name, req.Size, md5Hash, req.SliceMD5, req.SliceMD5s, sliceSize, overwrite)
+		// 天翼的分片大小由文件大小唯一决定，种子里的 piece_size 不参与；
+		// 只要手里有最终摘要（或逐片列表），就可以直接拿去判重
+		obj, err := d.rapidUploadByCAS(ctx, dstDir, req.Name, req.Size, md5Hash, req.SliceMD5, req.SliceMD5s, torrent.CASSliceSize(req.Size), overwrite)
 		if err == nil {
 			return obj, nil
 		}
@@ -63,6 +60,17 @@ func (d *Cloud189PC) RapidUploadByHashes(ctx context.Context, dstDir model.Obj, 
 		return nil, wrapRapidUploadError(err)
 	}
 	return obj, nil
+}
+
+// casSliceDigest 返回天翼判重时真正比较的最终分片摘要。
+//
+// 显式摘要优先：旧版 .cas 只有 sliceMd5 一个字段，它本身就是「逐片 MD5 汇总
+// 后的最终值」，直接用它即可；只有缺摘要时才用逐片列表按规范推算。
+func casSliceDigest(fileMD5, sliceMD5 string, sliceMD5s []string) string {
+	if digest := strings.ToUpper(strings.TrimSpace(sliceMD5)); digest != "" {
+		return digest
+	}
+	return torrent.SliceMD5FromPieces(sliceMD5s, fileMD5)
 }
 
 // wrapRapidUploadError 把账号级限流翻译成可判断、可读的错误

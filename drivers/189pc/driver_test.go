@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 )
 
 func TestFamilyTransferTempNamePreservesExtension(t *testing.T) {
@@ -32,6 +33,24 @@ func TestFamilyTransferTempNamePreservesExtension(t *testing.T) {
 				t.Fatalf("temporary name extension = %q, want %q", ext, tt.want)
 			}
 		})
+	}
+}
+
+// TestCASSliceDigestPrefersFinalDigest 最终摘要优先：旧 .cas 只存了这个值，
+// 它已经是逐片 MD5 的汇总结果，不能因为同时存在逐片列表就重新推算覆盖它。
+func TestCASSliceDigestPrefersFinalDigest(t *testing.T) {
+	fileMD5 := strings.Repeat("1", 32)
+	parts := []string{strings.Repeat("a", 32), strings.Repeat("b", 32)}
+
+	if got, want := casSliceDigest(fileMD5, "", parts), torrent.SliceMD5FromPieces(parts, fileMD5); got != want {
+		t.Fatalf("casSliceDigest() without explicit digest = %q, want %q", got, want)
+	}
+	explicit := strings.Repeat("F", 32)
+	if got := casSliceDigest(fileMD5, strings.ToLower(explicit), parts); got != explicit {
+		t.Fatalf("casSliceDigest() = %q, want the explicit digest %q", got, explicit)
+	}
+	if got := casSliceDigest(fileMD5, "", nil); got != strings.ToUpper(fileMD5) {
+		t.Fatalf("casSliceDigest() without any slice info = %q, want file MD5", got)
 	}
 }
 

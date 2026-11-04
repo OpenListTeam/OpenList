@@ -237,7 +237,8 @@ func FsForm(c *gin.Context) {
 	var seedHasher *torrent.HashWriter
 	var uploadReader io.Reader = f
 	if generateSeed {
-		seedHasher = torrent.NewHashWriter(seedPieceSize(c), seedPieceSize(c), 0)
+		sliceSize := uploadSeedSliceSize(c, file.Size)
+		seedHasher = torrent.NewHashWriter(sliceSize, sliceSize, 0)
 		uploadReader = io.TeeReader(f, seedHasher)
 	}
 	s := &stream.FileStream{
@@ -297,11 +298,6 @@ func shouldGenerateUploadSeed(c *gin.Context, path string) bool {
 }
 
 func seedPieceSize(c *gin.Context) int64 {
-	for _, format := range strings.Split(strings.ToLower(c.GetHeader("X-Seed-Sidecars")), ",") {
-		if strings.TrimSpace(format) == "cas" {
-			return torrent.DefaultPieceSize
-		}
-	}
 	value := c.GetHeader("X-Seed-Piece-Size")
 	if value == "" {
 		return torrent.DefaultPieceSize
@@ -311,6 +307,25 @@ func seedPieceSize(c *gin.Context) int64 {
 		return torrent.DefaultPieceSize
 	}
 	return size
+}
+
+// uploadSeedSliceSize 返回上传时计算哈希应使用的分片大小。
+// CAS 的分片由文件大小唯一决定（CASSliceSize），请求头里的 piece size 对它无效；
+// 其它格式沿用请求头/默认值。
+func uploadSeedSliceSize(c *gin.Context, fileSize int64) int64 {
+	formatsHeader := strings.TrimSpace(c.GetHeader("X-Seed-Sidecars"))
+	if formatsHeader == "" {
+		formatsHeader = strings.TrimSpace(c.GetHeader("X-Seed-Format"))
+	}
+	if formatsHeader == "" {
+		formatsHeader = configuredSeedFormats()
+	}
+	for _, format := range strings.Split(strings.ToLower(formatsHeader), ",") {
+		if strings.TrimSpace(format) == "cas" {
+			return torrent.CASSliceSize(fileSize)
+		}
+	}
+	return seedPieceSize(c)
 }
 
 func configuredSeedFormats() string {
@@ -358,7 +373,7 @@ func writeUploadSeedSidecar(c *gin.Context, dir, name string, expectedSize int64
 	if expectedSize >= 0 && hasher.GetTotalWritten() != expectedSize {
 		return fmt.Errorf("seed sidecar requires a complete stream: read %d of %d bytes", hasher.GetTotalWritten(), expectedSize)
 	}
-	seed := torrent.NewSeed(name, "OpenList", seedPieceSize(c))
+	seed := torrent.NewSeed(name, "OpenList", uploadSeedSliceSize(c, expectedSize))
 	formatsHeader := strings.TrimSpace(c.GetHeader("X-Seed-Sidecars"))
 	if formatsHeader == "" {
 		formatsHeader = strings.TrimSpace(c.GetHeader("X-Seed-Format"))

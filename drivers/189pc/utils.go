@@ -211,7 +211,7 @@ func (y *Cloud189PC) put(ctx context.Context, url string, headers map[string]str
 }
 
 func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool) ([]model.Obj, error) {
-    pageSize := 1000  // 每一页返回的文件数量
+	pageSize := 1000 // 每一页返回的文件数量
 	res := make([]model.Obj, 0, 100)
 	for pageNum := 1; ; pageNum++ {
 		resp, err := y.getFilesWithPage(ctx, fileId, isFamily, pageNum, pageSize, y.OrderBy, y.OrderDirection)
@@ -222,10 +222,10 @@ func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool)
 		if resp.FileListAO.Count == 0 {
 			break
 		}
-		
+
 		FolderCount := len(resp.FileListAO.FolderList) // 当前文件夹总数
-        FileCount := len(resp.FileListAO.FileList) // 当前文件总数
-        PageCount := FolderCount + FileCount // 当前页数总数
+		FileCount := len(resp.FileListAO.FileList)     // 当前文件总数
+		PageCount := FolderCount + FileCount           // 当前页数总数
 
 		for i := 0; i < FolderCount; i++ {
 			res = append(res, &resp.FileListAO.FolderList[i])
@@ -234,11 +234,11 @@ func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool)
 			resp.FileListAO.FileList[i].ParentID = fileId
 			res = append(res, &resp.FileListAO.FileList[i])
 		}
-		
+
 		// 当前文件数量小于设定数量则跳出
 		if PageCount < pageSize {
-            break
-        }
+			break
+		}
 	}
 	return res, nil
 }
@@ -1620,8 +1620,8 @@ func (y *Cloud189PC) OldUploadCommit(ctx context.Context, fileCommitUrl string, 
 //  2. checkTransSecond（用 fileMd5 + sliceMd5 检查云端是否已存在文件数据）
 //  3. commitMultiUploadFile（提交并返回文件对象）
 //
-// sliceMD5 是旧版 .cas 载荷里的现成摘要，sliceMD5s 是逐片列表；列表优先，
-// 因为它是可以独立校验的原始数据，摘要可以由列表重新算出来。
+// sliceMD5 是最终分片摘要，sliceMD5s 是可选的逐片 MD5 列表。
+// 摘要优先：它才是云端比较的值，逐片列表只用来在缺摘要时推算。
 func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, fileMD5 string, sliceMD5 string, sliceMD5s []string, sliceSize int64, overwrite bool) (model.Obj, error) {
 	isFamily := y.isFamily()
 
@@ -1633,23 +1633,7 @@ func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fil
 		sliceSize = partSize(fileSize)
 	}
 
-	// 计算 sliceMd5（与上传时一致的算法）
-	sliceMd5Hex := ""
-	if len(sliceMD5s) > 1 {
-		upperSliceMD5s := make([]string, len(sliceMD5s))
-		for i, s := range sliceMD5s {
-			upperSliceMD5s[i] = strings.ToUpper(s)
-		}
-		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(upperSliceMD5s, "\n")))
-	} else if len(sliceMD5s) == 1 {
-		sliceMd5Hex = strings.ToUpper(sliceMD5s[0])
-	}
-	if sliceMd5Hex == "" {
-		sliceMd5Hex = strings.ToUpper(sliceMD5)
-	}
-	if sliceMd5Hex == "" {
-		sliceMd5Hex = fileMD5Upper
-	}
+	sliceMd5Hex := casSliceDigest(fileMD5Upper, sliceMD5, sliceMD5s)
 
 	fullUrl := "https://upload.cloud.189.cn"
 	if isFamily {
