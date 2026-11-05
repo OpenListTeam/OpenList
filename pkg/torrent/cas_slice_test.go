@@ -3,6 +3,7 @@ package torrent
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -145,6 +146,88 @@ func TestDecodeCASWithFinalSliceMD5Only(t *testing.T) {
 	}
 	if payload["md5"] != fileMD5 {
 		t.Fatalf("re-encoded md5 = %v, want %q", payload["md5"], fileMD5)
+	}
+}
+
+// TestBuildCASFileEntryRejectsMismatchedSlicing 片数相同不代表切法相同：
+// 15MiB 文件按 8MiB 切是 2 片、按 CAS 的 10MiB 切也是 2 片，边界却是 [8,7]
+// 与 [10,5]。只有切法确认一致时才能用逐片列表推导最终摘要。
+func TestBuildCASFileEntryRejectsMismatchedSlicing(t *testing.T) {
+	const fileSize = 15 * 1024 * 1024
+	md5Hex := strings.Repeat("1", 32)
+	parts := []string{strings.Repeat("a", 32), strings.Repeat("b", 32)}
+	file := SeedFile{
+		Path: "a.bin", Size: fileSize,
+		Hashes: SeedHashes{MD5: md5Hex, Pieces: &SeedPieceHashes{MD5: parts}},
+	}
+
+	if _, err := buildCASFileEntry(file, 8*1024*1024); err == nil {
+		t.Fatal("8MiB slices must not be reused as 10MiB CAS slices")
+	}
+
+	entry, err := buildCASFileEntry(file, 10*1024*1024)
+	if err != nil {
+		t.Fatalf("buildCASFileEntry() with matching slicing error = %v", err)
+	}
+	if want := SliceMD5FromPieces(parts, md5Hex); entry.SliceMD5 != want {
+		t.Fatalf("sliceMd5 = %q, want %q", entry.SliceMD5, want)
+	}
+	if len(entry.PartsMD5) != 2 {
+		t.Fatalf("partsMd5 = %#v, want 2 entries", entry.PartsMD5)
+	}
+}
+
+// TestDecodeCASRejectsMultiSliceWithoutSliceMD5 多片文件没有 sliceMd5 时，
+// 不能拿整文件 MD5 冒充最终摘要；单片文件才可以。
+func TestDecodeCASRejectsMultiSliceWithoutSliceMD5(t *testing.T) {
+	md5Hex := strings.Repeat("1", 32)
+	multi := fmt.Sprintf(`{"name":"a.bin","size":%d,"md5":%q}`, 15*1024*1024, md5Hex)
+	if _, err := DecodeCAS([]byte(multi), DefaultParseLimits()); err == nil {
+		t.Fatal("a multi-slice payload without sliceMd5 must be rejected")
+	}
+
+	single := fmt.Sprintf(`{"name":"a.bin","size":%d,"md5":%q}`, 5*1024*1024, md5Hex)
+	seed, err := DecodeCAS([]byte(single), DefaultParseLimits())
+	if err != nil {
+		t.Fatalf("DecodeCAS() single slice error = %v", err)
+	}
+	if seed.Files[0].CASSliceMD5 != md5Hex {
+		t.Fatalf("single-slice CASSliceMD5 = %q, want the whole-file MD5", seed.Files[0].CASSliceMD5)
+	}
+}
+
+// TestDecodeCASClampsOversizedSliceSize 超大文件的 CAS 分片会超过 Seed 容器
+// 的 64MiB 上限（约 117GiB 以上进入 70MiB 档），解码时只钳制容器字段，
+// 文件级分片仍在编码时按 CASSliceSize 写出，.cas 不能因此无法解析。
+func TestDecodeCASClampsOversizedSliceSize(t *testing.T) {
+	const size = int64(200) << 30 // 200GiB -> 110MiB 分片
+	md5Hex := strings.Repeat("1", 32)
+	sliceMD5 := strings.Repeat("f", 32)
+	if got := CASSliceSize(size); got <= 64*1024*1024 {
+		t.Fatalf("CASSliceSize(%d) = %d, want > 64MiB for this test", size, got)
+	}
+	payload := fmt.Sprintf(`{"name":"big.bin","size":%d,"md5":%q,"sliceMd5":%q}`, size, md5Hex, sliceMD5)
+	seed, err := DecodeCAS([]byte(payload), DefaultParseLimits())
+	if err != nil {
+		t.Fatalf("DecodeCAS() error = %v", err)
+	}
+	if seed.PieceSize != DefaultPieceSize {
+		t.Fatalf("seed piece size = %d, want clamped %d", seed.PieceSize, DefaultPieceSize)
+	}
+	if seed.Files[0].CASSliceMD5 != sliceMD5 {
+		t.Fatalf("CASSliceMD5 = %q, want %q", seed.Files[0].CASSliceMD5, sliceMD5)
+	}
+
+	encoded, err := EncodeCAS(seed)
+	if err != nil {
+		t.Fatalf("EncodeCAS() error = %v", err)
+	}
+	body := decodeCASJSON(t, encoded)
+	if body["sliceMd5"] != strings.ToUpper(sliceMD5) {
+		t.Fatalf("re-encoded sliceMd5 = %v", body["sliceMd5"])
+	}
+	if got := int64(body["slice_size"].(float64)); got != CASSliceSize(size) {
+		t.Fatalf("re-encoded slice_size = %d, want %d", got, CASSliceSize(size))
 	}
 }
 

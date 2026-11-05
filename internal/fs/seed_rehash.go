@@ -120,7 +120,7 @@ func RehashSeedFromFilesWithMatrix(
 		// CAS 的分片大小由文件大小唯一决定，用户配置无效；
 		// 所有文件共用同一档位时把它对齐到种子级，逐片哈希才能一并写进 .cas
 		if size, ok := torrent.CASUniformSliceSize(seed.Files); ok {
-			pieceSize = size
+			pieceSize = torrent.ClampSeedPieceSize(size)
 		}
 	}
 	setSeedHashPieceSize(seed, pieceSize)

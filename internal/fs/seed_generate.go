@@ -353,7 +353,7 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 			}
 		}
 		if uniform {
-			pieceSize = size
+			pieceSize = torrent.ClampSeedPieceSize(size)
 		}
 	}
 

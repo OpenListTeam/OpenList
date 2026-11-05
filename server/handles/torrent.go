@@ -1772,7 +1772,7 @@ func UpdateSeed(c *gin.Context) {
 		if casFormat {
 			// CAS 分片由文件大小唯一决定；所有文件同档时把种子级 piece_size 对齐过去
 			if size, ok := torrent.CASUniformSliceSize(seed.Files); ok {
-				seed.PieceSize = size
+				seed.PieceSize = torrent.ClampSeedPieceSize(size)
 			}
 		}
 		for i := range seed.Files {

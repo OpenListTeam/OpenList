@@ -90,6 +90,20 @@ func CASPartCount(fileSize int64) int64 {
 	return expectedCASPartCount(fileSize, CASSliceSize(fileSize))
 }
 
+// ClampSeedPieceSize 把值限制在 Seed 容器允许的 piece_size 范围内
+// （16KiB..64MiB，见 ValidateSeed）。
+//
+// 超大文件的 CAS 文件级分片可能超过 64MiB（约 117GiB 以上进入 70MiB 档），
+// 而种子级的 PieceSize 只是一个容器字段，不该因此让整个 .cas 无法解码：
+// 超出范围时退化为默认值，逐片哈希会按切法不符被丢弃，但最终摘要
+// （CASSliceMD5 / sliceMd5）仍然保留，秒传依旧可用。
+func ClampSeedPieceSize(size int64) int64 {
+	if size < 16*1024 || size > 64*1024*1024 {
+		return DefaultPieceSize
+	}
+	return size
+}
+
 // CASUniformSliceSize 返回所有文件共用的 CAS 分片大小。
 // 文件跨过分片档位（10MiB/20MiB…）时没有共用值，返回 false。
 // 种子级 piece_size 只能存一个值，只有共用时逐片哈希才能挂到种子上。
@@ -968,8 +982,12 @@ func DecodeOSS(data []byte, limits ParseLimits) (*Seed, error) {
 //
 // sliceMd5 写的是「最终分片摘要」——天翼判重时真正比较的就是这个值；逐片 MD5
 // 只是可选的附加信息（partsMd5）。分片大小由文件大小唯一决定（CASSliceSize），
-// 与 seed.PieceSize 无关；手里的逐片哈希若是按别的切法算的，写进去只会误导，
-// 这里直接省略——凭 sliceMd5 一样能秒传。
+// 与 seed.PieceSize 无关。
+//
+// 逐片 MD5 只有在「确实按 CAS 分片大小算出来的」时才能使用：仅比较片数不够，
+// 15MiB 文件按 8MiB 切是 2 片、按 CAS 的 10MiB 切也是 2 片，但边界是
+// [8,7] 和 [10,5]，据此推出来的最终摘要会与云端不一致。因此要求
+// pieceSize（逐片哈希的实际切法）严格等于 CAS 分片大小。
 func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 	if file.Hashes.MD5 == "" {
 		return CASFileEntry{}, fmt.Errorf("CAS requires a whole-file MD5 for %s", file.Path)
@@ -982,20 +1000,20 @@ func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
 		sliceSize = DefaultPieceSize
 	}
 	var parts []string
-	if file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
+	if pieceSize == sliceSize && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
 		candidate := upperStrings(file.Hashes.Pieces.MD5)
 		if int64(len(candidate)) == expectedCASPartCount(file.Size, sliceSize) {
 			parts = candidate
 		}
 	}
-	// 显式给出的最终摘要优先；缺省时才用逐片列表推（旧文件只有前者）
+	// 显式给出的最终摘要优先；缺省时才用切法已确认的逐片列表推
 	sliceMD5 := strings.ToUpper(file.CASSliceMD5)
 	if sliceMD5 == "" && len(parts) > 0 {
 		sliceMD5 = SliceMD5FromPieces(parts, file.Hashes.MD5)
 	}
 	if sliceMD5 == "" {
 		if file.Size > sliceSize {
-			return CASFileEntry{}, fmt.Errorf("CAS requires a final slice MD5 or complete per-slice MD5s for %s", file.Path)
+			return CASFileEntry{}, fmt.Errorf("CAS requires a final slice MD5 or per-slice MD5s computed at the CAS slice size for %s", file.Path)
 		}
 		sliceMD5 = strings.ToUpper(file.Hashes.MD5)
 	}
@@ -1085,8 +1103,9 @@ func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
 		return nil, fmt.Errorf("CAS seed exceeds %d files", limits.MaxFiles)
 	}
 	// 种子里的 piece_size 是文件级分片规则的载体：189 由文件大小唯一决定，
-	// 其它云盘才信任载荷里声明的 slice_size。
-	seed.PieceSize = casEntrySliceSize(entries[0])
+	// 其它云盘才信任载荷里声明的 slice_size。超大文件的 CAS 分片会超出
+	// Seed 容器的上限，这里只钳制容器字段，文件级分片仍按 CASSliceSize 计算。
+	seed.PieceSize = ClampSeedPieceSize(casEntrySliceSize(entries[0]))
 	for _, entry := range entries {
 		file, err := casEntryToSeedFile(entry)
 		if err != nil {
@@ -1114,20 +1133,33 @@ func casEntrySliceSize(entry CASFileEntry) int64 {
 
 // casEntryToSeedFile converts a CAS payload entry into a SeedFile, restoring the
 // per-piece MD5 list when it is present (partsMd5, or the legacy slice_md5s).
+//
+// sliceMd5 是判重用的最终摘要：多片文件的 sliceMd5 与整文件 MD5 通常不同，
+// 不能拿后者冒充。只有「文件不超过一片」或「载荷声明了与 CAS 规则一致的分片
+// 大小、且逐片列表完整」时才能得到可信摘要，其余情况视为无效载荷。
 func casEntryToSeedFile(entry CASFileEntry) (SeedFile, error) {
 	if entry.Name == "" || entry.Size < 0 || !validHexHash(entry.MD5, 32) {
 		return SeedFile{}, fmt.Errorf("invalid CAS payload")
 	}
-	sliceMD5 := entry.SliceMD5
-	if sliceMD5 == "" {
-		sliceMD5 = entry.MD5
-	}
-	if !validHexHash(sliceMD5, 32) {
-		return SeedFile{}, fmt.Errorf("invalid CAS sliceMd5")
-	}
 	parts := entry.PartsMD5
 	if len(parts) == 0 {
 		parts = entry.SliceMD5s
+	}
+	sliceSize := casEntrySliceSize(entry)
+	sliceMD5 := entry.SliceMD5
+	if sliceMD5 == "" {
+		switch {
+		case entry.Size <= sliceSize:
+			sliceMD5 = entry.MD5
+		case len(parts) > 0 && entry.SliceSize == sliceSize &&
+			int64(len(parts)) == expectedCASPartCount(entry.Size, sliceSize):
+			sliceMD5 = SliceMD5FromPieces(parts, entry.MD5)
+		default:
+			return SeedFile{}, fmt.Errorf("invalid CAS payload: %q spans more than one slice and carries no sliceMd5", entry.Name)
+		}
+	}
+	if !validHexHash(sliceMD5, 32) {
+		return SeedFile{}, fmt.Errorf("invalid CAS sliceMd5")
 	}
 	file := SeedFile{
 		Path: entry.Name, Size: entry.Size, CASCreateTime: entry.CreateTime,
