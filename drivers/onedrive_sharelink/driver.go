@@ -44,6 +44,8 @@ type OnedriveSharelink struct {
 
 	headerMu sync.RWMutex
 	sg       singleflight.Group[http.Header]
+
+	listURL string
 }
 
 func (d *OnedriveSharelink) Config() driver.Config {
@@ -80,19 +82,49 @@ func (d *OnedriveSharelink) Init(ctx context.Context) error {
 	}
 	d.storeHeaders(h)
 
+	// Validate the RootFolderPath format. It is a SharePoint server-relative
+	// path, so it must be absolute; the document library segment is site
+	// language dependent and therefore not checked here.
+	if d.hasCustomRoot() && !strings.HasPrefix(d.RootFolderPath, "/") {
+		return fmt.Errorf("root_folder_path must be an absolute path, got %q", d.RootFolderPath)
+	}
+
 	return nil
+}
+
+// hasCustomRoot reports whether the user configured a non-root RootFolderPath.
+func (d *OnedriveSharelink) hasCustomRoot() bool {
+	return d.RootFolderPath != "" && d.RootFolderPath != "/"
 }
 
 func (d *OnedriveSharelink) Drop(ctx context.Context) error {
 	return nil
 }
 
+// relativePath converts the full virtual path from OpenList to a path relative
+// to the shared folder's root. When root_folder_path is configured, OpenList
+// passes the full path including that prefix.
+func (d *OnedriveSharelink) relativePath(virtualPath string) (string, error) {
+	if !d.hasCustomRoot() {
+		return virtualPath, nil
+	}
+	rel, ok := stripPrefix(virtualPath, d.RootFolderPath)
+	if !ok {
+		return "", fmt.Errorf("path %q is outside configured root %q", virtualPath, d.RootFolderPath)
+	}
+	return rel, nil
+}
+
 func (d *OnedriveSharelink) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	files, err := d.getFiles(ctx, dir.GetPath())
+	relPath, err := d.relativePath(dir.GetPath())
 	if err != nil {
 		return nil, err
 	}
-	folderSizes, err := d.driveChildrenFolderSizes(ctx, dir.GetPath())
+	files, err := d.getFiles(ctx, relPath)
+	if err != nil {
+		return nil, err
+	}
+	folderSizes, err := d.driveChildrenFolderSizes(ctx, relPath)
 	if err != nil {
 		log.Warnf("onedrive_sharelink: failed to get folder sizes for %s: %+v", dir.GetPath(), err)
 	}
@@ -142,11 +174,15 @@ func (d *OnedriveSharelink) Link(ctx context.Context, file model.Obj, args model
 }
 
 func (d *OnedriveSharelink) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+	relPath, err := d.relativePath(parentDir.GetPath())
+	if err != nil {
+		return err
+	}
 	token, err := d.getValidDriveAccessToken(ctx)
 	if err != nil {
 		return err
 	}
-	apiURL := injectAccessToken(d.drivePathAPIURL(parentDir.GetPath())+"/children", token)
+	apiURL := injectAccessToken(d.drivePathAPIURL(relPath)+"/children", token)
 	body := map[string]any{
 		"name":                              dirName,
 		"folder":                            map[string]any{},
@@ -189,7 +225,11 @@ func (d *OnedriveSharelink) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *OnedriveSharelink) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	info, err := d.createUploadInfo(ctx, stdpath.Join(dstDir.GetPath(), stream.GetName()), stream.GetSize())
+	relPath, err := d.relativePath(dstDir.GetPath())
+	if err != nil {
+		return err
+	}
+	info, err := d.createUploadInfo(ctx, stdpath.Join(relPath, stream.GetName()), stream.GetSize())
 	if err != nil {
 		return err
 	}
@@ -295,7 +335,11 @@ func (d *OnedriveSharelink) GetDirectUploadInfo(ctx context.Context, tool string
 	if tool != "HttpDirect" {
 		return nil, errs.NotImplement
 	}
-	return d.createUploadInfo(ctx, stdpath.Join(dstDir.GetPath(), fileName), fileSize)
+	relPath, err := d.relativePath(dstDir.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	return d.createUploadInfo(ctx, stdpath.Join(relPath, fileName), fileSize)
 }
 
 func (d *OnedriveSharelink) createUploadInfo(ctx context.Context, path string, fileSize int64) (*model.HttpDirectUploadInfo, error) {
@@ -436,12 +480,47 @@ func (d *OnedriveSharelink) uploadSessionChunk(ctx context.Context, uploadURL st
 }
 
 func (d *OnedriveSharelink) drivePathAPIURL(path string) string {
-	drivePath := stdpath.Join(d.driveRootPath, path)
-	drivePath = utils.FixAndCleanPath(drivePath)
+	base := d.driveRootPath
+	// When RootFolderPath is configured, the base drive root needs to take it
+	// into account so the API targets the correct subfolder.
+	if d.hasCustomRoot() {
+		base = d.effectiveDriveRootPath()
+	}
+	drivePath := utils.FixAndCleanPath(stdpath.Join(base, path))
 	if drivePath == "/" {
 		return d.DriveURL + "/root"
 	}
 	return fmt.Sprintf("%s/root:%s:", d.DriveURL, utils.EncodePath(drivePath, true))
+}
+
+// effectiveDriveRootPath computes the drive-relative root path from the
+// user-configured RootFolderPath. RootFolderPath is a SharePoint server-relative
+// path (e.g. /personal/user/Documents/subfolder); this method extracts the
+// portion beyond the document library root (e.g. /subfolder).
+func (d *OnedriveSharelink) effectiveDriveRootPath() string {
+	if d.listURL == "" || !d.hasCustomRoot() {
+		return d.driveRootPath
+	}
+	if rel, ok := stripPrefix(d.RootFolderPath, d.listURL); ok {
+		return rel
+	}
+	log.Warnf("onedrive_sharelink: RootFolderPath %q is not under listURL %q", d.RootFolderPath, d.listURL)
+	return d.driveRootPath
+}
+
+// stripPrefix removes prefix from path when path equals prefix or is nested
+// under it, matching on the path separator to avoid /foo matching /foobar.
+// It reports whether the prefix matched.
+func stripPrefix(path, prefix string) (string, bool) {
+	path = utils.FixAndCleanPath(path)
+	prefix = utils.FixAndCleanPath(prefix)
+	if path == prefix {
+		return "/", true
+	}
+	if strings.HasPrefix(path, prefix+"/") {
+		return utils.FixAndCleanPath(path[len(prefix):]), true
+	}
+	return path, false
 }
 
 func injectAccessToken(rawURL, token string) string {
@@ -561,6 +640,7 @@ func (d *OnedriveSharelink) refreshDriveContextFromRedirect(ctx context.Context,
 	d.DriveAccessToken = ctxInfo.DriveInfo.DriveAccessToken
 	d.DriveTokenTime = time.Now().Unix()
 	d.driveRootPath = rootPath
+	d.listURL = ctxInfo.ListURL
 	d.headerMu.Unlock()
 	return nil
 }
