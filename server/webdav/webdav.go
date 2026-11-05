@@ -91,7 +91,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if status != 0 {
 		w.WriteHeader(status)
 		if status != http.StatusNoContent {
-			w.Write([]byte(StatusText(status)))
+			msg := StatusText(status)
+			if err != nil {
+				// 响应体附带具体错误原因，而不是只有 "Method Not Allowed"
+				// 这类状态文本——否则排障时无法区分权限不足、对象不存在
+				// 还是上游网盘 API 报错，客户端日志和抓包里看不到根因。
+				// 仅补充响应体，不改变状态码语义。
+				msg = fmt.Sprintf("%s: %v", msg, err)
+			}
+			w.Write([]byte(msg))
 		}
 	} else if useBufferedWriter {
 		brw.WriteToResponse(w)
@@ -531,9 +539,20 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 		return http.StatusNotFound, err
 	}
 
-	// TODO(rost): Returning 405 Method Not Allowed might not be appropriate.
+	// 上传失败是瞬时状态（网络抖动、上游网盘 API 故障），不是资源的固有属性。
+	// 映射为 405 Method Not Allowed 会告诉 Synology Hyper Backup 这类备份客户端
+	// "目标已永久不可用"，使其在一次可恢复的故障后就中止整个数小时的备份任务。
+	// 503 Service Unavailable 语义正确，会促使客户端重试。
+	// 但 503 只应落在瞬时故障上：权限不足和驱动不支持上传是资源的固有属性，
+	// 客户端重试没有意义，先按错误类型分流，其余执行失败才落到 503。
 	if err != nil {
-		return http.StatusMethodNotAllowed, err
+		if errors.Is(err, errs.PermissionDenied) {
+			return http.StatusForbidden, err
+		}
+		if errs.IsNotImplementError(err) || errs.IsNotSupportError(err) {
+			return http.StatusNotImplemented, err
+		}
+		return http.StatusServiceUnavailable, err
 	}
 	fi, err = fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
