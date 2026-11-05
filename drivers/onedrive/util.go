@@ -190,14 +190,21 @@ func (d *Onedrive) upSmall(ctx context.Context, dstDir model.Obj, stream model.F
 	// 1. upload new file
 	// ApiDoc: https://learn.microsoft.com/en-us/onedrive/developer/rest-api/api/driveitem_put_content?view=odsp-graph-online
 	url := d.GetMetaUrl(false, filepath) + "/content"
+	var item File
 	_, err := d.Request(url, http.MethodPut, func(req *resty.Request) {
 		req.SetBody(driver.NewLimitedUploadStream(ctx, stream)).SetContext(ctx)
-	}, nil)
+	}, &item)
 	if err != nil {
 		return fmt.Errorf("onedrive: Failed to upload new file(path=%v): %w", filepath, err)
 	}
+	// 2. verify stored size: a stalled body can still get a 2xx while fewer
+	// bytes (even 0) were actually stored, which would silently corrupt data.
+	// Skip when the expected size is unknown (e.g. chunked WebDAV PUTs).
+	if stream.GetSize() >= 0 && item.Size != stream.GetSize() {
+		return fmt.Errorf("onedrive: uploaded file size mismatch (path=%v): stored %d bytes, expected %d", filepath, item.Size, stream.GetSize())
+	}
 
-	// 2. update metadata
+	// 3. update metadata
 	err = d.updateMetadata(ctx, stream, filepath)
 	if err != nil {
 		return fmt.Errorf("onedrive: Failed to update file(path=%v) metadata: %w", filepath, err)
