@@ -16,6 +16,7 @@ type Addition struct {
 	CustomHost         string `json:"custom_host" help:"Custom host for onedrive download link"`
 	DisableDiskUsage   bool   `json:"disable_disk_usage" default:"false"`
 	EnableDirectUpload bool   `json:"enable_direct_upload" default:"false" help:"Enable direct upload from client to OneDrive"`
+	RemoveWay          string `json:"remove_way" required:"true" type:"select" options:"trash,delete"`
 }
 
 var config = driver.Config{
