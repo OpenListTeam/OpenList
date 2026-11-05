@@ -40,6 +40,10 @@ type Link struct {
 	utils.SyncClosers `json:"-"`
 	// 如果SyncClosers中的资源被关闭后Link将不可用，则此值应为 true
 	RequireReference bool `json:"-"`
+
+	// FileName overrides the download filename in Content-Disposition when non-empty.
+	// Drivers use this to supply the correct extension for exported files.
+	FileName string `json:"-"`
 }
 
 // Clone transfers ownership of l without inheriting its cache expiration.
@@ -53,6 +57,7 @@ func (l *Link) Clone() *Link {
 		ContentLength:    l.ContentLength,
 		SyncClosers:      utils.NewSyncClosers(l),
 		RequireReference: l.RequireReference,
+		FileName:         l.FileName,
 	}
 }
 
