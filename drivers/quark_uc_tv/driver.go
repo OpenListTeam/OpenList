@@ -12,7 +12,6 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
@@ -142,30 +141,6 @@ func (d *QuarkUCTV) Link(ctx context.Context, file model.Obj, args model.LinkArg
 	}
 
 	return d.getDownloadLink(ctx, file)
-}
-
-func (d *QuarkUCTV) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	return nil, errs.NotImplement
-}
-
-func (d *QuarkUCTV) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	return nil, errs.NotImplement
-}
-
-func (d *QuarkUCTV) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	return nil, errs.NotImplement
-}
-
-func (d *QuarkUCTV) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	return nil, errs.NotImplement
-}
-
-func (d *QuarkUCTV) Remove(ctx context.Context, obj model.Obj) error {
-	return errs.NotImplement
-}
-
-func (d *QuarkUCTV) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
-	return nil, errs.NotImplement
 }
 
 type QuarkUCTVCommon struct {
