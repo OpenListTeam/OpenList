@@ -2,11 +2,13 @@ package smb
 
 import (
 	"context"
-	"errors"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -18,6 +20,8 @@ import (
 
 type SMB struct {
 	lastConnTime atomic.Int64
+	publishMode  atomic.Int32 // see publishModeFor
+	probeMu      sync.Mutex
 	model.Storage
 	Addition
 	fs *smb2.Share
@@ -35,6 +39,7 @@ func (d *SMB) Init(ctx context.Context) error {
 	if !strings.Contains(d.Addition.Address, ":") {
 		d.Addition.Address = d.Addition.Address + ":445"
 	}
+	d.publishMode.Store(publishUnknown)
 	return d._initFS(ctx)
 }
 
@@ -58,6 +63,13 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	d.updateLastConnTime()
 	files := make([]model.Obj, 0, len(rawFiles))
 	for _, f := range rawFiles {
+		if isStaging(f.Name()) {
+			// an upload in progress; reclaim the ones a killed process left
+			if time.Since(f.ModTime()) > staleStagingAge {
+				_ = d.fs.Remove(path.Join(fullPath, f.Name()))
+			}
+			continue
+		}
 		file := model.Object{
 			Path:     path.Join(fullPath, f.Name()),
 			Name:     f.Name(),
@@ -182,24 +194,43 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	if err := d.checkConn(ctx); err != nil {
 		return err
 	}
-	fullPath := filepath.Join(dstDir.GetPath(), stream.GetName())
-	out, err := d.fs.Create(fullPath)
+	dir := dstDir.GetPath()
+	fullPath := filepath.Join(dir, stream.GetName())
+	mode := d.publishModeFor(dir)
+	target, flag := fullPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC
+	switch mode {
+	case publishStaged:
+		target, flag = filepath.Join(dir, stagingName()), os.O_RDWR|os.O_CREATE|os.O_EXCL
+	case publishNewOnly:
+		flag = os.O_RDWR | os.O_CREATE | os.O_EXCL
+	}
+	out, err := d.fs.OpenFile(target, flag, 0o666)
 	if err != nil {
 		d.cleanLastConnTime()
+		if mode == publishNewOnly {
+			if _, serr := d.fs.Stat(fullPath); serr == nil {
+				return errCannotReplace
+			}
+		}
 		return err
 	}
 	d.updateLastConnTime()
 	defer func() {
 		_ = out.Close()
-		if errors.Is(err, context.Canceled) {
-			_ = d.fs.Remove(fullPath)
+		// never remove the destination: another upload may own it by now
+		if err != nil && target != fullPath {
+			_ = d.fs.Remove(target)
 		}
 	}()
 	err = utils.CopyWithCtx(ctx, out, driver.NewLimitedUploadStream(ctx, stream), stream.GetSize(), up)
-	if err != nil {
+	if err != nil || target == fullPath {
 		return err
 	}
-	return nil
+	if err = out.Close(); err != nil {
+		return err
+	}
+	err = d.fs.Rename(target, fullPath)
+	return err
 }
 
 func (d *SMB) GetDetails(ctx context.Context) (*model.StorageDetails, error) {

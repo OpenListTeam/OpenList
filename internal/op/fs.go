@@ -708,15 +708,27 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 	}
 	log.Debugf("put file [%s] done", file.GetName())
 	if storage.Config().NoOverwriteUpload && fi != nil && fi.GetSize() > 0 {
+		// a canceled upload (client gone, multipart abort or expiry) is exactly
+		// when the old obj has to come back, so do not reuse its context
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
 		if err != nil {
-			// upload failed, recover old obj
-			err := Rename(ctx, storage, tempPath, file.GetName())
-			if err != nil {
-				log.Errorf("failed recover old obj: %+v", err)
+			// upload failed, recover old obj, unless another upload has taken
+			// its name meanwhile: the newer file wins, the old obj stays aside
+			_, getErr := GetUnwrap(rctx, storage, dstPath)
+			switch {
+			case errs.IsObjectNotFound(getErr):
+				if err := Rename(rctx, storage, tempPath, file.GetName()); err != nil {
+					log.Errorf("failed recover old obj: %+v", err)
+				}
+			case getErr == nil:
+				log.Warnf("keep old obj as %s: %s was uploaded again meanwhile", tempPath, dstPath)
+			default:
+				log.Errorf("failed recover old obj: %+v", getErr)
 			}
 		} else {
 			// upload success, remove old obj
-			err = Remove(ctx, storage, tempPath)
+			err = Remove(rctx, storage, tempPath)
 		}
 	}
 	return errors.WithStack(err)

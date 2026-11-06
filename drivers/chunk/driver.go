@@ -174,6 +174,13 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			break
 		}
 		rawName := obj.GetName()
+		if isStaging(rawName) {
+			// an upload in progress; reclaim the ones a killed process left
+			if isStaleStaging(obj) {
+				_ = op.Remove(ctx, remoteStorage, stdpath.Join(remoteActualDir, rawName))
+			}
+			continue
+		}
 		if obj.IsDir() {
 			if name, ok := strings.CutPrefix(rawName, d.ChunkPrefix); ok {
 				resultIdx := len(result)
@@ -467,15 +474,31 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	if (d.Thumbnail && dstDir.GetName() == ".thumbnails") || (d.ChunkLargeFileOnly && file.GetSize() <= d.PartSize) {
 		return op.Put(ctx, remoteStorage, stdpath.Join(remoteActualPath, dstDir.GetPath()), file, up)
 	}
+	parent := stdpath.Join(remoteActualPath, dstDir.GetPath())
+	name := d.ChunkPrefix + file.GetName()
+	if !canRename(remoteStorage) {
+		// nothing to publish with: write the parts in place, but never remove
+		// a chunk folder another upload may own by now
+		return d.putParts(ctx, remoteStorage, stdpath.Join(parent, name), file, up)
+	}
+	staging := stdpath.Join(parent, stagingName())
+	if err := d.putParts(ctx, remoteStorage, staging, file, up); err != nil {
+		_ = op.Remove(context.WithoutCancel(ctx), remoteStorage, staging)
+		return err
+	}
+	return publish(ctx, remoteStorage, parent, staging, name)
+}
+
+// putParts uploads the hash markers and the parts of file into dir.
+func (d *Chunk) putParts(ctx context.Context, remoteStorage driver.Driver, dir string, file model.FileStreamer, up driver.UpdateProgress) error {
 	upReader := &driver.ReaderUpdatingProgress{
 		Reader:         file,
 		UpdateProgress: up,
 	}
-	dst := stdpath.Join(remoteActualPath, dstDir.GetPath(), d.ChunkPrefix+file.GetName())
 	skipHookCtx := context.WithValue(ctx, conf.SkipHookKey, struct{}{})
 	if d.StoreHash {
 		for ht, value := range file.GetHash().All() {
-			_ = op.Put(skipHookCtx, remoteStorage, dst, &stream.FileStream{
+			_ = op.Put(skipHookCtx, remoteStorage, dir, &stream.FileStream{
 				Obj: &model.Object{
 					Name:     fmt.Sprintf("hash_%s_%s%s", ht.Name, value, d.CustomExt),
 					Size:     1,
@@ -492,9 +515,8 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		fullPartCount--
 		tailSize = d.PartSize
 	}
-	partIndex := 0
-	for partIndex < fullPartCount {
-		err = op.Put(skipHookCtx, remoteStorage, dst, &stream.FileStream{
+	for partIndex := 0; partIndex < fullPartCount; partIndex++ {
+		err := op.Put(skipHookCtx, remoteStorage, dir, &stream.FileStream{
 			Obj: &model.Object{
 				Name:     d.getPartName(partIndex),
 				Size:     d.PartSize,
@@ -504,12 +526,10 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 			Reader:   io.LimitReader(upReader, d.PartSize),
 		}, nil)
 		if err != nil {
-			_ = op.Remove(ctx, remoteStorage, dst)
 			return err
 		}
-		partIndex++
 	}
-	err = op.Put(ctx, remoteStorage, dst, &stream.FileStream{
+	return op.Put(ctx, remoteStorage, dir, &stream.FileStream{
 		Obj: &model.Object{
 			Name:     d.getPartName(fullPartCount),
 			Size:     tailSize,
@@ -518,10 +538,6 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		Mimetype: file.GetMimetype(),
 		Reader:   upReader,
 	}, nil)
-	if err != nil {
-		_ = op.Remove(ctx, remoteStorage, dst)
-	}
-	return err
 }
 
 func (d *Chunk) getPartName(part int) string {
