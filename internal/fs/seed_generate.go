@@ -294,10 +294,10 @@ func EncodeGeneratedSeed(seed *torrent.Seed, format string, standardPieces []byt
 		if file.CASSliceMD5 != "" {
 			t.SetCASInfo(&torrent.CASInfo{
 				FileMD5: strings.ToUpper(file.Hashes.MD5), SliceMD5: strings.ToUpper(file.CASSliceMD5),
-				SliceSize: torrent.DefaultPieceSize, Cloud: casCloud,
+				SliceSize: torrent.CASSliceSize(file.Size), Cloud: casCloud,
 			})
-		} else if seed.PieceSize == torrent.DefaultPieceSize && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
-			t.SetCASInfo(torrent.BuildCASInfoFromMD5sWithCloud(file.Hashes.MD5, file.Hashes.Pieces.MD5, torrent.DefaultPieceSize, casCloud))
+		} else if file.Hashes.Pieces != nil && int64(len(file.Hashes.Pieces.MD5)) == torrent.CASPartCount(file.Size) {
+			t.SetCASInfo(torrent.BuildCASInfoFromMD5sWithCloud(file.Hashes.MD5, file.Hashes.Pieces.MD5, torrent.CASSliceSize(file.Size), casCloud))
 		}
 	} else {
 		for _, file := range seed.Files {
@@ -327,11 +327,9 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	}
 	defer release()
 	matrix := normalizedSeedMatrix(params.HashMatrix, formats)
+	casTarget := slices.Contains(formats, "cas")
 	pieceSize := params.PieceSize
 	if pieceSize <= 0 {
-		pieceSize = torrent.DefaultPieceSize
-	}
-	if slices.Contains(formats, "cas") {
 		pieceSize = torrent.DefaultPieceSize
 	}
 
@@ -342,6 +340,21 @@ func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGen
 	}
 	if len(entries) == 0 {
 		return nil, nil, fmt.Errorf("no files found under the selected paths")
+	}
+	if casTarget {
+		// CAS 的分片大小由文件大小唯一决定（10/20 MiB…），用户配置对它无效。
+		// 所有文件同档时把种子级 piece_size 也对齐过去，逐片 MD5 与最终摘要就能同时写进 .cas。
+		size := torrent.CASSliceSize(entries[0].Size)
+		uniform := true
+		for _, entry := range entries[1:] {
+			if torrent.CASSliceSize(entry.Size) != size {
+				uniform = false
+				break
+			}
+		}
+		if uniform {
+			pieceSize = torrent.ClampSeedPieceSize(size)
+		}
 	}
 
 	seedName := strings.TrimSpace(params.Name)
@@ -423,6 +436,9 @@ func buildSeedGroup(
 	useGlobalDirect := len(directSet) == 0 && params.IncludeDirectSource
 	hasShare := useGlobalShare || len(shareSet) > 0
 	hasDirect := useGlobalDirect || len(directSet) > 0
+
+	// CAS 目标的哈希切法由文件大小决定，与 piece_size 参数无关
+	casTarget := slices.Contains(formats, "cas")
 	if hasShare && !user.CanShare() {
 		return nil, nil, errs.PermissionDenied
 	}
@@ -440,7 +456,7 @@ func buildSeedGroup(
 			return nil, nil, err
 		}
 		if params.OnStage != nil {
-			params.OnStage(fmt.Sprintf("正在计算哈希 %d/%d: %s", index+1, len(entries), stdpath.Base(entry.SeedPath)))
+			params.OnStage(fmt.Sprintf("hashing %d/%d: %s", index+1, len(entries), stdpath.Base(entry.SeedPath)))
 		}
 		requestedPath := entry.Requested
 		fullPath := entry.FullPath
@@ -490,8 +506,21 @@ func buildSeedGroup(
 			return nil, nil, fmt.Errorf("storage cannot stream %s: %w", requestedPath, err)
 		}
 		fileHasher := torrent.NewHashWriter(pieceSize, pieceSize, 0)
+		// CAS 的切法由文件大小决定，可能和 BT/OSS 的 piece_size 不同；
+		// 不一致时另开一个 hasher 只算分片 MD5（同一份字节，多算一遍而已），
+		// 最终摘要照样能写进 .cas，逐片列表则因切法不同而省略。
+		var casHasher *torrent.HashWriter
+		if casTarget {
+			if casSlice := torrent.CASSliceSize(obj.GetSize()); casSlice != pieceSize {
+				casHasher = torrent.NewHashWriter(casSlice, casSlice, 0)
+			}
+		}
+		sinks := []io.Writer{globalHasher, fileHasher}
+		if casHasher != nil {
+			sinks = append(sinks, casHasher)
+		}
 		progress.reader = rc
-		n, copyErr := io.Copy(io.MultiWriter(globalHasher, fileHasher), progress)
+		n, copyErr := io.Copy(io.MultiWriter(sinks...), progress)
 		progress.reader = nil
 		_ = rc.Close()
 		if copyErr != nil {
@@ -502,6 +531,14 @@ func buildSeedGroup(
 		}
 		fileHasher.Finish()
 		seedFile := fileHasher.BuildSeedFile(seedPath, modified)
+		if casTarget {
+			slicer := fileHasher
+			if casHasher != nil {
+				casHasher.Finish()
+				slicer = casHasher
+			}
+			seedFile.CASSliceMD5 = strings.ToLower(slicer.GetSliceMD5(seedFile.Hashes.MD5))
+		}
 		applySeedMatrix(&seedFile, matrix)
 		if comment := strings.TrimSpace(params.FileComments[requestedPath]); comment != "" {
 			seedFile.Comment = comment
@@ -519,7 +556,7 @@ func buildSeedGroup(
 	// 哈希读完，先把进度推到位，再进入编码阶段
 	progress.reportNow()
 	if params.OnStage != nil {
-		params.OnStage("正在生成种子文件")
+		params.OnStage("generating seed files")
 	}
 	createdShares := make([]string, 0, len(seed.Files))
 	keepCreatedShares := false
@@ -570,6 +607,14 @@ func buildSeedGroup(
 		}
 		if outputPath == "" {
 			return artifact, nil
+		}
+		// 产物与源文件同名时写盘会覆盖源文件（例如从 xxx.mp4.cas 生成 .cas），
+		// 用户既丢了原始种子，又得到一个只描述元数据的种子。宁可失败也不静默覆盖。
+		target := stdpath.Join(outputPath, fileName)
+		for _, source := range entries {
+			if stdpath.Clean(source.FullPath) == stdpath.Clean(target) {
+				return artifact, fmt.Errorf("seed output %s would overwrite its own source file", target)
+			}
 		}
 		dstDir, err := user.JoinPath(outputPath)
 		if err != nil {
@@ -705,7 +750,7 @@ func (t *SeedGenerateTask) Run() error {
 	t.ClearEndTime()
 	t.SetStartTime(time.Now())
 	t.SetProgress(0)
-	t.setStatus("正在准备")
+	t.setStatus("preparing")
 	defer func() { t.SetEndTime(time.Now()) }()
 
 	params := t.params

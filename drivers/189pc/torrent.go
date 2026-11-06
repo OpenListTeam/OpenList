@@ -52,12 +52,12 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	// 解析 torrent
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
-		return nil, fmt.Errorf("解析 torrent 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse torrent: %w", err)
 	}
 
 	// 检查是否包含 CAS 扩展信息
 	if !t.HasCASInfo() {
-		return nil, fmt.Errorf("torrent 不包含 CAS 扩展信息，无法秒传")
+		return nil, fmt.Errorf("torrent has no CAS metadata, rapid upload is not possible")
 	}
 
 	cas := t.CAS
@@ -72,9 +72,9 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 	}
 
 	// 复用统一的 CAS 秒传核心实现
-	respObj, err := y.rapidUploadByCAS(ctx, dstDir, fileName, fileSize, fileMD5, sliceMD5s, cas.SliceSize, overwrite)
+	respObj, err := y.rapidUploadByCAS(ctx, dstDir, fileName, fileSize, fileMD5, cas.SliceMD5, sliceMD5s, cas.SliceSize, overwrite)
 	if err != nil {
-		utils.Log.Errorf("[RapidUpload] 秒传失败: fileMD5=%s, err=%v", fileMD5, err)
+		utils.Log.Errorf("[RapidUpload] rapid upload failed: fileMD5=%s, err=%v", fileMD5, err)
 		return nil, err
 	}
 
@@ -85,7 +85,7 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 		go func() {
 			torrentName := fileName + ".cas.torrent"
 			infoHash, _ := GetInfoHashHex(torrentData)
-			utils.Log.Infof("秒传成功，上传 torrent: %s (info_hash: %s, size: %d bytes)",
+			utils.Log.Infof("rapid upload succeeded, uploading torrent: %s (info_hash: %s, size: %d bytes)",
 				torrentName, infoHash, len(torrentData))
 
 			torrentFileStream := &stream.FileStream{
@@ -100,9 +100,9 @@ func (y *Cloud189PC) RapidUploadFromTorrent(ctx context.Context, dstDir model.Ob
 			}
 			_, uploadErr := y.fastUpload(context.Background(), capturedDstDir, torrentFileStream, func(p float64) {}, capturedIsFamily, false, false)
 			if uploadErr != nil {
-				utils.Log.Warnf("上传 torrent 文件失败: %v", uploadErr)
+				utils.Log.Warnf("failed to upload torrent file: %v", uploadErr)
 			} else {
-				utils.Log.Infof("torrent 文件已上传: %s", torrentName)
+				utils.Log.Infof("torrent file uploaded: %s", torrentName)
 				op.Cache.DeleteDirectory(y, capturedDstDir.GetPath())
 			}
 		}()
@@ -153,11 +153,11 @@ func ComputePieceSHA1(data []byte) []byte {
 func ExtractCASFromTorrent(torrentData []byte) (*torrent.CASInfo, string, int64, error) {
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
-		return nil, "", 0, fmt.Errorf("解析 torrent 失败: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to parse torrent: %w", err)
 	}
 
 	if !t.HasCASInfo() {
-		return nil, "", 0, fmt.Errorf("torrent 不包含 CAS 扩展信息")
+		return nil, "", 0, fmt.Errorf("torrent has no CAS metadata")
 	}
 
 	return t.CAS, t.Info.Name, t.GetTotalSize(), nil
@@ -168,7 +168,7 @@ func ExtractCASFromTorrent(torrentData []byte) (*torrent.CASInfo, string, int64,
 func InjectCASIntoTorrent(torrentData []byte, fileMD5 string, sliceMD5s []string, sliceSize int64) ([]byte, error) {
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
-		return nil, fmt.Errorf("解析 torrent 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse torrent: %w", err)
 	}
 
 	// 计算 sliceMD5（统一走规范实现）
@@ -253,7 +253,7 @@ func (y *Cloud189PC) torrentFollowCopy(srcFolderId string, srcFileName string, d
 	go func() {
 		torrentFile, err := y.findFileByName(context.Background(), torrentName, srcFolderId, isFamily)
 		if err != nil {
-			utils.Log.Debugf("查找 torrent 文件失败（跟随复制）: %v", err)
+			utils.Log.Debugf("failed to look up torrent file (follow copy): %v", err)
 			return
 		}
 		// 复制 torrent 文件到目标目录
@@ -265,11 +265,11 @@ func (y *Cloud189PC) torrentFollowCopy(srcFolderId string, srcFileName string, d
 				IsFolder: 0,
 			})
 		if copyErr != nil {
-			utils.Log.Warnf("跟随复制 torrent 文件失败: %v", copyErr)
+			utils.Log.Warnf("failed to copy torrent file (follow): %v", copyErr)
 			return
 		}
 		if err = y.WaitBatchTask("COPY", resp.TaskID, time.Second); err != nil {
-			utils.Log.Warnf("等待跟随复制 torrent 文件失败: %v", err)
+			utils.Log.Warnf("failed to wait for torrent copy (follow): %v", err)
 		}
 	}()
 }
@@ -291,7 +291,7 @@ func (y *Cloud189PC) torrentFollowMove(srcFolderId string, srcFileName string, d
 	go func() {
 		torrentFile, err := y.findFileByName(context.Background(), torrentName, srcFolderId, isFamily)
 		if err != nil {
-			utils.Log.Debugf("查找 torrent 文件失败（跟随移动）: %v", err)
+			utils.Log.Debugf("failed to look up torrent file (follow move): %v", err)
 			return
 		}
 		// 移动 torrent 文件到目标目录
@@ -303,11 +303,11 @@ func (y *Cloud189PC) torrentFollowMove(srcFolderId string, srcFileName string, d
 				IsFolder: 0,
 			})
 		if moveErr != nil {
-			utils.Log.Warnf("跟随移动 torrent 文件失败: %v", moveErr)
+			utils.Log.Warnf("failed to move torrent file (follow): %v", moveErr)
 			return
 		}
 		if err = y.WaitBatchTask("MOVE", resp.TaskID, time.Millisecond*400); err != nil {
-			utils.Log.Warnf("等待跟随移动 torrent 文件失败: %v", err)
+			utils.Log.Warnf("failed to wait for torrent move (follow): %v", err)
 		}
 	}()
 }
@@ -330,7 +330,7 @@ func (y *Cloud189PC) torrentFollowRename(folderId string, oldFileName string, ne
 	go func() {
 		torrentFile, err := y.findFileByName(context.Background(), oldTorrentName, folderId, isFamily)
 		if err != nil {
-			utils.Log.Debugf("查找 torrent 文件失败（跟随重命名）: %v", err)
+			utils.Log.Debugf("failed to look up torrent file (follow rename): %v", err)
 			return
 		}
 
@@ -351,7 +351,7 @@ func (y *Cloud189PC) torrentFollowRename(folderId string, oldFileName string, ne
 			req.SetContext(context.Background()).SetQueryParams(queryParam)
 		}, nil, &RenameResp{}, isFamily)
 		if renameErr != nil {
-			utils.Log.Warnf("跟随重命名 torrent 文件失败: %v", renameErr)
+			utils.Log.Warnf("failed to rename torrent file (follow): %v", renameErr)
 		}
 	}()
 }

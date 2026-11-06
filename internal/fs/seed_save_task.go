@@ -79,7 +79,7 @@ func (t *SeedSaveTask) Finish(err error) {
 	if errors.Is(err, context.Canceled) ||
 		t.GetState() == tache.StateCanceling || t.GetState() == tache.StateCanceled ||
 		(t.Ctx() != nil && errors.Is(t.Ctx().Err(), context.Canceled)) {
-		t.SetStatus("已取消")
+		t.SetStatus("canceled")
 		t.SetState(tache.StateCanceled)
 		return
 	}
@@ -117,6 +117,6 @@ func NewSeedSaveTask(ctx context.Context, user *model.User, title string) *SeedS
 	t.cancel = cancel
 	t.SetState(tache.StateRunning)
 	t.SetProgress(0)
-	t.SetStatus("正在准备")
+	t.SetStatus("preparing")
 	return t
 }
