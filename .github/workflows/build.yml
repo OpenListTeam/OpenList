@@ -24,7 +24,7 @@ jobs:
           go-version: "1.27.3"
 
       - name: Go test
-        run: go test ./internal/db/... ./internal/transcode/... ./internal/media/...
+        run: go test ./internal/db/... ./internal/transcode/... ./internal/media/... ./internal/fs/... ./server/handles/... ./server/common/... ./pkg/torrent/...
 
   build:
     strategy:
