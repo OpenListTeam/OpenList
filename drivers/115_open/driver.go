@@ -40,16 +40,35 @@ func (d *Open115) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
+// onTokenRefreshed persists the rotated token pair. 115 Open refresh tokens are
+// single use: once a new one is issued the previous one is rejected, so a lost
+// write would leave the storage broken after a restart. An empty refresh token
+// must never overwrite the stored one, otherwise the following refresh is sent
+// without the parameter and fails with "refresh_token 格式错误".
+func (d *Open115) onTokenRefreshed(accessToken, refreshToken string) {
+	d.Addition.AccessToken = accessToken
+	if refreshToken != "" {
+		d.Addition.RefreshToken = refreshToken
+	}
+	op.MustSaveDriverStorage(d)
+}
+
 func (d *Open115) Init(ctx context.Context) error {
+	if d.Addition.AccessToken == "" && d.Addition.RefreshToken == "" {
+		return errors.New("access token or refresh token is required")
+	}
 	d.client = sdk.New(sdk.WithRefreshToken(d.Addition.RefreshToken),
 		sdk.WithAccessToken(d.Addition.AccessToken),
-		sdk.WithOnRefreshToken(func(s1, s2 string) {
-			d.Addition.AccessToken = s1
-			d.Addition.RefreshToken = s2
-			op.MustSaveDriverStorage(d)
-		}))
+		sdk.WithOnRefreshToken(d.onTokenRefreshed))
 	if flags.Debug || flags.Dev {
 		d.client.SetDebug(true)
+	}
+	if d.Addition.AccessToken == "" {
+		// Without an access token the SDK would send an unauthenticated request
+		// first and only then refresh, surfacing a misleading "40100000 参数错误".
+		if _, err := d.client.RefreshToken(ctx); err != nil {
+			return err
+		}
 	}
 	_, err := d.client.UserInfo(ctx)
 	if err != nil {
