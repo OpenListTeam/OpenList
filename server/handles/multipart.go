@@ -19,7 +19,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const multipartMinChunkSize = int64(1) << 20 // 1MB
+const (
+	multipartMinChunkSize = int64(1) << 20 // 1MB
+	// X-File-Identity is stored per session, so bound what a client can pin
+	multipartMaxIdentityLen = 256
+)
 
 // multipartChunkSize resolves the effective chunk size. The admin setting is
 // the ceiling: a client may suggest a smaller chunk via X-Chunk-Size but never
@@ -80,12 +84,6 @@ func MultipartInit(c *gin.Context) {
 		}
 	}
 	overwrite := c.GetHeader("Overwrite") != "false"
-	if !overwrite {
-		if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
-			common.ErrorStrResp(c, "file exists", 403)
-			return
-		}
-	}
 	dir, name := stdpath.Split(path)
 	if shouldIgnoreSystemFile(name) {
 		common.ErrorStrResp(c, errs.IgnoredSystemFile.Error(), 403)
@@ -115,7 +113,14 @@ func MultipartInit(c *gin.Context) {
 	if len(mimetype) == 0 {
 		mimetype = utils.GetMimeType(name)
 	}
-	snap, resumed, err := multipart.DefaultManager.Init(multipart.InitReq{
+	// opaque to the server: it only ever compares it with the value the
+	// session was created with, to decide whether resuming is safe
+	identity := c.GetHeader("X-File-Identity")
+	if len(identity) > multipartMaxIdentityLen {
+		common.ErrorStrResp(c, "X-File-Identity is too long", 400)
+		return
+	}
+	req := multipart.InitReq{
 		User:      user,
 		Path:      path,
 		Size:      size,
@@ -123,7 +128,17 @@ func MultipartInit(c *gin.Context) {
 		Mimetype:  mimetype,
 		Modified:  getLastModified(c),
 		Hashes:    h,
-	})
+		Identity:  identity,
+	}
+	// an interrupted upload may resume even though in-place drivers have
+	// already written its partial output to the destination
+	if !overwrite && !multipart.DefaultManager.ResumesSameFile(req) {
+		if res, _ := fs.Get(c.Request.Context(), path, &fs.GetArgs{NoLog: true}); res != nil {
+			common.ErrorStrResp(c, "file exists", 403)
+			return
+		}
+	}
+	snap, resumed, err := multipart.DefaultManager.Init(req)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
