@@ -113,11 +113,18 @@ func RehashSeedFromFilesWithMatrix(
 		return nil, fmt.Errorf("unsupported target format %q", targetFormat)
 	}
 	pieceSize := seed.PieceSize
-	if pieceSize <= 0 || target == "cas" {
+	if pieceSize <= 0 {
 		pieceSize = torrent.DefaultPieceSize
 	}
+	if target == "cas" {
+		// CAS 的分片大小由文件大小唯一决定，用户配置无效；
+		// 所有文件共用同一档位时把它对齐到种子级，逐片哈希才能一并写进 .cas
+		if size, ok := torrent.CASUniformSliceSize(seed.Files); ok {
+			pieceSize = torrent.ClampSeedPieceSize(size)
+		}
+	}
 	setSeedHashPieceSize(seed, pieceSize)
-	return rehashSeedContents(ctx, user, seed, base, matrix, target == "torrent")
+	return rehashSeedContents(ctx, user, seed, base, matrix, target == "torrent", target == "cas")
 }
 
 func setSeedHashPieceSize(seed *torrent.Seed, pieceSize int64) {
@@ -131,7 +138,7 @@ func setSeedHashPieceSize(seed *torrent.Seed, pieceSize int64) {
 	seed.PieceSize = pieceSize
 }
 
-func rehashSeedContents(ctx context.Context, user *model.User, seed *torrent.Seed, base string, matrix SeedHashMatrix, needGlobal bool) ([]byte, error) {
+func rehashSeedContents(ctx context.Context, user *model.User, seed *torrent.Seed, base string, matrix SeedHashMatrix, needGlobal bool, casTarget bool) ([]byte, error) {
 	var global *torrent.HashWriter
 	if needGlobal || matrix.SHA1.Pieces && len(seed.GlobalPieces) > 0 {
 		global = torrent.NewHashWriter(seed.PieceSize, seed.PieceSize, 0)
@@ -142,7 +149,12 @@ func rehashSeedContents(ctx context.Context, user *model.User, seed *torrent.See
 		if err != nil {
 			return nil, fmt.Errorf("open %s: %w", file.Path, err)
 		}
-		hasher := torrent.NewHashWriter(seed.PieceSize, seed.PieceSize, 0)
+		// CAS 的切法由文件大小决定，可能和种子级 piece_size 不同
+		hashSize := seed.PieceSize
+		if casTarget {
+			hashSize = torrent.CASSliceSize(file.Size)
+		}
+		hasher := torrent.NewHashWriter(hashSize, hashSize, 0)
 		var writer io.Writer = hasher
 		if global != nil {
 			writer = io.MultiWriter(global, hasher)
@@ -157,7 +169,13 @@ func rehashSeedContents(ctx context.Context, user *model.User, seed *torrent.See
 		}
 		hasher.Finish()
 		built := hasher.BuildSeedFile(file.Path, file.Modified)
+		if casTarget {
+			file.CASSliceMD5 = strings.ToLower(hasher.GetSliceMD5(built.Hashes.MD5))
+		}
 		mergeSeedRehashMatrix(&file.Hashes, built.Hashes, matrix)
+		if casTarget {
+			file.DropInconsistentCASParts(seed.PieceSize)
+		}
 	}
 	if global != nil {
 		global.Finish()

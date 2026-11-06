@@ -113,6 +113,72 @@ func buildSeedRapidUploadRequest(t *torrent.Torrent, open func() (model.FileStre
 	return req
 }
 
+// buildSeedFileRapidUploadRequest builds a rapid-upload request for exactly one
+// seed file, straight from the seed's hash matrix.
+//
+// It must not go through a torrent container: EncodeSeed(format="torrent")
+// requires SHA-1 piece hashes, which CAS seeds (MD5 + slice MD5s) never carry,
+// so the old round trip rejected every 189-style 秒传 before any request was
+// sent. Reading the seed file directly also keeps the drive's own slice size
+// and legacy slice digest intact.
+//
+// open lazily provides the file content and may be nil.
+func buildSeedFileRapidUploadRequest(seed *torrent.Seed, file torrent.SeedFile, open func() (model.FileStreamer, error)) *driver.SeedRapidUploadRequest {
+	if seed == nil || file.Size < 0 {
+		return nil
+	}
+	name := stdpath.Base(file.Path)
+	if name == "" || name == "." || name == ".." {
+		return nil
+	}
+	wholeHashes := make(map[*utils.HashType]string)
+	if file.Hashes.MD5 != "" {
+		wholeHashes[utils.MD5] = strings.ToUpper(file.Hashes.MD5)
+	}
+	if file.Hashes.SHA1 != "" {
+		wholeHashes[utils.SHA1] = strings.ToUpper(file.Hashes.SHA1)
+	}
+	if file.Hashes.SHA256 != "" {
+		wholeHashes[utils.SHA256] = strings.ToUpper(file.Hashes.SHA256)
+	}
+	if file.Hashes.GCID != "" {
+		wholeHashes[hash_extend.GCID] = strings.ToUpper(file.Hashes.GCID)
+	}
+	// 189 的分片大小由文件大小唯一决定，seed.PieceSize 只在其它云盘才有效
+	sliceSize := seed.PieceSize
+	if file.CASCloud == "" || file.CASCloud == torrent.Cloud189 {
+		sliceSize = torrent.CASSliceSize(file.Size)
+	}
+	req := &driver.SeedRapidUploadRequest{
+		Name:      name,
+		Size:      file.Size,
+		SliceSize: sliceSize,
+		SliceMD5:  strings.ToUpper(file.CASSliceMD5),
+		Open:      open,
+	}
+	if file.Hashes.Pieces != nil {
+		req.SliceMD5s = file.Hashes.Pieces.MD5
+		req.SliceSHA1s = file.Hashes.Pieces.SHA1
+	}
+	req.Whole = &utils.HashInfo{}
+	*req.Whole = utils.NewHashInfoByMap(wholeHashes)
+	return req
+}
+
+// seedRapidUploadBlocker returns why rapid upload must be skipped for this seed
+// file ("" means it may be attempted).
+//
+// 种子可以描述任意文件，包括另一个种子容器：拿 .cas 再生成 .cas 时，载荷里的
+// name 就是 .cas 自己。这类种子秒传上去只会在目标目录再造一个同名 .cas，
+// 看起来像「秒传成功但只有一个 cas 文件」，所以先拦下来。
+func seedRapidUploadBlocker(file torrent.SeedFile) string {
+	name := stdpath.Base(file.Path)
+	if !fs.IsSeedContainerName(name) {
+		return ""
+	}
+	return fmt.Sprintf("this seed describes a seed file itself (%s), not the content inside it; use the seed that describes the target file", name)
+}
+
 // seedFileSupportsRapidUpload reports whether a seed file carries enough hash
 // metadata for the given rapid-upload driver to attempt an instant upload.
 func seedFileSupportsRapidUpload(uploader driver.SeedRapidUploader, file torrent.SeedFile) bool {
@@ -161,14 +227,14 @@ var seedSourceHTTPClient = &http.Client{
 	Timeout: 5 * time.Minute,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= maxSeedSourceRedirects {
-			return fmt.Errorf("种子来源重定向次数过多（最多 %d 次）", maxSeedSourceRedirects)
+			return fmt.Errorf("too many seed source redirects (max %d)", maxSeedSourceRedirects)
 		}
 		if err := validateSeedHost(req.URL); err != nil {
-			return fmt.Errorf("种子来源重定向被拒绝: %w", err)
+			return fmt.Errorf("seed source redirect rejected: %w", err)
 		}
 		// Redirects must not silently drop to a weaker scheme.
 		if origin := via[0].URL.Scheme; !strings.EqualFold(req.URL.Scheme, origin) {
-			return fmt.Errorf("种子来源重定向不允许切换协议: %s -> %s", origin, req.URL.Scheme)
+			return fmt.Errorf("seed source redirect must not switch scheme: %s -> %s", origin, req.URL.Scheme)
 		}
 		return nil
 	},
@@ -187,14 +253,14 @@ var seedSiteURLProvider = func() string {
 func seedSiteConfig() (*url.URL, error) {
 	configured := strings.TrimSpace(seedSiteURLProvider())
 	if configured == "" {
-		return nil, fmt.Errorf("seed_site_url 未配置")
+		return nil, fmt.Errorf("seed_site_url is not configured")
 	}
 	site, err := url.Parse(configured)
 	if err != nil {
-		return nil, fmt.Errorf("seed_site_url 解析失败: %w", err)
+		return nil, fmt.Errorf("failed to parse seed_site_url: %w", err)
 	}
 	if site.Scheme == "" || site.Hostname() == "" {
-		return nil, fmt.Errorf("seed_site_url 缺少协议或主机名")
+		return nil, fmt.Errorf("seed_site_url is missing scheme or host")
 	}
 	return site, nil
 }
@@ -233,20 +299,20 @@ func effectivePort(u *url.URL) string {
 // validation and by the redirect guard, so both enforce identical rules.
 func validateSeedHost(u *url.URL) error {
 	if u == nil {
-		return fmt.Errorf("空 URL")
+		return fmt.Errorf("empty URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("不支持的协议 %q", u.Scheme)
+		return fmt.Errorf("unsupported scheme %q", u.Scheme)
 	}
 	if u.User != nil {
-		return fmt.Errorf("种子来源不允许携带用户凭据")
+		return fmt.Errorf("seed source must not carry user credentials")
 	}
 	site, err := seedSiteConfig()
 	if err != nil {
 		return err
 	}
 	if !sameSeedHost(u, site) {
-		return fmt.Errorf("种子来源主机 %q 与配置站点 %q 不一致", u.Host, site.Host)
+		return fmt.Errorf("seed source host %q does not match the configured site %q", u.Host, site.Host)
 	}
 	return nil
 }
@@ -254,7 +320,7 @@ func validateSeedHost(u *url.URL) error {
 // validateParsedTorrent checks that basic torrent invariants hold.
 func validateParsedTorrent(t *torrent.Torrent) error {
 	if len(t.Info.Pieces)%20 != 0 {
-		return fmt.Errorf("torrent pieces 数据无效：长度必须为 20 的整数倍")
+		return fmt.Errorf("invalid torrent pieces: length must be a multiple of 20")
 	}
 	return nil
 }
@@ -309,21 +375,21 @@ func ParseTorrent(c *gin.Context) {
 
 	// 限制 Base64 输入大小（最大 ~10MB decoded）
 	if len(req.TorrentData) > maxTorrentBase64Len {
-		common.ErrorResp(c, fmt.Errorf("torrent 数据过大（最大 10MB）"), 400)
+		common.ErrorResp(c, fmt.Errorf("torrent data is too large (max 10MB)"), 400)
 		return
 	}
 
 	// Base64 解码
 	torrentData, err := base64.StdEncoding.DecodeString(req.TorrentData)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("无效的 Base64 编码: %w", err), 400)
+		common.ErrorResp(c, fmt.Errorf("invalid base64 data: %w", err), 400)
 		return
 	}
 
 	// 解析 torrent
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("解析 torrent 失败: %w", err), 400)
+		common.ErrorResp(c, fmt.Errorf("failed to parse torrent: %w", err), 400)
 		return
 	}
 	if err := validateParsedTorrent(t); err != nil {
@@ -411,19 +477,19 @@ func TorrentRapidUpload(c *gin.Context) {
 	// Base64 解码
 	torrentData, err := base64.StdEncoding.DecodeString(req.TorrentData)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("无效的 Base64 编码: %w", err), 400)
+		common.ErrorResp(c, fmt.Errorf("invalid base64 data: %w", err), 400)
 		return
 	}
 
 	// 解析 torrent
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("解析 torrent 失败: %w", err), 400)
+		common.ErrorResp(c, fmt.Errorf("failed to parse torrent: %w", err), 400)
 		return
 	}
 
 	if !t.HasCASInfo() {
-		common.ErrorResp(c, fmt.Errorf("torrent 不包含 CAS 扩展信息，无法秒传"), 400)
+		common.ErrorResp(c, fmt.Errorf("torrent has no CAS metadata, rapid upload is not possible"), 400)
 		return
 	}
 
@@ -437,7 +503,7 @@ func TorrentRapidUpload(c *gin.Context) {
 	// 获取目标目录对象
 	dstDir, err := op.Get(c.Request.Context(), storage, dstDirActualPath)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("获取目标目录失败: %w", err), 500)
+		common.ErrorResp(c, fmt.Errorf("failed to get the destination folder: %w", err), 500)
 		return
 	}
 	if !dstDir.IsDir() {
@@ -448,7 +514,7 @@ func TorrentRapidUpload(c *gin.Context) {
 	// 探测目标驱动是否支持通用 CAS 秒传
 	rapid, ok := storage.(driver.SeedRapidUploader)
 	if !ok {
-		common.ErrorResp(c, fmt.Errorf("目标存储驱动 %s 不支持哈希秒传（CAS）", storage.GetStorage().Driver), 400)
+		common.ErrorResp(c, fmt.Errorf("target driver %s does not support hash-based rapid upload (CAS)", storage.GetStorage().Driver), 400)
 		return
 	}
 
@@ -457,26 +523,26 @@ func TorrentRapidUpload(c *gin.Context) {
 	// 挂载到目标目录」，语义上等价于覆盖，放开成用户可选没有实际意义。
 	rapidReq := buildSeedRapidUploadRequest(t, nil)
 	if rapidReq == nil {
-		common.ErrorResp(c, fmt.Errorf("该种子无法用于秒传：仅支持单文件且大小与哈希一致的种子"), 400)
+		common.ErrorResp(c, fmt.Errorf("this seed cannot be used for rapid upload: only a single file whose size matches its hashes is supported"), 400)
 		return
 	}
 	// 秒传是同步接口，同时挂一个展示用任务，任务列表里能看到进行中的状态
 	progress := fs.NewSeedSaveTask(c.Request.Context(), user, "rapid upload "+rapidReq.Name)
-	progress.Report(0, 1, rapidReq.Name, "正在秒传")
+	progress.Report(0, 1, rapidReq.Name, "rapid uploading")
 	obj, err := rapid.RapidUploadByHashes(progress.Ctx(), dstDir, rapidReq, true)
 	if cancelErr := progress.Ctx().Err(); cancelErr != nil {
 		err = cancelErr
 	}
 	if err != nil {
 		progress.Finish(err)
-		common.ErrorResp(c, fmt.Errorf("秒传失败: %w", err), 400)
+		common.ErrorResp(c, fmt.Errorf("rapid upload failed: %w", err), 400)
 		return
 	}
-	progress.Report(1, 1, obj.GetName(), "秒传完成")
+	progress.Report(1, 1, obj.GetName(), "rapid upload done")
 	progress.Finish(nil)
 
 	common.SuccessResp(c, gin.H{
-		"message":   "秒传成功",
+		"message":   "rapid upload succeeded",
 		"file_name": obj.GetName(),
 		"file_size": obj.GetSize(),
 	})
@@ -486,33 +552,33 @@ func TorrentRapidUpload(c *gin.Context) {
 func UploadTorrentAndParse(c *gin.Context) {
 	file, err := c.FormFile("torrent")
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("获取上传文件失败: %w", err), 400)
+		common.ErrorResp(c, fmt.Errorf("failed to read the uploaded file: %w", err), 400)
 		return
 	}
 
 	// 限制文件大小（最大 10MB）
 	if file.Size > 10*1024*1024 {
-		common.ErrorResp(c, fmt.Errorf("torrent 文件过大（最大 10MB）"), 400)
+		common.ErrorResp(c, fmt.Errorf("torrent file is too large (max 10MB)"), 400)
 		return
 	}
 
 	f, err := file.Open()
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("打开文件失败: %w", err), 500)
+		common.ErrorResp(c, fmt.Errorf("failed to open the file: %w", err), 500)
 		return
 	}
 	defer f.Close()
 
 	torrentData, err := io.ReadAll(f)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("读取文件失败: %w", err), 500)
+		common.ErrorResp(c, fmt.Errorf("failed to read the file: %w", err), 500)
 		return
 	}
 
 	// 解析 torrent
 	t, err := torrent.Decode(torrentData)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("解析 torrent 失败: %w", err), 400)
+		common.ErrorResp(c, fmt.Errorf("failed to parse torrent: %w", err), 400)
 		return
 	}
 	if err := validateParsedTorrent(t); err != nil {
@@ -608,7 +674,7 @@ func GenerateTorrentForPath(c *gin.Context) {
 	// with_cas 需要目标驱动支持通用哈希秒传（CAS）
 	if req.WithCAS {
 		if _, ok := storage.(driver.SeedRapidUploader); !ok {
-			common.ErrorResp(c, fmt.Errorf("存储驱动 %s 不支持 CAS 秒传扩展", storage.GetStorage().Driver), 400)
+			common.ErrorResp(c, fmt.Errorf("driver %s does not support the CAS rapid-upload extension", storage.GetStorage().Driver), 400)
 			return
 		}
 	}
@@ -616,24 +682,24 @@ func GenerateTorrentForPath(c *gin.Context) {
 	// 获取文件对象
 	obj, err := op.Get(c.Request.Context(), storage, actualPath)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("获取文件失败: %w", err), 500)
+		common.ErrorResp(c, fmt.Errorf("failed to get the file: %w", err), 500)
 		return
 	}
 	if obj.IsDir() {
-		common.ErrorResp(c, fmt.Errorf("不支持为目录生成 torrent"), 400)
+		common.ErrorResp(c, fmt.Errorf("generating a torrent for a folder is not supported"), 400)
 		return
 	}
 
 	// 限制可生成 torrent 的文件大小
 	if obj.GetSize() > maxTorrentGenFileSize {
-		common.ErrorResp(c, fmt.Errorf("文件过大，无法生成 torrent（最大 1GB）"), 400)
+		common.ErrorResp(c, fmt.Errorf("file is too large to generate a torrent (max 1GB)"), 400)
 		return
 	}
 
 	// 获取文件下载链接
 	link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{})
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("获取文件链接失败: %w", err), 500)
+		common.ErrorResp(c, fmt.Errorf("failed to get the file link: %w", err), 500)
 		return
 	}
 	defer link.Close()
@@ -642,14 +708,14 @@ func GenerateTorrentForPath(c *gin.Context) {
 	// 对于仅返回 URL（无 RangeReader）的驱动，GetRangeReaderFromLink 会退化为 HTTP Range 流式读取
 	rangeReader, err := stream.GetRangeReaderFromLink(obj.GetSize(), link)
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("该存储不支持流式读取，无法生成 torrent: %w", err), 400)
+		common.ErrorResp(c, fmt.Errorf("storage cannot stream, torrent generation failed: %w", err), 400)
 		return
 	}
 
 	// 读取整个文件
 	rc, err := rangeReader.RangeRead(c.Request.Context(), http_range.Range{Length: obj.GetSize()})
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("读取文件失败: %w", err), 500)
+		common.ErrorResp(c, fmt.Errorf("failed to read the file: %w", err), 500)
 		return
 	}
 	defer rc.Close()
@@ -661,7 +727,7 @@ func GenerateTorrentForPath(c *gin.Context) {
 		torrentData, err = torrent.GenerateFromReader(rc, obj.GetName(), obj.GetSize(), torrent.DefaultPieceSize)
 	}
 	if err != nil {
-		common.ErrorResp(c, fmt.Errorf("生成 torrent 失败: %w", err), 500)
+		common.ErrorResp(c, fmt.Errorf("failed to generate torrent: %w", err), 500)
 		return
 	}
 
@@ -1553,7 +1619,9 @@ func validateSeedSource(src torrent.SeedSource) error {
 }
 
 // rehashSeedFile reads one server-side file and recomputes its whole and piece hashes.
-func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSize int64) (torrent.SeedFile, error) {
+// cas 为 true 时忽略传入的 pieceSize，改用 CASSliceSize(size)：CAS 的分片由文件大小
+// 唯一决定，用户配置对它无效；同时回填最终分片摘要。
+func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSize int64, cas bool) (torrent.SeedFile, error) {
 	var out torrent.SeedFile
 	fullPath, err := user.JoinPath(sourcePath)
 	if err != nil {
@@ -1591,6 +1659,9 @@ func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSi
 		return out, err
 	}
 	defer rc.Close()
+	if cas {
+		pieceSize = torrent.CASSliceSize(obj.GetSize())
+	}
 	hasher := torrent.NewHashWriter(pieceSize, pieceSize, obj.GetSize())
 	n, copyErr := io.Copy(hasher, io.LimitReader(rc, obj.GetSize()+1))
 	if copyErr != nil {
@@ -1604,7 +1675,11 @@ func rehashSeedFile(c *gin.Context, user *model.User, sourcePath string, pieceSi
 	if !obj.ModTime().IsZero() {
 		modified = obj.ModTime().UTC().Format(time.RFC3339)
 	}
-	return hasher.BuildSeedFile(stdpath.Base(sourcePath), modified), nil
+	out = hasher.BuildSeedFile(stdpath.Base(sourcePath), modified)
+	if cas {
+		out.CASSliceMD5 = strings.ToLower(hasher.GetSliceMD5(out.Hashes.MD5))
+	}
+	return out, nil
 }
 
 // UpdateSeed edits seed metadata and optionally recalculates hashes from server files.
@@ -1682,6 +1757,7 @@ func UpdateSeed(c *gin.Context) {
 			return
 		}
 		seed.PieceSize = pieceSize
+		casFormat := format == "cas"
 		matrix := normalizedSeedMatrix(req.HashMatrix, []string{format})
 		recalcMap := make(map[string]string, len(req.RecalcFiles))
 		for _, rf := range req.RecalcFiles {
@@ -1693,12 +1769,18 @@ func UpdateSeed(c *gin.Context) {
 			common.ErrorStrResp(c, "recalculate requires at least one source_path", 400)
 			return
 		}
+		if casFormat {
+			// CAS 分片由文件大小唯一决定；所有文件同档时把种子级 piece_size 对齐过去
+			if size, ok := torrent.CASUniformSliceSize(seed.Files); ok {
+				seed.PieceSize = torrent.ClampSeedPieceSize(size)
+			}
+		}
 		for i := range seed.Files {
 			srcPath, ok := recalcMap[seed.Files[i].Path]
 			if !ok {
 				continue
 			}
-			rehashed, rehashErr := rehashSeedFile(c, user, srcPath, pieceSize)
+			rehashed, rehashErr := rehashSeedFile(c, user, srcPath, pieceSize, casFormat)
 			if rehashErr != nil {
 				common.ErrorResp(c, rehashErr, 400)
 				return
@@ -1706,10 +1788,18 @@ func UpdateSeed(c *gin.Context) {
 			rehashed.Path = seed.Files[i].Path
 			rehashed.Comment = seed.Files[i].Comment
 			rehashed.Sources = seed.Files[i].Sources
-			rehashed.CASSliceMD5 = ""
 			rehashed.CASCreateTime = ""
+			if !casFormat {
+				rehashed.CASSliceMD5 = ""
+			}
 			applySeedMatrix(&rehashed, matrix)
 			seed.Files[i] = rehashed
+		}
+		if casFormat {
+			// 多个文件跨过分片档位时种子只能存一种切法，其余文件只留最终摘要
+			for i := range seed.Files {
+				seed.Files[i].DropInconsistentCASParts(seed.PieceSize)
+			}
 		}
 		// 重算得到的是逐文件独立 pieces，不能再当整包 pieces 复用
 		seed.GlobalPieces = nil
@@ -1834,22 +1924,19 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 		name := stdpath.Base(file.Path)
 		if progress != nil {
 			// Report 用的是「第几个文件」，从 1 开始；用下标会让第一个文件显示 0/N、进度条不动
-			progress.Report(i+1, len(pending), name, "正在保存")
+			progress.Report(i+1, len(pending), name, "saving")
 		}
-		if rapidUploader != nil && seedFileSupportsRapidUpload(rapidUploader, file) {
-			one := *seed
-			one.Name = name
-			one.Files = []torrent.SeedFile{file}
-			if len(seed.Files) != 1 {
-				one.GlobalPieces = nil
-			}
-			if data, encodeErr := torrent.EncodeSeed(&one, "torrent"); encodeErr == nil {
-				if t, decErr := torrent.Decode(data); decErr == nil {
-					if rapidReq := buildSeedRapidUploadRequest(t, seedContentOpener(seed, file, ctx)); rapidReq != nil {
-						if obj, rapidErr := rapidUploader.RapidUploadByHashes(ctx, dstDir, rapidReq, req.Overwrite); rapidErr == nil {
-							results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
-							continue
-						}
+		var rapidErr error
+		if rapidUploader != nil {
+			if blocker := seedRapidUploadBlocker(file); blocker != "" {
+				rapidErr = errors.New(blocker)
+			} else if seedFileSupportsRapidUpload(rapidUploader, file) {
+				if rapidReq := buildSeedFileRapidUploadRequest(seed, file, seedContentOpener(seed, file, ctx)); rapidReq != nil {
+					var obj model.Obj
+					obj, rapidErr = rapidUploader.RapidUploadByHashes(ctx, dstDir, rapidReq, req.Overwrite)
+					if rapidErr == nil {
+						results = append(results, gin.H{"path": file.Path, "name": obj.GetName(), "method": "rapid_upload"})
+						continue
 					}
 				}
 			}
@@ -1858,7 +1945,21 @@ func saveSeedFilesToPath(c *gin.Context, user *model.User, seed *torrent.Seed, r
 			return results, driverName, mountPath, err
 		}
 		if rapidOnly {
-			results = append(results, gin.H{"path": file.Path, "name": name, "method": "unavailable", "error": "target driver cannot reuse the available hashes"})
+			// 带上真实失败原因：只说「不能再利用哈希」会把「云端没有该文件」和
+			// 「请求根本没发出去」混成同一个错误，无法定位
+			reason := "target driver cannot reuse the available hashes"
+			if rapidErr != nil {
+				reason = fmt.Sprintf("rapid upload failed: %v", rapidErr)
+			}
+			results = append(results, gin.H{"path": file.Path, "name": name, "method": "unavailable", "error": reason})
+			// 账号当日流量用尽是账号级状态：同批其余文件必然同样失败，
+			// 一次性标完，不再逐个打服务端
+			if rapidErr != nil && errors.Is(rapidErr, errs.DailyFlowLimitExceeded) {
+				for _, rest := range pending[i+1:] {
+					results = append(results, gin.H{"path": rest.Path, "name": stdpath.Base(rest.Path), "method": "unavailable", "error": reason})
+				}
+				break
+			}
 			continue
 		}
 		source := firstUsableSeedSource(file)
@@ -1976,7 +2077,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 			finalResults = append(finalResults, gin.H{"path": res["path"], "name": name, "method": "transfer", "error": "transit requires a synchronous intermediate save (rapid upload or PutURL)"})
 			continue
 		}
-		progress.Report(i+1, relayTotal, name, "正在转存")
+		progress.Report(i+1, relayTotal, name, "transferring")
 		srcObjPath := stdpath.Join(transitFullPath, name)
 		_, copyErr := fs.Copy(context.WithValue(progress.Ctx(), conf.NoTaskKey, struct{}{}), srcObjPath, finalDst)
 		if err := progress.Ctx().Err(); err != nil {
@@ -1992,7 +2093,7 @@ func transferSeedViaTransit(c *gin.Context, user *model.User, seed *torrent.Seed
 	}
 	if failed > 0 {
 		// 任务状态按真实结果收尾（HTTP 仍返回逐文件结果，调用方可自行决定是否重试）
-		progress.Finish(fmt.Errorf("%d/%d 个文件转存失败", failed, relayTotal))
+		progress.Finish(fmt.Errorf("%d/%d seed files failed to transfer", failed, relayTotal))
 	} else {
 		progress.Finish(nil)
 	}
@@ -2186,11 +2287,11 @@ func seedContentOpener(seed *torrent.Seed, file torrent.SeedFile, ctx context.Co
 		}
 		resp, err := seedSourceHTTPClient.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("下载种子内容失败: %w", err)
+			return nil, fmt.Errorf("failed to download seed content: %w", err)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
-			return nil, fmt.Errorf("下载种子内容失败: HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("failed to download seed content: HTTP %d", resp.StatusCode)
 		}
 		// Content-Length is authoritative when present; fall back to the seed
 		// metadata. Reject up-front rather than streaming an oversized body.
@@ -2200,11 +2301,11 @@ func seedContentOpener(seed *torrent.Seed, file torrent.SeedFile, ctx context.Co
 		}
 		if size > maxTorrentGenFileSize {
 			resp.Body.Close()
-			return nil, fmt.Errorf("种子内容超过大小上限: %d", size)
+			return nil, fmt.Errorf("seed content exceeds the size limit: %d", size)
 		}
 		if file.Size > 0 && resp.ContentLength >= 0 && resp.ContentLength != file.Size {
 			resp.Body.Close()
-			return nil, fmt.Errorf("种子内容大小不匹配: 期望 %d，实际 %d", file.Size, resp.ContentLength)
+			return nil, fmt.Errorf("seed content size mismatch: expected %d, got %d", file.Size, resp.ContentLength)
 		}
 
 		obj := &model.Object{
