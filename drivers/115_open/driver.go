@@ -42,13 +42,22 @@ func (d *Open115) GetAddition() driver.Additional {
 
 // onTokenRefreshed persists the rotated token pair. 115 Open refresh tokens are
 // single use: once a new one is issued the previous one is rejected, so a lost
-// write would leave the storage broken after a restart. An empty refresh token
-// must never overwrite the stored one, otherwise the following refresh is sent
-// without the parameter and fails with "refresh_token 格式错误".
+// write would leave the storage broken after a restart.
+//
+// The SDK assigns the response to its own fields before invoking this callback,
+// so an empty refresh token in the response would also clear the value used by
+// the next refresh request. Restore both states from the addition, which keeps
+// the last usable token when the field is missing.
 func (d *Open115) onTokenRefreshed(accessToken, refreshToken string) {
-	d.Addition.AccessToken = accessToken
+	if accessToken != "" {
+		d.Addition.AccessToken = accessToken
+	}
 	if refreshToken != "" {
 		d.Addition.RefreshToken = refreshToken
+	}
+	if d.client != nil {
+		d.client.SetAccessToken(d.Addition.AccessToken)
+		d.client.SetRefreshToken(d.Addition.RefreshToken)
 	}
 	op.MustSaveDriverStorage(d)
 }
