@@ -36,14 +36,8 @@ func sharingAccessSetup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	sqlDB, err := database.DB()
-	if err != nil {
-		t.Fatalf("database handle: %v", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
 	conf.Conf = conf.DefaultConfig(t.TempDir())
-	db.Init(database)
-	t.Cleanup(func() { _ = sqlDB.Close() })
+	useTestDatabase(t, database)
 	if _, err := op.CreateStorage(context.Background(), model.Storage{
 		Driver:    "Local",
 		MountPath: "/local",

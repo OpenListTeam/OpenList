@@ -45,14 +45,24 @@ func mediaWipeConfirmed() bool {
 	return false
 }
 
-// mediaItemsTable 返回 MediaItem 的真实表名。
-// 表名带有 conf.Database.TablePrefix（可配置，默认 x_），不能硬编码。
-func mediaItemsTable() (string, error) {
-	stmt := &gorm.Statement{DB: db}
-	if err := stmt.Parse(&model.MediaItem{}); err != nil {
+// TableNameOf 返回 value 对应的真实表名：带 conf.Database.TablePrefix（默认
+// x_），也尊重模型自带的 TableName()。手写 SQL 表达式引用列时必须用它，
+// 硬编码表名在默认前缀下会整条语句报 "no such column"。
+func TableNameOf(database *gorm.DB, value interface{}) (string, error) {
+	if database == nil {
+		return "", gorm.ErrInvalidDB
+	}
+	stmt := &gorm.Statement{DB: database}
+	if err := stmt.Parse(value); err != nil {
 		return "", err
 	}
 	return stmt.Schema.Table, nil
+}
+
+// mediaItemsTable 返回 MediaItem 的真实表名。
+// 表名带有 conf.Database.TablePrefix（可配置，默认 x_），不能硬编码。
+func mediaItemsTable() (string, error) {
+	return TableNameOf(db, &model.MediaItem{})
 }
 
 // migrateMediaItems 处理 media_items 表的迁移兼容性
@@ -79,7 +89,7 @@ func migrateMediaItems() error {
 	const idx = "idx_media_folder_file_album"
 	if m.HasIndex(table, idx) {
 		// 已是新索引：仅清理软删除残留数据，避免与唯一索引冲突
-		if err := db.Exec("DELETE FROM "+quoteIdent(table)+" WHERE deleted_at IS NOT NULL").Error; err != nil {
+		if err := db.Exec("DELETE FROM " + quoteIdent(table) + " WHERE deleted_at IS NOT NULL").Error; err != nil {
 			log.Warnf("media_items: 清理软删除残留数据失败: %v", err)
 		}
 		return nil
@@ -90,6 +100,15 @@ func migrateMediaItems() error {
 		log.Warnf("media_items: 检测到旧版本数据（表 %s 缺少索引 %s）。", table, idx)
 		log.Warnf("media_items: 旧数据的路径语义已变更，建议清空后重新扫描；为避免误删，本次启动不会自动清库。")
 		log.Warnf("media_items: 如确认清空，请设置环境变量 %s=1 后重启；也可在管理后台对各媒体库点击「清空数据库」再重扫。", MediaMigrateWipeEnv)
+		// AutoMigrate 随后要在旧数据上补建 (folder_path, file_name, album_name)
+		// 组合唯一索引。旧数据若有重复行，建索引会失败，Init 里的 Fatalf 会
+		// 把进程直接杀掉——而容器编排里重启不会自动带上环境变量，实例就陷入
+		// crash-loop。清空整表必须管理员确认，但“重复行”是同一个条目的多条记
+		// 录，保留每组最新一条即可让索引建起来、实例先启动；语义修正交给之后
+		// 的重扫。软删除残留同样会撞唯一索引，一并清掉（新索引分支也这么做）。
+		if err := dedupeLegacyMediaItems(table); err != nil {
+			return err
+		}
 		return nil
 	}
 	log.Warnf("media_items: 已确认 %s，清空旧版本数据（表 %s）后重新迁移", MediaMigrateWipeEnv, table)
@@ -101,6 +120,34 @@ func migrateMediaItems() error {
 		}
 	}
 	if err := db.Exec("DELETE FROM " + quoteIdent(table)).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+// dedupeLegacyMediaItems 让旧表能通过组合唯一索引的创建：
+//   - 删除软删除残留（deleted_at 非空的行，新索引分支同样清理）；
+//   - 对 (folder_path, file_name, album_name) 相同的每组只保留 id 最大（最新）的一行。
+//
+// 只丢弃重复与已删除的行，不碰唯一记录；若这一步之后 AutoMigrate 仍失败，
+// 说明问题不在重复行上，按原有 Fatalf 路径处理。
+func dedupeLegacyMediaItems(table string) error {
+	q := quoteIdent(table)
+	m := db.Migrator()
+	for _, col := range []string{"deleted_at", "id", "folder_path", "file_name", "album_name"} {
+		if !m.HasColumn(table, col) {
+			// 比去重依赖的列还老的表：AutoMigrate 会先补列（旧行全 NULL，不
+			// 撞唯一索引），这里无需也无法去重。
+			log.Debugf("media_items: legacy table %s lacks column %s, skipping dedupe", table, col)
+			return nil
+		}
+	}
+	if err := db.Exec("DELETE FROM " + q + " WHERE deleted_at IS NOT NULL").Error; err != nil {
+		return err
+	}
+	// MySQL 不允许 DELETE 直接引用同表的子查询，包一层派生表后三种方言通用。
+	dedup := "DELETE FROM " + q + " WHERE id NOT IN (SELECT max_id FROM (SELECT MAX(id) AS max_id FROM " + q + " GROUP BY folder_path, file_name, album_name) AS keep_newest)"
+	if err := db.Exec(dedup).Error; err != nil {
 		return err
 	}
 	return nil

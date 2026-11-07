@@ -21,9 +21,9 @@ import (
 // tiering task walks hot_dir (the path the alias points at). The second one is
 // what a hot/cold split can act on, so it must not be dropped; the first is kept
 // because it is the honest answer to "which path was read".
-func recordFileRead(requested string, file model.Obj) {
+func recordFileRead(bucket, requested string, file model.Obj) {
 	if requested != "" {
-		access.Record(requested)
+		access.RecordBucket(bucket, requested)
 	}
 	if file == nil {
 		return
@@ -39,5 +39,5 @@ func recordFileRead(requested string, file model.Obj) {
 	if _, _, err := op.GetStorageAndActualPath(p); err != nil {
 		return
 	}
-	access.Record(p)
+	access.RecordBucket(bucket, p)
 }

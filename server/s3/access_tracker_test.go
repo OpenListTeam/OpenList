@@ -84,7 +84,7 @@ func TestAccessKeepsObjectMetadata(t *testing.T) {
 
 	path := "/nora/blobs/bb"
 	b.storeStoredMetadata(t.Context(), path, map[string]string{
-		"X-Amz-Meta-Sha256": "deadbeef",
+		"x-amz-meta-sha256": "deadbeef",
 	})
 
 	b.recordAccess(path)
@@ -98,7 +98,7 @@ func TestAccessKeepsObjectMetadata(t *testing.T) {
 	if !ok {
 		t.Fatal("user metadata disappeared")
 	}
-	if headers["X-Amz-Meta-Sha256"] != "deadbeef" {
+	if headers["x-amz-meta-sha256"] != "deadbeef" {
 		t.Fatalf("user metadata was overwritten: %v", headers)
 	}
 }

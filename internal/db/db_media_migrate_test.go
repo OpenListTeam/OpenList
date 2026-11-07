@@ -121,3 +121,42 @@ func TestCreateOrUpdateRejectsOverlongIndexColumns(t *testing.T) {
 		t.Fatalf("boundary length must be accepted: %v", err)
 	}
 }
+
+// 旧数据自身含重复行时，未确认清库的启动路径必须先去重（保留每组最新一条
+// 并清掉软删除残留），否则 AutoMigrate 的组合唯一索引建不起来，进程会
+// Fatalf，容器重启（不带环境变量）陷入 crash-loop。
+func TestMigrateDedupesLegacyRowsSoAutoMigrateSucceeds(t *testing.T) {
+	db = openTestDB(t, "")
+	createLegacyMediaTableWithAlbum(t, db, "media_items")
+	if err := migrateMediaItems(); err != nil {
+		t.Fatal(err)
+	}
+	if n := countRows(t, db, "media_items"); n != 2 {
+		t.Fatalf("one row per (folder_path, file_name, album_name) group must survive, got %d", n)
+	}
+	var kept []int64
+	if err := db.Table("media_items").Order("id").Pluck("id", &kept).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 2 || kept[0] != 2 || kept[1] != 3 {
+		t.Fatalf("the newest row of each group must be kept, got ids %v", kept)
+	}
+}
+
+func createLegacyMediaTableWithAlbum(t *testing.T, d *gorm.DB, table string) {
+	t.Helper()
+	if err := d.Exec("CREATE TABLE " + table + " (id integer primary key autoincrement, deleted_at datetime, folder_path text, file_name text, album_name text)").Error; err != nil {
+		t.Fatal(err)
+	}
+	rows := []string{
+		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'A')", // 1 dup of 2
+		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'A')", // 2 newest of group
+		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'B')", // 3 own group
+		"INSERT INTO " + table + " (deleted_at, folder_path, file_name, album_name) VALUES ('2024-01-01', '/a', 'b.mp3', 'B')", // 4 soft-deleted, must go
+	}
+	for _, r := range rows {
+		if err := d.Exec(r).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+}

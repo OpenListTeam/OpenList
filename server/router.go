@@ -173,6 +173,7 @@ func admin(g *gin.RouterGroup) {
 	s3.GET("/access", handles.S3ObjectAccessList)
 	access := g.Group("/file_access")
 	access.GET("/list", handles.FileAccessList)
+	access.GET("/summary", handles.FileAccessSummary)
 	access.POST("/prune", handles.FileAccessPrune)
 	meta := g.Group("/meta")
 	meta.GET("/list", handles.ListMetas)

@@ -113,6 +113,16 @@ func (cm *CacheManager) GetSetting(key string) (*model.SettingItem, bool) {
 	return nil, false
 }
 
+// forget one cached setting
+func (cm *CacheManager) DeleteSetting(key string) {
+	cm.settingCache.Delete(key)
+}
+
+// forget one cached setting group
+func (cm *CacheManager) DeleteSettingGroup(key string) {
+	cm.settingCache.Delete(key)
+}
+
 // cache setting groups
 func (cm *CacheManager) SetSettingGroup(key string, settings []model.SettingItem) {
 	cm.settingCache.Set(key, settings)

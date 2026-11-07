@@ -21,11 +21,18 @@ import (
 	"gorm.io/gorm"
 )
 
+// handlesTestDataDir is the data directory shared by this package's tests. It
+// is created in init (the tests need a configured instance before any test
+// runs) and removed by TestMain, so a run does not leak it into the system
+// temp dir the way upstream v4.2.9 does.
+var handlesTestDataDir string
+
 func init() {
 	dataDir, err := os.MkdirTemp("", "openlist-handles-*")
 	if err != nil {
 		panic(err)
 	}
+	handlesTestDataDir = dataDir
 	conf.Conf = conf.DefaultConfig(dataDir)
 	database, err := gorm.Open(sqlite.Open("file:handles?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {

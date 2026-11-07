@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"path"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -15,6 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/gofakes3"
+	log "github.com/sirupsen/logrus"
 )
 
 type Bucket struct {
@@ -36,10 +38,56 @@ func mapBackendError(err error) error {
 
 const emptyObjectName = "ThisIsAnEmptyFolderInTheS3Bucket"
 
+var bucketsCache parsedSettingCache[[]Bucket]
+
+// errBucketPathUnbounded is returned for a bucket whose path would expose the
+// whole virtual filesystem instead of a subtree of it.
+var errBucketPathUnbounded = stderrors.New("the path would expose every storage mount")
+
+// cleanBucketPath normalises a bucket's configured path and rejects the shapes
+// that turn one bucket into the root of the instance: an empty path, "/" and a
+// path that climbs out with ".." all resolved to the mount root, and a bucket
+// marked public in that shape served every storage anonymously.
+func cleanBucketPath(name, bucketPath string) (string, error) {
+	trimmed := strings.TrimSpace(bucketPath)
+	if trimmed == "" {
+		return "", stderrors.New("its path is empty")
+	}
+	for _, segment := range strings.Split(trimmed, "/") {
+		if segment == ".." {
+			return "", stderrors.New("its path contains a \"..\" segment")
+		}
+	}
+	cleaned := path.Clean("/" + strings.TrimPrefix(trimmed, "/"))
+	if cleaned == "/" {
+		return "", errBucketPathUnbounded
+	}
+	return cleaned, nil
+}
+
 func getAndParseBuckets() ([]Bucket, error) {
-	var res []Bucket
-	err := json.Unmarshal([]byte(setting.GetStr(conf.S3Buckets)), &res)
-	return res, err
+	raw := strings.TrimSpace(setting.GetStr(conf.S3Buckets))
+	return bucketsCache.get(raw, func(raw string) ([]Bucket, error) {
+		if raw == "" {
+			return nil, nil
+		}
+		var parsed []Bucket
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			log.Warnf("failed to parse %s as JSON: %v", conf.S3Buckets, err)
+			return nil, err
+		}
+		kept := make([]Bucket, 0, len(parsed))
+		for _, bucket := range parsed {
+			cleaned, err := cleanBucketPath(bucket.Name, bucket.Path)
+			if err != nil {
+				log.Warnf("ignoring S3 bucket %q: %v", bucket.Name, err)
+				continue
+			}
+			bucket.Path = cleaned
+			kept = append(kept, bucket)
+		}
+		return kept, nil
+	})
 }
 
 func getBucketByName(name string) (Bucket, error) {
@@ -70,10 +118,15 @@ func getDirEntries(ctx context.Context, path string) ([]model.Obj, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
-	if errs.IsNotFoundError(err) {
-		return nil, gofakes3.ErrNoSuchKey
-	} else if err != nil {
-		return nil, gofakes3.ErrNoSuchKey
+	if err != nil {
+		// Only a genuinely missing path means "empty listing". Folding every
+		// other failure in here (expired upstream token, driver 5xx, rate limit)
+		// answered 200 with zero keys, and a client that syncs with --delete
+		// treats that as "the bucket is empty".
+		if errs.IsNotFoundError(err) {
+			return nil, gofakes3.ErrNoSuchKey
+		}
+		return nil, err
 	}
 
 	if !fi.IsDir() {

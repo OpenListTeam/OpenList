@@ -29,9 +29,11 @@ type authKeySink interface {
 // Bucket scope, readonly and the public flag are already resolved per request
 // and never went stale.
 type keyRing struct {
-	mu     sync.RWMutex
-	keys   map[string]string
-	sinks  []authKeySink
+	mu    sync.RWMutex
+	keys  map[string]string
+	sinks []authKeySink
+	// lookup is only set by tests that inject a key resolution; production
+	// derives the keys from the same snapshot it fingerprints (see sync).
 	lookup func() map[string]string
 	// raw is the settings fingerprint the current keys were built from. The
 	// tick only re-parses the JSON when the raw strings actually changed, so
@@ -49,7 +51,7 @@ func newKeyRing(seed map[string]string) *keyRing {
 	}
 	// The seed was just read from the settings, so record the matching
 	// fingerprint; otherwise the very first tick would re-apply a no-op diff.
-	return &keyRing{keys: cp, lookup: resolveAuthPairsQuiet, raw: authSettingsFingerprint()}
+	return &keyRing{keys: cp, raw: authSettingsFingerprint()}
 }
 
 // snapshot returns a copy of the keys currently accepted, for gofakes3's boot
@@ -89,16 +91,39 @@ func (k *keyRing) secret(accessKey string) (string, bool) {
 // sync pulls the current settings into the ring. It reports whether anything
 // changed; the caller decides whether that is worth a log line.
 func (k *keyRing) sync() bool {
-	raw := authSettingsFingerprint()
+	// One read of the settings produces both the fingerprint and the keys. Two
+	// separate reads let a save land in between: the ring then applies an empty
+	// or stale key set while recording the new fingerprint as already applied,
+	// and since gofakes3 verifies no signature at all while its key map is
+	// empty, that state silently opens the gateway to anonymous requests -
+	// permanently, because every later tick compares equal and does nothing.
+	snap := authSettingsSnapshot()
 
 	k.mu.RLock()
-	unchanged := raw == k.raw
+	unchanged := snap.fingerprint() == k.raw
 	k.mu.RUnlock()
 	if unchanged {
 		return false
 	}
 
-	want := k.lookup()
+	var want map[string]string
+	if k.lookup != nil {
+		// Injected resolution, used by the tests that count how much work a
+		// tick does.
+		want = k.lookup()
+	} else {
+		rules, misconfigured := loadS3BucketAuthRulesFrom(snap.rawAuth, snap.accessKeyID, snap.secretKey)
+		if misconfigured {
+			// Credentials are configured but none of them is usable. Applying
+			// that would empty the ring, so keep the keys that work and try
+			// again on the next tick instead of failing open.
+			if warnBadAuthRulesOnce(snap.rawAuth + "\x00" + snap.accessKeyID) {
+				utils.Log.Warnf("S3 credentials are configured but unusable; keeping the %d key(s) already in effect", len(k.snapshot()))
+			}
+			return false
+		}
+		want = authPairsFromRules(rules, false)
+	}
 	if want == nil {
 		want = map[string]string{}
 	}
@@ -121,22 +146,27 @@ func (k *keyRing) sync() bool {
 	if len(add) == 0 && len(del) == 0 {
 		// Nothing to apply, but remember the fingerprint: that is what keeps
 		// the next ticks to a string comparison.
-		k.raw = raw
+		k.raw = snap.fingerprint()
 		return false
 	}
 
+	// Add before Del, and note that the two sets are disjoint: `add` holds keys
+	// that are new or whose secret changed, `del` only keys that disappeared
+	// from the configuration, so adding first can never resurrect a removed key
+	// and deleting first was needlessly destructive. It mattered: gofakes3
+	// verifies no signature at all while its key map is empty, so replacing the
+	// whole key set with Del-then-Add left a window in which an unsigned request
+	// was accepted.
 	for _, sink := range k.sinks {
-		// Del before Add: a rotated secret must not be deleted after the new
-		// one landed, or the key would silently stop working.
-		if len(del) > 0 {
-			sink.DelAuthKeys(del)
-		}
 		if len(add) > 0 {
 			sink.AddAuthKeys(add)
 		}
+		if len(del) > 0 {
+			sink.DelAuthKeys(del)
+		}
 	}
 	k.keys = want
-	k.raw = raw
+	k.raw = snap.fingerprint()
 	return true
 }
 
@@ -145,12 +175,31 @@ func (k *keyRing) sync() bool {
 // on every tick, and a fixed-size struct keeps the comparison allocation free.
 type authFingerprint [3]string
 
-func authSettingsFingerprint() authFingerprint {
-	return authFingerprint{
-		setting.GetStr(conf.S3BucketAuth),
-		setting.GetStr(conf.S3AccessKeyId),
-		setting.GetStr(conf.S3SecretAccessKey),
+// authSnapshot is one read of the three credential settings. Its fields are the
+// raw values; fingerprint() is what the ring records, and it is computed from
+// the very same values the keys are derived from.
+type authSnapshot struct {
+	rawAuth     string
+	accessKeyID string
+	secretKey   string
+}
+
+func (s authSnapshot) fingerprint() authFingerprint {
+	return authFingerprint{s.rawAuth, s.accessKeyID, s.secretKey}
+}
+
+// authSettingsSnapshot reads the credential settings once. Every caller that
+// needs both a fingerprint and the keys must use this, not two separate reads.
+func authSettingsSnapshot() authSnapshot {
+	return authSnapshot{
+		rawAuth:     setting.GetStr(conf.S3BucketAuth),
+		accessKeyID: setting.GetStr(conf.S3AccessKeyId),
+		secretKey:   setting.GetStr(conf.S3SecretAccessKey),
 	}
+}
+
+func authSettingsFingerprint() authFingerprint {
+	return authSettingsSnapshot().fingerprint()
 }
 
 // watch applies settings changes until ctx is cancelled. The interval is a

@@ -38,10 +38,20 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// The intervals below are package globals that some tests shorten to make a
+// throttle observable. Captured before any test runs, so prepare can put the
+// real values back: a test that runs after one of those has to see the shipped
+// defaults, not whatever the previous test left behind.
+var (
+	defaultHitInterval   = hitInterval
+	defaultWriteInterval = writeInterval
+)
+
 // prepare gives a test a clean buffer and a clean table.
 func prepare(t *testing.T) {
 	t.Helper()
-	t.Helper()
+	hitInterval, writeInterval = defaultHitInterval, defaultWriteInterval
+	t.Cleanup(func() { hitInterval, writeInterval = defaultHitInterval, defaultWriteInterval })
 	if err := db.GetDb().Where("1 = 1").Delete(&model.FileAccess{}).Error; err != nil {
 		t.Fatalf("clear file_access: %v", err)
 	}
@@ -220,6 +230,9 @@ func TestForgetDropsPendingSample(t *testing.T) {
 }
 
 func TestPruneDropsOnlyStaleRows(t *testing.T) {
+	// Rows and the in-memory tracker are package-global: without this the
+	// survivor set depends on what ran before, so -shuffle turns it red.
+	prepare(t)
 	now := time.Now().UTC()
 	old := now.AddDate(0, 0, -400)
 	fresh := now.Add(-time.Hour)

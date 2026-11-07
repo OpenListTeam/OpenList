@@ -32,7 +32,14 @@ func TestMain(m *testing.M) {
 	// one connection keeps every test on the same copy of it.
 	sqlDB.SetMaxOpenConns(1)
 	db.Init(database)
-	os.Exit(m.Run())
+	code := m.Run()
+	// init() of this package creates a data directory that holds every part
+	// file the multipart tests write; nothing else ever removes it, so without
+	// this a test run leaves it (and its part files) in the system temp dir.
+	if multipartTestDataDir != "" {
+		_ = os.RemoveAll(multipartTestDataDir)
+	}
+	os.Exit(code)
 }
 
 // resetMetadataTable clears persisted metadata so tests stay independent.
@@ -61,31 +68,41 @@ func countMetadataRows(t *testing.T) int64 {
 func TestMetadataSurvivesProcessRestart(t *testing.T) {
 	resetMetadataTable(t)
 	ctx := context.Background()
-	headers := map[string]string{"Content-Type": "text/plain", "X-Amz-Meta-Pin": "deadbeef"}
+	headers := map[string]string{"Content-Type": "text/plain", "x-amz-meta-pin": "deadbeef"}
 
 	before := &s3Backend{meta: new(sync.Map)}
 	before.storeObjectMetadata(ctx, "/bucket/meta.txt", headers)
 
 	after := &s3Backend{meta: new(sync.Map)}
 	stored, ok := after.loadObjectMetadata(ctx, "/bucket/meta.txt")
-	if !ok || stored["X-Amz-Meta-Pin"] != "deadbeef" {
+	if !ok || stored["x-amz-meta-pin"] != "deadbeef" {
 		t.Fatalf("metadata lost across a restart: %v", stored)
 	}
 }
 
-// The common case must not pay for a row.
-func TestPlainUploadCreatesNoRow(t *testing.T) {
+// An upload that carries no user metadata still keeps its ETag, which is the one
+// thing that cannot be recovered from the stored bytes without reading them.
+func TestPlainUploadKeepsOnlyItsETagRow(t *testing.T) {
 	resetMetadataTable(t)
 	ctx := context.Background()
 
 	b := &s3Backend{meta: new(sync.Map)}
-	b.storeObjectMetadata(ctx, "/bucket/plain.txt", map[string]string{"Content-Type": "text/plain"})
+	b.storeObjectMetadata(ctx, "/bucket/plain.txt", map[string]string{
+		"Content-Type":  "text/plain",
+		etagMetadataKey: "9dd4e461268c8034f5c8564e155c67a6",
+	})
 
-	if rows := countMetadataRows(t); rows != 0 {
-		t.Fatalf("a plain upload left %d row(s) behind", rows)
+	stored, ok := b.loadStoredMetadata(ctx, "/bucket/plain.txt")
+	if !ok {
+		t.Fatal("the ETag of a plain upload was not kept")
 	}
-	if _, ok := b.loadStoredMetadata(ctx, "/bucket/plain.txt"); ok {
-		t.Fatal("plain upload reported persisted metadata")
+	if stored[etagMetadataKey] != "9dd4e461268c8034f5c8564e155c67a6" {
+		t.Fatalf("ETag row is wrong: %v", stored)
+	}
+	for key := range stored {
+		if strings.HasPrefix(strings.ToLower(key), userMetadataPrefix) {
+			t.Fatalf("a plain upload stored user metadata: %v", stored)
+		}
 	}
 }
 
@@ -96,14 +113,20 @@ func TestOverwriteWithoutUserMetadataDropsStaleRow(t *testing.T) {
 	ctx := context.Background()
 
 	b := &s3Backend{meta: new(sync.Map)}
-	b.storeObjectMetadata(ctx, "/bucket/m.txt", map[string]string{"X-Amz-Meta-Pin": "old"})
-	b.storeObjectMetadata(ctx, "/bucket/m.txt", map[string]string{"Content-Type": "text/plain"})
+	b.storeObjectMetadata(ctx, "/bucket/m.txt", map[string]string{"x-amz-meta-pin": "old"})
+	b.storeObjectMetadata(ctx, "/bucket/m.txt", map[string]string{
+		"Content-Type":  "text/plain",
+		etagMetadataKey: "d41d8cd98f00b204e9800998ecf8427e",
+	})
 
-	if _, ok := b.loadStoredMetadata(ctx, "/bucket/m.txt"); ok {
-		t.Fatal("stale metadata survived an overwrite")
+	stored, ok := b.loadStoredMetadata(ctx, "/bucket/m.txt")
+	if !ok {
+		t.Fatal("the row of the new content disappeared")
 	}
-	if rows := countMetadataRows(t); rows != 0 {
-		t.Fatalf("overwrite left %d row(s) behind", rows)
+	for key := range stored {
+		if strings.HasPrefix(strings.ToLower(key), userMetadataPrefix) {
+			t.Fatalf("stale user metadata survived an overwrite: %v", stored)
+		}
 	}
 }
 
@@ -112,7 +135,7 @@ func TestDeleteRemovesPersistedMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	b := &s3Backend{meta: new(sync.Map)}
-	b.storeObjectMetadata(ctx, "/bucket/gone.txt", map[string]string{"X-Amz-Meta-Pin": "deadbeef"})
+	b.storeObjectMetadata(ctx, "/bucket/gone.txt", map[string]string{"x-amz-meta-pin": "deadbeef"})
 	b.meta.Delete("/bucket/gone.txt")
 	b.deleteStoredMetadata(ctx, "/bucket/gone.txt")
 
@@ -126,17 +149,17 @@ func TestCopyCarriesMetadataToDestination(t *testing.T) {
 	ctx := context.Background()
 
 	b := &s3Backend{meta: new(sync.Map)}
-	b.storeObjectMetadata(ctx, "/bucket/src.txt", map[string]string{"X-Amz-Meta-Pin": "carried"})
+	b.storeObjectMetadata(ctx, "/bucket/src.txt", map[string]string{"x-amz-meta-pin": "carried"})
 	// The destination upload itself carries no user metadata, which is what a
 	// COPY directive does before the recorded copy is applied.
 	b.storeObjectMetadata(ctx, "/bucket/dst.txt", map[string]string{"Content-Type": "text/plain"})
 	b.copyStoredMetadata(ctx, "/bucket/src.txt", "/bucket/dst.txt")
 
 	stored, ok := b.loadStoredMetadata(ctx, "/bucket/dst.txt")
-	if !ok || stored["X-Amz-Meta-Pin"] != "carried" {
+	if !ok || stored["x-amz-meta-pin"] != "carried" {
 		t.Fatalf("copy did not carry metadata: %v", stored)
 	}
-	if source, ok := b.loadStoredMetadata(ctx, "/bucket/src.txt"); !ok || source["X-Amz-Meta-Pin"] != "carried" {
+	if source, ok := b.loadStoredMetadata(ctx, "/bucket/src.txt"); !ok || source["x-amz-meta-pin"] != "carried" {
 		t.Fatalf("copy damaged the source metadata: %v", source)
 	}
 }
@@ -148,9 +171,9 @@ func TestLongPathMetadata(t *testing.T) {
 	name := "/bucket/" + longTestKey(300)
 
 	b := &s3Backend{meta: new(sync.Map)}
-	b.storeObjectMetadata(ctx, name, map[string]string{"X-Amz-Meta-Pin": "deadbeef"})
+	b.storeObjectMetadata(ctx, name, map[string]string{"x-amz-meta-pin": "deadbeef"})
 
-	if stored, ok := b.loadStoredMetadata(ctx, name); !ok || stored["X-Amz-Meta-Pin"] != "deadbeef" {
+	if stored, ok := b.loadStoredMetadata(ctx, name); !ok || stored["x-amz-meta-pin"] != "deadbeef" {
 		t.Fatalf("metadata lost for long path: %v", stored)
 	}
 }
@@ -174,7 +197,7 @@ func TestSelfCopyReplaceWithoutMetadataClearsMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	b := &s3Backend{meta: new(sync.Map)}
-	b.storeObjectMetadata(ctx, "/bucket/clear.txt", map[string]string{"X-Amz-Meta-Pin": "deadbeef"})
+	b.storeObjectMetadata(ctx, "/bucket/clear.txt", map[string]string{"x-amz-meta-pin": "deadbeef"})
 
 	if _, err := b.replaceObjectMetadata(ctx, "/bucket/clear.txt", map[string]string{"X-Amz-Metadata-Directive": "REPLACE"}); err != nil {
 		t.Fatalf("self-copy failed: %v", err)
@@ -193,12 +216,12 @@ func TestSelfCopyWithoutDirectiveKeepsMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	b := &s3Backend{meta: new(sync.Map)}
-	b.storeObjectMetadata(ctx, "/bucket/keep.txt", map[string]string{"X-Amz-Meta-Pin": "deadbeef"})
+	b.storeObjectMetadata(ctx, "/bucket/keep.txt", map[string]string{"x-amz-meta-pin": "deadbeef"})
 
 	if _, err := b.replaceObjectMetadata(ctx, "/bucket/keep.txt", map[string]string{}); err != nil {
 		t.Fatalf("self-copy failed: %v", err)
 	}
-	if stored, ok := b.loadObjectMetadata(ctx, "/bucket/keep.txt"); !ok || stored["X-Amz-Meta-Pin"] != "deadbeef" {
+	if stored, ok := b.loadObjectMetadata(ctx, "/bucket/keep.txt"); !ok || stored["x-amz-meta-pin"] != "deadbeef" {
 		t.Fatalf("plain self-copy dropped metadata: %v", stored)
 	}
 }
@@ -208,19 +231,23 @@ func TestSelfCopyReplaceAppliesRequestMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	b := &s3Backend{meta: new(sync.Map)}
-	b.storeObjectMetadata(ctx, "/bucket/swap.txt", map[string]string{"X-Amz-Meta-Pin": "old", "X-Amz-Meta-Extra": "gone"})
+	b.storeObjectMetadata(ctx, "/bucket/swap.txt", map[string]string{"x-amz-meta-pin": "old", "x-amz-meta-extra": "gone"})
 
-	if _, err := b.replaceObjectMetadata(ctx, "/bucket/swap.txt", map[string]string{
+	res, err := b.replaceObjectMetadata(ctx, "/bucket/swap.txt", map[string]string{
 		"X-Amz-Metadata-Directive": "REPLACE",
-		"X-Amz-Meta-Pin":           "new",
-	}); err != nil {
+		"x-amz-meta-pin":           "new",
+	})
+	if err != nil {
 		t.Fatalf("self-copy failed: %v", err)
 	}
+	if res.LastModified.IsZero() {
+		t.Fatalf("self-copy CopyObjectResult.LastModified must not be zero")
+	}
 	stored, ok := b.loadObjectMetadata(ctx, "/bucket/swap.txt")
-	if !ok || stored["X-Amz-Meta-Pin"] != "new" {
+	if !ok || stored["x-amz-meta-pin"] != "new" {
 		t.Fatalf("request metadata not applied: %v", stored)
 	}
-	if _, present := stored["X-Amz-Meta-Extra"]; present {
+	if _, present := stored["x-amz-meta-extra"]; present {
 		t.Fatalf("REPLACE kept metadata the request did not mention: %v", stored)
 	}
 }
@@ -244,13 +271,13 @@ func TestSelfCopyReplaceSurvivesRestart(t *testing.T) {
 	const body = "0123456789abcdef"
 	if _, err := b.PutObject(ctx, "mp", "restart.bin", map[string]string{
 		"Content-Type":   "text/plain",
-		"X-Amz-Meta-Pin": "v1",
+		"x-amz-meta-pin": "v1",
 	}, strings.NewReader(body), int64(len(body))); err != nil {
 		t.Fatalf("PutObject: %+v", err)
 	}
 	if _, err := b.CopyObject(ctx, "mp", "restart.bin", "mp", "restart.bin", map[string]string{
 		"X-Amz-Metadata-Directive": "REPLACE",
-		"X-Amz-Meta-Pin":           "v2",
+		"x-amz-meta-pin":           "v2",
 	}); err != nil {
 		t.Fatalf("self copy: %+v", err)
 	}
@@ -260,7 +287,7 @@ func TestSelfCopyReplaceSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HeadObject after restart: %+v", err)
 	}
-	if got := obj.Metadata["X-Amz-Meta-Pin"]; got != "v2" {
+	if got := obj.Metadata["x-amz-meta-pin"]; got != "v2" {
 		t.Fatalf("metadata after restart = %q, want v2 (the self copy only reached the cache)", got)
 	}
 }
@@ -273,7 +300,7 @@ func TestCopyReplaceDropsSourceMetadata(t *testing.T) {
 
 	source := map[string]string{
 		"Content-Type":    "text/plain",
-		"X-Amz-Meta-Keep": "from-source",
+		"x-amz-meta-keep": "from-source",
 	}
 	if _, err := b.PutObject(ctx, "mp", "src.txt", source, strings.NewReader("copy me"), 7); err != nil {
 		t.Fatalf("PutObject: %+v", err)
@@ -292,13 +319,57 @@ func TestCopyReplaceDropsSourceMetadata(t *testing.T) {
 		t.Fatalf("HeadObject: %+v", err)
 	}
 	meta := object.Metadata
-	if got := meta["X-Amz-Meta-Keep"]; got != "" {
-		t.Fatalf("REPLACE kept the source metadata: X-Amz-Meta-Keep = %q", got)
+	if got := meta["x-amz-meta-keep"]; got != "" {
+		t.Fatalf("REPLACE kept the source metadata: x-amz-meta-keep = %q", got)
 	}
 	if got := metadataDirective(meta); got != "" {
 		t.Fatalf("the copy directive was stored as metadata: %q", got)
 	}
 	if got := meta["Content-Type"]; got != "application/json" {
 		t.Fatalf("Content-Type = %q, want the value the request asked for", got)
+	}
+}
+
+// User metadata keys come back in the shape AWS documents — "x-amz-meta-" plus a
+// lowercase suffix. Passing the Go-canonicalised "X-Amz-Meta-Team" through made
+// clients miss the key they had sent (boto3: obj["Metadata"]["team"] empty).
+func TestUserMetadataKeysComeBackLowercase(t *testing.T) {
+	ctx := context.Background()
+	b, _ := setupMultipartBackend(t)
+
+	if _, err := b.PutObject(ctx, "mp", "meta-case.txt",
+		map[string]string{"X-Amz-Meta-Team": "cold-tier", "Content-Type": "text/plain"},
+		strings.NewReader("x"), 1); err != nil {
+		t.Fatalf("PutObject: %+v", err)
+	}
+
+	obj, err := b.GetObject(ctx, "mp", "meta-case.txt", nil)
+	if err != nil {
+		t.Fatalf("GetObject: %+v", err)
+	}
+	if got := obj.Metadata["x-amz-meta-team"]; got != "cold-tier" {
+		t.Errorf("metadata key is not the AWS shape: %v", obj.Metadata)
+	}
+	if _, present := obj.Metadata["X-Amz-Meta-Team"]; present {
+		t.Errorf("canonicalised key leaked into the response: %v", obj.Metadata)
+	}
+}
+
+// Rows written before the normalisation keep the canonicalised spelling; they
+// must still be readable, and must be reported in the AWS shape.
+func TestLegacyMetadataRowsAreNormalisedOnRead(t *testing.T) {
+	ctx := context.Background()
+	b, _ := setupMultipartBackend(t)
+
+	b.storeObjectMetadata(ctx, "/bucket/legacy.txt", map[string]string{
+		"X-Amz-Meta-Team": "cold-tier",
+		"Content-Type":    "text/plain",
+	})
+	stored, ok := b.loadObjectMetadata(ctx, "/bucket/legacy.txt")
+	if !ok {
+		t.Fatal("metadata row disappeared")
+	}
+	if got := stored["x-amz-meta-team"]; got != "cold-tier" {
+		t.Errorf("legacy key not normalised on read: %v", stored)
 	}
 }

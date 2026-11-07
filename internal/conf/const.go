@@ -53,6 +53,10 @@ const (
 	ForwardDirectLinkParams = "forward_direct_link_params"
 	IgnoreDirectLinkParams  = "ignore_direct_link_params"
 	FileAccessTrack         = "file_access_track"
+	// FileAccessRetentionDays is how long an access row is kept after its last
+	// read. The table holds one row per file, so this is what keeps it
+	// proportional to the library rather than to its whole history.
+	FileAccessRetentionDays = "file_access_retention_days"
 	WebauthnLoginEnabled    = "webauthn_login_enabled"
 	SharePreview            = "share_preview"
 	ShareArchivePreview     = "share_archive_preview"
@@ -144,7 +148,7 @@ const (
 	LdapLoginTips         = "ldap_login_tips"
 
 	// s3
-	S3Buckets         = "s3_buckets"
+	S3Buckets = "s3_buckets"
 	// S3BucketCors stores per-bucket CORS rules as JSON (bucket name -> []s3CORSRule),
 	// with "*" acting as the default for every bucket that has no rules of its own.
 	S3BucketCors      = "s3_bucket_cors"

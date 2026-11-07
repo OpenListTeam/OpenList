@@ -2,6 +2,7 @@ package handles
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -24,18 +25,16 @@ import (
 //	path            only objects whose path starts with this string
 //	older_than_days only objects last read at least this many days ago
 //	limit           at most this many rows (default 200, maximum 5000)
+//	offset          skip this many rows (default 0)
+//	include_never_read  "true"/"1"/"yes" also lists objects never read
 //
 // Rows are ordered oldest read first, because that is the order in which
 // objects become archiving candidates.
 func S3ObjectAccessList(c *gin.Context) {
-	limit := 200
-	if raw := c.Query("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			if n > 5000 {
-				n = 5000
-			}
-			limit = n
-		}
+	limit, offset, err := accessPaging(c)
+	if err != nil {
+		common.ErrorResp(c, err, 400)
+		return
 	}
 
 	if db.GetDb() == nil {
@@ -47,20 +46,37 @@ func S3ObjectAccessList(c *gin.Context) {
 	// An object nobody ever read is the best archiving candidate there is, so it
 	// can be included; without the flag the answer only covers objects that were
 	// read at least once.
-	includeNeverRead := c.Query("include_never_read") == "true"
-	if prefix := c.Query("path"); prefix != "" {
-		query = query.Where(`path LIKE ? ESCAPE '\'`, escapeLikePrefix(prefix)+"%")
+	includeNeverRead, err := accessBoolFlag(c.Query("include_never_read"))
+	if err != nil {
+		common.ErrorResp(c, fmt.Errorf("include_never_read: %w", err), 400)
+		return
 	}
+	if prefix := c.Query("path"); prefix != "" {
+		// A byte-wise prefix test, not LIKE: LIKE treats "%" and "_" as wildcards
+		// and ignores case on several engines, so "/Movies" also returned
+		// "/movies/..." from a different mount, and an archiving job fed with this
+		// list then moved objects outside the tree it was pointed at.
+		clause, args := accessPrefixCondition(db.GetDb().Dialector.Name(), "path", prefix)
+		query = query.Where(clause, args...)
+	}
+	var cutoff *time.Time
 	if raw := c.Query("older_than_days"); raw != "" {
-		if days, err := strconv.Atoi(raw); err == nil && days >= 0 {
-			cutoff := time.Now().UTC().AddDate(0, 0, -days)
-			if includeNeverRead {
-				query = query.Where("(last_access IS NULL OR last_access < ?)", cutoff)
-			} else {
-				query = query.Where("last_access IS NOT NULL AND last_access < ?", cutoff)
-			}
+		days, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || days < 0 {
+			// Answering as if the filter were absent returned objects that were
+			// read yesterday - and, worse, the never-read ones.
+			common.ErrorResp(c, fmt.Errorf("older_than_days must be a non-negative integer, got %q", raw), 400)
+			return
 		}
-	} else if !includeNeverRead {
+		at := time.Now().UTC().AddDate(0, 0, -days)
+		cutoff = &at
+	}
+	switch {
+	case includeNeverRead && cutoff != nil:
+		query = query.Where("(last_access IS NULL OR last_access < ?)", *cutoff)
+	case cutoff != nil:
+		query = query.Where("last_access IS NOT NULL AND last_access < ?", *cutoff)
+	case !includeNeverRead:
 		query = query.Where("last_access IS NOT NULL")
 	}
 
@@ -77,7 +93,7 @@ func S3ObjectAccessList(c *gin.Context) {
 	if includeNeverRead {
 		order = "last_access IS NOT NULL ASC, last_access ASC"
 	}
-	if err := query.Order(order).Limit(limit).Find(&items).Error; err != nil {
+	if err := query.Order(order).Limit(limit).Offset(offset).Find(&items).Error; err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
@@ -85,11 +101,4 @@ func S3ObjectAccessList(c *gin.Context) {
 		"total":   total,
 		"content": items,
 	})
-}
-
-// escapeLikePrefix makes a path safe to use as the prefix of a LIKE pattern:
-// without it a key containing % or _ would match objects it does not name.
-func escapeLikePrefix(prefix string) string {
-	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return replacer.Replace(prefix)
 }

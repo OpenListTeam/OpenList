@@ -51,9 +51,18 @@ import (
 const s3CORSWildcardBucket = "*"
 
 const (
-	s3CORSBodyLimit     = 1 << 20 // 1 MiB, same ceiling as a config document
-	s3CORSMaxRules      = 100     // S3's own limit
-	s3CORSDefaultMaxAge = 3000
+	s3CORSBodyLimit = 1 << 20 // 1 MiB, same ceiling as a config document
+	s3CORSMaxRules  = 100     // S3's own limit
+	// A rule holds a handful of origins, headers and methods; the caps below are
+	// what keeps a preflight check linear. Without them one configuration entry
+	// listing tens of thousands of headers made a single anonymous OPTIONS
+	// request cost hundreds of milliseconds, because every requested header is
+	// compared against every allowed pattern.
+	s3CORSMaxListEntries = 100
+	s3CORSMaxEntryLength = 256
+	// s3CORSMaxRequestHeaders caps the headers a preflight may ask about.
+	s3CORSMaxRequestHeaders = 64
+	s3CORSDefaultMaxAge     = 3000
 )
 
 // s3CORSRule is one <CORSRule> entry of a bucket CORS configuration.
@@ -137,10 +146,18 @@ var corsSettingMu sync.Mutex
 
 // saveS3CORSSetting persists the per-bucket configuration. It is a variable so
 // tests can stub the database write.
-var saveS3CORSSetting = func(config map[string][]s3CORSRule) error {
+var saveS3CORSSetting = func(rawBefore string, config map[string][]s3CORSRule) error {
 	payload, err := json.Marshal(config)
 	if err != nil {
 		return err
+	}
+	// Optimistic concurrency: the read-modify-write below runs under
+	// corsSettingMu, but an admin editing the same setting through
+	// /api/admin/setting/save does not take that lock. Comparing the value we
+	// merged from with the value now stored turns a silent lost update into a
+	// retryable error instead of dropping whichever change came second.
+	if current := strings.TrimSpace(setting.GetStr(conf.S3BucketCors)); current != rawBefore {
+		return errS3CORSConfigurationChanged
 	}
 	item, err := op.GetSettingItemByKey(conf.S3BucketCors)
 	if err != nil || item == nil {
@@ -156,28 +173,91 @@ var saveS3CORSSetting = func(config map[string][]s3CORSRule) error {
 		item = &copied
 	}
 	item.Value = string(payload)
-	return op.SaveSettingItem(item)
+	// Quiet save: a bucket-level policy must not invalidate the directory, link,
+	// user and detail caches, nor fire every setting-change callback.
+	return op.SaveSettingItemQuiet(item)
+}
+
+// checkS3CORSSettingParsable reports whether the stored setting can be parsed,
+// so that a save never merges into the empty map that an unparsable value
+// degrades to (which would drop every other bucket's policy).
+func checkS3CORSSettingParsable() error {
+	raw := strings.TrimSpace(setting.GetStr(conf.S3BucketCors))
+	if raw == "" {
+		return nil
+	}
+	var config map[string][]s3CORSRule
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return fmt.Errorf("%s does not contain valid JSON (%v); fix it before changing a bucket's CORS rules", conf.S3BucketCors, err)
+	}
+	return nil
 }
 
 // getS3CORSConfiguration returns the parsed setting, keyed by bucket name.
-func getS3CORSConfiguration() map[string][]s3CORSRule {
-	config := map[string][]s3CORSRule{}
+var corsConfigCache parsedSettingCache[map[string][]s3CORSRule]
+
+// corsConfigurationShared returns the cached snapshot. Callers must only read
+// it: the map and every rule slice in it are shared with other requests.
+func corsConfigurationShared() map[string][]s3CORSRule {
 	raw := strings.TrimSpace(setting.GetStr(conf.S3BucketCors))
-	if raw == "" {
-		return config
-	}
-	if err := json.Unmarshal([]byte(raw), &config); err != nil {
-		log.Warnf("failed to parse %s: %v", conf.S3BucketCors, err)
+	config, _ := corsConfigCache.get(raw, func(raw string) (map[string][]s3CORSRule, error) {
+		if raw == "" {
+			return map[string][]s3CORSRule{}, nil
+		}
+		parsed := map[string][]s3CORSRule{}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			log.Warnf("failed to parse %s (%d bytes): %v", conf.S3BucketCors, len(raw), err)
+			return map[string][]s3CORSRule{}, err
+		}
+		return parsed, nil
+	})
+	if config == nil {
 		return map[string][]s3CORSRule{}
 	}
 	return config
 }
 
+// getS3CORSConfiguration returns a deep copy, for callers that may modify the
+// document (the read-modify-write of PutBucketCors/DeleteBucketCors).
+func getS3CORSConfiguration() map[string][]s3CORSRule {
+	return cloneS3CORSConfiguration(corsConfigurationShared())
+}
+
+// cloneS3CORSConfiguration deep-copies the parsed configuration so a
+// read-modify-write cannot change the cached map other requests are reading.
+func cloneS3CORSConfiguration(config map[string][]s3CORSRule) map[string][]s3CORSRule {
+	out := make(map[string][]s3CORSRule, len(config))
+	for bucket, rules := range config {
+		copied := make([]s3CORSRule, len(rules))
+		for i := range rules {
+			copied[i] = rules[i]
+			copied[i].AllowedOrigins = append([]string(nil), rules[i].AllowedOrigins...)
+			copied[i].AllowedMethods = append([]string(nil), rules[i].AllowedMethods...)
+			copied[i].AllowedHeaders = append([]string(nil), rules[i].AllowedHeaders...)
+			copied[i].ExposeHeaders = append([]string(nil), rules[i].ExposeHeaders...)
+		}
+		out[bucket] = copied
+	}
+	return out
+}
+
+// errS3CORSConfigurationChanged reports a lost update: the stored document
+// changed between the read and the write.
+var errS3CORSConfigurationChanged = errors.New("the CORS configuration changed while this request was being applied")
+
+// `?cors` writes are deliberately not throttled. An earlier round added a
+// per-bucket rate limit here, but nothing ever called it: the guard sat beside
+// the handler instead of inside it, so the only exercise it got was its own
+// unit test. Wiring it up would have invented a 503 the S3 API does not have
+// (a client looping PutBucketCors is an authenticated tenant doing bounded
+// work, exactly like one looping PutObject), so the dead code is gone rather
+// than switched on.
+
 // corsRulesForBucket resolves the rules that apply to a bucket: its own rules
 // when it has any, otherwise the wildcard rules, otherwise the built-in
 // permissive default.
 func corsRulesForBucket(bucket string) []s3CORSRule {
-	config := getS3CORSConfiguration()
+	config := corsConfigurationShared()
 	if rules, ok := config[bucket]; ok && len(rules) > 0 {
 		return rules
 	}
@@ -190,7 +270,7 @@ func corsRulesForBucket(bucket string) []s3CORSRule {
 // hasS3CORSConfiguration reports whether the bucket (or the wildcard key) has
 // an explicit configuration, which is what GetBucketCors must expose.
 func hasS3CORSConfiguration(bucket string) bool {
-	config := getS3CORSConfiguration()
+	config := corsConfigurationShared()
 	if rules, ok := config[bucket]; ok && len(rules) > 0 {
 		return true
 	}
@@ -252,9 +332,23 @@ func (r *s3CORSRule) allowsMethod(method string) bool {
 }
 
 func (r *s3CORSRule) allowsHeaders(headers []string) bool {
+	if len(headers) == 0 {
+		return true
+	}
+	for _, pattern := range r.AllowedHeaders {
+		if strings.TrimSpace(pattern) == "*" {
+			// Every header is allowed; skipping the comparison keeps a rule that
+			// allows "*" as cheap as an empty one.
+			return true
+		}
+	}
+	patterns := r.AllowedHeaders
+	if len(patterns) > s3CORSMaxListEntries {
+		patterns = patterns[:s3CORSMaxListEntries]
+	}
 	for _, header := range headers {
 		allowed := false
-		for _, pattern := range r.AllowedHeaders {
+		for _, pattern := range patterns {
 			if corsWildcardMatch(pattern, header) {
 				allowed = true
 				break
@@ -276,6 +370,11 @@ type s3CORSDecision struct {
 	allowHeaders  string
 	exposeHeaders string
 	maxAge        int
+	// headersRejected reports a preflight that named a request header the
+	// matched rules do not allow. S3 answers such a preflight with none of its
+	// CORS headers at all, so the whole decision is dropped rather than being
+	// delivered without Access-Control-Allow-Headers.
+	headersRejected bool
 }
 
 func (d s3CORSDecision) allowed() bool { return d.origin != "" }
@@ -324,11 +423,21 @@ func decideS3CORS(rules []s3CORSRule, origin, method string, requestedHeaders []
 	decision.exposeHeaders = strings.Join(expose, ", ")
 
 	if len(requestedHeaders) > 0 {
+		allowed := false
 		for _, rule := range matched {
 			if rule.allowsHeaders(requestedHeaders) {
 				decision.allowHeaders = strings.Join(requestedHeaders, ", ")
+				allowed = true
 				break
 			}
+		}
+		if !allowed {
+			// A preflight that asks for a header no rule allows is a failed
+			// preflight, not a partially successful one: answering it with
+			// Access-Control-Allow-Origin but no Allow-Headers left the browser
+			// and every hand-written client to disagree about whether it
+			// passed. S3 returns no CORS headers in this case.
+			decision.headersRejected = true
 		}
 	} else {
 		decision.allowHeaders = strings.Join(appendUniqueFold(nil, matched[0].AllowedHeaders...), ", ")
@@ -395,6 +504,10 @@ func (w *corsResponseWriter) applyCORSHeaders() {
 	}
 	decision := w.decision
 	if !decision.allowed() {
+		// The answer still depends on the request's Origin even when no rule
+		// matched, so a shared cache must not hand this ACAO-less response to an
+		// origin that is allowed.
+		header.Add("Vary", "Origin")
 		return
 	}
 	header.Set("Access-Control-Allow-Origin", decision.origin)
@@ -453,9 +566,15 @@ func splitHeaderList(raw string) []string {
 		return nil
 	}
 	parts := strings.Split(raw, ",")
+	if len(parts) > s3CORSMaxRequestHeaders {
+		parts = parts[:s3CORSMaxRequestHeaders]
+	}
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			if len(trimmed) > s3CORSMaxEntryLength {
+				trimmed = trimmed[:s3CORSMaxEntryLength]
+			}
 			out = append(out, trimmed)
 		}
 	}
@@ -467,6 +586,11 @@ func splitHeaderList(raw string) []string {
 func corsHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		// Every answer below may differ per origin, including the one given to a
+		// request without an Origin header, so the cache must key on it either
+		// way. Only adding it when an Origin is present let a shared cache hand a
+		// credentialed response to a request that never had one.
+		w.Header().Add("Vary", "Origin")
 		bucket := bucketOnlyName(r.URL.Path)
 		rules := corsRulesForBucket(bucket)
 
@@ -517,6 +641,11 @@ func isS3CORSConfigurationRequest(r *http.Request) bool {
 // middleware.
 func answerS3CORSPreflight(w http.ResponseWriter, r *http.Request, origin string, rules []s3CORSRule) {
 	requestedMethod := strings.ToUpper(strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")))
+	if requestedMethod == "" {
+		writeS3Error(w, r, http.StatusBadRequest, "InvalidRequest", bucketOnlyName(r.URL.Path),
+			"Missing required header: Access-Control-Request-Method.")
+		return
+	}
 	requestedHeaders := splitHeaderList(r.Header.Get("Access-Control-Request-Headers"))
 
 	decision := decideS3CORS(rules, origin, requestedMethod, requestedHeaders)
@@ -526,6 +655,17 @@ func answerS3CORSPreflight(w http.ResponseWriter, r *http.Request, origin string
 		w.Header().Add("Vary", "Access-Control-Request-Method")
 		w.Header().Add("Vary", "Access-Control-Request-Headers")
 		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	if decision.headersRejected {
+		// S3 documents this as "none of the response CORS headers are
+		// returned"; the status stays 200 because the request itself was
+		// answered, only the browser-side permission is missing.
+		w.Header().Add("Vary", "Origin")
+		w.Header().Add("Vary", "Access-Control-Request-Method")
+		w.Header().Add("Vary", "Access-Control-Request-Headers")
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -540,7 +680,16 @@ func answerS3CORSPreflight(w http.ResponseWriter, r *http.Request, origin string
 	if decision.exposeHeaders != "" {
 		w.Header().Set("Access-Control-Expose-Headers", decision.exposeHeaders)
 	}
-	w.Header().Set("Access-Control-Max-Age", strconv.Itoa(decision.maxAge))
+	// S3 answers every allowed preflight with credentials allowed; without it a
+	// browser drops an otherwise permitted request that carries cookies or an
+	// Authorization header.
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	if decision.maxAge > 0 {
+		// Without MaxAgeSeconds S3 leaves the header out; sending 0 made every
+		// request revalidate the preflight, which is the slowest possible
+		// answer for a hot page.
+		w.Header().Set("Access-Control-Max-Age", strconv.Itoa(decision.maxAge))
+	}
 	w.Header().Set("Content-Length", "0")
 	w.WriteHeader(http.StatusOK)
 }
@@ -557,9 +706,30 @@ func handleS3CORSConfiguration(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
+	// `?cors` names bucket configuration, so an object key in the path is a
+	// mistake: `GET /bucket/key?cors` used to answer with the bucket's rules
+	// (and `PUT` overwrote them), bypassing every guard behind this point.
+	if _, _, hasObject := parseObjectPath(r.URL.Path); hasObject {
+		writeS3Error(w, r, http.StatusBadRequest, "InvalidArgument", bucketOnlyName(r.URL.Path),
+			"The CORS configuration belongs to a bucket: remove the object key from the request path.")
+		return true
+	}
+
 	bucket := bucketOnlyName(r.URL.Path)
 	if bucket == "" {
-		return false
+		// `?cors` on the service root names no bucket. Answering it with an empty
+		// 200 hid the mistake; S3 wants a bucket here.
+		writeS3Error(w, r, http.StatusBadRequest, "InvalidArgument", "",
+			"The CORS configuration belongs to a bucket: name one in the request path.")
+		return true
+	}
+	// Authenticate before answering whether the bucket exists: replying 404 to an
+	// unknown bucket and 403 to a known one told anonymous callers which bucket
+	// names are configured. No other object path leaks that.
+	write := r.Method != http.MethodGet
+	if status, code, message := s3CORSAPIAuthorized(r, bucket, write); code != "" {
+		writeS3Error(w, r, status, code, bucket, message)
+		return true
 	}
 	if _, err := getBucketByName(bucket); err != nil {
 		writeS3Error(w, r, http.StatusNotFound, "NoSuchBucket", bucket,
@@ -567,15 +737,15 @@ func handleS3CORSConfiguration(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 
-	write := r.Method != http.MethodGet
-	if status, code, message := s3CORSAPIAuthorized(r, bucket, write); code != "" {
-		writeS3Error(w, r, status, code, bucket, message)
-		return true
-	}
-
 	switch r.Method {
 	case http.MethodGet:
-		rules, ok := getS3CORSConfiguration()[bucket]
+		// The effective policy, not the literal map entry: a bucket governed by
+		// the wildcard key does have a configuration to report.
+		stored := corsConfigurationShared()
+		rules, ok := stored[bucket]
+		if !ok || len(rules) == 0 {
+			rules, ok = stored[s3CORSWildcardBucket]
+		}
 		if !ok || len(rules) == 0 {
 			writeS3Error(w, r, http.StatusNotFound, "NoSuchCORSConfiguration", bucket,
 				"The CORS configuration does not exist.")
@@ -621,7 +791,16 @@ const signatureV4Prefix = "AWS4-HMAC-SHA256 "
 // text in every request, so trusting it would let anybody who knows it rewrite
 // another bucket's CORS policy.
 func s3CORSAPIAuthorized(r *http.Request, bucket string, write bool) (int, string, string) {
-	rules := getS3BucketAuthRules()
+	// A credential setting that is present but unusable (broken JSON, a rule
+	// without a secret) must not degrade to "no credentials configured": that
+	// state opens the gateway, and this endpoint answers before bucketAuthHandler
+	// gets the chance to refuse the request. `?cors` writes are therefore denied
+	// with the same 503 the object path returns.
+	rules, misconfigured := loadS3BucketAuthRules()
+	if misconfigured {
+		return http.StatusServiceUnavailable, "ServiceUnavailable",
+			"The S3 credentials of this server are misconfigured"
+	}
 	if len(rules) == 0 {
 		// No credentials configured: the gateway is open, exactly as it is for
 		// object requests.
@@ -698,18 +877,38 @@ func putS3CORSConfiguration(w http.ResponseWriter, r *http.Request, rules []s3CO
 	_, _ = w.Write(payload)
 }
 
+// checkS3CORSListBounds rejects a rule list that is longer than S3 allows or
+// carries an entry long enough to make header matching expensive.
+func checkS3CORSListBounds(list []string) error {
+	if len(list) > s3CORSMaxListEntries {
+		return fmt.Errorf("a CORS rule list may not contain more than %d entries", s3CORSMaxListEntries)
+	}
+	for _, entry := range list {
+		if len(entry) > s3CORSMaxEntryLength {
+			return fmt.Errorf("a CORS rule entry may not be longer than %d characters", s3CORSMaxEntryLength)
+		}
+	}
+	return nil
+}
+
 // saveS3CORSRules replaces (or with nil removes) the rules of one bucket.
 func saveS3CORSRules(bucket string, rules []s3CORSRule) error {
 	corsSettingMu.Lock()
 	defer corsSettingMu.Unlock()
 
+	// Refuse to write when the stored document cannot be parsed: merging into an
+	// empty map would silently wipe every other bucket's policy.
+	if err := checkS3CORSSettingParsable(); err != nil {
+		return err
+	}
+	rawBefore := strings.TrimSpace(setting.GetStr(conf.S3BucketCors))
 	config := getS3CORSConfiguration()
 	if len(rules) == 0 {
 		delete(config, bucket)
 	} else {
 		config[bucket] = rules
 	}
-	return saveS3CORSSetting(config)
+	return saveS3CORSSetting(rawBefore, config)
 }
 
 // validateS3CORSRules applies S3's schema checks and normalises the document in
@@ -723,6 +922,11 @@ func validateS3CORSRules(rules []s3CORSRule) error {
 	}
 	for i := range rules {
 		rule := &rules[i]
+		for _, list := range [][]string{rule.AllowedOrigins, rule.AllowedMethods, rule.AllowedHeaders, rule.ExposeHeaders} {
+			if err := checkS3CORSListBounds(list); err != nil {
+				return err
+			}
+		}
 		if normalized := appendUniqueFold(nil, rule.AllowedOrigins...); len(normalized) == 0 {
 			return errors.New("a CORSRule must have at least one AllowedOrigin")
 		} else {
@@ -733,11 +937,13 @@ func validateS3CORSRules(rules []s3CORSRule) error {
 		for _, method := range rule.AllowedMethods {
 			normalized := strings.ToUpper(strings.TrimSpace(method))
 			switch normalized {
+			case "*":
+				methods = appendUniqueFold(methods, http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPost, http.MethodDelete)
 			case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPost, http.MethodDelete:
 				methods = appendUniqueFold(methods, normalized)
 			default:
 				if normalized != "" {
-					return fmt.Errorf("invalid AllowedMethod %q: must be one of GET, HEAD, PUT, POST, DELETE", method)
+					return fmt.Errorf("invalid AllowedMethod %q: must be one of GET, HEAD, PUT, POST, DELETE (or *)", method)
 				}
 			}
 		}

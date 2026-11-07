@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setTestSetting(key, val string) {
@@ -105,6 +107,15 @@ func TestV4CredentialAccessKey_Malformed(t *testing.T) {
 
 func TestGetS3BucketAuthRules_Fallback(t *testing.T) {
 	// When s3_bucket_auth is empty, fallback to s3_access_key_id / s3_secret_access_key
+	//
+	// The legacy pair is global state shared by the whole package: leaving it
+	// behind adds a "legacy-ak" rule to every later test that counts or indexes
+	// the parsed rules, so which tests pass would depend on the run order.
+	t.Cleanup(func() {
+		setTestSetting(conf.S3BucketAuth, "[]")
+		setTestSetting(conf.S3AccessKeyId, "")
+		setTestSetting(conf.S3SecretAccessKey, "")
+	})
 	setTestSetting(conf.S3BucketAuth, "[]")
 	setTestSetting(conf.S3AccessKeyId, "legacy-ak")
 	setTestSetting(conf.S3SecretAccessKey, "legacy-sk")
@@ -114,7 +125,7 @@ func TestGetS3BucketAuthRules_Fallback(t *testing.T) {
 	assert.Equal(t, "legacy-ak", rules[0].AccessKey)
 	assert.Equal(t, "legacy-sk", rules[0].SecretKey)
 	assert.Equal(t, []string{"*"}, rules[0].Buckets)
-	assert.False(t, rules[0].ReadOnly)
+	assert.False(t, rules[0].ReadOnly, "a plain legacy key is read-write")
 
 	pairs := resolveAuthPairs()
 	assert.Equal(t, "legacy-sk", pairs["legacy-ak"])
@@ -341,19 +352,23 @@ func TestGetS3BucketAuthRules_MasterKeyOverridesPerBucketRows(t *testing.T) {
 	rules := getS3BucketAuthRules()
 	assert.Equal(t, "master-key", rules[0].AccessKey)
 	assert.Equal(t, []string{"*"}, rules[0].Buckets)
-	assert.False(t, rules[0].ReadOnly)
+	assert.True(t, rules[0].ReadOnly, "the read-only row for the master key must stick")
 	assert.Equal(t, "app-key", rules[1].AccessKey)
 	assert.Equal(t, []string{"priv"}, rules[1].Buckets)
 
 	req, _ := http.NewRequest("PUT", "/anything/obj", nil)
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=master-key/20261028/us-east-1/s3/aws4_request, Signature=xxx")
 	assert.True(t, s3BucketAuthorized(req, "anything"))
-	assert.True(t, s3BucketCanWrite(req))
+	assert.False(t, s3BucketCanWrite(req), "a read-only master key must not write")
+
+	// The scoped rule for the other key is unaffected.
+	other, _ := http.NewRequest("PUT", "/priv/obj", nil)
+	other.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=app-key/20261028/us-east-1/s3/aws4_request, Signature=xxx")
+	assert.True(t, s3BucketCanWrite(other))
 }
 
 func TestGetS3BucketAuthRules_DropsKeylessRules(t *testing.T) {
-	// A rule with no access key authenticates nothing. Counting it as
-	// "credentials configured" would deny every anonymous client.
+	// A rule with no access key authenticates nothing, so it is dropped.
 	setTestSetting(conf.S3BucketAuth, `[{"buckets":["priv"]},{"access_key_id":"","secret_access_key":""}]`)
 	setTestSetting(conf.S3AccessKeyId, "")
 	setTestSetting(conf.S3SecretAccessKey, "")
@@ -361,17 +376,208 @@ func TestGetS3BucketAuthRules_DropsKeylessRules(t *testing.T) {
 
 	assert.Empty(t, getS3BucketAuthRules())
 	assert.Empty(t, resolveAuthPairs())
+}
+
+func TestBucketAuthHandler_RefusesWhenConfigIsUnusable(t *testing.T) {
+	// Credentials are configured, so the operator believes the buckets are
+	// protected, but nothing usable came out of it: a rule without a secret, a
+	// legacy key without one, and unparseable JSON. Serving any of these as
+	// anonymous access would hand out every bucket because of a typo, so the
+	// gateway refuses the request instead.
+	cases := map[string]func(){
+		"rule without secret": func() {
+			setTestSetting(conf.S3BucketAuth, `[{"access_key_id":"app-key","buckets":["priv"]}]`)
+		},
+		"legacy key without secret": func() {
+			setTestSetting(conf.S3BucketAuth, "[]")
+			setTestSetting(conf.S3AccessKeyId, "master-key")
+			setTestSetting(conf.S3SecretAccessKey, "")
+		},
+		"broken json": func() {
+			setTestSetting(conf.S3BucketAuth, `[{"access_key_id":`)
+		},
+	}
+
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			setTestSetting(conf.S3BucketAuth, "[]")
+			setTestSetting(conf.S3AccessKeyId, "")
+			setTestSetting(conf.S3SecretAccessKey, "")
+			setup()
+			defer func() {
+				setTestSetting(conf.S3BucketAuth, "[]")
+				setTestSetting(conf.S3AccessKeyId, "")
+				setTestSetting(conf.S3SecretAccessKey, "")
+			}()
+
+			rules, misconfigured := loadS3BucketAuthRules()
+			assert.Empty(t, rules)
+			assert.True(t, misconfigured)
+
+			called := false
+			chained := bucketAuthHandler(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(http.StatusOK) }),
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }),
+			)
+			req, _ := http.NewRequest("GET", "/priv/secret.txt", nil)
+			rec := httptest.NewRecorder()
+			chained.ServeHTTP(rec, req)
+			assert.False(t, called, "a misconfigured gateway must not fall through to the anonymous path")
+			assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+
+			// The helpers used by the redirect and CORS paths must agree.
+			assert.False(t, s3BucketAuthorized(req, "priv"))
+			assert.False(t, s3BucketCanWrite(req))
+		})
+	}
+}
+
+func TestRequestAccessKey_ResolvesOneIdentity(t *testing.T) {
+	// Signed as one key, presigned as another: the request has no single
+	// identity, so it is refused instead of being verified as one key and
+	// authorised as the other.
+	mixed, _ := http.NewRequest("GET", "/priv/obj", nil)
+	mixed.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=app-key/20261028/us-east-1/s3/aws4_request, Signature=xxx")
+	q := mixed.URL.Query()
+	q.Set("X-Amz-Credential", "victim-key/20261028/us-east-1/s3/aws4_request")
+	q.Set("X-Amz-Signature", "yyy")
+	mixed.URL.RawQuery = q.Encode()
+	key, ok := requestAccessKey(mixed)
+	assert.False(t, ok, "a request naming two keys must not be authorised at all")
+	assert.Empty(t, key)
+	assert.True(t, hasConflictingCredentials(mixed))
+
+	headerOnly, _ := http.NewRequest("GET", "/priv/obj", nil)
+	headerOnly.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=app-key/20261028/us-east-1/s3/aws4_request, Signature=xxx")
+	key, ok = requestAccessKey(headerOnly)
+	assert.True(t, ok)
+	assert.Equal(t, "app-key", key)
+
+	queryOnly, _ := http.NewRequest("GET", "/priv/obj?X-Amz-Credential="+url.QueryEscape("victim-key/20261028/us-east-1/s3/aws4_request"), nil)
+	key, ok = requestAccessKey(queryOnly)
+	assert.True(t, ok)
+	assert.Equal(t, "victim-key", key)
+
+	// Both query spellings, naming different keys: gofakes3's V2 parser reads
+	// AWSAccessKeyId while this one used to read X-Amz-Credential first, so this
+	// shape was verified as one key and authorised as the other.
+	bothQuery, _ := http.NewRequest("GET", "/priv/obj?X-Amz-Credential="+url.QueryEscape("master-key/20261028/us-east-1/s3/aws4_request")+"&AWSAccessKeyId=app-key", nil)
+	_, ok = requestAccessKey(bothQuery)
+	assert.False(t, ok, "two different query credentials must be refused")
+
+	// The V2 header form without the space: gofakes3 strips spaces before it
+	// looks for the AWS prefix, so this parses as app-key on both sides.
+	unspaced, _ := http.NewRequest("GET", "/priv/obj", nil)
+	unspaced.Header.Set("Authorization", "AWSapp-key:c2lnbmF0dXJl")
+	key, ok = requestAccessKey(unspaced)
+	assert.True(t, ok)
+	assert.Equal(t, "app-key", key)
+
+	anonymous, _ := http.NewRequest("GET", "/priv/obj", nil)
+	_, ok = requestAccessKey(anonymous)
+	assert.True(t, ok)
+	assert.False(t, hasConflictingCredentials(anonymous))
+}
+
+func TestBucketAuthHandler_RejectsConflictingCredentials(t *testing.T) {
+	setTestSetting(conf.S3BucketAuth, `[{"access_key_id":"app-key","secret_access_key":"app-secret","buckets":["priv"]}]`)
+	defer setTestSetting(conf.S3BucketAuth, "[]")
+
+	called := false
+	chained := bucketAuthHandler(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }),
+	)
+	req, _ := http.NewRequest("GET", "/priv/obj", nil)
+	req.Header.Set("Authorization", "AWS app-key:signature")
+	q := req.URL.Query()
+	q.Set("AWSAccessKeyId", "app-key")
+	q.Set("Signature", "sig")
+	q.Set("Expires", "1700000000")
+	req.URL.RawQuery = q.Encode()
+
+	rec := httptest.NewRecorder()
+	chained.ServeHTTP(rec, req)
+	assert.False(t, called)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestBucketAuthHandler_CopySourceMustBeAllowed(t *testing.T) {
+	// A key scoped to "app" must not be able to read "shared" by copying out
+	// of it, and a source without "/" must not reach gofakes3, which indexes
+	// the parsed parts unchecked.
+	setTestSetting(conf.S3BucketAuth, `[{"access_key_id":"app-key","secret_access_key":"app-secret","buckets":["app"]}]`)
+	defer setTestSetting(conf.S3BucketAuth, "[]")
 
 	called := false
 	chained := bucketAuthHandler(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(http.StatusOK) }),
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
 	)
-	req, _ := http.NewRequest("GET", "/priv/secret.txt", nil)
+
+	newCopy := func(source string) *http.Request {
+		req, _ := http.NewRequest("PUT", "/app/dst.txt", nil)
+		// SignedHeaders has to name the copy source: Signature V4 authenticates
+		// only the headers it lists, and gofakes3 rejects a V4 Authorization that
+		// carries no SignedHeaders at all, so a fixture without it describes a
+		// request that cannot exist.
+		req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=app-key/20261028/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-copy-source, Signature=xxx")
+		if source != "" {
+			req.Header.Set("X-Amz-Copy-Source", source)
+		}
+		return req
+	}
+
+	// Same bucket: allowed.
 	rec := httptest.NewRecorder()
-	chained.ServeHTTP(rec, req)
-	assert.True(t, called, "anonymous request must still reach gofakes3 when no usable key exists")
+	chained.ServeHTTP(rec, newCopy("/app/src.txt"))
+	assert.True(t, called)
 	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// Another bucket: denied, and nothing reaches the storage layer.
+	called = false
+	rec = httptest.NewRecorder()
+	chained.ServeHTTP(rec, newCopy("/shared/secret.txt"))
+	assert.False(t, called)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+
+	// Malformed header: rejected instead of panicking deeper in.
+	called = false
+	rec = httptest.NewRecorder()
+	chained.ServeHTTP(rec, newCopy("no-slash-here"))
+	assert.False(t, called)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// A key with a dot segment cannot be smuggled through the source either.
+	called = false
+	rec = httptest.NewRecorder()
+	chained.ServeHTTP(rec, newCopy("/app/../shared/secret.txt"))
+	assert.False(t, called)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestStorableMetadata_DropsRequestHeaders(t *testing.T) {
+	headers := map[string]string{
+		"x-amz-meta-owner":     "team-a",
+		"Content-Type":         "text/plain",
+		"Content-Disposition":  `attachment; filename="a.txt"`,
+		"X-Amz-Copy-Source":    "/other-bucket/secret.bin",
+		"X-Amz-Security-Token": "session-token",
+		"X-Amz-Date":           "20261028T180000Z",
+		"X-Amz-Content-Sha256": "abc",
+		"Content-Length":       "12345",
+		"Last-Modified":        "Wed, 28 Oct 2026 18:00:00 GMT",
+		"X-Amz-Checksum-Crc32": "AAAAAA==",
+	}
+
+	stored := storableMetadata(headers)
+	assert.Equal(t, "team-a", stored["x-amz-meta-owner"])
+	assert.Equal(t, "text/plain", stored["Content-Type"])
+	assert.Equal(t, `attachment; filename="a.txt"`, stored["Content-Disposition"])
+	assert.Equal(t, "AAAAAA==", stored["X-Amz-Checksum-Crc32"])
+	for _, dropped := range []string{"X-Amz-Copy-Source", "X-Amz-Security-Token", "X-Amz-Date", "X-Amz-Content-Sha256", "Content-Length", "Last-Modified"} {
+		assert.NotContains(t, stored, dropped)
+	}
 }
 
 func TestBucketAuthHandler_PublicBuckets(t *testing.T) {
@@ -500,4 +706,33 @@ func TestListBuckets_ViewFiltering(t *testing.T) {
 	resAdmin, err := backend.ListBuckets(ctxAdmin)
 	assert.NoError(t, err)
 	assert.Len(t, resAdmin, 3)
+}
+
+func TestMergedRuleWithWildcardDropsPerBucketWritability(t *testing.T) {
+	// Three rows for one key: a writable pair, a read-only bucket, then a
+	// read-only wildcard. The wildcard decides the whole key, and it must not
+	// leave behind the per-bucket writability computed from the earlier rows.
+	for name, rows := range map[string]string{
+		"wildcard last": `[
+			{"access_key_id":"auditkeywild","secret_access_key":"s","buckets":["a","b"],"readonly":false},
+			{"access_key_id":"auditkeywild","secret_access_key":"s","buckets":["a"],"readonly":true},
+			{"access_key_id":"auditkeywild","secret_access_key":"s","buckets":["*"],"readonly":true}]`,
+		"wildcard first": `[
+			{"access_key_id":"auditkeywild","secret_access_key":"s","buckets":["*"],"readonly":true},
+			{"access_key_id":"auditkeywild","secret_access_key":"s","buckets":["a","b"],"readonly":false},
+			{"access_key_id":"auditkeywild","secret_access_key":"s","buckets":["a"],"readonly":true}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			setTestSetting(conf.S3BucketAuth, rows)
+			defer setTestSetting(conf.S3BucketAuth, "[]")
+
+			rules, misconfigured := loadS3BucketAuthRules()
+			require.False(t, misconfigured)
+			require.Len(t, rules, 1)
+			assert.True(t, rules[0].ReadOnly, "a read-only wildcard row makes the whole key read-only")
+			assert.Nil(t, rules[0].writableBuckets, "no stale per-bucket writability may survive the wildcard row")
+			assert.False(t, rules[0].CanWriteBucket("b"), "row order must not change who can write")
+			assert.False(t, rules[0].CanWriteBucket("a"))
+		})
+	}
 }

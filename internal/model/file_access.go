@@ -30,7 +30,11 @@ type FileAccess struct {
 	PathHash string `json:"-" gorm:"size:64;uniqueIndex:idx_file_access"`
 	// LastAccess is the most recent read. It is never NULL: a row only exists
 	// because the file was read at least once.
-	LastAccess *time.Time `json:"last_access" gorm:"column:last_access;index:idx_file_access_last"`
+	// The composite (bucket, last_access) index is what the heatmap reads: it is
+	// index-only, so "how many files per bucket per recency bucket" never touches
+	// the table rows. It also serves the per-bucket filter on its own, which the
+	// leftmost-prefix rule already covers.
+	LastAccess *time.Time `json:"last_access" gorm:"column:last_access;index:idx_file_access_last;index:idx_file_access_bucket_last,priority:2"`
 	// FirstAccess is when this instance first saw the file read, so that a
 	// reader can tell "read once, yesterday" from "read daily for a year".
 	FirstAccess *time.Time `json:"first_access"`
@@ -38,10 +42,23 @@ type FileAccess struct {
 	// dozens of ranged requests for one playback counts once. It answers
 	// "frequently used", which a single timestamp cannot.
 	Hits int64 `json:"hits"`
+	// Bucket names the S3 bucket the most recent read came through, and is empty
+	// for the readers that know nothing about buckets (/d, /p, WebDAV, the media
+	// library). It exists because two buckets can front the same library at
+	// different tiers: without it, "which bucket is this file hot in" could only
+	// be answered by matching storage paths, and a bucket whose path is an alias
+	// of another's would be indistinguishable. A row keeps the bucket of the last
+	// read that named one, so a /d read does not erase what S3 recorded.
+	Bucket string `json:"bucket" gorm:"size:64;index:idx_file_access_bucket;index:idx_file_access_bucket_last,priority:1"`
 }
 
-// TableName keeps the table name short and singular; the SQL of the bulk upsert
-// refers to it by name.
+// TableName keeps the name short and singular, and - unlike every other table -
+// it deliberately ignores conf.Database.TablePrefix. The index names declared on
+// this model (idx_file_access, idx_file_access_last) are constants as well, so
+// renaming the table on an existing install collides with the indexes of the old
+// table and the migration aborts at startup ("index idx_file_access already
+// exists"). Code that has to name the table in SQL resolves it through
+// db.TableNameOf, never by hand.
 func (FileAccess) TableName() string {
 	return "file_access"
 }

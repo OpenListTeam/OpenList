@@ -22,11 +22,20 @@ import (
 	"gorm.io/gorm"
 )
 
+// multipartTestDataDir is the data directory every test in this package shares.
+// It is created in init because the package-level tests need a configured
+// TempDir before any test runs; TestMain removes it once the run is over, so a
+// test run does not leave a directory (and every part file written into it)
+// behind in the system temp dir. Upstream v4.2.9 created it and never removed
+// it.
+var multipartTestDataDir string
+
 func init() {
 	dataDir, err := os.MkdirTemp("", "openlist-s3-mp-*")
 	if err != nil {
 		panic(err)
 	}
+	multipartTestDataDir = dataDir
 	conf.Conf = conf.DefaultConfig(dataDir)
 	if err := os.MkdirAll(conf.Conf.TempDir, 0o755); err != nil {
 		panic("mkdir temp dir: " + err.Error())
@@ -202,8 +211,18 @@ func TestMultipartUploadEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %+v", err)
 	}
-	if !strings.HasSuffix(etag, `-3"`) || !strings.HasPrefix(etag, `"`) {
-		t.Fatalf("complete etag = %q, want a quoted \"<hex>-3\" multipart etag", etag)
+	// A multipart object answers the composite ETag S3 defines,
+	// "md5(md5(part)...)-N", and a later HEAD must report the same value: clients
+	// that verify a download against the ETag they were handed depend on it.
+	if !strings.HasSuffix(etag, `-3"`) {
+		t.Fatalf("complete etag = %q, want a composite <md5>-3", etag)
+	}
+	head, err := b.HeadObject(context.Background(), "mp", "dir/hello.txt")
+	if err != nil {
+		t.Fatalf("HeadObject: %+v", err)
+	}
+	if head.ETag != etag {
+		t.Fatalf("HEAD etag = %q, want the completion etag %q", head.ETag, etag)
 	}
 
 	// The object must exist on disk with the concatenated content.

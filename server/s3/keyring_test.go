@@ -12,6 +12,9 @@ import (
 type recordingSink struct {
 	added   []map[string]string
 	removed [][]string
+	// calls keeps the order of the calls, which matters: gofakes3 accepts
+	// everything while its key map is empty, so a replacement must add first.
+	calls []string
 }
 
 func (s *recordingSink) AddAuthKeys(p map[string]string) {
@@ -20,10 +23,12 @@ func (s *recordingSink) AddAuthKeys(p map[string]string) {
 		cp[k] = v
 	}
 	s.added = append(s.added, cp)
+	s.calls = append(s.calls, "add")
 }
 
 func (s *recordingSink) DelAuthKeys(p []string) {
 	s.removed = append(s.removed, append([]string(nil), p...))
+	s.calls = append(s.calls, "del")
 }
 
 func setBucketAuthRules(t *testing.T, rules []S3BucketAuthRule) {

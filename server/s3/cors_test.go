@@ -34,7 +34,7 @@ func withCORSTestFixture(t *testing.T) {
 	setTestSetting(conf.S3SecretAccessKey, "")
 
 	previous := saveS3CORSSetting
-	saveS3CORSSetting = func(config map[string][]s3CORSRule) error {
+	saveS3CORSSetting = func(_ string, config map[string][]s3CORSRule) error {
 		payload, err := json.Marshal(config)
 		if err != nil {
 			return err
@@ -453,11 +453,8 @@ func TestCorsPreflightWithoutRequestedMethod(t *testing.T) {
 	withCORSTestFixture(t)
 	recorder := doCORSRequest(t, corsHandler(http.NotFoundHandler()),
 		corsPreflight(t, "/bucket/file.txt", "https://app.example", "", ""))
-	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, "*", recorder.Header().Get("Access-Control-Allow-Origin"))
-	assert.Contains(t, recorder.Header().Get("Access-Control-Allow-Methods"), "PUT")
-	// Nothing was requested, so the rule's own header list is reflected.
-	assert.Contains(t, recorder.Header().Get("Access-Control-Allow-Headers"), "*")
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "Access-Control-Request-Method")
 }
 
 func TestCorsPublicBucketPreflight(t *testing.T) {

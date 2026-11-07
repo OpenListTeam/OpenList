@@ -13,6 +13,10 @@ import (
 	"github.com/OpenListTeam/gofakes3"
 )
 
+// slashPrefix is the delimiter a "/" listing carries: the file system walk
+// applies it directly, unlike other delimiters which are grouped per key.
+var slashPrefix = &gofakes3.Prefix{HasDelimiter: true, Delimiter: "/"}
+
 func TestListPageBoundsRecursiveTraversal(t *testing.T) {
 	listCalls := 0
 	b := &s3Backend{
@@ -29,7 +33,7 @@ func TestListPageBoundsRecursiveTraversal(t *testing.T) {
 		},
 	}
 
-	got, err := b.listPage(context.Background(), "bucket", "data", "", false, gofakes3.ListBucketPage{MaxKeys: 3})
+	got, err := b.listPage(context.Background(), "bucket", "data", "", false, nil, gofakes3.ListBucketPage{MaxKeys: 3})
 	if err != nil {
 		t.Fatalf("listPage() error = %v", err)
 	}
@@ -75,7 +79,7 @@ func TestListPageContinuesWithoutGapsOrDuplicates(t *testing.T) {
 	var gotKeys []string
 	page := gofakes3.ListBucketPage{MaxKeys: 37}
 	for pageNumber := 0; pageNumber < 10; pageNumber++ {
-		got, err := b.listPage(context.Background(), "bucket", "data", "", false, page)
+		got, err := b.listPage(context.Background(), "bucket", "data", "", false, nil, page)
 		if err != nil {
 			t.Fatalf("listPage() page %d error = %v", pageNumber, err)
 		}
@@ -118,7 +122,7 @@ func TestListPagePaginatesContentsAndCommonPrefixesTogether(t *testing.T) {
 		},
 	}
 
-	first, err := b.listPage(context.Background(), "bucket", "data", "", true, gofakes3.ListBucketPage{MaxKeys: 2})
+	first, err := b.listPage(context.Background(), "bucket", "data", "", true, slashPrefix, gofakes3.ListBucketPage{MaxKeys: 2})
 	if err != nil {
 		t.Fatalf("first listPage() error = %v", err)
 	}
@@ -132,7 +136,7 @@ func TestListPagePaginatesContentsAndCommonPrefixesTogether(t *testing.T) {
 		t.Fatalf("first page truncated = %v, next marker = %q", first.IsTruncated, first.NextMarker)
 	}
 
-	second, err := b.listPage(context.Background(), "bucket", "data", "", true, gofakes3.ListBucketPage{
+	second, err := b.listPage(context.Background(), "bucket", "data", "", true, slashPrefix, gofakes3.ListBucketPage{
 		Marker:    first.NextMarker,
 		HasMarker: true,
 		MaxKeys:   2,
@@ -167,7 +171,7 @@ func TestListPageSkipsCompletedSubtrees(t *testing.T) {
 		},
 	}
 
-	got, err := b.listPage(context.Background(), "bucket", "data", "", false, gofakes3.ListBucketPage{
+	got, err := b.listPage(context.Background(), "bucket", "data", "", false, nil, gofakes3.ListBucketPage{
 		Marker:    "data/b/pack",
 		HasMarker: true,
 		MaxKeys:   1,
@@ -196,7 +200,7 @@ func TestListPageUsesS3MaximumAndProbesForTruncation(t *testing.T) {
 		},
 	}
 
-	got, err := b.listPage(context.Background(), "bucket", "data", "", false, gofakes3.ListBucketPage{MaxKeys: 5000})
+	got, err := b.listPage(context.Background(), "bucket", "data", "", false, nil, gofakes3.ListBucketPage{MaxKeys: 5000})
 	if err != nil {
 		t.Fatalf("listPage() error = %v", err)
 	}
@@ -215,7 +219,7 @@ func TestListPageDoesNotReturnEmptyDirectoryMarkerForDifferentPrefix(t *testing.
 		},
 	}
 
-	got, err := b.listPage(context.Background(), "bucket", "empty", "not-the-marker", false, gofakes3.ListBucketPage{MaxKeys: 10})
+	got, err := b.listPage(context.Background(), "bucket", "empty", "not-the-marker", false, nil, gofakes3.ListBucketPage{MaxKeys: 10})
 	if err != nil {
 		t.Fatalf("listPage() error = %v", err)
 	}
@@ -235,7 +239,7 @@ func TestListPageHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := b.listPage(ctx, "bucket", "data", "", false, gofakes3.ListBucketPage{MaxKeys: 10})
+	_, err := b.listPage(ctx, "bucket", "data", "", false, nil, gofakes3.ListBucketPage{MaxKeys: 10})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("listPage() error = %v, want context.Canceled", err)
 	}
@@ -253,7 +257,7 @@ func TestListPageStopsWhenDirectoryReadCancelsContext(t *testing.T) {
 		},
 	}
 
-	_, err := b.listPage(ctx, "bucket", "data", "", false, gofakes3.ListBucketPage{MaxKeys: 10})
+	_, err := b.listPage(ctx, "bucket", "data", "", false, nil, gofakes3.ListBucketPage{MaxKeys: 10})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("listPage() error = %v, want context.Canceled", err)
 	}
@@ -271,7 +275,7 @@ func TestListPageDoesNotReorderDirectoryCacheEntries(t *testing.T) {
 		},
 	}
 
-	if _, err := b.listPage(context.Background(), "bucket", "data", "", false, gofakes3.ListBucketPage{MaxKeys: 10}); err != nil {
+	if _, err := b.listPage(context.Background(), "bucket", "data", "", false, nil, gofakes3.ListBucketPage{MaxKeys: 10}); err != nil {
 		t.Fatalf("listPage() error = %v", err)
 	}
 	wantOrder := []string{"c", "a", "b"}
@@ -302,10 +306,11 @@ func TestListPageMixedDirectoryAndFilePaginatesInKeyOrder(t *testing.T) {
 	tests := []struct {
 		name      string
 		delimiter bool
+		prefix    *gofakes3.Prefix
 		want      []string
 	}{
-		{"delimiter", true, []string{"data/a", "data/b-c/", "data/b.txt", "data/b/", "data/c"}},
-		{"recursive", false, []string{"data/a", "data/b-c/k", "data/b.txt", "data/b/x", "data/b/y", "data/c"}},
+		{"delimiter", true, slashPrefix, []string{"data/a", "data/b-c/", "data/b.txt", "data/b/", "data/c"}},
+		{"recursive", false, nil, []string{"data/a", "data/b-c/k", "data/b.txt", "data/b/x", "data/b/y", "data/c"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -316,7 +321,7 @@ func TestListPageMixedDirectoryAndFilePaginatesInKeyOrder(t *testing.T) {
 				var got []string
 				page := gofakes3.ListBucketPage{MaxKeys: maxKeys}
 				for i := 0; i <= len(tt.want); i++ {
-					list, err := b.listPage(context.Background(), "bucket", "data", "", tt.delimiter, page)
+					list, err := b.listPage(context.Background(), "bucket", "data", "", tt.delimiter, tt.prefix, page)
 					if err != nil {
 						t.Fatalf("MaxKeys=%d: listPage() error = %v", maxKeys, err)
 					}
@@ -342,5 +347,70 @@ func TestListPageMixedDirectoryAndFilePaginatesInKeyOrder(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A delimiter other than "/" groups keys on that character, not on the
+// directory tree: with Delimiter=":" the key "c:d/e.txt" belongs to "c:".
+func TestListPageGroupsByNonSlashDelimiter(t *testing.T) {
+	tree := map[string][]model.Obj{
+		"bucket/data": {
+			&model.Object{Name: "a:b", Size: 1},
+			&model.Object{Name: "c:d", IsFolder: true},
+			&model.Object{Name: "plain.txt", Size: 1},
+		},
+		"bucket/data/c:d": {&model.Object{Name: "e.txt", Size: 1}},
+	}
+	b := &s3Backend{
+		listDir: func(_ context.Context, dir string) ([]model.Obj, error) {
+			return tree[dir], nil
+		},
+	}
+	prefix := &gofakes3.Prefix{HasDelimiter: true, Delimiter: ":"}
+	list, err := b.listPage(context.Background(), "bucket", "data", "", true, prefix,
+		gofakes3.ListBucketPage{MaxKeys: 10})
+	if err != nil {
+		t.Fatalf("listPage() error = %v", err)
+	}
+	var contents, prefixes []string
+	for _, item := range list.Contents {
+		contents = append(contents, item.Key)
+	}
+	for _, p := range list.CommonPrefixes {
+		prefixes = append(prefixes, p.Prefix)
+	}
+	sort.Strings(contents)
+	sort.Strings(prefixes)
+	if !slices.Equal(contents, []string{"data/plain.txt"}) {
+		t.Errorf("contents = %v, want only data/plain.txt", contents)
+	}
+	if !slices.Equal(prefixes, []string{"data/a:", "data/c:"}) {
+		t.Errorf("common prefixes = %v, want [data/a: data/c:]", prefixes)
+	}
+}
+
+// TestEmptyDirectoryPlaceholderOnlyInFolderListings pins that the
+// empty-folder placeholder appears in a folder-style listing but not in a
+// recursive one: recursive listings must report only keys that exist, otherwise
+// `rm --recursive` and `purge` leave one phantom key per nesting level behind.
+func TestEmptyDirectoryPlaceholderOnlyInFolderListings(t *testing.T) {
+	b := &s3Backend{
+		listDir: func(_ context.Context, _ string) ([]model.Obj, error) { return nil, nil },
+	}
+	folder, err := b.listPage(context.Background(), "bucket", "empty", "", false, slashPrefix,
+		gofakes3.ListBucketPage{MaxKeys: 10})
+	if err != nil {
+		t.Fatalf("folder listing error = %v", err)
+	}
+	if len(folder.Contents) != 1 || folder.Contents[0].Key != "empty/"+emptyObjectName {
+		t.Fatalf("folder listing contents = %#v, want the placeholder", folder.Contents)
+	}
+	recursive, err := b.listPage(context.Background(), "bucket", "empty", "", false, nil,
+		gofakes3.ListBucketPage{MaxKeys: 10})
+	if err != nil {
+		t.Fatalf("recursive listing error = %v", err)
+	}
+	if len(recursive.Contents) != 0 {
+		t.Fatalf("recursive listing contents = %#v, want none", recursive.Contents)
 	}
 }
