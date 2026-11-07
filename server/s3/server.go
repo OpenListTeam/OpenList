@@ -42,8 +42,8 @@ func NewServer(ctx context.Context) (h http.Handler, err error) {
 	keys.bind(faker)
 	go keys.watch(ctx)
 
-	return redirectHandler(bucketAuthHandler(
+	return corsHandler(redirectHandler(bucketAuthHandler(
 		rangeStatusHandler(faker.Server()),
 		publicBucketGuard(rangeStatusHandler(publicFaker.Server())),
-	), keys), nil
+	), keys)), nil
 }

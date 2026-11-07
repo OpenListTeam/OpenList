@@ -145,6 +145,9 @@ const (
 
 	// s3
 	S3Buckets         = "s3_buckets"
+	// S3BucketCors stores per-bucket CORS rules as JSON (bucket name -> []s3CORSRule),
+	// with "*" acting as the default for every bucket that has no rules of its own.
+	S3BucketCors      = "s3_bucket_cors"
 	S3AccessKeyId     = "s3_access_key_id"
 	S3SecretAccessKey = "s3_secret_access_key"
 	S3BucketAuth      = "s3_bucket_auth"

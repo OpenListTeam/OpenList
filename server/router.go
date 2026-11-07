@@ -374,6 +374,10 @@ func Cors(r *gin.Engine) {
 }
 
 func InitS3(e *gin.Engine) {
-	Cors(e)
+	// No gin-contrib/cors here: the S3 engine answers CORS itself, because the
+	// rules are per bucket (`?cors` / `s3_bucket_cors`) and a global middleware
+	// would answer every preflight before the bucket could be looked at. The
+	// default rule inherits this instance's `cors` config, so leaving the
+	// middleware out does not change what an unconfigured deployment allows.
 	S3Server(e.Group("/"))
 }

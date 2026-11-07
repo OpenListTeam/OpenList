@@ -240,6 +240,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.S3SecretAccessKey, Value: "", Type: conf.TypeString, Group: model.S3, Flag: model.PRIVATE},
 		{Key: conf.S3BucketAuth, Value: "[]", Type: conf.TypeText, Group: model.S3, Flag: model.PRIVATE},
 		{Key: conf.S3Buckets, Value: "[]", Type: conf.TypeString, Group: model.S3, Flag: model.PRIVATE},
+		{Key: conf.S3BucketCors, Value: "{}", Type: conf.TypeText, Group: model.S3, Flag: model.PRIVATE},
 		{Key: conf.S3AccessTrack, Value: "true", Type: conf.TypeBool, Group: model.S3, Flag: model.PRIVATE},
 
 		// ftp settings

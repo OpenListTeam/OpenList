@@ -145,7 +145,7 @@ func parseObjectPath(rawPath string) (bucket, object string, ok bool) {
 // block a direct redirect.
 func hasNonObjectQuery(r *http.Request) bool {
 	query := r.URL.Query()
-	for _, key := range []string{"uploadId", "uploads", "versioning", "versions", "location"} {
+	for _, key := range []string{"uploadId", "uploads", "versioning", "versions", "location", "cors"} {
 		if _, ok := query[key]; ok {
 			return true
 		}
