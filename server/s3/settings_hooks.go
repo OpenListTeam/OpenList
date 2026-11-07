@@ -33,6 +33,13 @@ func init() {
 	op.RegisterSettingItemHook(conf.S3BucketCors, func(item *model.SettingItem) error {
 		return checkS3CORSConfigSetting(item.Value)
 	})
+	op.RegisterSettingItemHook(conf.S3Mode, func(item *model.SettingItem) error {
+		raw := strings.ToLower(strings.TrimSpace(item.Value))
+		if raw != "" && raw != S3ModePerformance && raw != S3ModeCompat {
+			return fmt.Errorf("%s must be %q or %q, got %q", conf.S3Mode, S3ModePerformance, S3ModeCompat, item.Value)
+		}
+		return nil
+	})
 }
 
 // checkS3BucketAuthSetting validates the bucket credential document.
@@ -112,6 +119,13 @@ func checkS3BucketsSetting(value string) error {
 			return fmt.Errorf("%s defines bucket %q twice", conf.S3Buckets, name)
 		}
 		seen[name] = true
+		if bucket.Mode != "" {
+			mode := strings.ToLower(strings.TrimSpace(bucket.Mode))
+			if mode != S3ModePerformance && mode != S3ModeCompat {
+				return fmt.Errorf("%s bucket %q has invalid mode %q: must be %q or %q",
+					conf.S3Buckets, name, bucket.Mode, S3ModePerformance, S3ModeCompat)
+			}
+		}
 		cleaned, err := cleanBucketPath(name, bucket.Path)
 		if err != nil {
 			return fmt.Errorf("%s bucket %q cannot be used: %v", conf.S3Buckets, name, err)

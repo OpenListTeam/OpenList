@@ -53,37 +53,37 @@ type embyUserData struct {
 // 客户端按 SupportsDirectPlay -> SupportsDirectStream -> TranscodingUrl 的顺序判定播放方式，
 // 同时读取 MediaStreams（视频/音频轨）和 RequiresOpening 等字段，缺失会被判定为"不可播放"。
 type embyMediaSource struct {
-	Protocol                string
-	Id                      string
-	Path                    string `json:",omitempty"`
-	Type                    string
-	Container               string `json:",omitempty"`
-	Name                    string `json:",omitempty"`
-	Size                    int64  `json:",omitempty"`
-	IsRemote                bool
-	ETag                    string `json:",omitempty"`
-	RunTimeTicks            int64  `json:",omitempty"`
-	ReadAtNativeFramerate   bool
-	IgnoreDts               bool
-	IgnoreIndex             bool
-	GenPtsInput             bool
-	SupportsTranscoding     bool
-	SupportsDirectStream    bool
-	SupportsDirectPlay      bool
-	IsInfiniteStream        bool
-	RequiresOpening         bool
-	RequiresClosing         bool
-	RequiresLooping         bool
-	SupportsProbing         bool
-	VideoType               string `json:",omitempty"`
-	MediaStreams            []embyMediaStream
-	MediaAttachments        []any
-	Formats                 []string
-	Bitrate                 int `json:",omitempty"`
-	RequiredHttpHeaders     map[string]string
+	Protocol                   string
+	Id                         string
+	Path                       string `json:",omitempty"`
+	Type                       string
+	Container                  string `json:",omitempty"`
+	Name                       string `json:",omitempty"`
+	Size                       int64  `json:",omitempty"`
+	IsRemote                   bool
+	ETag                       string `json:",omitempty"`
+	RunTimeTicks               int64  `json:",omitempty"`
+	ReadAtNativeFramerate      bool
+	IgnoreDts                  bool
+	IgnoreIndex                bool
+	GenPtsInput                bool
+	SupportsTranscoding        bool
+	SupportsDirectStream       bool
+	SupportsDirectPlay         bool
+	IsInfiniteStream           bool
+	RequiresOpening            bool
+	RequiresClosing            bool
+	RequiresLooping            bool
+	SupportsProbing            bool
+	VideoType                  string `json:",omitempty"`
+	MediaStreams               []embyMediaStream
+	MediaAttachments           []any
+	Formats                    []string
+	Bitrate                    int `json:",omitempty"`
+	RequiredHttpHeaders        map[string]string
 	DirectStreamUrl            string `json:",omitempty"`
 	AddApiKeyToDirectStreamUrl bool
-	DefaultAudioStreamIndex    int  `json:",omitempty"`
+	DefaultAudioStreamIndex    int `json:",omitempty"`
 	// DefaultSubtitleStreamIndex 指向歌词字幕轨：客户端歌词面板只认
 	// Type=="Subtitle" 且 Index 等于该值的流，缺失就不请求歌词
 	DefaultSubtitleStreamIndex *int   `json:",omitempty"`
@@ -114,84 +114,84 @@ type embyMediaStream struct {
 // Id/ParentId/SeriesId/SeasonId/AlbumId 是 Guid，DateCreated/PremiereDate/EndDate 是 DateTime?。
 // 空值必须省略（omitempty），否则客户端会把 "" 当作 Guid/DateTime 解析并抛异常。
 type embyItem struct {
-	Name                         string          `json:",omitempty"`
-	ServerId                     string          `json:",omitempty"`
-	Id                           string          `json:",omitempty"`
-	DateCreated                  string          `json:",omitempty"`
-	Container                    string          `json:",omitempty"`
-	SortName                     string          `json:",omitempty"`
-	PremiereDate                 string          `json:",omitempty"`
-	Overview                     string          `json:",omitempty"`
-	ProductionYear               int             `json:",omitempty"`
-	CommunityRating              float32         `json:",omitempty"`
-	OfficialRating               string          `json:",omitempty"`
-	RunTimeTicks                 int64           `json:",omitempty"`
-	IndexNumber                  int             `json:",omitempty"`
-	ParentIndexNumber            int             `json:",omitempty"`
-	Type                         string          `json:",omitempty"`
-	MediaType                    string          `json:",omitempty"`
-	IsFolder                     bool
-	ParentId                     string          `json:",omitempty"`
-	SeriesId                     string          `json:",omitempty"`
-	SeriesName                   string          `json:",omitempty"`
-	SeasonId                     string          `json:",omitempty"`
-	SeasonName                   string          `json:",omitempty"`
-	Album                        string          `json:",omitempty"`
-	AlbumId                      string          `json:",omitempty"`
-	AlbumArtist                  string          `json:",omitempty"`
-	AlbumArtists                 []embyNameID
-	Artists                      []string
-	ArtistItems                  []embyNameID
-	Genres                       []string
-	GenreItems                   []embyNameID
-	Studios                      []embyNameID
-	People                       []any
-	MediaStreams                 []any
-	Taglines                     []string
-	ProductionLocations          []string
-	Keywords                     []string
-	RemoteTrailers               []any
-	ExternalUrls                 []any
-	LockedFields                 []string
-	Path                         string          `json:",omitempty"`
-	ImageTags                    map[string]string
-	BackdropImageTags            []string
-	ProviderIds                  map[string]string
-	UserData                     *embyUserData
-	MediaSources                 []embyMediaSource
-	ChildCount                   int             `json:",omitempty"`
-	LocationType                 string          `json:",omitempty"`
-	CollectionType               string          `json:",omitempty"`
-	ViewType                     string          `json:",omitempty"`
+	Name                string  `json:",omitempty"`
+	ServerId            string  `json:",omitempty"`
+	Id                  string  `json:",omitempty"`
+	DateCreated         string  `json:",omitempty"`
+	Container           string  `json:",omitempty"`
+	SortName            string  `json:",omitempty"`
+	PremiereDate        string  `json:",omitempty"`
+	Overview            string  `json:",omitempty"`
+	ProductionYear      int     `json:",omitempty"`
+	CommunityRating     float32 `json:",omitempty"`
+	OfficialRating      string  `json:",omitempty"`
+	RunTimeTicks        int64   `json:",omitempty"`
+	IndexNumber         int     `json:",omitempty"`
+	ParentIndexNumber   int     `json:",omitempty"`
+	Type                string  `json:",omitempty"`
+	MediaType           string  `json:",omitempty"`
+	IsFolder            bool
+	ParentId            string `json:",omitempty"`
+	SeriesId            string `json:",omitempty"`
+	SeriesName          string `json:",omitempty"`
+	SeasonId            string `json:",omitempty"`
+	SeasonName          string `json:",omitempty"`
+	Album               string `json:",omitempty"`
+	AlbumId             string `json:",omitempty"`
+	AlbumArtist         string `json:",omitempty"`
+	AlbumArtists        []embyNameID
+	Artists             []string
+	ArtistItems         []embyNameID
+	Genres              []string
+	GenreItems          []embyNameID
+	Studios             []embyNameID
+	People              []any
+	MediaStreams        []any
+	Taglines            []string
+	ProductionLocations []string
+	Keywords            []string
+	RemoteTrailers      []any
+	ExternalUrls        []any
+	LockedFields        []string
+	Path                string `json:",omitempty"`
+	ImageTags           map[string]string
+	BackdropImageTags   []string
+	ProviderIds         map[string]string
+	UserData            *embyUserData
+	MediaSources        []embyMediaSource
+	ChildCount          int    `json:",omitempty"`
+	LocationType        string `json:",omitempty"`
+	CollectionType      string `json:",omitempty"`
+	ViewType            string `json:",omitempty"`
 	// Subviews 是电影库页面的必需字段：客户端 videos.js 直接读取
 	// item.Subviews 并调用 .includes()，缺失会抛 undefined.includes 导致整页报错
-	Subviews []string `json:",omitempty"`
-	EndDate                      string          `json:",omitempty"`
-	Status                       string          `json:",omitempty"`
-	PlayAccess                   string          `json:",omitempty"`
-	Video3DFormat                string          `json:",omitempty"`
-	PreferredMetadataLanguage    string          `json:",omitempty"`
-	PreferredMetadataCountryCode string          `json:",omitempty"`
-	CleanName                    string          `json:",omitempty"`
-	PresentationUniqueKey        string          `json:",omitempty"`
-	ShortOverview                string          `json:",omitempty"`
-	HomePageUrl                  string          `json:",omitempty"`
-	SeriesPrimaryImageTag        string          `json:",omitempty"`
-	PrimaryImageTag              string          `json:",omitempty"`
-	ParentThumbItemId            string          `json:",omitempty"`
-	ParentThumbImageTag          string          `json:",omitempty"`
-	ParentPrimaryImageItemId     string          `json:",omitempty"`
-	ParentPrimaryImageTag        string          `json:",omitempty"`
-	AlbumPrimaryImageTag         string          `json:",omitempty"`
-	ParentBackdropItemId         string          `json:",omitempty"`
-	AirTime                      string          `json:",omitempty"`
-	PrimaryImageAspectRatio      float64         `json:",omitempty"`
-	CriticRating                 float64         `json:",omitempty"`
-	MediaSourceCount             int             `json:",omitempty"`
-	LocalTrailerCount            int             `json:",omitempty"`
-	RecursiveItemCount           int             `json:",omitempty"`
-	SpecialFeatureCount          int             `json:",omitempty"`
-	PartCount                    int             `json:",omitempty"`
+	Subviews                     []string `json:",omitempty"`
+	EndDate                      string   `json:",omitempty"`
+	Status                       string   `json:",omitempty"`
+	PlayAccess                   string   `json:",omitempty"`
+	Video3DFormat                string   `json:",omitempty"`
+	PreferredMetadataLanguage    string   `json:",omitempty"`
+	PreferredMetadataCountryCode string   `json:",omitempty"`
+	CleanName                    string   `json:",omitempty"`
+	PresentationUniqueKey        string   `json:",omitempty"`
+	ShortOverview                string   `json:",omitempty"`
+	HomePageUrl                  string   `json:",omitempty"`
+	SeriesPrimaryImageTag        string   `json:",omitempty"`
+	PrimaryImageTag              string   `json:",omitempty"`
+	ParentThumbItemId            string   `json:",omitempty"`
+	ParentThumbImageTag          string   `json:",omitempty"`
+	ParentPrimaryImageItemId     string   `json:",omitempty"`
+	ParentPrimaryImageTag        string   `json:",omitempty"`
+	AlbumPrimaryImageTag         string   `json:",omitempty"`
+	ParentBackdropItemId         string   `json:",omitempty"`
+	AirTime                      string   `json:",omitempty"`
+	PrimaryImageAspectRatio      float64  `json:",omitempty"`
+	CriticRating                 float64  `json:",omitempty"`
+	MediaSourceCount             int      `json:",omitempty"`
+	LocalTrailerCount            int      `json:",omitempty"`
+	RecursiveItemCount           int      `json:",omitempty"`
+	SpecialFeatureCount          int      `json:",omitempty"`
+	PartCount                    int      `json:",omitempty"`
 	IsHD                         bool
 	CanDelete                    bool
 	CanDownload                  bool
@@ -202,30 +202,30 @@ type embyItem struct {
 	TagItems                     []embyNameID
 	AirDays                      []string
 	ParentBackdropImageTags      []string
-	OriginalTitle                string          `json:",omitempty"`
-	ForcedSortName               string          `json:",omitempty"`
-	Etag                         string          `json:",omitempty"`
-	DateLastMediaAdded           string          `json:",omitempty"`
-	CustomRating                 string          `json:",omitempty"`
-	ChannelId                    string          `json:",omitempty"`
-	ChannelName                  string          `json:",omitempty"`
-	FileName                     string          `json:",omitempty"`
-	Number                       string          `json:",omitempty"`
-	SeriesStudio                 string          `json:",omitempty"`
-	AspectRatio                  string          `json:",omitempty"`
-	DisplayPreferencesId         string          `json:",omitempty"`
-	ParentLogoItemId             string          `json:",omitempty"`
-	ParentLogoImageTag           string          `json:",omitempty"`
-	IsoType                      string          `json:",omitempty"`
-	Software                     string          `json:",omitempty"`
-	CameraMake                   string          `json:",omitempty"`
-	CameraModel                  string          `json:",omitempty"`
-	Size                         int64           `json:",omitempty"`
-	Bitrate                      int             `json:",omitempty"`
-	IndexNumberEnd               int             `json:",omitempty"`
-	DisplayOrder                 string          `json:",omitempty"`
-	Width                        int             `json:",omitempty"`
-	Height                       int             `json:",omitempty"`
+	OriginalTitle                string `json:",omitempty"`
+	ForcedSortName               string `json:",omitempty"`
+	Etag                         string `json:",omitempty"`
+	DateLastMediaAdded           string `json:",omitempty"`
+	CustomRating                 string `json:",omitempty"`
+	ChannelId                    string `json:",omitempty"`
+	ChannelName                  string `json:",omitempty"`
+	FileName                     string `json:",omitempty"`
+	Number                       string `json:",omitempty"`
+	SeriesStudio                 string `json:",omitempty"`
+	AspectRatio                  string `json:",omitempty"`
+	DisplayPreferencesId         string `json:",omitempty"`
+	ParentLogoItemId             string `json:",omitempty"`
+	ParentLogoImageTag           string `json:",omitempty"`
+	IsoType                      string `json:",omitempty"`
+	Software                     string `json:",omitempty"`
+	CameraMake                   string `json:",omitempty"`
+	CameraModel                  string `json:",omitempty"`
+	Size                         int64  `json:",omitempty"`
+	Bitrate                      int    `json:",omitempty"`
+	IndexNumberEnd               int    `json:",omitempty"`
+	DisplayOrder                 string `json:",omitempty"`
+	Width                        int    `json:",omitempty"`
+	Height                       int    `json:",omitempty"`
 	Chapters                     []any
 	Tags                         []string
 }
@@ -520,36 +520,36 @@ func embyUserDtoOf(u *model.User) *embyUserDto {
 	// 缺失即判定为禁止播放，并弹出 "Playback of this content is currently restricted"。
 	// 这里按 Emby 的 UserPolicy 结构给全默认值，避免任何字段被读成 undefined。
 	policy := map[string]any{
-		"IsAdministrator":                u.IsAdmin(),
-		"IsDisabled":                     u.Disabled,
-		"IsHidden":                       false,
-		"EnableMediaPlayback":            true,
-		"EnableAudioPlaybackTranscoding": true,
-		"EnableVideoPlaybackTranscoding": true,
-		"EnablePlaybackRemuxing":         true,
-		"EnableContentDownloading":       true,
-		"EnableSyncTranscoding":          true,
-		"EnableSubtitleDownloading":      true,
-		"EnableSubtitleManagement":       true,
+		"IsAdministrator":                 u.IsAdmin(),
+		"IsDisabled":                      u.Disabled,
+		"IsHidden":                        false,
+		"EnableMediaPlayback":             true,
+		"EnableAudioPlaybackTranscoding":  true,
+		"EnableVideoPlaybackTranscoding":  true,
+		"EnablePlaybackRemuxing":          true,
+		"EnableContentDownloading":        true,
+		"EnableSyncTranscoding":           true,
+		"EnableSubtitleDownloading":       true,
+		"EnableSubtitleManagement":        true,
 		"EnableRemoteControlOfOtherUsers": false,
-		"EnableSharedDeviceControl":      true,
-		"EnableRemoteAccess":             true,
-		"EnableLiveTvManagement":         false,
-		"EnableLiveTvAccess":             false,
-		"EnableAllChannels":              true,
-		"EnableAllFolders":               true,
-		"EnableAllDevices":               true,
-		"ForceRemoteSourceTranscoding":   false,
-		"EnabledFolders":                 []string{},
-		"EnabledChannels":                []string{},
-		"EnabledDevices":                 []string{},
-		"BlockedChannels":                []string{},
-		"BlockedMediaFolders":            []string{},
-		"BlockedTags":                    []string{},
-		"AllowedTags":                    []string{},
-		"MaxParentalRating":              nil,
-		"AuthenticationProviderId":       "Default",
-		"PasswordResetProviderId":        "Default",
+		"EnableSharedDeviceControl":       true,
+		"EnableRemoteAccess":              true,
+		"EnableLiveTvManagement":          false,
+		"EnableLiveTvAccess":              false,
+		"EnableAllChannels":               true,
+		"EnableAllFolders":                true,
+		"EnableAllDevices":                true,
+		"ForceRemoteSourceTranscoding":    false,
+		"EnabledFolders":                  []string{},
+		"EnabledChannels":                 []string{},
+		"EnabledDevices":                  []string{},
+		"BlockedChannels":                 []string{},
+		"BlockedMediaFolders":             []string{},
+		"BlockedTags":                     []string{},
+		"AllowedTags":                     []string{},
+		"MaxParentalRating":               nil,
+		"AuthenticationProviderId":        "Default",
+		"PasswordResetProviderId":         "Default",
 	}
 	return &embyUserDto{
 		Name:                  u.Username,
@@ -912,34 +912,34 @@ func embyPublicSystemInfo(c *gin.Context) {
 func embySystemInfo(c *gin.Context) {
 	api := common.GetApiUrl(c.Request.Context())
 	c.JSON(200, gin.H{
-		"ServerName":               setting.GetStr(conf.SiteTitle, "OpenList"),
-		"Version":                  embyVersion(),
-		"Id":                       embyServerID(),
-		"OperatingSystem":          "Linux",
+		"ServerName":                 setting.GetStr(conf.SiteTitle, "OpenList"),
+		"Version":                    embyVersion(),
+		"Id":                         embyServerID(),
+		"OperatingSystem":            "Linux",
 		"OperatingSystemDisplayName": "Linux",
-		"LocalAddress":             api,
-		"WebPath":                  "",
-		"StartupWizardCompleted":   true,
-		"HasPendingRestart":        false,
-		"IsShuttingDown":           false,
-		"SupportsLibraryMonitor":   false,
-		"CanSelfRestart":           false,
-		"CanLaunchWebBrowser":      false,
-		"SupportsHttps":            false,
-		"HasUpdateAvailable":       false,
-		"EncoderLocation":          "System",
-		"SystemArchitecture":       "X64",
-		"SystemUpdateLevel":        "Release",
+		"LocalAddress":               api,
+		"WebPath":                    "",
+		"StartupWizardCompleted":     true,
+		"HasPendingRestart":          false,
+		"IsShuttingDown":             false,
+		"SupportsLibraryMonitor":     false,
+		"CanSelfRestart":             false,
+		"CanLaunchWebBrowser":        false,
+		"SupportsHttps":              false,
+		"HasUpdateAvailable":         false,
+		"EncoderLocation":            "System",
+		"SystemArchitecture":         "X64",
+		"SystemUpdateLevel":          "Release",
 		// 不返回真实监听端口：这个端点匿名可访问，客户端本来就是从已知端口连进来的，
 		// 回了真实端口只是白给一份端口探测信息。
 		"HttpServerPortNumber": 0,
 		"HttpsPortNumber":      0,
-		"ProgramDataPath":          "",
-		"ItemsByNamePath":          "",
-		"CachePath":                "",
-		"LogPath":                  "",
-		"InternalMetadataPath":     "",
-		"TranscodingTempPath":      "",
+		"ProgramDataPath":      "",
+		"ItemsByNamePath":      "",
+		"CachePath":            "",
+		"LogPath":              "",
+		"InternalMetadataPath": "",
+		"TranscodingTempPath":  "",
 	})
 }
 

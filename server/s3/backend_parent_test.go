@@ -16,11 +16,11 @@ func TestPutObjectUnderObjectParentIsRejected(t *testing.T) {
 	ctx := context.Background()
 	b, _ := setupMultipartBackend(t)
 
-	if err := b.putStream(ctx, "mp", "tree", nil, strings.NewReader("x"), 1); err != nil {
+	if _, err := b.putStream(ctx, "mp", "tree", nil, strings.NewReader("x"), 1); err != nil {
 		t.Fatalf("put the object that becomes the parent: %v", err)
 	}
 
-	err := b.putStream(ctx, "mp", "tree/deep/leaf.txt", nil, strings.NewReader("x"), 1)
+	_, err := b.putStream(ctx, "mp", "tree/deep/leaf.txt", nil, strings.NewReader("x"), 1)
 	if err == nil {
 		t.Fatal("a key under an object parent was accepted")
 	}
@@ -29,7 +29,7 @@ func TestPutObjectUnderObjectParentIsRejected(t *testing.T) {
 	}
 
 	// A missing (as opposed to object-valued) prefix must still be created.
-	if err := b.putStream(ctx, "mp", "fresh/a/b/c.txt", nil, strings.NewReader("y"), 1); err != nil {
+	if _, err := b.putStream(ctx, "mp", "fresh/a/b/c.txt", nil, strings.NewReader("y"), 1); err != nil {
 		t.Fatalf("put under a missing prefix: %v", err)
 	}
 }

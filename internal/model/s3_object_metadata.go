@@ -31,6 +31,16 @@ type S3ObjectMetadata struct {
 	// which is what a hot/cold split needs. A row of a never read object keeps
 	// it NULL.
 	LastAccess *time.Time `json:"last_access" gorm:"column:last_access;index:idx_s3_object_metadata_access"`
+	// ETag is the ETag of the object as the S3 server last reported it, recorded
+	// so that a later HEAD can answer without reading the object: a remote
+	// storage pays a full download for every hash it has to compute, which turns
+	// one 128 KiB block read into a download of the whole object.
+	ETag string `json:"etag" gorm:"column:etag;size:64"`
+	// Size and ModTime identify the content the ETag describes. They come from
+	// the node right after the upload, so a later read only has to compare them
+	// to tell whether the object was changed behind the server's back.
+	Size    int64 `json:"size"`
+	ModTime int64 `json:"modtime"`
 }
 
 func (m *S3ObjectMetadata) BeforeSave(*gorm.DB) error {

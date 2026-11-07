@@ -52,7 +52,7 @@ func TestReuploadWithoutUserMetadataKeepsAccessRecord(t *testing.T) {
 	}
 
 	// `aws s3 cp` sends a Content-Type and no user metadata.
-	b.storeObjectMetadata(context.Background(), name, map[string]string{"Content-Type": "video/mp4"})
+	b.storeObjectMetadata(context.Background(), name, map[string]string{"Content-Type": "video/mp4"}, nil, "")
 
 	after := metadataRow(t, name)
 	if after == nil {
@@ -66,12 +66,12 @@ func TestReuploadWithoutUserMetadataKeepsAccessRecord(t *testing.T) {
 	}
 
 	// The headers of an object that carries user metadata are still replaced.
-	b.storeObjectMetadata(context.Background(), name, map[string]string{"x-amz-meta-owner": "ops"})
+	b.storeObjectMetadata(context.Background(), name, map[string]string{"x-amz-meta-owner": "ops"}, nil, "")
 	withMeta := metadataRow(t, name)
 	if withMeta == nil || withMeta.LastAccess == nil || !withMeta.LastAccess.Equal(read) {
 		t.Fatal("storing user metadata dropped the access record")
 	}
-	b.storeObjectMetadata(context.Background(), name, map[string]string{"Content-Type": "video/mp4"})
+	b.storeObjectMetadata(context.Background(), name, map[string]string{"Content-Type": "video/mp4"}, nil, "")
 	cleared := metadataRow(t, name)
 	if cleared == nil || cleared.LastAccess == nil {
 		t.Fatal("clearing user metadata dropped the access record")

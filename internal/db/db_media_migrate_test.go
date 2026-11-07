@@ -149,9 +149,9 @@ func createLegacyMediaTableWithAlbum(t *testing.T, d *gorm.DB, table string) {
 		t.Fatal(err)
 	}
 	rows := []string{
-		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'A')", // 1 dup of 2
-		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'A')", // 2 newest of group
-		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'B')", // 3 own group
+		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'A')",                           // 1 dup of 2
+		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'A')",                           // 2 newest of group
+		"INSERT INTO " + table + " (folder_path, file_name, album_name) VALUES ('/a', 'b.mp3', 'B')",                           // 3 own group
 		"INSERT INTO " + table + " (deleted_at, folder_path, file_name, album_name) VALUES ('2024-01-01', '/a', 'b.mp3', 'B')", // 4 soft-deleted, must go
 	}
 	for _, r := range rows {

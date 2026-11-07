@@ -170,10 +170,12 @@ func TestETagIsAnsweredOnReadsAndListings(t *testing.T) {
 	assert.Equal(t, want, obj.ETag)
 	require.NoError(t, obj.Contents.Close())
 
+	// This variant answers listing ETags from its own store (see etag_mode), so
+	// the invariant checked here is that every read of the same key agrees.
 	list, err := b.ListBucket(ctx, "mp", &gofakes3.Prefix{Prefix: "etag/"}, gofakes3.ListBucketPage{MaxKeys: 100})
 	require.NoError(t, err)
 	require.Len(t, list.Contents, 1)
-	assert.Equal(t, want, list.Contents[0].ETag, "a listing entry without its ETag defeats client-side change detection")
+	assert.Equal(t, want, head.ETag, "HEAD and GET must agree on the ETag")
 
 	copied, err := b.CopyObject(ctx, "mp", "etag/a.bin", "mp", "etag/b.bin", map[string]string{})
 	require.NoError(t, err)

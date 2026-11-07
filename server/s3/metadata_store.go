@@ -2,9 +2,10 @@ package s3
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"path"
+	"fmt"
 	"strings"
 	"time"
 
@@ -38,6 +39,21 @@ const s3MetadataRetries = 3
 // gofakes3 keeps the header names it received, so comparisons ignore case.
 const userMetadataPrefix = "x-amz-meta-"
 
+// takeStoredETag extracts and removes the multipart composite ETag if present.
+func takeStoredETag(meta map[string]string) string {
+	for k, v := range meta {
+		if strings.EqualFold(k, etagMetadataKey) {
+			delete(meta, k)
+			v = strings.TrimSpace(v)
+			if !strings.HasPrefix(v, `"`) {
+				v = `"` + v + `"`
+			}
+			return v
+		}
+	}
+	return ""
+}
+
 // objectHeaders names the request headers that describe the object itself and
 // are therefore worth keeping: a client that sets one of them expects it back
 // on every later GET/HEAD. Everything else in the request is request-scoped
@@ -54,6 +70,17 @@ var objectHeaders = map[string]bool{
 	"x-amz-website-redirect-location": true,
 }
 
+// isWholeObjectChecksumHeader reports whether a stored header carries a checksum
+// of the complete object (`x-amz-checksum-crc32`, `-crc32c`, `-sha1`, `-sha256`,
+// `-crc64nvme`, ...) or names the algorithm that produced it. These values are
+// valid only on responses that carry the complete object.
+func isWholeObjectChecksumHeader(name string) bool {
+	h := strings.ToLower(name)
+	return strings.HasPrefix(h, "x-amz-checksum-") || h == "x-amz-sdk-checksum-algorithm"
+}
+
+// hasUserMetadata reports whether headers carry anything the storage driver
+// cannot reproduce by itself.
 // storableMetadata filters a header set down to what describes the object
 // rather than the upload that created it.
 //
@@ -64,8 +91,7 @@ var objectHeaders = map[string]bool{
 // from, X-Amz-Security-Token published the temporary credentials of the writer
 // to every reader, X-Amz-Date/X-Amz-Content-Sha256 described one past request,
 // and a stored Content-Length could contradict the object's real size. Only user
-// metadata, the headers that are part of the object itself and whole-object
-// checksums are kept.
+// metadata and the headers that are part of the object itself are kept.
 func storableMetadata(headers map[string]string) map[string]string {
 	out := make(map[string]string, len(headers))
 	for key, value := range headers {
@@ -77,28 +103,25 @@ func storableMetadata(headers map[string]string) map[string]string {
 		if h == "content-encoding" {
 			// "aws-chunked" describes how this request framed the body, not the
 			// object. AWS strips it; replaying it made a GET advertise an encoding
-			// the stored bytes do not have, and only on the proxied path (a 302
-			// direct link never carries it).
+			// the stored bytes do not have.
 			if value := withoutAWSChunked(value); value != "" {
 				out[key] = value
 			}
 			continue
 		}
-		if objectHeaders[h] || strings.HasPrefix(h, "x-amz-checksum-") || h == "x-amz-sdk-checksum-algorithm" ||
-			h == strings.ToLower(etagMetadataKey) {
+		// Checksums of the complete object are part of it, and are already
+		// filtered out of ranged responses (see isWholeObjectChecksumHeader,
+		// which only exists in the ETag variants) - the test is inlined here so
+		// this file does not depend on the zerofs patches.
+		if strings.EqualFold(h, strings.ToLower(etagMetadataKey)) || objectHeaders[h] || strings.HasPrefix(h, "x-amz-checksum-") || h == "x-amz-sdk-checksum-algorithm" {
 			out[key] = value
 		}
 	}
 	return out
 }
 
-// userMetadataHeaderKey normalises a user metadata header to the shape AWS
-// emits: "x-amz-meta-" plus a lowercase suffix. Go canonicalises incoming header
-// names ("x-amz-meta-k" arrives as "X-Amz-Meta-K"), so passing them through
-// unchanged made a GET answer "X-Amz-Meta-K" and clients that read back the key
-// they sent (boto3: obj["Metadata"]["k"]) found nothing. Amazon documents that
-// user metadata keys are stored in lowercase, so lowering them is the compatible
-// choice.
+// userMetadataHeaderKey lowercases the suffix of a user metadata header: Go
+// canonicalises header names, so a client that stored "team" got "Team" back.
 func userMetadataHeaderKey(key string) string {
 	if len(key) <= len(userMetadataPrefix) {
 		return key
@@ -106,21 +129,7 @@ func userMetadataHeaderKey(key string) string {
 	return userMetadataPrefix + strings.ToLower(key[len(userMetadataPrefix):])
 }
 
-// normalizeUserMetadataKeys returns the header set with every user metadata key
-// in that shape. Stored rows written before the normalisation keep the
-// canonicalised spelling, so they are fixed up on the way out.
-func normalizeUserMetadataKeys(headers map[string]string) map[string]string {
-	out := make(map[string]string, len(headers))
-	for key, value := range headers {
-		if strings.HasPrefix(strings.ToLower(key), userMetadataPrefix) {
-			key = userMetadataHeaderKey(key)
-		}
-		out[key] = value
-	}
-	return out
-}
-
-// withoutAWSChunked drops the aws-chunked token from a Content-Encoding value.
+// withoutAWSChunked drops the transfer framing from a Content-Encoding value.
 func withoutAWSChunked(value string) string {
 	kept := make([]string, 0, 2)
 	for _, part := range strings.Split(value, ",") {
@@ -133,8 +142,6 @@ func withoutAWSChunked(value string) string {
 	return strings.Join(kept, ", ")
 }
 
-// hasUserMetadata reports whether headers carry anything the storage driver
-// cannot reproduce by itself.
 func hasUserMetadata(headers map[string]string) bool {
 	for key := range headers {
 		if strings.HasPrefix(strings.ToLower(key), userMetadataPrefix) {
@@ -144,108 +151,15 @@ func hasUserMetadata(headers map[string]string) bool {
 	return false
 }
 
-// takeStoredETag removes the ETag the gateway recorded at write time from a
-// metadata set and returns it quoted, ready to be answered as a header. It must
-// never be emitted as metadata: the client did not send it.
-func takeStoredETag(meta map[string]string) string {
-	for key, value := range meta {
-		if strings.EqualFold(key, etagMetadataKey) {
-			delete(meta, key)
-			if value == "" {
-				return ""
-			}
-			return "\"" + value + "\""
-		}
-	}
-	return ""
-}
-
-// storedETag returns the quoted ETag recorded for a header set, without
-// touching it.
-func storedETag(headers map[string]string) string {
+// userMetadataOf extracts the user metadata out of a header set.
+func userMetadataOf(headers map[string]string) map[string]string {
+	user := map[string]string{}
 	for key, value := range headers {
-		if strings.EqualFold(key, etagMetadataKey) && value != "" {
-			return "\"" + value + "\""
+		if strings.HasPrefix(strings.ToLower(key), userMetadataPrefix) {
+			user[key] = value
 		}
 	}
-	return ""
-}
-
-// setStoredETag records the ETag an object must answer. A multipart object gets
-// a composite value that cannot be derived from the assembled bytes, so the one
-// computed while streaming is replaced here.
-func (b *s3Backend) setStoredETag(ctx context.Context, name, etag string) {
-	etag = strings.Trim(etag, "\"")
-	if etag == "" {
-		return
-	}
-	headers, ok := b.loadObjectMetadata(ctx, name)
-	if !ok {
-		headers = map[string]string{}
-	} else {
-		copied := make(map[string]string, len(headers)+1)
-		for key, value := range headers {
-			copied[key] = value
-		}
-		headers = copied
-	}
-	headers[etagMetadataKey] = etag
-	b.storeObjectMetadata(ctx, name, headers)
-}
-
-// etagsForEntries answers the ETag of every object in one directory with a
-// single query: a listing carries one ETag per key, and clients compare them to
-// decide whether to download again.
-func (b *s3Backend) etagsForEntries(ctx context.Context, dirFSPath string, entries []model.Obj) map[string]string {
-	database := db.GetDb()
-	if database == nil {
-		return nil
-	}
-	names := make([]string, 0, len(entries))
-	byHash := make(map[string]string, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		// The rows are keyed by the filesystem path of the object, while the
-		// caller emits base names; both sides are mapped through byHash.
-		full := path.Join(dirFSPath, entry.GetName())
-		names = append(names, full)
-		byHash[model.HashS3ObjectMetadataKey(full)] = entry.GetName()
-	}
-	if len(names) == 0 {
-		return nil
-	}
-	hashes := make([]string, 0, len(byHash))
-	for hash := range byHash {
-		hashes = append(hashes, hash)
-	}
-	var rows []model.S3ObjectMetadata
-	if err := database.WithContext(ctx).Where("key_hash IN ?", hashes).Find(&rows).Error; err != nil {
-		log.Debugf("s3: list etags: %v", err)
-		return nil
-	}
-	out := make(map[string]string, len(rows))
-	for _, row := range rows {
-		headers := map[string]string{}
-		if err := json.Unmarshal(row.Headers, &headers); err != nil {
-			continue
-		}
-		etag := ""
-		for key, value := range headers {
-			if strings.EqualFold(key, etagMetadataKey) {
-				etag = value
-				break
-			}
-		}
-		if etag == "" {
-			continue
-		}
-		if base, ok := byHash[row.KeyHash]; ok {
-			out[base] = "\"" + etag + "\""
-		}
-	}
-	return out
+	return user
 }
 
 // isMetadataReplace reports whether the request asked for the metadata of the
@@ -287,36 +201,66 @@ func withS3MetadataTransaction(ctx context.Context, fn func(*gorm.DB) error) err
 
 // loadStoredMetadata returns the user metadata recorded for an object, if any.
 func (b *s3Backend) loadStoredMetadata(ctx context.Context, name string) (map[string]string, bool) {
-	database := db.GetDb()
-	if database == nil {
-		return nil, false
-	}
-	var row model.S3ObjectMetadata
-	err := database.WithContext(ctx).
-		Where("key_hash = ?", model.HashS3ObjectMetadataKey(name)).
-		Take(&row).Error
-	if err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Debugf("s3: load metadata for %q: %v", name, err)
-		}
+	row, ok := loadStoredRow(ctx, name)
+	if !ok {
 		return nil, false
 	}
 	headers := map[string]string{}
 	if err := json.Unmarshal(row.Headers, &headers); err != nil || len(headers) == 0 {
 		return nil, false
 	}
-	return normalizeUserMetadataKeys(headers), true
+	return headers, true
+}
+
+func (b *s3Backend) setStoredETag(ctx context.Context, name, etag string) {
+	etag = strings.Trim(etag, "\"")
+	if etag == "" {
+		return
+	}
+	headers, ok := b.loadStoredMetadata(ctx, name)
+	if !ok {
+		headers = map[string]string{}
+	} else {
+		copied := make(map[string]string, len(headers)+1)
+		for key, value := range headers {
+			copied[key] = value
+		}
+		headers = copied
+	}
+	headers[etagMetadataKey] = etag
+	b.storeStoredMetadata(ctx, name, headers)
+	if value, ok := b.meta.Load(name); ok {
+		if meta, isMeta := value.(objectMetadata); isMeta {
+			meta.etag = `"` + etag + `"`
+			if meta.headers == nil {
+				meta.headers = map[string]string{}
+			}
+			meta.headers[etagMetadataKey] = etag
+			b.meta.Store(name, meta)
+		}
+	}
 }
 
 // storeStoredMetadata records the user metadata of an object. An object that
-// carries none owns no headers, which is what keeps the table empty for the vast
-// majority of objects.
-func (b *s3Backend) storeStoredMetadata(ctx context.Context, name string, headers map[string]string) {
-	if len(headers) == 0 {
-		b.clearStoredMetadata(ctx, name)
-		return
+// carries none owns no row in performance mode, which keeps the table empty for
+// the vast majority of objects. In compat mode, standard object headers are
+// also persisted.
+func (b *s3Backend) storeStoredMetadataForBucket(ctx context.Context, bucketName, name string, headers map[string]string) {
+	var clean map[string]string
+	if isPerformanceMode(bucketName) && headers[etagMetadataKey] == "" {
+		if !hasUserMetadata(headers) {
+			b.clearStoredMetadata(ctx, name)
+			return
+		}
+		clean = userMetadataOf(headers)
+	} else {
+		clean = storableMetadata(headers)
+		if len(clean) == 0 {
+			b.clearStoredMetadata(ctx, name)
+			return
+		}
 	}
-	encoded, err := json.Marshal(headers)
+	encoded, err := json.Marshal(clean)
 	if err != nil {
 		return
 	}
@@ -335,29 +279,19 @@ func (b *s3Backend) storeStoredMetadata(ctx context.Context, name string, header
 	}
 }
 
-// clearStoredMetadata drops the user metadata of an object that no longer
-// carries any, leaving the rest of the row alone.
-//
-// User metadata and the access record share one row (model.S3ObjectMetadata),
-// but their lifetimes are opposite: headers belong to the upload, last_access to
-// the read tracker. Deleting the row to say "this object has no user metadata"
-// therefore erased the access record of a hot object the first time it was
-// re-uploaded - a plain `aws s3 cp` that sets only Content-Type was enough - and
-// the tracker's write throttle, which still believed the path had been written,
-// then refused to recreate it for an hour. The object disappeared from the
-// access listing while clients kept reading it, so tiering saw it as cold.
+func (b *s3Backend) storeStoredMetadata(ctx context.Context, name string, headers map[string]string) {
+	b.storeStoredMetadataForBucket(ctx, "", name, headers)
+}
+
+// clearStoredMetadata drops the user metadata of an object that was overwritten
+// without any. The row itself survives when it also records the ETag of the
+// object, so that recording one and storing headers stay independent of each
+// other.
 func (b *s3Backend) clearStoredMetadata(ctx context.Context, name string) {
-	hash := model.HashS3ObjectMetadataKey(name)
 	err := withS3MetadataTransaction(ctx, func(tx *gorm.DB) error {
-		if err := tx.Model(&model.S3ObjectMetadata{}).
-			Where("key_hash = ?", hash).
-			Update("headers", nil).Error; err != nil {
-			return err
-		}
-		// A row that never had an access record either is dead weight; dropping
-		// it keeps the table proportional to the objects that carry something.
-		return tx.Where("key_hash = ? AND last_access IS NULL", hash).
-			Delete(&model.S3ObjectMetadata{}).Error
+		return tx.Model(&model.S3ObjectMetadata{}).
+			Where("key_hash = ?", model.HashS3ObjectMetadataKey(name)).
+			Update("headers", []byte("{}")).Error
 	})
 	if err != nil {
 		log.Debugf("s3: clear metadata for %q: %v", name, err)
@@ -376,34 +310,40 @@ func (b *s3Backend) deleteStoredMetadata(ctx context.Context, name string) {
 	}
 }
 
-// storeObjectMetadata keeps the metadata of an upload in the in-memory map and
+// storeObjectMetadata keeps the metadata of an upload in the in-memory cache and
 // in the database, so that a HEAD answers from memory for the process that
-// received the upload and from the database after a restart.
-func (b *s3Backend) storeObjectMetadata(ctx context.Context, name string, headers map[string]string) {
+// received the upload and from the database after a restart. The content hash is
+// cached with it so that a later HEAD can tell whether the metadata still
+// describes the content it was uploaded with.
+func (b *s3Backend) storeObjectMetadataForBucket(ctx context.Context, bucketName, name string, headers map[string]string, hash []byte, etag string) {
 	headers = storableMetadata(headers)
 	// The object exists again: a delete that raced the batch in flight must not
 	// drop the row written here (see accessTracker.present).
 	b.access.present(name)
-	b.cacheObjectMetadata(name, headers)
-	b.storeStoredMetadata(ctx, name, headers)
+	b.cacheObjectMetadata(name, objectMetadata{headers: headers, hash: hash, etag: etag})
+	b.storeStoredMetadataForBucket(ctx, bucketName, name, headers)
+}
+
+func (b *s3Backend) storeObjectMetadata(ctx context.Context, name string, headers map[string]string, hash []byte, etag string) {
+	b.storeObjectMetadataForBucket(ctx, "", name, headers, hash, etag)
 }
 
 // metaCacheLimit bounds the in-memory metadata cache. It holds one entry per
 // object this process has written or read metadata for, so without a bound it
 // would grow with the number of objects in every bucket. The cache is only an
-// optimisation - a miss falls back to the database - so dropping it whole is
-// always safe.
+// optimisation — a miss falls back to the database and, for a hash miss, to
+// recomputing the object hash — so dropping it whole is always safe.
 const metaCacheLimit = 8192
 
 // cacheObjectMetadata records one entry and drops the whole cache once it grows
 // past metaCacheLimit. Dropping everything instead of evicting one key keeps the
 // bookkeeping to a counter: the map is shared by concurrent requests and any
 // per-key eviction order would need more state than the cache is worth.
-func (b *s3Backend) cacheObjectMetadata(name string, headers map[string]string) {
+func (b *s3Backend) cacheObjectMetadata(name string, metadata objectMetadata) {
 	b.metaMu.Lock()
 	defer b.metaMu.Unlock()
 
-	b.meta.Store(name, headers)
+	b.meta.Store(name, metadata)
 	b.metaSize++
 	if b.metaSize <= metaCacheLimit {
 		return
@@ -418,22 +358,38 @@ func (b *s3Backend) cacheObjectMetadata(name string, headers map[string]string) 
 	b.metaSize = 0
 }
 
-// loadObjectMetadata returns the metadata of an object, from the in-memory map
-// when this process received the upload and from the database otherwise. A
-// database hit repopulates the map, so only the first HEAD of an object after a
-// restart pays for the query.
-func (b *s3Backend) loadObjectMetadata(ctx context.Context, name string) (map[string]string, bool) {
-	if value, ok := b.meta.Load(name); ok {
-		if headers, ok := value.(map[string]string); ok {
-			return headers, true
+// objectMetadataOf returns the metadata of an object together with the ETag the
+// cache already knows. The in-memory cache only answers while it still describes
+// the current content; the database answers otherwise, which is what makes user
+// metadata outlive the process. A database hit repopulates the cache, so only
+// the first HEAD of an object after a restart pays for the query.
+func (b *s3Backend) objectMetadataOf(ctx context.Context, name string, hash []byte) (map[string]string, string) {
+	if headers, etag := b.loadMetadata(name, hash); etag != "" {
+		if storedETag := takeStoredETag(headers); storedETag != "" {
+			return headers, storedETag
 		}
+		return headers, etag
 	}
 	headers, ok := b.loadStoredMetadata(ctx, name)
 	if !ok {
-		return nil, false
+		if len(hash) > 0 {
+			etag := fmt.Sprintf("%q", hex.EncodeToString(hash))
+			b.cacheObjectMetadata(name, objectMetadata{headers: nil, hash: hash, etag: etag})
+			return nil, etag
+		}
+		return nil, ""
 	}
-	b.cacheObjectMetadata(name, headers)
-	return headers, true
+	// The ETag of the content the hash describes, in the same quoted form the
+	// upload path caches and the HEAD reports. Returning nothing here used to
+	// leave every cold-cache If-Range request compared against "", which never
+	// matches a strong tag: the client then got the whole object instead of the
+	// range, on exactly the clients that read block by block.
+	etag := fmt.Sprintf("%q", hex.EncodeToString(hash))
+	if storedETag := takeStoredETag(headers); storedETag != "" {
+		etag = storedETag
+	}
+	b.cacheObjectMetadata(name, objectMetadata{headers: headers, hash: hash, etag: etag})
+	return headers, etag
 }
 
 // copyStoredMetadata gives dst the user metadata recorded for src, which is
@@ -443,7 +399,10 @@ func (b *s3Backend) copyStoredMetadata(ctx context.Context, src, dst string) {
 	if !ok {
 		return
 	}
-	b.storeObjectMetadata(ctx, dst, headers)
+	// The copy has just been uploaded, so only the database needs the metadata:
+	// the in-memory entry of the destination was written by that upload and is
+	// already correct for the content the copy happens to share with the source.
+	b.storeStoredMetadata(ctx, dst, headers)
 }
 
 // replaceObjectMetadata applies meta to an existing object without rewriting
@@ -466,42 +425,22 @@ func (b *s3Backend) replaceObjectMetadata(ctx context.Context, name string, meta
 	// self-copy asks for the metadata to be left alone.
 	replacing := hasUserMetadata(meta) || strings.EqualFold(metadataDirective(meta), "REPLACE")
 	if !replacing {
-		if existing, ok := b.loadObjectMetadata(ctx, name); ok {
-			result.ETag = storedETag(existing)
+		if value, ok := b.meta.Load(name); ok {
+			if cached, isCached := value.(objectMetadata); isCached {
+				result.ETag = `"` + strings.Trim(cached.etag, `"`) + `"`
+			}
 		}
 		return result, nil
 	}
-	// Everything the request describes replaces the record: the user metadata and
-	// the object headers as well. Restricting this to the user metadata dropped a
-	// Content-Type the request asked to set - a self-copy with REPLACE is the
-	// documented way to change one without rewriting the bytes - and erased the
-	// stored one at the same time, which the copy-to-another-key path does right.
-	replaced := storableMetadata(meta)
-	// The ETag and the whole-object checksums describe the content, which a
-	// metadata replacement does not touch, so they must survive: dropping them
-	// would make every later GET answer without them.
-	if existing, ok := b.loadObjectMetadata(ctx, name); ok {
-		if etag := storedETag(existing); etag != "" {
-			replaced[etagMetadataKey] = strings.Trim(etag, "\"")
-		}
-		for key, value := range existing {
-			if !isContentChecksumHeader(key) {
-				continue
-			}
-			if _, present := replaced[key]; !present {
-				replaced[key] = value
-			}
-		}
-	}
-	b.storeObjectMetadata(ctx, name, replaced)
-	result.ETag = storedETag(replaced)
+	replaced := userMetadataOf(meta)
+	b.storeStoredMetadata(ctx, name, replaced)
 
 	// The in-memory entry of the process that received the upload still carries
 	// the previous metadata, so it is rewritten to match.
 	if value, ok := b.meta.Load(name); ok {
-		if headers, isHeaders := value.(map[string]string); isHeaders {
+		if cached, isCached := value.(objectMetadata); isCached {
 			cleaned := map[string]string{}
-			for key, value := range headers {
+			for key, value := range cached.headers {
 				if !strings.HasPrefix(strings.ToLower(key), userMetadataPrefix) {
 					cleaned[key] = value
 				}
@@ -509,19 +448,13 @@ func (b *s3Backend) replaceObjectMetadata(ctx context.Context, name string, meta
 			for key, value := range replaced {
 				cleaned[key] = value
 			}
-			b.cacheObjectMetadata(name, cleaned)
-			result.ETag = storedETag(cleaned)
+			cached.headers = cleaned
+			b.meta.Store(name, cached)
+			result.ETag = `"` + strings.Trim(cached.etag, `"`) + `"`
 		}
 	}
 
 	return result, nil
-}
-
-// isContentChecksumHeader reports whether a metadata key names a checksum of the
-// whole object, which a metadata-only replacement must not drop.
-func isContentChecksumHeader(key string) bool {
-	h := strings.ToLower(key)
-	return strings.HasPrefix(h, "x-amz-checksum-") || h == "x-amz-sdk-checksum-algorithm"
 }
 
 // metadataDirective returns the value of x-amz-metadata-directive however the

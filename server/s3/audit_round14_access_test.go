@@ -76,7 +76,7 @@ func TestReuploadDuringFlushKeepsItsMetadata(t *testing.T) {
 	b := &s3Backend{meta: new(sync.Map)}
 	const p = "/audit/round14/re-upload.bin"
 
-	b.storeObjectMetadata(ctx, p, map[string]string{"X-Amz-Meta-Owner": "first"})
+	b.storeObjectMetadata(ctx, p, map[string]string{"X-Amz-Meta-Owner": "first"}, nil, "")
 	if row := accessRow(t, p); row == nil {
 		t.Fatal("the upload did not store a row")
 	}
@@ -89,7 +89,7 @@ func TestReuploadDuringFlushKeepsItsMetadata(t *testing.T) {
 		// batch is still on its way to the database.
 		b.deleteStoredMetadata(ctx, p)
 		b.access.forget(p)
-		b.storeObjectMetadata(ctx, p, map[string]string{"X-Amz-Meta-Owner": "second"})
+		b.storeObjectMetadata(ctx, p, map[string]string{"X-Amz-Meta-Owner": "second"}, nil, "")
 	}
 	b.flushAccess()
 

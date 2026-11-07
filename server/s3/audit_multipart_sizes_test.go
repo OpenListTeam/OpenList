@@ -3,6 +3,8 @@ package s3
 import (
 	"bufio"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -496,8 +498,13 @@ func TestCompleteAcceptsPartsSmallerThanFiveMiB(t *testing.T) {
 	}
 
 	etag := completeUpload(t, handler, "/mp/small-parts.bin", uploadID, parts)
-	if !strings.HasSuffix(strings.Trim(etag, `"`), "-2") {
-		t.Fatalf("composite ETag is %s, want a two-part value", etag)
+	// zerofs variant: the ETag is the plain MD5 of the assembled content, not the
+	// composite "md5(md5(part)...)-N" (a composite value would have to be stored
+	// as a side row, and this variant keeps stored objects free of
+	// gateway-generated metadata).
+	sum := md5.Sum([]byte("ab"))
+	if got := strings.Trim(etag, `"`); got != hex.EncodeToString(sum[:]) {
+		t.Fatalf("ETag is %s, want the MD5 of the assembled content", etag)
 	}
 	if got := objectBody(t, handler, "/mp/small-parts.bin"); got != "ab" {
 		t.Fatalf("assembled object is %q, want %q", got, "ab")

@@ -251,7 +251,6 @@ func (b *s3Backend) walkPage(
 	sort.Slice(dirEntries, func(i, j int) bool {
 		return listSortKey(dirEntries[i]) < listSortKey(dirEntries[j])
 	})
-	etags := b.etagsForEntries(ctx, fp, dirEntries)
 
 	for _, entry := range dirEntries {
 		object := entry.GetName()
@@ -320,7 +319,7 @@ func (b *s3Backend) walkPage(
 				// Key:          gofakes3.URLEncode(objectPath),
 				Key:          objectPath,
 				LastModified: gofakes3.NewContentTime(entry.ModTime()),
-				ETag:         etags[object],
+				ETag:         getFileHash(entry),
 				Size:         entry.GetSize(),
 				StorageClass: gofakes3.StorageStandard,
 			}

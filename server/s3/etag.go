@@ -1,0 +1,96 @@
+package s3
+
+import (
+	"bytes"
+	"context"
+	"crypto/md5"
+	"encoding/hex"
+	"fmt"
+	"io"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+)
+
+type objectMetadata struct {
+	headers map[string]string
+	hash    []byte
+	etag    string
+}
+
+// Only reuse upload metadata when it still describes the current content.
+func (b *s3Backend) loadMetadata(name string, hash []byte) (map[string]string, string) {
+	if value, ok := b.meta.Load(name); ok {
+		metadata := value.(objectMetadata)
+		if bytes.Equal(metadata.hash, hash) {
+			return metadata.headers, metadata.etag
+		}
+	}
+	return nil, ""
+}
+
+// objectHashForBucket returns the identity of the current content of an object
+// using the operational mode configured for that bucket (or global default).
+func (b *s3Backend) objectHashForBucket(ctx context.Context, bucketName, name string, obj model.Obj) ([]byte, error) {
+	if effectiveEtagMode(bucketName) == etagModeVersion {
+		return b.persistedIdentityHash(ctx, name, obj.GetSize(), obj.ModTime().UnixNano()), nil
+	}
+	return b.getObjectHash(ctx, name, obj)
+}
+
+// objectHash returns the identity of the current content of an object. It is
+// what an ETag is built from, so it decides whether answering a HEAD costs a
+// database lookup or a full read of the object (see etag_mode.go).
+func (b *s3Backend) objectHash(ctx context.Context, name string, obj model.Obj) ([]byte, error) {
+	return b.objectHashForBucket(ctx, "", name, obj)
+}
+
+// Metadata alone cannot identify content: clients can preserve both file size
+// and modification time when overwriting an object. Use the driver's MD5 when
+// available, otherwise hash the complete content, including for HEAD and ranges.
+func (b *s3Backend) getObjectHash(ctx context.Context, name string, obj model.Obj) ([]byte, error) {
+	if value := obj.GetHash().GetHash(utils.MD5); value != "" {
+		hash, err := hex.DecodeString(value)
+		if err != nil || len(hash) != md5.Size {
+			return nil, fmt.Errorf("invalid object MD5: %q", value)
+		}
+		return hash, nil
+	}
+	// Filesystem-backed storages answer from the cached MD5 without
+	// reading the object again; anything else falls through to the
+	// content hash below.
+	if cached, ok := b.readCachedHash(name); ok {
+		return cached, nil
+	}
+
+	link, file, err := fs.Link(ctx, name, model.LinkArgs{})
+	if err != nil {
+		return nil, err
+	}
+	defer link.Close()
+	size := link.ContentLength
+	if size <= 0 && file != nil {
+		size = file.GetSize()
+	}
+	ranges, err := stream.GetRangeReaderFromLink(size, link)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := ranges.RangeRead(ctx, http_range.Range{Length: -1})
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	hash := md5.New()
+	n, err := utils.CopyWithBuffer(hash, reader)
+	if err != nil {
+		return nil, err
+	}
+	if n != size {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return hash.Sum(nil), nil
+}

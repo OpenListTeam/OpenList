@@ -305,28 +305,37 @@ func contentSha256GuardWithKeys(next http.Handler, keys *keyRing) http.Handler {
 			// spelling gofakes3 understands after the seed was verified:
 			// renaming the signed variant first broke the seed check for every
 			// legitimately signed streaming upload.
-			if encoded, err := strconv.ParseInt(decodedLen, 10, 64); err == nil && encoded >= 0 {
-				r = r.WithContext(context.WithValue(r.Context(), decodedLengthKey{}, encoded))
-				// gofakes3 caps its frame decoder at this length, so a body that
-				// carries more bytes than it announced is cut off upstream: the
-				// storage layer only ever sees the announced prefix and putStream
-				// stores it with 200 OK. The frame headers are counted here,
-				// above that limit, so the overrun is refused instead.
-				watcher := newChunkFrameWatcher(r.Body, encoded, r.Header.Get("X-Amz-Trailer"))
-				// Both signed streaming variants carry a SigV4 chunk chain; the
-				// -TRAILER one adds a trailer section after the zero chunk, but
-				// its frames are signed the same way, so treating it as unsigned
-				// let a tampered frame through with 200 OK.
-				if upper == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
-					upper == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER" {
-					if err := watcher.enableSignatureVerification(r, keys); err != nil {
-						writeS3Error(w, r, http.StatusForbidden, "SignatureDoesNotMatch", bucketOnlyName(r.URL.Path), err.Error())
-						return
-					}
-				}
-				r.Body = watcher
-				r = r.WithContext(context.WithValue(r.Context(), chunkWatcherKey{}, watcher))
+			if decodedLen == "" {
+				writeS3Error(w, r, http.StatusLengthRequired, "MissingContentLength", bucketOnlyName(r.URL.Path),
+					"You must provide the Content-Length HTTP header.")
+				return
 			}
+			encoded, err := strconv.ParseInt(decodedLen, 10, 64)
+			if err != nil || encoded < 0 {
+				writeS3Error(w, r, http.StatusBadRequest, "InvalidArgument", bucketOnlyName(r.URL.Path),
+					"X-Amz-Decoded-Content-Length must be a non-negative integer.")
+				return
+			}
+			r = r.WithContext(context.WithValue(r.Context(), decodedLengthKey{}, encoded))
+			// gofakes3 caps its frame decoder at this length, so a body that
+			// carries more bytes than it announced is cut off upstream: the
+			// storage layer only ever sees the announced prefix and putStream
+			// stores it with 200 OK. The frame headers are counted here,
+			// above that limit, so the overrun is refused instead.
+			watcher := newChunkFrameWatcher(r.Body, encoded, r.Header.Get("X-Amz-Trailer"))
+			// Both signed streaming variants carry a SigV4 chunk chain; the
+			// -TRAILER one adds a trailer section after the zero chunk, but
+			// its frames are signed the same way, so treating it as unsigned
+			// let a tampered frame through with 200 OK.
+			if upper == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
+				upper == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER" {
+				if err := watcher.enableSignatureVerification(r, keys); err != nil {
+					writeS3Error(w, r, http.StatusForbidden, "SignatureDoesNotMatch", bucketOnlyName(r.URL.Path), err.Error())
+					return
+				}
+			}
+			r.Body = watcher
+			r = r.WithContext(context.WithValue(r.Context(), chunkWatcherKey{}, watcher))
 			if rawSha != canonical {
 				r.Header.Set("X-Amz-Content-Sha256", canonical)
 				// gofakes3 re-verifies the seed inside its own auth middleware

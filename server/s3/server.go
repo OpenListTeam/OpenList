@@ -67,7 +67,7 @@ func NewServer(ctx context.Context) (h http.Handler, err error) {
 	// The outermost wrapper lowercases user metadata headers, which Go
 	// canonicalises on the way in and gofakes3 re-emits with Header().Set.
 	return multipartQueryGuard(responseOverrideGuard(headerSignGuard(echoDeclaredChecksum(lowercaseUserMetadataHeaders(presignedLifetimeGuard(payloadGuard(corsHandler(objectKeyGuard(expectedBucketOwnerGuard(storageClassGuard(unsupportedWriteHeaderGuard(partNumberBoundsGuard(metadataDirectiveGuard(copySourceRangeGuard(partNumberGuard(validateListQuery(limitMultiDeleteBody(multiDeleteDigestGuard(redirectHandler(bucketAuthHandler(
-		repairS3Response(fixListEncoding(unsupportedSubresources(stripUnrequestedChecksums(stripRangeChecksums(rangeStatusHandler(multiRangeGuard(deleteConditionGuard(copySourceConditionGuard(listPartsHandler(uploadPartCopyHandler(withPutPreconditions(ifRangeHolder(backend, faker.Server())), backend, keys), backend), keys, backend.baseCopySourceIdentity), keys, backend.baseDeleteIdentity), backend, keys))))))),
+		repairS3Response(fixListEncoding(unsupportedSubresources(stripUnrequestedChecksums(stripRangeChecksums(rangeStatusHandler(multiRangeGuard(deleteConditionGuard(copySourceConditionGuard(listPartsHandler(uploadPartCopyHandler(withPutPreconditions(ifRangeHolder(backend, faker.Server())), backend, keys), backend), keys, backend.zeroCopySourceIdentity), keys, backend.zeroDeleteIdentity), backend, keys))))))),
 		publicBucketGuard(repairS3Response(fixListEncoding(unsupportedSubresources(stripUnrequestedChecksums(stripRangeChecksums(rangeStatusHandler(multiRangeGuard(withPutPreconditions(ifRangeHolder(publicBackend, publicFaker.Server())), publicBackend, keys)))))))),
 	), keys, backend)))))))))))))))))))), nil
 }

@@ -30,7 +30,7 @@ func TestPayloadHashMismatchLeavesNoObject(t *testing.T) {
 		sum:   sha256.New(),
 	}
 
-	err := backend.putStream(ctx, "mp", "sha/obj.txt", map[string]string{"Content-Type": "text/plain"},
+	_, err := backend.putStream(ctx, "mp", "sha/obj.txt", map[string]string{"Content-Type": "text/plain"},
 		guarded, int64(len(body)))
 	require.Error(t, err)
 	require.True(t, gofakes3.HasErrorCode(err, gofakes3.ErrBadDigest),
@@ -49,8 +49,9 @@ func TestPayloadHashMismatchLeavesNoObject(t *testing.T) {
 		want:  func() string { s := sha256.Sum256([]byte(body)); return hex.EncodeToString(s[:]) }(),
 		sum:   sha256.New(),
 	}
-	require.NoError(t, backend.putStream(ctx, "mp", "sha/obj.txt", map[string]string{"Content-Type": "text/plain"},
-		good, int64(len(body))))
+	_, err = backend.putStream(ctx, "mp", "sha/obj.txt", map[string]string{"Content-Type": "text/plain"},
+		good, int64(len(body)))
+	require.NoError(t, err)
 	info, err := backend.HeadObject(ctx, "mp", "sha/obj.txt")
 	require.NoError(t, err)
 	require.Equal(t, int64(len(body)), info.Size)

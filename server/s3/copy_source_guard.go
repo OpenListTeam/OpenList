@@ -2,6 +2,8 @@ package s3
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -127,10 +129,10 @@ func etagMatches(header, etag string) bool {
 	return false
 }
 
-// baseCopySourceIdentity resolves the current ETag and modification time of a
-// copy source from the stored metadata row, which is where every write through
-// this gateway records the MD5 it computed.
-func (b *s3Backend) baseCopySourceIdentity(ctx context.Context, bucketName, key string) (string, time.Time, bool) {
+// zeroCopySourceIdentity resolves the current ETag and modification time of a
+// copy source the way HEAD does, so a precondition compares against the value
+// the client was actually given.
+func (b *s3Backend) zeroCopySourceIdentity(ctx context.Context, bucketName, key string) (string, time.Time, bool) {
 	bucket, err := getBucketByName(bucketName)
 	if err != nil {
 		return "", time.Time{}, false
@@ -140,13 +142,17 @@ func (b *s3Backend) baseCopySourceIdentity(ctx context.Context, bucketName, key 
 		return "", time.Time{}, false
 	}
 	fmeta, _ := op.GetNearestMeta(fp)
-	obj, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{})
-	if err != nil || obj.IsDir() {
+	node, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{})
+	if err != nil || node.IsDir() {
 		return "", time.Time{}, false
 	}
-	etag := ""
-	if headers, ok := b.loadObjectMetadata(ctx, fp); ok {
-		etag = storedETag(headers)
+	hash, err := b.objectHashForBucket(ctx, bucketName, fp, node)
+	if err != nil {
+		return "", time.Time{}, false
 	}
-	return etag, obj.ModTime(), true
+	_, etag := b.objectMetadataOf(ctx, fp, hash)
+	if etag == "" && len(hash) > 0 {
+		etag = fmt.Sprintf("%q", hex.EncodeToString(hash))
+	}
+	return etag, node.ModTime(), true
 }

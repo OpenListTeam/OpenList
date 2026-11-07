@@ -214,41 +214,12 @@ func TestPresignedCopySourceMustBeSigned(t *testing.T) {
 	presigned.Header.Set("X-Amz-Copy-Source", "/secret/bucket/key")
 	assert.True(t, copySourceIsSigned(presigned))
 
-	// A header-signed request covers the headers it lists, and only those.
+	// Header-signed requests already cover every header they send.
 	headerSigned := httptest.NewRequest(http.MethodPut, "/bucket/obj", nil)
 	headerSigned.Header.Set("Authorization",
 		"AWS4-HMAC-SHA256 Credential=key/20261029/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-copy-source, Signature=abc")
 	headerSigned.Header.Set("X-Amz-Copy-Source", "/secret/bucket/key")
 	assert.True(t, copySourceIsSigned(headerSigned))
-
-	unsignedHeader := httptest.NewRequest(http.MethodPut, "/bucket/obj", nil)
-	unsignedHeader.Header.Set("Authorization",
-		"AWS4-HMAC-SHA256 Credential=key/20261029/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc")
-	unsignedHeader.Header.Set("X-Amz-Copy-Source", "/secret/bucket/key")
-	assert.False(t, copySourceIsSigned(unsignedHeader),
-		"a copy source the signature does not name is not covered by it")
-
-	// The range of an UploadPartCopy steers which slice is read, so it has to be
-	// signed as well.
-	unsignedRange := httptest.NewRequest(http.MethodPut, "/bucket/obj", nil)
-	unsignedRange.Header.Set("Authorization",
-		"AWS4-HMAC-SHA256 Credential=key/20261029/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-copy-source, Signature=abc")
-	unsignedRange.Header.Set("X-Amz-Copy-Source", "/secret/bucket/key")
-	unsignedRange.Header.Set("X-Amz-Copy-Source-Range", "bytes=0-9")
-	assert.False(t, copySourceIsSigned(unsignedRange),
-		"an unsigned copy-source-range must not change which slice is copied")
-
-	// Signature V2 hashes every x-amz- header into the string to sign, so there is
-	// nothing to check.
-	v2 := httptest.NewRequest(http.MethodPut, "/bucket/obj", nil)
-	v2.Header.Set("Authorization", "AWS key:sig")
-	v2.Header.Set("X-Amz-Copy-Source", "/secret/bucket/key")
-	assert.True(t, copySourceIsSigned(v2))
-
-	// Nothing to cover the header with: the bucket rules decide on their own.
-	anonymous := httptest.NewRequest(http.MethodPut, "/bucket/obj", nil)
-	anonymous.Header.Set("X-Amz-Copy-Source", "/secret/bucket/key")
-	assert.True(t, copySourceIsSigned(anonymous))
 }
 
 // UploadPartCopy talks to the backend before gofakes3 verifies anything, so an

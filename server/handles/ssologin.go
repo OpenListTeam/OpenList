@@ -98,7 +98,7 @@ func generateSSOBindingToken(c *gin.Context, purpose, ssoID string) (string, err
 		c.SetCookie(
 			ssoBindingCookie,
 			session,
-			int((stateExpire+ssoBindingExpire).Seconds()),
+			int((stateExpire + ssoBindingExpire).Seconds()),
 			path.Join(conf.URL.Path, "/api"),
 			"",
 			strings.HasPrefix(common.GetApiUrl(c), "https://"),

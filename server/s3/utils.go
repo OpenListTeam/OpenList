@@ -8,6 +8,7 @@ import (
 	stderrors "errors"
 	"path"
 	"strings"
+	"syscall"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -27,11 +28,20 @@ type Bucket struct {
 	// opt-in and off by default so existing deployments keep their current
 	// access behaviour after upgrading.
 	Public bool `json:"public,omitempty"`
+	// Mode configures the S3 behavior for this bucket: "performance" (default) or "compat".
+	// If omitted or empty, it inherits the global s3_mode.
+	Mode string `json:"mode,omitempty"`
 }
 
 func mapBackendError(err error) error {
+	if err == nil {
+		return nil
+	}
 	if stderrors.Is(err, errs.TemporaryCapacity) {
 		return gofakes3.ErrSlowDown
+	}
+	if stderrors.Is(err, syscall.ENAMETOOLONG) || strings.Contains(err.Error(), "file name too long") {
+		return gofakes3.ErrNoSuchKey
 	}
 	return err
 }

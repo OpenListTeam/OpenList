@@ -62,9 +62,9 @@ func deleteConditionGuard(next http.Handler, keys *keyRing, identity deleteIdent
 	})
 }
 
-// baseDeleteIdentity resolves the ETag of an object from its stored metadata row.
-func (b *s3Backend) baseDeleteIdentity(ctx context.Context, bucketName, key string) (string, bool) {
-	etag, _, ok := b.baseCopySourceIdentity(ctx, bucketName, key)
+// zeroDeleteIdentity resolves the ETag of an object from its hash and metadata.
+func (b *s3Backend) zeroDeleteIdentity(ctx context.Context, bucketName, key string) (string, bool) {
+	etag, _, ok := b.zeroCopySourceIdentity(ctx, bucketName, key)
 	if !ok {
 		return "", false
 	}

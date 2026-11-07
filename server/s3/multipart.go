@@ -424,7 +424,7 @@ func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object 
 	// The object is assembled from the parts, so the request body (the XML part
 	// list) says nothing about the bytes that are about to be written; -1 as the
 	// expected size and no declared hash keeps the verification off this path.
-	err = b.putStream(withoutPayloadExpectation(ctx), bucket, object, state.meta,
+	_, err = b.putStream(withoutPayloadExpectation(ctx), bucket, object, state.meta,
 		io.TeeReader(combined, contentHash), -1)
 	if err != nil {
 		// Leave the upload in place so the client may retry completion, per
@@ -439,21 +439,27 @@ func (b *s3Backend) CompleteMultipartUpload(ctx context.Context, bucket, object 
 	// Success: drop bookkeeping and clean up part files.
 	b.removeUpload(uploadID)
 
-	// S3 gives a multipart object the composite ETag "md5(md5(part)...) -N"; a
-	// plain MD5 of the assembled content is a different value, and clients that
-	// verify a download against the ETag they were handed report a corrupt file.
-	composite := md5.New()
-	for _, part := range ordered {
-		digest, decodeErr := hex.DecodeString(part.md5hex)
-		if decodeErr != nil {
-			return "", "", errors.New("a part carries an unreadable digest")
+	var etag string
+	if isPerformanceMode(bucket) {
+		// zerofs / performance: the ETag is the MD5 of the assembled content,
+		// avoiding side-row persistence in the database.
+		etag = fmt.Sprintf("%q", hex.EncodeToString(contentHash.Sum(nil)))
+	} else {
+		// compat mode: standard S3 gives a multipart object the composite ETag
+		// "md5(md5(part)...) -N", and records it as an object metadata side-row.
+		composite := md5.New()
+		for _, part := range ordered {
+			digest, decodeErr := hex.DecodeString(part.md5hex)
+			if decodeErr != nil {
+				return "", "", errors.New("a part carries an unreadable digest")
+			}
+			composite.Write(digest)
 		}
-		composite.Write(digest)
-	}
-	etag := fmt.Sprintf("\"%s-%d\"", hex.EncodeToString(composite.Sum(nil)), len(ordered))
-	if bucketInfo, err := getBucketByName(bucket); err == nil {
-		if fp, err := objectFSPath(bucketInfo.Path, object); err == nil {
-			b.setStoredETag(ctx, fp, etag)
+		etag = fmt.Sprintf("\"%s-%d\"", hex.EncodeToString(composite.Sum(nil)), len(ordered))
+		if bucketInfo, err := getBucketByName(bucket); err == nil {
+			if fp, err := objectFSPath(bucketInfo.Path, object); err == nil {
+				b.setStoredETag(ctx, fp, etag)
+			}
 		}
 	}
 	log.Debugf("s3 multipart: completed upload %s -> %s/%s (%d bytes)", uploadID, bucket, object, total)

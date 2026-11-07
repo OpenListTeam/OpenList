@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"hash"
 	"io"
 	"net/http"
 	"path"
@@ -37,27 +36,9 @@ import (
 )
 
 var (
-	// timeFormat has to be the HTTP date, not a lookalike: "Mon, 2 Jan 2006
-	// 15:04:05 GMT" writes a single digit day, which http.ParseTime - and every
-	// strict client - refuses to parse, so a Last-Modified the gateway emitted
-	// could not be fed back as If-Modified-Since or as an If-Range date.
-	timeFormat = http.TimeFormat
+	emptyPrefix = &gofakes3.Prefix{}
+	timeFormat  = http.TimeFormat
 )
-
-// s3TempKeyPrefix marks the sibling key an upload streams into before it is
-// renamed over the real one. A key carrying it is never a user object: listing
-// hides it and addressing it directly is refused.
-const s3TempKeyPrefix = ".openlist-s3-tmp-"
-
-// s3TempKeyName returns a collision-resistant temporary base name.
-func s3TempKeyName() string {
-	return s3TempKeyPrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
-}
-
-// isS3TempKey reports whether a key is one of those in-flight temporaries.
-func isS3TempKey(objectName string) bool {
-	return strings.HasPrefix(path.Base(strings.TrimSuffix(objectName, "/")), s3TempKeyPrefix)
-}
 
 // s3Backend implements the gofakes3.Backend interface to make an S3
 // backend for gofakes3. It also implements gofakes3.MultipartBackend so that
@@ -161,12 +142,7 @@ func (b *s3Backend) ListBucket(ctx context.Context, bucketName string, prefix *g
 	bucketPath := bucket.Path
 
 	if prefix == nil {
-		// A fresh value, never the package-level one: the workaround below
-		// mutates the struct it is given, and gofakes3 hands in its own pointer
-		// for a real request. Sharing one object across requests was a data
-		// race on a global, and the winner of it decided whether another
-		// request's listing honoured its delimiter.
-		prefix = &gofakes3.Prefix{}
+		prefix = emptyPrefix
 	}
 
 	// workaround
@@ -234,13 +210,12 @@ func (b *s3Backend) emptyDirMarkerObject(ctx context.Context, bucketPath, object
 // dirMarkerObject answers a read of a key that names a directory.
 //
 // A PUT of "prefix/" is accepted (it creates the directory) but nothing used to
-// answer a GET/HEAD for that key, and the key never showed up in a listing: the
-// write reported success and the object it claimed to create could neither be
-// read nor listed. Real S3 stores a zero-byte object for such a key; the file
-// system cannot hold a directory and an object on one path, so the directory
-// stands in for it and the read is answered with the zero-byte body the client
-// wrote. Only keys written with the trailing slash are affected - a plain
-// "prefix" read stays NoSuchKey.
+// answer a GET/HEAD for that key: the write reported success and the object it
+// claimed to create could not be read. Real S3 stores a zero-byte object for
+// such a key; the file system cannot hold a directory and an object on one
+// path, so the directory stands in for it and the read is answered with the
+// zero-byte body the client wrote. Only a key addressed with the trailing slash
+// qualifies - a plain "prefix" read stays NoSuchKey.
 func (b *s3Backend) dirMarkerObject(objectName string, node model.Obj, markerRequest bool) (*gofakes3.Object, bool) {
 	if !node.IsDir() || !(markerRequest || strings.HasSuffix(objectName, "/")) {
 		return nil, false
@@ -259,7 +234,9 @@ func (b *s3Backend) dirMarkerObject(objectName string, node model.Obj, markerReq
 // HeadObject returns the fileinfo for the given object name.
 //
 // Note that the metadata is not supported yet.
-func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName string) (*gofakes3.Object, error) {
+func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName string) (obj *gofakes3.Object, err error) {
+	defer func() { err = mapBackendError(err) }()
+
 	bucket, err := getBucketByName(bucketName)
 	if err != nil {
 		return nil, err
@@ -271,12 +248,16 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 	fmeta, _ := op.GetNearestMeta(fp)
-	node, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{})
+	ctx = context.WithValue(ctx, conf.MetaKey, fmeta)
+	node, err := fs.Get(ctx, fp, &fs.GetArgs{})
 	if err != nil {
 		if obj, ok := b.emptyDirMarkerObject(ctx, bucketPath, objectName); ok {
 			return obj, nil
 		}
-		return nil, gofakes3.KeyNotFound(objectName)
+		if errs.IsObjectNotFound(err) {
+			return nil, gofakes3.KeyNotFound(objectName)
+		}
+		return nil, err
 	}
 
 	if node.IsDir() {
@@ -298,23 +279,27 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 	// changing it.
 
 	size := node.GetSize()
-	// hash := getFileHashByte(fobj)
+	hash, err := b.objectHashForBucket(ctx, bucketName, fp, node)
+	if err != nil {
+		return nil, err
+	}
 
 	meta := map[string]string{
 		"Last-Modified": node.ModTime().UTC().Format(timeFormat),
 		"Content-Type":  utils.GetMimeType(fp),
 	}
 
-	if stored, ok := b.loadObjectMetadata(ctx, fp); ok {
-		for k, v := range stored {
+	stored, etag := b.objectMetadataOf(ctx, fp, hash)
+	for k, v := range stored {
+		if k != "Last-Modified" {
 			meta[k] = v
 		}
 	}
 
 	return &gofakes3.Object{
-		Name: objectName,
-		// Hash:     hash,
-		ETag:     takeStoredETag(meta),
+		Name:     objectName,
+		Hash:     hash,
+		ETag:     etag,
 		Metadata: meta,
 		Size:     size,
 		Contents: noOpReadCloser{},
@@ -336,12 +321,16 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 	fmeta, _ := op.GetNearestMeta(fp)
-	node, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{})
+	ctx = context.WithValue(ctx, conf.MetaKey, fmeta)
+	node, err := fs.Get(ctx, fp, &fs.GetArgs{})
 	if err != nil {
 		if obj, ok := b.emptyDirMarkerObject(ctx, bucketPath, objectName); ok {
 			return obj, nil
 		}
-		return nil, gofakes3.KeyNotFound(objectName)
+		if errs.IsObjectNotFound(err) {
+			return nil, gofakes3.KeyNotFound(objectName)
+		}
+		return nil, err
 	}
 
 	if node.IsDir() {
@@ -356,6 +345,11 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 	b.recordAccess(fp)
+
+	hash, err := b.objectHashForBucket(ctx, bucketName, fp, node)
+	if err != nil {
+		return nil, err
+	}
 
 	link, file, err := fs.Link(ctx, fp, model.LinkArgs{})
 	if err != nil {
@@ -398,18 +392,11 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 	// describes this object, S3 ignores Range and answers with the whole body;
 	// honouring the range would make a resuming client append new bytes to a
 	// file whose beginning has changed and report a corrupt download as success.
-	// The validator If-Range names can be the ETag the gateway itself issued, so
-	// it has to be read before the comparison rather than after the response is
-	// built.
-	validator := ""
-	if stored, ok := b.loadObjectMetadata(ctx, fp); ok {
-		// Read without consuming: the same cached map is merged into the response
-		// metadata below, and a deletion here would erase the ETag for everyone.
-		validator = storedETag(stored)
-	}
-	if ifRange := ifRangeFromContext(ctx); ifRange != "" &&
-		!ifRangeMatchesValidator(ifRange, validator, node.ModTime()) {
-		rnge = nil
+	if ifRange := ifRangeFromContext(ctx); ifRange != "" {
+		_, etag := b.objectMetadataOf(ctx, fp, hash)
+		if !ifRangeMatchesValidator(ifRange, etag, node.ModTime()) {
+			rnge = nil
+		}
 	}
 
 	rrf, err := stream.GetRangeReaderFromLink(size, link)
@@ -433,18 +420,28 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 		"Content-Type":        utils.GetMimeType(fp),
 	}
 
-	if stored, ok := b.loadObjectMetadata(ctx, fp); ok {
-		for k, v := range stored {
-			meta[k] = v
+	stored, etag := b.objectMetadataOf(ctx, fp, hash)
+	for k, v := range stored {
+		if k == "Last-Modified" {
+			continue
 		}
+		// A partial response must not replay the checksum of the complete object:
+		// the client only receives a slice of it, so validating that value always
+		// fails. SDKs that enable flexible checksums (boto3 >= 1.36, aws-sdk-rust)
+		// then reject every ranged GET, which is every read a block-device client
+		// such as ZeroFS performs.
+		if rnge != nil && isWholeObjectChecksumHeader(k) {
+			continue
+		}
+		meta[k] = v
 	}
 	closers := utils.NewClosers(rd, link)
 
 	return &gofakes3.Object{
 		// Name: gofakes3.URLEncode(objectName),
-		Name: objectName,
-		// Hash:     "",
-		ETag:     takeStoredETag(meta),
+		Name:     objectName,
+		Hash:     hash,
+		ETag:     etag,
 		Metadata: meta,
 		Size:     size,
 		Range:    rnge,
@@ -464,7 +461,8 @@ func (b *s3Backend) PutObject(
 	meta map[string]string,
 	input io.Reader, size int64,
 ) (result gofakes3.PutObjectResult, err error) {
-	return result, b.putStream(ctx, bucketName, objectName, meta, input, size)
+	_, err = b.putStream(ctx, bucketName, objectName, meta, input, size)
+	return result, err
 }
 
 // parentObjectConflict is the error for a key that cannot be stored because an
@@ -534,7 +532,7 @@ func withPutPreconditions(next http.Handler) http.Handler {
 // checkPutPreconditions compares the conditional headers with the object as it
 // exists under the key lock. A missing object only satisfies If-None-Match;
 // If-Match fails its precondition when there is no representation to match.
-func (b *s3Backend) checkPutPreconditions(ctx context.Context, fp, objectName string) error {
+func (b *s3Backend) checkPutPreconditions(ctx context.Context, bucketName, fp, objectName string) error {
 	conditions, _ := ctx.Value(putPreconditionsContextKey{}).(putPreconditions)
 	if conditions.ifMatch == "" && conditions.ifNoneMatch == "" {
 		return nil
@@ -542,10 +540,21 @@ func (b *s3Backend) checkPutPreconditions(ctx context.Context, fp, objectName st
 	fmeta, _ := op.GetNearestMeta(fp)
 	node, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{})
 	exists := err == nil && !node.IsDir()
+	if err != nil {
+		node = nil
+	}
 	etag := ""
 	if exists {
-		if headers, ok := b.loadObjectMetadata(ctx, fp); ok {
-			etag = storedETag(headers)
+		// In performance mode we derive the ETag from identity or content;
+		// in compat mode b.objectMetadataOf also resolves any persisted composite ETag.
+		if node != nil {
+			hash, hashErr := b.objectHashForBucket(ctx, bucketName, fp, node)
+			if hashErr == nil {
+				_, etag = b.objectMetadataOf(ctx, fp, hash)
+				if etag == "" && len(hash) > 0 {
+					etag = fmt.Sprintf("%q", hex.EncodeToString(hash))
+				}
+			}
 		}
 	}
 	if conditions.ifMatch != "" {
@@ -565,6 +574,20 @@ func (b *s3Backend) checkPutPreconditions(ctx context.Context, fp, objectName st
 // putStream stores the given object into the underlying storage. It is shared
 // by PutObject and the multipart-upload Complete step so both paths apply the
 // same directory creation, metadata and ignore rules.
+// s3TempKeyPrefix marks the sibling key an upload streams into before it is
+// renamed over its destination. The prefix is reserved: see object_path.go.
+const s3TempKeyPrefix = ".openlist-s3-tmp-"
+
+// s3TempKeyName returns a collision-resistant temporary base name.
+func s3TempKeyName() string {
+	return s3TempKeyPrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
+}
+
+func isS3TempKey(objectName string) bool {
+	base := path.Base(strings.TrimSuffix(objectName, "/"))
+	return strings.HasPrefix(base, s3TempKeyPrefix)
+}
+
 // s3RenameSupported reports whether the storage behind p can rename an object,
 // which is what a staged upload needs to publish the new content in one step.
 // Tests replace this hook.
@@ -584,10 +607,10 @@ func (b *s3Backend) putStream(
 	ctx context.Context, bucketName, objectName string,
 	meta map[string]string,
 	input io.Reader, size int64,
-) error {
+) (string, error) {
 	bucket, err := getBucketByName(bucketName)
 	if err != nil {
-		return err
+		return "", err
 	}
 	bucketPath := bucket.Path
 
@@ -600,13 +623,13 @@ func (b *s3Backend) putStream(
 		// them silently. The check runs before anything is created, so a
 		// rejected write leaves no empty directory behind (a listing renders
 		// those as phantom keys).
-		return gofakes3.ErrorMessage(gofakes3.ErrInvalidArgument,
+		return "", gofakes3.ErrorMessage(gofakes3.ErrInvalidArgument,
 			"a key ending in \"/\" cannot hold content")
 	}
 
 	fp, err := objectFSPath(bucketPath, objectName)
 	if err != nil {
-		return asS3KeyError(err)
+		return "", asS3KeyError(err)
 	}
 	// Content and metadata of one key must change together (see key_lock.go).
 	// The lock is taken on the resolved path: two keys that differ only by
@@ -614,8 +637,8 @@ func (b *s3Backend) putStream(
 	// names let them write it at the same time.
 	unlock := b.keyLocks.lock(fp)
 	defer unlock()
-	if err := b.checkPutPreconditions(ctx, fp, objectName); err != nil {
-		return err
+	if err := b.checkPutPreconditions(ctx, bucketName, fp, objectName); err != nil {
+		return "", err
 	}
 	log.Debugf("fp: %s, bucketPath: %s, objectName: %s", fp, bucketPath, objectName)
 
@@ -643,7 +666,7 @@ func (b *s3Backend) putStream(
 				emptied = fs.Remove(ctx, fp) == nil
 			}
 			if !emptied {
-				return gofakes3.ErrorMessage(gofakes3.ErrInvalidArgument,
+				return "", gofakes3.ErrorMessage(gofakes3.ErrInvalidArgument,
 					"the key names a folder that still holds objects; delete them first")
 			}
 		}
@@ -653,14 +676,14 @@ func (b *s3Backend) putStream(
 	parentNode, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	madeDir := false
 	if err == nil && !isDir && !parentNode.IsDir() {
-		return parentObjectConflict(objectName)
+		return "", parentObjectConflict(objectName)
 	}
 	// A storage driver answers "not a directory" when an ancestor of the key is
 	// an object. That is a conflict with what is stored, not a missing path, so
 	// it must not be reported as NoSuchKey: clients retry that forever.
 	if err != nil && !errs.IsObjectNotFound(err) {
 		if conflict, ok := findParentObject(ctx, bucketPath, objectName); ok {
-			return parentObjectConflict(conflict + "/")
+			return "", parentObjectConflict(conflict + "/")
 		}
 	}
 	if err != nil {
@@ -668,18 +691,18 @@ func (b *s3Backend) putStream(
 			log.Debugf("reqPath: %s not found and objectName contains /, need to makeDir", reqPath)
 			err = fs.MakeDir(ctx, reqPath)
 			if err != nil {
-				return errors.WithMessagef(err, "failed to makeDir, reqPath: %s", reqPath)
+				return "", errors.WithMessagef(err, "failed to makeDir, reqPath: %s", reqPath)
 			}
 			madeDir = true
 		} else {
-			return gofakes3.KeyNotFound(objectName)
+			return "", gofakes3.KeyNotFound(objectName)
 		}
 	}
 
 	if isDir {
 		// The marker itself is allowed: clients create it on purpose, and a
 		// directory has no content to store.
-		return nil
+		return "", nil
 	}
 
 	var ti time.Time
@@ -697,7 +720,7 @@ func (b *s3Backend) putStream(
 		ti = time.Now()
 	}
 
-	// The driver streams straight into the final key, so any failure after the
+	// The driver streams straight into the final key, so a failure after the
 	// first byte either published a partial object or destroyed the good one it
 	// replaced: a client that disconnects, a chunk frame that does not decode and
 	// a body that fails its declared hash are all "error, but bytes are already
@@ -721,34 +744,27 @@ func (b *s3Backend) putStream(
 		Ctime:    time.Now(),
 	}
 	// Check if system file should be ignored
-	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(path.Base(fp)) {
-		return errs.IgnoredSystemFile
+	if setting.GetBool(conf.IgnoreSystemFiles) && utils.IsSystemFile(obj.Name) {
+		return "", errs.IgnoredSystemFile
 	}
-	// The bytes that reach the driver are counted and hashed here, not in a
-	// request wrapper: gofakes3 hands the storage a LimitReader sized from the
-	// declared length, so a wrapper that compares at EOF may never see one. A
-	// request that declares a hash, or a length, is only accepted when what was
-	// written matches.
+	hash := md5.New()
+	// The bytes that reach the driver are counted and hashed here: gofakes3 hands
+	// the storage a LimitReader sized from the declared length, so a request
+	// wrapper that compares at EOF may never see one.
 	declared := declaredPayloadHash(ctx)
+	declaredHasher := sha256.New()
 	checksumAlgorithm, declaredChecksum := requestedChecksum(meta)
-	checksumSum := newChecksumHash(checksumAlgorithm)
+	checksumHasher := newChecksumHash(checksumAlgorithm)
 	var written int64
-	var declaredSum hash.Hash
-	// The MD5 feeds the ETag of every later GET, HEAD, listing entry and copy: a
-	// gateway that answers no ETag breaks conditional writes, cache revalidation
-	// and the change detection of every syncing client.
-	contentMD5 := md5.New()
-	writers := []io.Writer{contentMD5, &countingWriter{n: &written}}
+	writers := []io.Writer{hash, &countingWriter{n: &written}}
 	if declared != "" {
-		declaredSum = sha256.New()
-		writers = append(writers, declaredSum)
+		writers = []io.Writer{hash, declaredHasher, &countingWriter{n: &written}}
 	}
-	if checksumSum != nil {
-		writers = append(writers, checksumSum)
+	if checksumHasher != nil {
+		writers = append(writers, checksumHasher)
 	}
 	bodyErr := &bodyErrorReader{inner: input}
 	body := io.TeeReader(bodyErr, io.MultiWriter(writers...))
-
 	stream := &stream.FileStream{
 		Obj:      &obj,
 		Reader:   body,
@@ -775,11 +791,18 @@ func (b *s3Backend) putStream(
 		}
 	}
 	if err == nil && size >= 0 && written != size {
-		// The client promised size bytes and delivered another number of them.
-		// Uploading a truncated body used to answer 200 with an object shorter
-		// than its own declared length, which no client-side checksum catches
-		// because the ETag is computed from what actually arrived.
+		// The client promised size bytes and delivered another number: uploading
+		// a truncated body used to answer 200 with an object shorter than its own
+		// declared length.
 		err = gofakes3.ErrIncompleteBody
+	}
+	if err == nil && declared != "" && hex.EncodeToString(declaredHasher.Sum(nil)) != declared {
+		err = errPayloadHashMismatch
+	}
+	if err == nil && checksumHasher != nil && !checksumMatches(checksumAlgorithm, checksumHasher.Sum(nil), declaredChecksum) {
+		// The client asked the gateway to check its own integrity value; storing
+		// the body anyway made the header a decoration.
+		err = gofakes3.ErrBadDigest
 	}
 	if err == nil {
 		// A framed body can decode to fewer bytes than the client announced; the
@@ -792,13 +815,10 @@ func (b *s3Backend) putStream(
 		// The other direction: a framed body can carry more bytes than it
 		// announced. gofakes3 caps its decoder at the announced length, so the
 		// surplus never reached this function and "written != want" could not
-		// see it - the truncated prefix was stored and answered 200, with an
-		// ETag computed from the bytes that survived, so no client-side check
-		// could notice. S3 refuses the request; nothing is published here.
+		// see it - the truncated prefix was stored and answered 200. Draining to
+		// the end of the frames also reaches the trailer, where a streaming
+		// upload carries the checksum it asks the gateway to verify.
 		if watcher := chunkWatcherFromContext(ctx); watcher != nil {
-			// Draining to the end of the framed body also reaches the trailer,
-			// where a streaming upload carries the checksum it asks the gateway
-			// to verify.
 			switch {
 			case watcher.overrunAfterDecodedBody():
 				err = gofakes3.ErrIncompleteBody
@@ -809,17 +829,10 @@ func (b *s3Backend) putStream(
 			}
 		}
 	}
-	if err == nil && declaredSum != nil && hex.EncodeToString(declaredSum.Sum(nil)) != declared {
-		err = errPayloadHashMismatch
-	}
-	if err == nil && checksumSum != nil && !checksumMatches(checksumAlgorithm, checksumSum.Sum(nil), declaredChecksum) {
-		// The client asked the gateway to check its own integrity value; storing
-		// the body anyway made the header a decoration.
-		err = gofakes3.ErrBadDigest
-	}
 	if err != nil {
 		err = asS3WriteError(err)
-		// Nothing was published: only the temporary holds bytes, and it goes.
+		// Nothing was published: the live key still holds whatever it held
+		// before, and only the temporary has to go.
 		// A staged upload only holds bytes in the temporary, so it always goes.
 		// A direct one wrote into the key itself: its bytes are gone either way,
 		// and leaving the partial content behind would publish an object that no
@@ -831,25 +844,27 @@ func (b *s3Backend) putStream(
 		}
 		if madeDir {
 			// Leave nothing behind: the listing renders every empty directory as
-			// a phantom object, so a failed PUT would otherwise add a key that
-			// cannot be read.
-			// Only when it is still empty: the driver removes directories
-			// recursively, so an unconditional call deletes objects another
-			// request stored under the same prefix in the meantime.
+			// a phantom object, so a failed PUT would otherwise leave a key that
+			// cannot be read. Only when it is still empty, because the driver
+			// removes directories recursively.
 			if children, listErr := fs.List(ctx, reqPath, &fs.ListArgs{NoLog: true}); listErr == nil && len(children) == 0 {
 				if rmErr := fs.Remove(ctx, reqPath); rmErr != nil {
 					log.Debugf("failed to remove the directory created for a failed PUT %s: %v", reqPath, rmErr)
 				}
 			}
 		}
-		return err
+		return "", err
 	}
 
-	if b.putPausedAfterContent != nil {
-		b.putPausedAfterContent()
-	}
-	if meta == nil {
-		meta = map[string]string{}
+	// Commit: the whole upload checked out. A staged upload replaces the key in
+	// one step; a direct one is already in place under its final name.
+	if staged {
+		if err := fs.Rename(ctx, commitPath, path.Base(fp)); err != nil {
+			if rmErr := fs.Remove(ctx, commitPath); rmErr != nil {
+				log.Debugf("failed to remove the temporary %s after a failed commit: %v", commitPath, rmErr)
+			}
+			return "", asS3WriteError(err)
+		}
 	}
 	if watcher := chunkWatcherFromContext(ctx); watcher != nil {
 		// A framed body carries its checksum in the trailer rather than in a
@@ -868,21 +883,33 @@ func (b *s3Backend) putStream(
 			}
 		}
 	}
-	meta[etagMetadataKey] = hex.EncodeToString(contentMD5.Sum(nil))
 	dropUnverifiableChecksums(meta, checksumAlgorithm)
-	// Commit: the whole upload checked out. A staged upload replaces the key in
-	// one step; a direct one is already in place under its final name.
-	if staged {
-		if err := fs.Rename(ctx, commitPath, path.Base(fp)); err != nil {
-			if rmErr := fs.Remove(ctx, commitPath); rmErr != nil {
-				log.Debugf("failed to remove the temporary %s after a failed commit: %v", commitPath, rmErr)
-			}
-			return asS3WriteError(err)
-		}
+	sum := hash.Sum(nil)
+	// The ETag of a stored object is always the MD5 of its complete content, so
+	// that a HEAD after a restart recomputes exactly the value a client saw when
+	// it uploaded: a client that performs a conditional write needs a version
+	// that does not change when the server restarts. In version mode the same
+	// value is also recorded in the database, so that the HEAD can answer without
+	// reading the object back (see etag_mode.go).
+	etag := `"` + hex.EncodeToString(sum) + `"`
+	if b.putPausedAfterContent != nil {
+		b.putPausedAfterContent()
 	}
-	b.storeObjectMetadata(ctx, fp, meta)
+	b.storeObjectMetadataForBucket(ctx, bucketName, fp, meta, sum, etag)
+	// The content was just hashed on the way in, so record the result now
+	// instead of making the first HEAD of the new object read it again.
+	b.storeCachedHash(fp, sum, size, ti.UnixNano())
+	// The recorded size and modification time are read back from the storage, so
+	// that a driver that keeps the time differently from the request does not
+	// make the first HEAD believe the object had been changed behind our back.
+	storedSize, storedTime := size, ti.UnixNano()
+	if node, getErr := fs.Get(ctx, fp, &fs.GetArgs{}); getErr == nil {
+		storedSize, storedTime = node.GetSize(), node.ModTime().UnixNano()
+	}
+	recordedSize, recordedTime := contentFingerprint(storedSize, storedTime)
+	b.recordIdentity(ctx, fp, hex.EncodeToString(sum), recordedSize, recordedTime)
 
-	return nil
+	return etag, nil
 }
 
 // countingWriter counts the bytes that pass through it.
@@ -957,6 +984,8 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	if err != nil {
 		return asS3KeyError(err)
 	}
+	// Take the same lock as the writer so that a PUT and a DELETE of one key
+	// cannot interleave (see key_lock.go). Both lock the full storage path fp.
 	unlock := b.keyLocks.lock(fp)
 	defer unlock()
 	fmeta, _ := op.GetNearestMeta(fp)
@@ -993,8 +1022,8 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	}
 
 	if err := fs.Remove(ctx, fp); err != nil && !errs.IsObjectNotFound(err) {
-		// A 204 has to mean the object is gone. Losing the error here left the
-		// object readable while its metadata row was already purged.
+		// A 204 has to mean the object is gone. Losing the error left the object
+		// readable while its metadata row was already purged.
 		return err
 	}
 	// Drop the row before the cache entry: a HEAD that misses the cache would
@@ -1055,34 +1084,49 @@ func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket
 	if srcBucket == dstBucket && srcKey == dstKey {
 		// A self-copy is how S3 replaces an object's metadata in place: the
 		// content is not rewritten, and the metadata described by the request
-		// replaces what the object had.
-		return b.replaceObjectMetadata(ctx, srcFp, meta)
+		// replaces what the object had. Lock the key so it cannot interleave
+		// with a concurrent PUT or DELETE.
+		unlock := b.keyLocks.lock(srcFp)
+		defer unlock()
+		result, err = b.replaceObjectMetadata(ctx, srcFp, meta)
+		if err != nil {
+			return result, err
+		}
+		// The response still describes the object, so it carries the identity a
+		// HEAD carries: leaving it empty makes a client that reads the ETag of a
+		// metadata-only copy believe the object has none.
+		if node, getErr := fs.Get(ctx, srcFp, &fs.GetArgs{}); getErr == nil {
+			if hash, hashErr := b.objectHashForBucket(ctx, srcBucket, srcFp, node); hashErr == nil {
+				_, etag := b.objectMetadataOf(ctx, srcFp, hash)
+				if etag != "" {
+					result.ETag = etag
+				} else {
+					result.ETag = `"` + hex.EncodeToString(hash) + `"`
+				}
+			}
+			result.LastModified = gofakes3.NewContentTime(node.ModTime().UTC())
+		}
+		return result, nil
 	}
 	fmeta, _ := op.GetNearestMeta(srcFp)
-	srcNode, _ := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), srcFp, &fs.GetArgs{})
+	srcNode, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), srcFp, &fs.GetArgs{})
+	if err != nil {
+		if errs.IsObjectNotFound(err) {
+			return result, gofakes3.KeyNotFound(srcKey)
+		}
+		return result, err
+	}
 
 	c, err := b.GetObject(ctx, srcBucket, srcKey, nil)
 	if err != nil {
+		if errs.IsObjectNotFound(err) {
+			return result, gofakes3.KeyNotFound(srcKey)
+		}
 		return
 	}
 	defer func() {
 		_ = c.Contents.Close()
 	}()
-
-	// The source node is nil whenever GetObject answered a key that no object
-	// backs: the "<dir>/ThisIsAnEmptyFolderInTheS3Bucket" key a listing invents
-	// for an empty folder, and the "dir/" marker a client created with PUT.
-	// Dereferencing it panicked the handler, so a signed copy of that key reset
-	// the connection instead of copying zero bytes; the modification time then
-	// comes from the Last-Modified the object itself reports.
-	srcModified := time.Time{}
-	if srcNode != nil {
-		srcModified = srcNode.ModTime()
-	} else if stamp := c.Metadata["Last-Modified"]; stamp != "" {
-		if parsed, perr := http.ParseTime(stamp); perr == nil {
-			srcModified = parsed
-		}
-	}
 
 	// REPLACE means the request alone describes the destination, so inheriting
 	// the source metadata would answer a request that asked to replace it with
@@ -1096,8 +1140,8 @@ func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket
 			}
 		}
 	}
-	if _, ok := meta["mtime"]; !ok && !srcModified.IsZero() {
-		meta["mtime"] = swift.TimeToFloatString(srcModified)
+	if _, ok := meta["mtime"]; !ok {
+		meta["mtime"] = swift.TimeToFloatString(srcNode.ModTime())
 	}
 
 	dstB, err := getBucketByName(dstBucket)
@@ -1109,30 +1153,37 @@ func (b *s3Backend) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket
 	if err != nil {
 		return
 	}
+	dstFp, dstErr := objectFSPath(dstB.Path, dstKey)
+	if dstErr != nil {
+		return
+	}
 	// CopyObject reuploads the content, and c.Metadata only carries what this
 	// process still remembers, so the recorded copy is applied afterwards. A
 	// REPLACE copy must not take the source row: it holds the very metadata the
 	// request asked to drop.
-	dstETag := ""
-	dstFp, dstErr := objectFSPath(dstB.Path, dstKey)
-	if dstErr == nil {
-		if !replace {
-			b.copyStoredMetadata(ctx, srcFp, dstFp)
-		}
-		// The copy streamed the source bytes, so the ETag of the destination was
-		// computed during that upload; answering an empty one made clients treat
-		// a successful copy as an object they cannot validate.
-		if stored, ok := b.loadObjectMetadata(ctx, dstFp); ok {
-			dstETag = storedETag(stored)
-		}
+	if !replace {
+		b.copyStoredMetadata(ctx, srcFp, dstFp)
+	}
+	// The copy reports the ETag of the source, which in version mode is not the
+	// MD5 of the content the upload recorded, so the destination is given that
+	// same value. Without it a HEAD right after the copy answers with a different
+	// ETag than the copy itself returned.
+	if node, getErr := fs.Get(ctx, dstFp, &fs.GetArgs{}); getErr == nil {
+		size, modTime := contentFingerprint(node.GetSize(), node.ModTime().UnixNano())
+		b.recordIdentity(ctx, dstFp, hex.EncodeToString(c.Hash), size, modTime)
 	}
 
-	if srcModified.IsZero() {
-		srcModified = time.Now().UTC()
+	modTime := time.Now().UTC()
+	if srcNode != nil && !srcNode.ModTime().IsZero() {
+		modTime = srcNode.ModTime().UTC()
+	}
+	etag := c.ETag
+	if etag == "" {
+		etag = `"` + hex.EncodeToString(c.Hash) + `"`
 	}
 	return gofakes3.CopyObjectResult{
-		ETag:         dstETag,
-		LastModified: gofakes3.NewContentTime(srcModified),
+		ETag:         etag,
+		LastModified: gofakes3.NewContentTime(modTime),
 	}, nil
 }
 

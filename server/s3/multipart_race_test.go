@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -197,9 +197,11 @@ func TestMultipartCompleteManyParts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %+v", err)
 	}
-	// The composite ETag of a 200-part upload ends with its part count.
-	if !strings.HasSuffix(etag, `-200"`) {
-		t.Fatalf("complete etag = %q, want a composite <md5>-200", etag)
+	// This variant keeps the whole-object MD5 as the ETag (its identity model in
+	// patch 0004 derives the value from stored state so a HEAD after a restart
+	// answers the same thing, which a part-composite digest cannot do).
+	if !regexp.MustCompile(`^"[0-9a-f]{32}"$`).MatchString(etag) {
+		t.Fatalf("complete etag = %q, want a quoted whole-object MD5", etag)
 	}
 
 	val, ok := b.uploads.Load(uploadID)

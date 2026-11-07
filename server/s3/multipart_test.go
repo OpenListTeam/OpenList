@@ -3,6 +3,8 @@ package s3
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -211,18 +213,14 @@ func TestMultipartUploadEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %+v", err)
 	}
-	// A multipart object answers the composite ETag S3 defines,
-	// "md5(md5(part)...)-N", and a later HEAD must report the same value: clients
-	// that verify a download against the ETag they were handed depend on it.
-	if !strings.HasSuffix(etag, `-3"`) {
-		t.Fatalf("complete etag = %q, want a composite <md5>-3", etag)
-	}
-	head, err := b.HeadObject(context.Background(), "mp", "dir/hello.txt")
-	if err != nil {
-		t.Fatalf("HeadObject: %+v", err)
-	}
-	if head.ETag != etag {
-		t.Fatalf("HEAD etag = %q, want the completion etag %q", head.ETag, etag)
+	// The ETag of the finished object is the MD5 of its complete content, not
+	// S3's "<md5 of part digests>-3": a client that performs a conditional write
+	// compares the ETag it gets here with the one a later HEAD reports, and the
+	// value derived from the part digests cannot be recomputed from the stored
+	// object after a restart.
+	contentSum := md5.Sum([]byte("Hello, multipart world!"))
+	if want := `"` + hex.EncodeToString(contentSum[:]) + `"`; etag != want {
+		t.Fatalf("complete etag = %q, want %q (the content MD5)", etag, want)
 	}
 
 	// The object must exist on disk with the concatenated content.
