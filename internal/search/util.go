@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -9,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/search/searcher"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
@@ -19,6 +21,42 @@ func Progress() (*model.IndexProgress, error) {
 	var progress model.IndexProgress
 	err := utils.Json.UnmarshalFromString(p, &progress)
 	return &progress, err
+}
+
+// ProgressWithStats refreshes the displayed count without changing saved build history.
+func ProgressWithStats(ctx context.Context) (*model.IndexProgress, error) {
+	progress, err := Progress()
+	if err != nil {
+		return nil, err
+	}
+	if Running() {
+		progress.IsDone = false
+		return progress, nil
+	}
+	refreshProgressStats(ctx, progress, instance)
+	return progress, nil
+}
+
+func refreshProgressStats(ctx context.Context, progress *model.IndexProgress, backend searcher.Searcher) {
+	if !progress.IsDone {
+		return
+	}
+	provider, ok := backend.(searcher.StatsProvider)
+	if !ok {
+		return
+	}
+	stats, err := provider.GetIndexStats(ctx)
+	if err != nil {
+		// Statistics must not make the saved progress unavailable (e.g. missing stats.get permission).
+		log.Warnf("refresh index statistics error: %v", err)
+		return
+	}
+	if stats.IsIndexing {
+		// Keep the frontend polling until queued and processing tasks have finished.
+		progress.IsDone = false
+		return
+	}
+	progress.ObjCount = stats.ObjectCount
 }
 
 func WriteProgress(progress *model.IndexProgress) {

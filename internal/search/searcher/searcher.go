@@ -13,6 +13,17 @@ type Config struct {
 
 type Filter func(node model.SearchNode) bool
 
+// IndexStats describes the indexed documents and any outstanding index work.
+type IndexStats struct {
+	ObjectCount uint64
+	IsIndexing  bool
+}
+
+// StatsProvider optionally supplies authoritative statistics without scanning storage.
+type StatsProvider interface {
+	GetIndexStats(ctx context.Context) (IndexStats, error)
+}
+
 // FilteredSearcher applies filtering before calculating pagination and totals.
 type FilteredSearcher interface {
 	SearchFiltered(ctx context.Context, req model.SearchReq, filter Filter) ([]model.SearchNode, int64, error)

@@ -121,7 +121,9 @@ func ClearIndex(c *gin.Context) {
 }
 
 func GetProgress(c *gin.Context) {
-	progress, err := search.Progress()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	progress, err := search.ProgressWithStats(ctx)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
