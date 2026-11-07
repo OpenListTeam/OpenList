@@ -17,7 +17,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/tache"
@@ -56,7 +55,7 @@ func (t *TransferTask) Run() error {
 			if err != nil {
 				return err
 			}
-			r, err := rr.RangeRead(t.Ctx(), http_range.Range{Length: t.GetTotalBytes()})
+			r, err := stream.NewResumableReader(t.Ctx(), rr, t.GetTotalBytes())
 			if err != nil {
 				return err
 			}
