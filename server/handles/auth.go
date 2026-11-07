@@ -57,8 +57,10 @@ func loginHash(c *gin.Context, req *LoginReq) {
 	// check username
 	user, err := op.GetUserByName(req.Username)
 	if err != nil {
-		common.ErrorStrResp(c, model.InvalidUsernameOrPassword, 401)
-		model.LoginCache.Set(ip, count+1, cache.WithEx[int](model.DefaultLockDuration))
+		failure := common.ErrorUserLookupResp(c, err)
+		if failure.CountAsAuthFailure {
+			model.LoginCache.Set(ip, count+1, cache.WithEx[int](model.DefaultLockDuration))
+		}
 		return
 	}
 	// validate password hash

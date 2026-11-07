@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -93,15 +94,30 @@ func WebDAVAuth(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	user, ok := tryLogin(username, password)
-	if !ok {
+	user, err := tryLogin(username, password)
+	if err != nil {
 		if c.Request.Method == "OPTIONS" {
 			common.GinAppendValues(c, conf.UserKey, guest)
 			c.Next()
 			return
 		}
-		model.LoginCache.Set(ip, count+1)
-		c.Status(http.StatusUnauthorized)
+		failure := common.ClassifyAuthError(err)
+		if failure.CountAsAuthFailure {
+			model.LoginCache.Set(ip, count+1)
+		}
+		status := http.StatusUnauthorized
+		switch failure.Code {
+		case 503:
+			status = http.StatusServiceUnavailable
+		case 500:
+			status = http.StatusInternalServerError
+		}
+		if errs.IsDatabaseBusy(err) {
+			log.Errorf("[webdav auth] database busy during login: %+v", err)
+		} else if failure.Code == 500 {
+			log.Errorf("[webdav auth] login failed: %+v", err)
+		}
+		c.Status(status)
 		c.Abort()
 		return
 	}
@@ -151,7 +167,7 @@ func WebDAVAuth(c *gin.Context) {
 	c.Next()
 }
 
-func tryLogin(username, password string) (*model.User, bool) {
+func tryLogin(username, password string) (*model.User, error) {
 	user, err := op.GetUserByName(username)
 	if err == nil {
 		err = user.ValidateRawPassword(password)
@@ -161,5 +177,5 @@ func tryLogin(username, password string) (*model.User, bool) {
 	} else if setting.GetBool(conf.LdapLoginEnabled) && model.CanWebdavRead(int32(setting.GetInt(conf.LdapDefaultPermission, 0))) {
 		user, err = tryLdapLoginAndRegister(username, password)
 	}
-	return user, err == nil
+	return user, err
 }

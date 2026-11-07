@@ -7,6 +7,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -65,6 +66,9 @@ func (d *SftpDriver) GetConfig() *sftpd.Config {
 func (d *SftpDriver) GetFileSystem(sc *ssh.ServerConn) (sftpd.FileSystem, error) {
 	userObj, err := op.GetUserByName(sc.User())
 	if err != nil {
+		if errs.IsDatabaseBusy(err) {
+			return nil, errs.ErrDatabaseBusy
+		}
 		return nil, err
 	}
 	ctx := context.Background()
@@ -110,7 +114,13 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 		userObj, err = tryLdapLoginAndRegister(conn.User(), pass)
 	}
 	if err != nil {
-		model.LoginCache.Set(ip, count+1)
+		failure := common.ClassifyAuthError(err)
+		if failure.CountAsAuthFailure {
+			model.LoginCache.Set(ip, count+1)
+		}
+		if errs.IsDatabaseBusy(err) {
+			return nil, errs.ErrDatabaseBusy
+		}
 		return nil, err
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
@@ -124,6 +134,9 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 func (d *SftpDriver) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	userObj, err := op.GetUserByName(conn.User())
 	if err != nil {
+		if errs.IsDatabaseBusy(err) {
+			return nil, errs.ErrDatabaseBusy
+		}
 		return nil, err
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {

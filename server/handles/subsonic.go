@@ -13,6 +13,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -322,8 +323,12 @@ func SubsonicAPI(c *gin.Context) {
 		return
 	}
 
-	user, _, ok := subAuth(c)
-	if !ok {
+	user, _, err := subAuth(c)
+	if err != nil {
+		if errs.IsDatabaseBusy(err) {
+			subError(c, 0, model.DatabaseTemporarilyUnavailable)
+			return
+		}
 		// 锁定判定同样要看用户名维度，否则被锁的账号只会收到「密码错误」
 		if mediaAuthLockedFor(c, subParam(c, "u")) {
 			subError(c, 40, "Too many failed attempts, please try again later")
@@ -477,21 +482,22 @@ func subIntParam(c *gin.Context, key string, def int) int {
 }
 
 // subAuth 支持 apiKey / u+t+s / u+p（默认关闭）认证，并对失败次数做 IP + 用户名双维度限流
-func subAuth(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
+func subAuth(c *gin.Context) (*model.User, *model.MediaAppKey, error) {
 	username := strings.TrimSpace(subParam(c, "u"))
 	if mediaAuthLockedFor(c, username) {
-		return nil, nil, false
+		return nil, nil, errs.WrongPassword
 	}
-	u, k, ok := subAuthInner(c)
-	if ok {
+	u, k, err := subAuthInner(c)
+	if err == nil {
 		// 用真实用户名清除计数：apiKey 认证时 u 参数是空的
 		mediaAuthSucceededFor(c, u.Username)
-	} else if subHasCredential(c) {
+	} else if subHasCredential(c) && !errs.IsDatabaseBusy(err) {
 		// 只有「确实带了凭据但校验失败」才计数；
 		// 完全裸请求（部分客户端启动时会先发一次不带参数的探测）不计入失败次数。
+		// DB contention must not inflate auth lockout counters.
 		mediaAuthFailedFor(c, username)
 	}
-	return u, k, ok
+	return u, k, err
 }
 
 // subHasCredential 判断请求是否真的携带了认证凭据
@@ -500,13 +506,13 @@ func subHasCredential(c *gin.Context) bool {
 		subParam(c, "t") != "" || subParam(c, "p") != ""
 }
 
-func subAuthInner(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
+func subAuthInner(c *gin.Context) (*model.User, *model.MediaAppKey, error) {
 	// OpenSubsonic apiKey 扩展：直接把应用密钥放在 apiKey 参数里
 	if key := strings.TrimSpace(subParam(c, "apiKey")); key != "" {
 		if u, k, ok := subAuthByAppKey(key); ok {
-			return u, k, true
+			return u, k, nil
 		}
-		return nil, nil, false
+		return nil, nil, errs.WrongPassword
 	}
 	username := strings.TrimSpace(subParam(c, "u"))
 	password := decodeSubsonicPassword(subParam(c, "p"))
@@ -514,14 +520,17 @@ func subAuthInner(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
 	if username == "" {
 		if password != "" {
 			if u, k, ok := subAuthByAppKey(password); ok {
-				return u, k, true
+				return u, k, nil
 			}
 		}
-		return nil, nil, false
+		return nil, nil, errs.WrongPassword
 	}
 	user, err := op.GetUserByName(username)
-	if err != nil || user.Disabled || user.IsGuest() {
-		return nil, nil, false
+	if err != nil {
+		return nil, nil, err
+	}
+	if user.Disabled || user.IsGuest() {
+		return nil, nil, errs.WrongPassword
 	}
 	// t+s：用应用密钥的明文做 md5(密码+salt) 校验（Subsonic token 认证）
 	if salt := subParam(c, "s"); salt != "" {
@@ -534,7 +543,7 @@ func subAuthInner(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
 				}
 				if media.MatchSubsonicToken(plain, salt, token) {
 					db.TouchMediaAppKey(keys[i].ID)
-					return user, &keys[i], true
+					return user, &keys[i], nil
 				}
 			}
 			// 不直接返回：个别客户端会同时带上 p，继续按明文校验
@@ -545,13 +554,13 @@ func subAuthInner(c *gin.Context) (*model.User, *model.MediaAppKey, bool) {
 		// 使用主账号密码认证会把登录密码暴露给第三方客户端，必须由管理员显式开启
 		if setting.GetBool(conf.MediaSubsonicAllowPwd) && user.OtpSecret == "" &&
 			user.ValidateRawPassword(password) == nil {
-			return user, nil, true
+			return user, nil, nil
 		}
 		if u, k, ok := subAuthByAppKey(password); ok && u.ID == user.ID {
-			return u, k, true
+			return u, k, nil
 		}
 	}
-	return nil, nil, false
+	return nil, nil, errs.WrongPassword
 }
 
 // decodeSubsonicPassword 解析 p 参数，兼容 Subsonic 的 enc:<hex> 编码

@@ -2,6 +2,7 @@ package handles
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -22,6 +23,10 @@ func LoginLdap(c *gin.Context) {
 		return
 	}
 	user, err := op.GetUserByName(req.Username)
+	if err != nil && !errs.IsRecordNotFound(err) {
+		common.ErrorUserLookupResp(c, err)
+		return
+	}
 	if err == nil && !user.AllowLdap {
 		common.ErrorStrResp(c, "login via ldap is not allowed", 403)
 		return
