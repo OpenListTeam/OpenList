@@ -169,6 +169,8 @@ func Init(e *gin.Engine) {
 }
 
 func admin(g *gin.RouterGroup) {
+	s3 := g.Group("/s3")
+	s3.GET("/access", handles.S3ObjectAccessList)
 	meta := g.Group("/meta")
 	meta.GET("/list", handles.ListMetas)
 	meta.GET("/get", handles.GetMeta)

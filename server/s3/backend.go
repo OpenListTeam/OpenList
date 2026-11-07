@@ -41,6 +41,7 @@ type s3Backend struct {
 	meta    *sync.Map
 	listDir func(context.Context, string) ([]model.Obj, error)
 	uploads *sync.Map // map[gofakes3.UploadID]*multipartState
+	access  accessTracker
 }
 
 // newBackend creates a new SimpleBucketBackend.
@@ -125,6 +126,7 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 	if node.IsDir() {
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
+	b.recordAccess(fp)
 
 	size := node.GetSize()
 	// hash := getFileHashByte(fobj)
@@ -169,6 +171,7 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 	if node.IsDir() {
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
+	b.recordAccess(fp)
 
 	link, file, err := fs.Link(ctx, fp, model.LinkArgs{})
 	if err != nil {
@@ -376,8 +379,12 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	}
 
 	fs.Remove(ctx, fp)
-	b.meta.Delete(fp)
+	// Drop the row before the cache entry: a HEAD that misses the cache would
+	// otherwise read the row back and describe an object that no longer exists.
 	b.deleteStoredMetadata(ctx, fp)
+	b.meta.Delete(fp)
+	// A read recorded just before the delete must not recreate the row later.
+	b.access.forget(fp)
 	return nil
 }
 

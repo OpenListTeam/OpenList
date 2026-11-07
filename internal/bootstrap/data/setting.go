@@ -238,6 +238,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.S3AccessKeyId, Value: "", Type: conf.TypeString, Group: model.S3, Flag: model.PRIVATE},
 		{Key: conf.S3SecretAccessKey, Value: "", Type: conf.TypeString, Group: model.S3, Flag: model.PRIVATE},
 		{Key: conf.S3Buckets, Value: "[]", Type: conf.TypeString, Group: model.S3, Flag: model.PRIVATE},
+		{Key: conf.S3AccessTrack, Value: "true", Type: conf.TypeBool, Group: model.S3, Flag: model.PRIVATE},
 
 		// ftp settings
 		{Key: conf.FTPPublicHost, Value: "127.0.0.1", Type: conf.TypeString, Group: model.FTP, Flag: model.PRIVATE},

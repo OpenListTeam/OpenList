@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -24,6 +25,12 @@ type S3ObjectMetadata struct {
 	Path    string `json:"path" gorm:"type:text"`
 	KeyHash string `json:"-" gorm:"size:64;uniqueIndex:idx_s3_object_metadata"`
 	Headers []byte `json:"headers"`
+	// LastAccess is when the S3 server last served a read of the object: a GET
+	// (full or ranged) or a HEAD. The storage drivers keep a modification time
+	// but no access time, and "was this read recently" exists nowhere but here -
+	// which is what a hot/cold split needs. A row of a never read object keeps
+	// it NULL.
+	LastAccess *time.Time `json:"last_access" gorm:"column:last_access;index:idx_s3_object_metadata_access"`
 }
 
 func (m *S3ObjectMetadata) BeforeSave(*gorm.DB) error {
