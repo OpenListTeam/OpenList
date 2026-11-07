@@ -25,6 +25,8 @@ type woPanMock struct {
 	refreshed  bool
 	badUA      int
 	refreshURL string
+	// expiredToken, when set, is rejected like an expired access token.
+	expiredToken string
 }
 
 func (m *woPanMock) transport(t *testing.T) http.RoundTripper {
@@ -70,7 +72,14 @@ func (m *woPanMock) transport(t *testing.T) http.RoundTripper {
 		case wopan.KeyFamilyUserCurrentEncode:
 			data = `{"defaultHomeId":42}`
 		}
-		body := `{"STATUS":"200","RSP":{"RSP_CODE":"0000","RSP_DESC":"","DATA":` + data + `}}`
+		code := "0000"
+		if m.expiredToken != "" && req.Header.Key != wopan.KeyAppRefreshToken &&
+			r.Header.Get("Accesstoken") == m.expiredToken {
+			// The live backend answers an invalid access token with RSP_CODE
+			// 1001 on both the api-user and the wohome channel.
+			code, data = "1001", "null"
+		}
+		body := `{"STATUS":"200","RSP":{"RSP_CODE":"` + code + `","RSP_DESC":"","DATA":` + data + `}}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Status:     "200 OK",
@@ -185,5 +194,33 @@ func TestInitClientCredentials(t *testing.T) {
 				t.Fatalf("defaultFamilyID = %q, want %q", d.defaultFamilyID, tt.wantFamilyID)
 			}
 		})
+	}
+}
+
+// TestInitClientRefreshesExpiredAccessToken covers a stored access token that
+// has expired while the refresh token is still valid. Only wohome requests
+// refresh the token on failure; api-user requests such as AppQueryUser (sent by
+// InitData) do not, so init has to reach the server through wohome first.
+func TestInitClientRefreshesExpiredAccessToken(t *testing.T) {
+	const expiredAccessToken = "0123456789abcdef"
+
+	mock := &woPanMock{expiredToken: expiredAccessToken}
+	d := &Wopan{Addition: Addition{
+		AccessToken:  expiredAccessToken,
+		RefreshToken: "refresh",
+	}}
+	newTestClient(d, mock.transport(t))
+
+	if err := d.initClient(context.Background()); err != nil {
+		t.Fatalf("initClient returned error: %v (calls: %v)", err, mock.calls)
+	}
+	if !mock.refreshed {
+		t.Fatalf("expected the expired access token to be refreshed (calls: %v)", mock.calls)
+	}
+	if d.AccessToken != "fedcba9876543210" || d.RefreshToken != "new-refresh" {
+		t.Fatalf("tokens = %q, %q, want the refreshed pair", d.AccessToken, d.RefreshToken)
+	}
+	if d.defaultFamilyID != "42" {
+		t.Fatalf("defaultFamilyID = %q, want 42", d.defaultFamilyID)
 	}
 }
