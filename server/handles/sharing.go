@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -218,8 +219,15 @@ func SharingDown(c *gin.Context) {
 	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath); url != "" {
-				c.Redirect(302, url)
-				return
+				// Served by the configured proxy, so the shared file was read -
+				// same rule as the link branch below, and the same condition: a
+				// row only for a path that really is an object, because this
+				// handler is public and the unwrapped path follows the request.
+				if _, err := fs.Get(c.Request.Context(), unwrapPath, &fs.GetArgs{NoLog: true}); err == nil {
+					recordRead(c, unwrapPath)
+					c.Redirect(302, url)
+					return
+				}
 			}
 		}
 		link, obj, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{
@@ -231,6 +239,12 @@ func SharingDown(c *gin.Context) {
 			common.ErrorPage(c, errors.New("failed get sharing link"), 500)
 			return
 		}
+		// A share being read is the file being read: record it under its real path,
+		// so that a file kept alive by a shared link is not archived. Only once the
+		// link exists: recording earlier let an unauthenticated caller mint rows for
+		// paths that are not objects (the request path is client-chosen) with every
+		// 500 it provoked.
+		recordRead(c, unwrapPath)
 		proxy(c, link, obj, storage.GetStorage().ProxyRange)
 	} else {
 		link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{
@@ -244,6 +258,8 @@ func SharingDown(c *gin.Context) {
 			common.ErrorPage(c, errors.New("failed get sharing link"), 500)
 			return
 		}
+		// Record only what was really served: see the note in the proxy branch.
+		recordRead(c, unwrapPath)
 		redirect(c, link)
 	}
 }
@@ -295,6 +311,9 @@ func SharingArchiveExtract(c *gin.Context) {
 			if dealErrorPage(c, err) {
 				return
 			}
+			// Serving an entry out of the shared archive is reading the archive:
+			// record the file the storage holds, not the entry inside it.
+			recordRead(c, unwrapPath)
 			proxy(c, link, obj, storage.GetStorage().ProxyRange)
 		} else {
 			args.Redirect = true
@@ -302,6 +321,7 @@ func SharingArchiveExtract(c *gin.Context) {
 			if dealErrorPage(c, err) {
 				return
 			}
+			recordRead(c, unwrapPath)
 			redirect(c, link)
 		}
 	} else {
@@ -309,6 +329,7 @@ func SharingArchiveExtract(c *gin.Context) {
 		if dealErrorPage(c, err) {
 			return
 		}
+		recordRead(c, unwrapPath)
 		fileName := stdpath.Base(innerPath)
 		proxyInternalExtract(c, rc, size, fileName)
 	}

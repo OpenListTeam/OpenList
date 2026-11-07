@@ -333,6 +333,9 @@ func ArchiveDown(c *gin.Context) {
 			common.ErrorPage(c, err, 500)
 			return
 		}
+		// The archive file is what the storage holds, and what a tiering pass
+		// moves: reading one entry inside it is reading it.
+		recordRead(c, archiveRawPath)
 		redirect(c, link)
 	}
 }
@@ -363,6 +366,7 @@ func ArchiveProxy(c *gin.Context) {
 			common.ErrorPage(c, err, 500)
 			return
 		}
+		recordRead(c, archiveRawPath)
 		proxy(c, link, file, storage.GetStorage().ProxyRange)
 	} else {
 		common.ErrorPage(c, errors.New("proxy not allowed"), 403)
@@ -406,6 +410,10 @@ func ArchiveInternalExtract(c *gin.Context) {
 		common.ErrorPage(c, err, 500)
 		return
 	}
+	// Same rule as ArchiveDown/ArchiveProxy: serving an entry reads the archive the
+	// storage holds, and that is the file a tiering pass moves. This endpoint needs
+	// its own call because it streams the entry itself instead of using a link.
+	recordRead(c, archiveRawPath)
 	fileName := stdpath.Base(innerPath)
 	proxyInternalExtract(c, rc, size, fileName)
 }

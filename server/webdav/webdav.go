@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/access"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -322,6 +323,16 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	if err != nil {
 		return http.StatusNotFound, err
 	}
+	// A WebDAV client is reading the file: record it like a /d download, so that a
+	// mounted drive keeps its files hot. Only GET serves content though - HEAD and
+	// POST are probes (davfs2, Windows Explorer, rclone and `curl -I` send HEAD
+	// while merely listing a directory), and file_access feeds the hot/cold
+	// tiering job, so a probe must not make a file look hot.
+	recordRead := func() {
+		if r.Method == http.MethodGet {
+			access.Record(reqPath)
+		}
+	}
 	if fi.IsDir() {
 		if r.Method == http.MethodHead {
 			w.Header().Set("Content-Type", "httpd/unix-directory")
@@ -339,6 +350,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		}
 		defer link.Close()
 		http.Redirect(w, r, link.URL, http.StatusFound)
+		recordRead()
 		return 0, nil
 	}
 
@@ -346,6 +358,10 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		if url := common.GenerateDownProxyURL(storage.GetStorage(), reqPath); url != "" {
 			w.Header().Set("Cache-Control", "max-age=0, no-cache, no-store, must-revalidate")
 			http.Redirect(w, r, url, http.StatusFound)
+			// The proxy streams the file, so the GET read it: the same record the
+			// local proxy and the 302_redirect policy make below. The object was
+			// already resolved by fs.Get above, so the path is known to exist.
+			recordRead()
 			return 0, nil
 		}
 	}
@@ -366,6 +382,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		}
 		return http.StatusInternalServerError, fmt.Errorf("webdav proxy error: %+v", err)
 	}
+	recordRead()
 	return 0, nil
 }
 

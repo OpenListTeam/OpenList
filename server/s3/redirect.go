@@ -71,6 +71,7 @@ func directObjectURL(r *http.Request, authPairs map[string]string) (string, bool
 	if file == nil || file.IsDir() || link.URL == "" || link.RangeReader != nil {
 		return "", false
 	}
+	recordFileRead(reqPath, file)
 	return link.URL, true
 }
 

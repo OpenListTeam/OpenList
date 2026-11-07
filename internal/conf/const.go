@@ -52,6 +52,7 @@ const (
 	FilenameCharMapping     = "filename_char_mapping"
 	ForwardDirectLinkParams = "forward_direct_link_params"
 	IgnoreDirectLinkParams  = "ignore_direct_link_params"
+	FileAccessTrack         = "file_access_track"
 	WebauthnLoginEnabled    = "webauthn_login_enabled"
 	SharePreview            = "share_preview"
 	ShareArchivePreview     = "share_archive_preview"

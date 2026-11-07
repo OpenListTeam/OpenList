@@ -2,8 +2,10 @@ package handles
 
 import (
 	"errors"
+	"net/http"
 	stdpath "path"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/access"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -39,6 +41,10 @@ func Down(c *gin.Context) {
 			common.ErrorPage(c, err, 500)
 			return
 		}
+		// The file is really being served now: this is the moment the hot/cold
+		// split needs, because it is the only evidence that the file is still
+		// in use.
+		recordRead(c, rawPath)
 		redirect(c, link)
 	}
 }
@@ -56,8 +62,17 @@ func Proxy(c *gin.Context) {
 	if forceProxy || canProxy(storage, filename) {
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath); url != "" {
-				c.Redirect(302, url)
-				return
+				// The proxy serves the content, so this redirect is a read like
+				// any other - without the record an instance that offloads its
+				// downloads reports the library as never read. Only for an
+				// object though: the request path is client-chosen and /p is
+				// reachable without a sign, so a path that is not there falls
+				// through to the link below and reports its error instead.
+				if _, err := fs.Get(c.Request.Context(), rawPath, &fs.GetArgs{NoLog: true}); err == nil {
+					recordRead(c, rawPath)
+					c.Redirect(302, url)
+					return
+				}
 			}
 		}
 		link, file, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
@@ -68,11 +83,23 @@ func Proxy(c *gin.Context) {
 			common.ErrorPage(c, err, 500)
 			return
 		}
+		recordRead(c, rawPath)
 		proxy(c, link, file, storage.GetStorage().ProxyRange)
 	} else {
 		common.ErrorPage(c, errors.New("proxy not allowed"), 403)
 		return
 	}
+}
+
+// recordRead marks path as read by the client that asked for it. Only a GET
+// serves content: HEAD is what players, browsers and link checkers send to learn
+// a file's size before deciding to download it, and file_access is the input of
+// the hot/cold tiering job, so a probe must not make a file look hot.
+func recordRead(c *gin.Context, path string) {
+	if c.Request.Method != http.MethodGet {
+		return
+	}
+	access.Record(path)
 }
 
 func redirect(c *gin.Context, link *model.Link) {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/access"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -127,6 +128,7 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
 	b.recordAccess(fp)
+	recordFileRead(fp, node)
 
 	size := node.GetSize()
 	// hash := getFileHashByte(fobj)
@@ -177,6 +179,7 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 	if err != nil {
 		return nil, err
 	}
+	recordFileRead(fp, file)
 	defer func() {
 		if s3Obj == nil {
 			_ = link.Close()
@@ -385,6 +388,7 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	b.meta.Delete(fp)
 	// A read recorded just before the delete must not recreate the row later.
 	b.access.forget(fp)
+	access.Forget(fp)
 	return nil
 }
 
