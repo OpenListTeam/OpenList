@@ -246,11 +246,7 @@ func (d *PikPak) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	}
 
 	params := resp.Resumable.Params
-	// endpoint := strings.Join(strings.Split(params.Endpoint, ".")[1:], ".")
-	// web 端上传 返回的endpoint 为 `mypikpak.net` | android 端上传 返回的endpoint 为 `vip-lixian-07.mypikpak.net`·
-	if d.Addition.Platform == "android" {
-		params.Endpoint = "mypikpak.net"
-	}
+	params.Endpoint = normalizeUploadEndpoint(params.Endpoint, params.Bucket)
 
 	if stream.GetSize() <= 10*utils.MB { // 文件大小 小于10MB，改用普通模式上传
 		return d.UploadByOSS(ctx, &params, stream, up)
