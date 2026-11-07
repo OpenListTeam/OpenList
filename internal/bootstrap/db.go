@@ -50,8 +50,7 @@ func InitDB() {
 				if !(strings.HasSuffix(database.DBFile, ".db") && len(database.DBFile) > 3) {
 					log.Fatalf("db name error.")
 				}
-				dB, err = gorm.Open(openSQLite(fmt.Sprintf("%s?_journal=WAL&_vacuum=incremental",
-					database.DBFile)), gormConfig)
+				dB, err = gorm.Open(openSQLite(database.DBFile), gormConfig)
 			}
 		case "mysql":
 			{
@@ -85,4 +84,21 @@ func InitDB() {
 		log.Fatalf("failed to connect database:%s", err.Error())
 	}
 	db.Init(dB)
+}
+
+// appendDSNParams appends SQLite DSN query parameters while keeping the ones
+// already present. The accepted pragma syntax differs between the pure-Go and
+// the cgo builds, so each build supplies its own parameter list.
+func appendDSNParams(dsn, params string) string {
+	if params == "" {
+		return dsn
+	}
+	switch {
+	case strings.HasSuffix(dsn, "?"), strings.HasSuffix(dsn, "&"):
+		return dsn + params
+	case strings.Contains(dsn, "?"):
+		return dsn + "&" + params
+	default:
+		return dsn + "?" + params
+	}
 }
