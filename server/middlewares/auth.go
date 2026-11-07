@@ -54,8 +54,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 		}
 		user, err := op.GetUserByName(userClaims.Username)
 		if err != nil {
-			common.ErrorResp(c, err, 401)
-			c.Abort()
+			common.ErrorUserLookupResp(c, err)
 			return
 		}
 		// validate password timestamp
@@ -109,8 +108,7 @@ func Authn(c *gin.Context) {
 	}
 	user, err := op.GetUserByName(userClaims.Username)
 	if err != nil {
-		common.ErrorResp(c, err, 401)
-		c.Abort()
+		common.ErrorUserLookupResp(c, err)
 		return
 	}
 	// validate password timestamp

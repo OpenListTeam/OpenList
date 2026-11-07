@@ -19,6 +19,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/media"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -998,7 +999,16 @@ func embyAuthenticateByName(c *gin.Context) {
 		return
 	}
 	user, err := op.GetUserByName(username)
-	if err != nil || user.Disabled || user.IsGuest() {
+	if err != nil {
+		if errs.IsDatabaseBusy(err) {
+			c.JSON(503, gin.H{"Error": model.DatabaseTemporarilyUnavailable})
+			return
+		}
+		mediaAuthFailedFor(c, username)
+		embyUnauthorized(c)
+		return
+	}
+	if user.Disabled || user.IsGuest() {
 		mediaAuthFailedFor(c, username)
 		embyUnauthorized(c)
 		return
@@ -1018,7 +1028,16 @@ func embyAuthenticateByID(c *gin.Context, idStr string) {
 		return
 	}
 	user, err := op.GetUserById(id)
-	if err != nil || user.Disabled || user.IsGuest() {
+	if err != nil {
+		if errs.IsDatabaseBusy(err) {
+			c.JSON(503, gin.H{"Error": model.DatabaseTemporarilyUnavailable})
+			return
+		}
+		mediaAuthFailed(c)
+		embyUnauthorized(c)
+		return
+	}
+	if user.Disabled || user.IsGuest() {
 		mediaAuthFailed(c)
 		embyUnauthorized(c)
 		return

@@ -15,6 +15,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -137,7 +138,13 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 			userObj, err = tryLdapLoginAndRegister(user, pass)
 		}
 		if err != nil {
-			model.LoginCache.Set(ip, count+1)
+			failure := common.ClassifyAuthError(err)
+			if failure.CountAsAuthFailure {
+				model.LoginCache.Set(ip, count+1)
+			}
+			if errs.IsDatabaseBusy(err) {
+				return nil, errs.ErrDatabaseBusy
+			}
 			return nil, err
 		}
 	}

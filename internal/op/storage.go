@@ -306,6 +306,9 @@ func saveDriverStorage(driver driver.Driver) error {
 	storage.Addition = str
 	err = db.UpdateStorage(storage)
 	if err != nil {
+		if errs.IsDatabaseBusy(err) {
+			return errors.WithMessage(errs.ErrDatabaseBusy, "failed update storage in database")
+		}
 		return errors.WithMessage(err, "failed update storage in database")
 	}
 	return nil

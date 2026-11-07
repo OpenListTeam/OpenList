@@ -37,9 +37,11 @@ func BeginAuthnLogin(c *gin.Context) {
 	if username := c.Query("username"); username != "" {
 		var user *model.User
 		user, err = db.GetUserByName(username)
-		if err == nil {
-			options, sessionData, err = authnInstance.BeginLogin(user)
+		if err != nil {
+			common.ErrorUserLookupResp(c, err)
+			return
 		}
+		options, sessionData, err = authnInstance.BeginLogin(user)
 	} else { // client-side discoverable login
 		options, sessionData, err = authnInstance.BeginDiscoverableLogin()
 	}
@@ -88,7 +90,7 @@ func FinishAuthnLogin(c *gin.Context) {
 	if username := c.Query("username"); username != "" {
 		user, err = db.GetUserByName(username)
 		if err != nil {
-			common.ErrorResp(c, err, 400)
+			common.ErrorUserLookupResp(c, err)
 			return
 		}
 		_, err = authnInstance.FinishLogin(user, sessionData, c.Request)
