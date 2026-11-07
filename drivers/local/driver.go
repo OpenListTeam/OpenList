@@ -70,8 +70,8 @@ func (d *Local) Init(ctx context.Context) error {
 		d.Addition.RootFolderPath = abs
 	}
 	if d.DirectorySize {
-		d.directoryMap.root = d.GetRootPath()
-		_, err := d.directoryMap.CalculateDirSize(d.GetRootPath())
+		d.directoryMap.root = filepath.Clean(d.GetRootPath())
+		_, err := d.directoryMap.CalculateDirSize(d.directoryMap.root)
 		if err != nil {
 			return err
 		}
