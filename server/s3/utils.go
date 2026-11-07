@@ -20,6 +20,11 @@ import (
 type Bucket struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+	// Public marks the bucket as readable without AWS credentials (anonymous
+	// GET/HEAD only). Writes always require a configured access key. It is
+	// opt-in and off by default so existing deployments keep their current
+	// access behaviour after upgrading.
+	Public bool `json:"public,omitempty"`
 }
 
 func mapBackendError(err error) error {
@@ -48,6 +53,15 @@ func getBucketByName(name string) (Bucket, error) {
 		}
 	}
 	return Bucket{}, gofakes3.BucketNotFound(name)
+}
+
+// isPublicBucket reports whether the named bucket allows anonymous reads.
+func isPublicBucket(name string) bool {
+	bucket, err := getBucketByName(name)
+	if err != nil {
+		return false
+	}
+	return bucket.Public
 }
 
 func getDirEntries(ctx context.Context, path string) ([]model.Obj, error) {
@@ -164,12 +178,5 @@ func prefixParser(p *gofakes3.Prefix) (path, remaining string) {
 // }
 
 func authlistResolver() map[string]string {
-	s3accesskeyid := setting.GetStr(conf.S3AccessKeyId)
-	s3secretaccesskey := setting.GetStr(conf.S3SecretAccessKey)
-	if s3accesskeyid == "" && s3secretaccesskey == "" {
-		return nil
-	}
-	authList := make(map[string]string)
-	authList[s3accesskeyid] = s3secretaccesskey
-	return authList
+	return resolveAuthPairs()
 }

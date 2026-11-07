@@ -63,12 +63,21 @@ func (b *s3Backend) ListBuckets(ctx context.Context) ([]gofakes3.BucketInfo, err
 		return nil, err
 	}
 	var response []gofakes3.BucketInfo
+	rule, _ := ctx.Value(s3AuthRuleContextKey).(*S3BucketAuthRule)
+
 	for _, b := range buckets {
+		if rule != nil && !rule.MatchesBucket(b.Name) {
+			continue
+		}
 		node, _ := fs.Get(ctx, b.Path, &fs.GetArgs{})
+		var creationDate time.Time
+		if node != nil {
+			creationDate = node.ModTime()
+		}
 		response = append(response, gofakes3.BucketInfo{
 			// Name:         gofakes3.URLEncode(b.Name),
 			Name:         b.Name,
-			CreationDate: gofakes3.NewContentTime(node.ModTime()),
+			CreationDate: gofakes3.NewContentTime(creationDate),
 		})
 	}
 	return response, nil

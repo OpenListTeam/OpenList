@@ -17,16 +17,16 @@ import (
 	"github.com/OpenListTeam/gofakes3/signature"
 )
 
-func redirectHandler(next http.Handler, authPairs map[string]string) http.Handler {
+func redirectHandler(next http.Handler, keys *keyRing) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if u, ok := directObjectURL(r, authPairs); ok {
+		if u, ok := directObjectURL(r, keys); ok {
 			w.Header().Set("Referrer-Policy", "no-referrer")
 			w.Header().Set("Cache-Control", "max-age=0, no-cache, no-store, must-revalidate")
 			w.Header().Set("Location", u)
 			w.WriteHeader(http.StatusFound)
 			return
 		}
-		if u, ok := directUploadURL(r, authPairs); ok {
+		if u, ok := directUploadURL(r, keys); ok {
 			w.Header().Set("Referrer-Policy", "no-referrer")
 			w.Header().Set("Location", u)
 			w.Header().Set("Cache-Control", "no-store")
@@ -37,15 +37,15 @@ func redirectHandler(next http.Handler, authPairs map[string]string) http.Handle
 	})
 }
 
-func directObjectURL(r *http.Request, authPairs map[string]string) (string, bool) {
+func directObjectURL(r *http.Request, keys *keyRing) (string, bool) {
 	if r.Method != http.MethodGet {
 		return "", false
 	}
-	if hasNonObjectQuery(r) || !s3RequestAuthorized(r, authPairs) {
+	if hasNonObjectQuery(r) || !s3RequestAuthorized(r, keys) {
 		return "", false
 	}
 	bucketName, objectName, ok := parseObjectPath(r.URL.Path)
-	if !ok {
+	if !ok || !s3BucketReadAllowed(r, bucketName) {
 		return "", false
 	}
 	bucket, err := getBucketByName(bucketName)
@@ -75,11 +75,11 @@ func directObjectURL(r *http.Request, authPairs map[string]string) (string, bool
 	return link.URL, true
 }
 
-func directUploadURL(r *http.Request, authPairs map[string]string) (string, bool) {
+func directUploadURL(r *http.Request, keys *keyRing) (string, bool) {
 	if r.Method != http.MethodPut || r.ContentLength < 0 {
 		return "", false
 	}
-	if hasNonObjectQuery(r) || !s3RequestAuthorized(r, authPairs) {
+	if hasNonObjectQuery(r) || !s3RequestAuthorized(r, keys) {
 		return "", false
 	}
 	if r.Header.Get("X-Amz-Copy-Source") != "" ||
@@ -87,7 +87,7 @@ func directUploadURL(r *http.Request, authPairs map[string]string) (string, bool
 		return "", false
 	}
 	bucketName, objectName, ok := parseObjectPath(r.URL.Path)
-	if !ok || strings.HasSuffix(objectName, "/") {
+	if !ok || strings.HasSuffix(objectName, "/") || !s3BucketAuthorized(r, bucketName) || !s3BucketCanWrite(r) {
 		return "", false
 	}
 	bucket, err := getBucketByName(bucketName)
@@ -156,8 +156,10 @@ func hasNonObjectQuery(r *http.Request) bool {
 	return false
 }
 
-func s3RequestAuthorized(r *http.Request, authPairs map[string]string) bool {
-	if len(authPairs) == 0 {
+func s3RequestAuthorized(r *http.Request, keys *keyRing) bool {
+	if keys == nil || keys.empty() {
+		// No key configured at all: upstream treats such a gateway as open, so
+		// the direct-transfer redirect stays available.
 		return true
 	}
 	// Verify against the keys this server was configured with. V4SignVerify and
@@ -165,13 +167,9 @@ func s3RequestAuthorized(r *http.Request, authPairs map[string]string) bool {
 	// gofakes3 never writes (keys are kept per instance), so they always
 	// returned InvalidAccessKeyId and the 302/307 direct-transfer redirects
 	// never ran. Same V4-then-V2 order the auth middleware uses.
-	lookup := func(accessKey string) (string, bool) {
-		secret, ok := authPairs[accessKey]
-		return secret, ok
-	}
-	result := signature.V4SignVerifyWithLookup(r, lookup)
+	result := signature.V4SignVerifyWithLookup(r, keys.secret)
 	if result == signature.ErrUnsupportAlgorithm {
-		result = signature.V2SignVerifyWithLookup(r, lookup)
+		result = signature.V2SignVerifyWithLookup(r, keys.secret)
 	}
 	return result == signature.ErrNone
 }

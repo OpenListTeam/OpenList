@@ -147,6 +147,7 @@ const (
 	S3Buckets         = "s3_buckets"
 	S3AccessKeyId     = "s3_access_key_id"
 	S3SecretAccessKey = "s3_secret_access_key"
+	S3BucketAuth      = "s3_bucket_auth"
 	S3AccessTrack     = "s3_access_track"
 
 	// qbittorrent
