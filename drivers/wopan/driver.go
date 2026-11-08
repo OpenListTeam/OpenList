@@ -55,7 +55,7 @@ func (d *Wopan) Init(ctx context.Context) error {
 
 // initClient prepares the client before any dispatcher request is served.
 //
-// Two things have to happen here, in this order:
+// Three things have to happen here, in this order:
 //
 //  1. The browser User-Agent must be applied to the underlying resty client.
 //     The SDK only records it in WithUA/SetUA (and uses w.ua for upload2C), so
@@ -67,6 +67,11 @@ func (d *Wopan) Init(ctx context.Context) error {
 //     accessToken[:16]; with an empty token the SDK fails with
 //     "crypto/aes: invalid key size 0", which used to break refresh-token-only
 //     configurations during FamilyUserCurrentEncode.
+//  3. The default family must be queried before InitData. It is a wohome
+//     request, and the SDK refreshes the access token and retries when a
+//     wohome request fails, so a stored access token that has expired is
+//     renewed here. InitData starts with AppQueryUser on the api-user
+//     channel, which never refreshes and fails with RSP_CODE 1001 instead.
 func (d *Wopan) initClient(ctx context.Context) error {
 	d.client.SetUserAgent(wopan.DefaultUA)
 
@@ -82,9 +87,6 @@ func (d *Wopan) initClient(ctx context.Context) error {
 		}
 	}
 
-	if err := d.client.InitData(); err != nil {
-		return fmt.Errorf("initialize user data: %w", err)
-	}
 	fml, err := d.client.FamilyUserCurrentEncode(func(req *resty.Request) {
 		req.SetContext(ctx)
 	})
@@ -92,6 +94,10 @@ func (d *Wopan) initClient(ctx context.Context) error {
 		return fmt.Errorf("query default family: %w", err)
 	}
 	d.defaultFamilyID = strconv.Itoa(fml.DefaultHomeId)
+
+	if err := d.client.InitData(); err != nil {
+		return fmt.Errorf("initialize user data: %w", err)
+	}
 	return nil
 }
 
