@@ -140,6 +140,61 @@ func TestPutWritesThroughSymlink(t *testing.T) {
 	}
 }
 
+func TestPutWritesThroughRelativeSymlinkWithSymlinkParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks may require extra privileges on Windows")
+	}
+
+	for _, test := range []struct {
+		name     string
+		existing bool
+	}{
+		{name: "existing target", existing: true},
+		{name: "dangling target", existing: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			actualDir := filepath.Join(root, "x", "y")
+			if err := os.MkdirAll(actualDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(root, "a"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(root, "x", "y"), filepath.Join(root, "a", "b")); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(root, "x", "t.txt")
+			if test.existing {
+				if err := os.WriteFile(target, []byte("old"), 0o666); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink("../t.txt", filepath.Join(actualDir, "l")); err != nil {
+				t.Fatal(err)
+			}
+
+			file := &stream.FileStream{
+				Obj:    &model.Object{Name: "l", Size: 3},
+				Reader: bytes.NewReader([]byte("new")),
+			}
+			if err := (&Local{}).Put(context.Background(), &model.Object{Path: filepath.Join(root, "a", "b")}, file, nil); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != "new" {
+				t.Fatalf("target contents = %q, want %q", got, "new")
+			}
+			if _, err := os.Stat(filepath.Join(root, "a", "t.txt")); !os.IsNotExist(err) {
+				t.Fatalf("incorrect lexical target unexpectedly exists: err = %v", err)
+			}
+		})
+	}
+}
+
 func TestPutRejectsSymlinkLoop(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("creating symlinks may require extra privileges on Windows")
@@ -168,6 +223,36 @@ func TestPutRejectsSymlinkLoop(t *testing.T) {
 		if info.Mode()&os.ModeSymlink == 0 {
 			t.Fatalf("%s was replaced by a regular file", name)
 		}
+	}
+}
+
+func TestPutRejectsOverwriteOfReadOnlyFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permission bits are not supported on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can write read-only files")
+	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, "test.bin")
+	if err := os.WriteFile(path, []byte("old"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	file := &stream.FileStream{
+		Obj:    &model.Object{Name: "test.bin", Size: 3},
+		Reader: bytes.NewReader([]byte("new")),
+	}
+	if err := (&Local{}).Put(context.Background(), &model.Object{Path: root}, file, nil); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Put error = %v, want permission denied", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old" {
+		t.Fatalf("file contents = %q, want original contents", got)
 	}
 }
 

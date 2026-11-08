@@ -29,22 +29,34 @@ import (
 const thumbPrefix = "openlist_thumb_"
 
 // resolveSymlinkFile follows symlinks like os.Create does, including dangling ones.
-func resolveSymlinkFile(path string) string {
+func resolveSymlinkFile(path string) (string, error) {
 	for range 255 {
+		dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return path, err
+		}
+		path = filepath.Join(dir, filepath.Base(path))
+
 		info, err := os.Lstat(path)
-		if err != nil || info.Mode()&os.ModeSymlink == 0 {
-			return path
+		if err != nil {
+			if os.IsNotExist(err) {
+				return path, nil
+			}
+			return path, err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return path, nil
 		}
 		dst, err := os.Readlink(path)
 		if err != nil {
-			return path
+			return path, err
 		}
 		if !filepath.IsAbs(dst) {
 			dst = filepath.Join(filepath.Dir(path), dst)
 		}
 		path = dst
 	}
-	return path
+	return path, fmt.Errorf("too many symbolic links")
 }
 
 func isSymlinkDir(f fs.FileInfo, path string) bool {

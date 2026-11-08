@@ -424,11 +424,19 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	fullPath := resolveSymlinkFile(filepath.Join(dstDir.GetPath(), stream.GetName()))
+	fullPath, err := resolveSymlinkFile(filepath.Join(dstDir.GetPath(), stream.GetName()))
+	if err != nil {
+		return err
+	}
 	perm := os.FileMode(0o666)
 	stat, statErr := os.Stat(fullPath)
 	if statErr == nil {
 		perm = stat.Mode().Perm()
+		check, err := os.OpenFile(fullPath, os.O_WRONLY, 0)
+		if err != nil {
+			return err
+		}
+		_ = check.Close()
 	} else if !os.IsNotExist(statErr) {
 		return statErr
 	}
