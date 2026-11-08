@@ -256,6 +256,40 @@ func TestPutRejectsOverwriteOfReadOnlyFile(t *testing.T) {
 	}
 }
 
+func TestPutReplacesFileInReadOnlyDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permission bits are not supported on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can write read-only directories")
+	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, "test.bin")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(root, 0o755)
+
+	file := &stream.FileStream{
+		Obj:    &model.Object{Name: "test.bin", Size: 3},
+		Reader: bytes.NewReader([]byte("new")),
+	}
+	if err := (&Local{}).Put(context.Background(), &model.Object{Path: root}, file, nil); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("file contents = %q, want %q", got, "new")
+	}
+}
+
 func TestPutTempFileUsesExistingPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("file permission bits are not supported on Windows")

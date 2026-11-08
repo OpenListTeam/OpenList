@@ -3,6 +3,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -442,13 +443,22 @@ func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	}
 	tempPath := filepath.Join(filepath.Dir(fullPath), ".openlist-upload-"+uuid.NewString())
 	out, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	usingTemp := true
+	if err != nil && statErr == nil && errors.Is(err, fs.ErrPermission) {
+		usingTemp = false
+		out, err = os.OpenFile(fullPath, os.O_WRONLY|os.O_TRUNC, perm)
+	}
 	if err != nil {
 		return err
 	}
-	tempPath = out.Name()
+	if usingTemp {
+		tempPath = out.Name()
+	} else {
+		tempPath = fullPath
+	}
 	defer func() {
 		_ = out.Close()
-		if err != nil {
+		if err != nil && usingTemp {
 			_ = os.Remove(tempPath)
 		}
 	}()
@@ -459,16 +469,20 @@ func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 	if err = out.Close(); err != nil {
 		return err
 	}
-	if err = os.Chtimes(tempPath, stream.ModTime(), stream.ModTime()); err != nil {
-		log.Errorf("[local] failed to change time of %s: %s", fullPath, err)
-	}
-	if statErr == nil {
-		if err = os.Chmod(tempPath, perm); err != nil {
+	if usingTemp {
+		if err = os.Chtimes(tempPath, stream.ModTime(), stream.ModTime()); err != nil {
+			log.Errorf("[local] failed to change time of %s: %s", fullPath, err)
+		}
+		if statErr == nil {
+			if err = os.Chmod(tempPath, perm); err != nil {
+				return err
+			}
+		}
+		if err = os.Rename(tempPath, fullPath); err != nil {
 			return err
 		}
-	}
-	if err = os.Rename(tempPath, fullPath); err != nil {
-		return err
+	} else if err = os.Chtimes(fullPath, stream.ModTime(), stream.ModTime()); err != nil {
+		log.Errorf("[local] failed to change time of %s: %s", fullPath, err)
 	}
 	if d.directoryMap.Has(dstDir.GetPath()) {
 		d.directoryMap.UpdateDirSize(dstDir.GetPath())
