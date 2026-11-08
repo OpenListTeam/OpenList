@@ -67,6 +67,10 @@ func isTrailingSlashRequest(ctx context.Context) bool {
 	return value
 }
 
+func isExactTrailingSlashRequest(ctx context.Context, key string) bool {
+	return isTrailingSlashRequest(ctx) || strings.HasSuffix(key, "/")
+}
+
 // requestObjectKey restores the trailing slash that gofakes3 routing removed.
 func requestObjectKey(ctx context.Context, object string) string {
 	if isTrailingSlashRequest(ctx) && !strings.HasSuffix(object, "/") {

@@ -134,6 +134,10 @@ func (b *s3Backend) HeadObject(ctx context.Context, bucketName, objectName strin
 		}, nil
 	}
 
+	if isExactTrailingSlashRequest(ctx, objectName) {
+		return nil, gofakes3.KeyNotFound(objectName)
+	}
+
 	fp := path.Join(bucketPath, objectName)
 	fmeta, _ := op.GetNearestMeta(fp)
 	node, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{})
@@ -192,6 +196,10 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 			Size:     0,
 			Contents: io.NopCloser(strings.NewReader("")),
 		}, nil
+	}
+
+	if isExactTrailingSlashRequest(ctx, objectName) {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	fp := path.Join(bucketPath, objectName)
@@ -420,6 +428,9 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 		return markerErr
 	} else if marker != nil {
 		return deleteS3Marker(marker.Bucket, marker.Key)
+	}
+	if isExactTrailingSlashRequest(ctx, objectName) {
+		return nil
 	}
 	bucketPath := bucket.Path
 

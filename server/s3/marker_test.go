@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"io"
-	"os"
-	"path/filepath"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -184,6 +184,87 @@ func TestS3MarkerHTTPTrailingSlashLifecycle(t *testing.T) {
 		t.Fatalf("HEAD deleted marker status = %d, want %d", head.StatusCode, http.StatusNotFound)
 	}
 	head.Body.Close()
+}
+
+func TestS3MarkerHTTPExactKeyIsolation(t *testing.T) {
+	ctx := context.Background()
+	_, _ = setupMultipartBackend(t)
+	handler, err := NewServer(ctx)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	baseURL := server.URL + "/mp/exact-key-isolation"
+	put := func(url, body string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("new PUT request: %v", err)
+		}
+		req.ContentLength = int64(len(body))
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("PUT request: %v", err)
+		}
+		return response
+	}
+	ordinary := put(baseURL, "ordinary")
+	if ordinary.StatusCode != http.StatusOK {
+		t.Fatalf("PUT ordinary status = %d, want %d", ordinary.StatusCode, http.StatusOK)
+	}
+	ordinary.Body.Close()
+	marker := put(baseURL+"/", "")
+	if marker.StatusCode != http.StatusOK {
+		t.Fatalf("PUT marker status = %d, want %d", marker.StatusCode, http.StatusOK)
+	}
+	marker.Body.Close()
+
+	deleteMarker := func() {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, baseURL+"/", nil)
+		if err != nil {
+			t.Fatalf("new DELETE request: %v", err)
+		}
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("DELETE marker: %v", err)
+		}
+		if response.StatusCode != http.StatusNoContent {
+			t.Fatalf("DELETE marker status = %d, want %d", response.StatusCode, http.StatusNoContent)
+		}
+		response.Body.Close()
+	}
+	deleteMarker()
+	deleteMarker()
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		response, err := http.DefaultClient.Do(func() *http.Request {
+			req, requestErr := http.NewRequestWithContext(ctx, method, baseURL+"/", nil)
+			if requestErr != nil {
+				t.Fatalf("new %s request: %v", method, requestErr)
+			}
+			return req
+		}())
+		if err != nil {
+			t.Fatalf("%s marker after delete: %v", method, err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s deleted marker status = %d, want %d", method, response.StatusCode, http.StatusNotFound)
+		}
+	}
+
+	response, err := http.Get(baseURL)
+	if err != nil {
+		t.Fatalf("GET ordinary: %v", err)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || readErr != nil || string(body) != "ordinary" {
+		t.Fatalf("GET ordinary status = %d, body = %q, err = %v", response.StatusCode, body, readErr)
+	}
 }
 
 func TestS3RootSlashMarkerListing(t *testing.T) {
