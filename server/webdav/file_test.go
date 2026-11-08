@@ -15,7 +15,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -23,69 +22,43 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestIsSameStorageSameDir(t *testing.T) {
-	testCases := []struct {
-		src, dstDir string
-		want        bool
-	}{
-		{"/a/b/c.txt", "/a/b", true},
-		{"/storage/data/main/file.tmp", "/storage/data/main", true},
-		{"/dav/folder/sub/file.txt", "/dav/folder/sub", true},
-		{"/file.txt", "/", true},
-	}
-	for _, tc := range testCases {
-		if got := isSameStorage(tc.src, tc.dstDir); got != tc.want {
-			t.Errorf("isSameStorage(%q, %q) = %v, want %v", tc.src, tc.dstDir, got, tc.want)
-		}
-	}
-}
-
-// moveProbe counts the driver operations a move is allowed to use. Renaming
-// must not depend on file data, so any copy or link is a bug in the caller.
-type moveProbe struct {
-	copies  atomic.Int32
-	links   atomic.Int32
-	renames atomic.Int32
-}
-
-func (p *moveProbe) probe() *moveProbe { return p }
-
-// renameOnlyDriver can rename but cannot transfer file data, like Quark.
-// With claimDestination set, its first rename simulates another writer taking
-// the destination after the handler's existence check, then refuses it.
-type renameOnlyDriver struct {
+// moveDriver stands in for a cloud driver. With flagged set it declares
+// NoOverwriteRename and keeps that promise by refusing a rename onto an
+// existing name. It counts Copy calls, which a rename needs no data transfer for.
+type moveDriver struct {
 	local.Local
-	moveProbe
 	root             string
+	flagged          bool
+	copies           atomic.Int32
 	claimDestination atomic.Bool
 	claimed          atomic.Bool
 }
 
-func (d *renameOnlyDriver) Config() driver.Config {
+func (d *moveDriver) Config() driver.Config {
 	c := d.Local.Config()
 	c.Name = "WebDAVMoveRegression"
+	c.NoOverwriteRename = d.flagged
 	return c
 }
 
-func (d *renameOnlyDriver) Copy(context.Context, model.Obj, model.Obj) error {
+func (d *moveDriver) Copy(ctx context.Context, src, dst model.Obj) error {
 	d.copies.Add(1)
-	return errs.NotSupport
+	return d.Local.Copy(ctx, src, dst)
 }
 
-func (d *renameOnlyDriver) Link(context.Context, model.Obj, model.LinkArgs) (*model.Link, error) {
-	d.links.Add(1)
-	return nil, errors.New("file data transfer is unavailable")
-}
-
-func (d *renameOnlyDriver) Rename(ctx context.Context, obj model.Obj, name string) error {
+// With claimDestination set, the first rename simulates another writer taking
+// the destination after the handler's existence check, then refuses it.
+func (d *moveDriver) Rename(ctx context.Context, obj model.Obj, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	d.renames.Add(1)
+	target := filepath.Join(filepath.Dir(obj.GetPath()), name)
 	if d.claimDestination.Load() && d.claimed.CompareAndSwap(false, true) {
-		if err := os.WriteFile(filepath.Join(d.root, name), []byte("other writer"), 0o600); err != nil {
+		if err := os.WriteFile(target, []byte("other writer"), 0o600); err != nil {
 			return err
 		}
+	}
+	if _, err := os.Lstat(target); err == nil && d.flagged {
 		return errors.New("destination already exists")
 	}
 	return d.Local.Rename(ctx, obj, name)
@@ -96,22 +69,22 @@ type moveFixture struct {
 	mount string
 	src   string
 	dst   string
-	probe *moveProbe
+	d     *moveDriver
 	ctx   context.Context
 	h     *Handler
 }
 
-func setupMoveFixture(t *testing.T, newDriver func(root string) driver.Driver) *moveFixture {
+func setupMoveFixture(t *testing.T, d *moveDriver) *moveFixture {
 	t.Helper()
 	root := t.TempDir()
+	d.root = root
 	database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "test.db")), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	conf.Conf = conf.DefaultConfig(t.TempDir())
 	db.Init(database)
-	instance := newDriver(root)
-	op.RegisterDriver(func() driver.Driver { return instance })
+	op.RegisterDriver(func() driver.Driver { return d })
 	addition, err := utils.Json.MarshalToString(map[string]string{"root_folder_path": root})
 	if err != nil {
 		t.Fatal(err)
@@ -130,72 +103,97 @@ func setupMoveFixture(t *testing.T, newDriver func(root string) driver.Driver) *
 		sqlDB, _ := database.DB()
 		_ = sqlDB.Close()
 	})
-	registered, err := op.GetStorageByMountPath(mount)
-	if err != nil {
-		t.Fatal(err)
-	}
-	user := &model.User{Username: "rename-only", BasePath: "/", Role: model.GENERAL, Permission: 1 << 4}
+	user := &model.User{Username: "mover", BasePath: "/", Role: model.GENERAL, Permission: 1<<4 | 1<<5}
 	return &moveFixture{
 		root: root, mount: mount,
-		src:   path.Join(mount, "original.mp4"),
-		dst:   path.Join(mount, "renamed.mp4"),
-		probe: registered.(interface{ probe() *moveProbe }).probe(),
-		ctx:   context.WithValue(context.Background(), conf.UserKey, user),
-		h:     &Handler{Prefix: "/dav", LockSystem: NewMemLS()},
+		src: path.Join(mount, "original.mp4"),
+		dst: path.Join(mount, "renamed.mp4"),
+		d:   d,
+		ctx: context.WithValue(context.Background(), conf.UserKey, user),
+		h:   &Handler{Prefix: "/dav", LockSystem: NewMemLS()},
 	}
 }
 
-func setupRenameFixture(t *testing.T) *moveFixture {
+func (f *moveFixture) write(t *testing.T, name, content string) {
 	t.Helper()
-	return setupMoveFixture(t, func(root string) driver.Driver { return &renameOnlyDriver{} })
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(f.root, name)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.root, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
-func (f *moveFixture) move() *httptest.ResponseRecorder {
-	r := httptest.NewRequest("MOVE", "http://example.test/dav"+f.src, nil).WithContext(f.ctx)
-	r.Header.Set("Destination", "http://example.test/dav"+f.dst)
+func (f *moveFixture) assertContent(t *testing.T, name, want string) {
+	t.Helper()
+	if b, err := os.ReadFile(filepath.Join(f.root, name)); err != nil || string(b) != want {
+		t.Fatalf("%s = %q, %v; want %q", name, b, err, want)
+	}
+}
+
+func (f *moveFixture) move(src, dst string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("MOVE", "http://example.test/dav"+src, nil).WithContext(f.ctx)
+	r.Header.Set("Destination", "http://example.test/dav"+dst)
 	r.Header.Set("Overwrite", "F")
 	w := httptest.NewRecorder()
 	f.h.ServeHTTP(w, r)
 	return w
 }
 
-func (f *moveFixture) assertNoTransfer(t *testing.T) {
-	t.Helper()
-	if f.probe.copies.Load() != 0 || f.probe.links.Load() != 0 {
-		t.Fatalf("rename accessed file data: copies=%d links=%d", f.probe.copies.Load(), f.probe.links.Load())
+// Only drivers that declare NoOverwriteRename may skip the source backup, and
+// only for a same-directory rename of a file.
+func TestMoveSourceBackupDependsOnDriverGuarantee(t *testing.T) {
+	cases := []struct {
+		name        string
+		flagged     bool
+		cross       bool
+		wantBackups bool
+	}{
+		{"flagged driver renames in place", true, false, false},
+		{"unflagged driver keeps the backup", false, false, true},
+		{"flagged driver keeps the backup across directories", true, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupMoveFixture(t, &moveDriver{flagged: tc.flagged})
+			f.write(t, "original.mp4", "source")
+			f.write(t, "sub/keep", "")
+			src, dst, want := f.src, f.dst, "renamed.mp4"
+			if tc.cross {
+				dst, want = path.Join(f.mount, "sub", "renamed.mp4"), "sub/renamed.mp4"
+			}
+			if w := f.move(src, dst); w.Code != http.StatusCreated {
+				t.Fatalf("MOVE status=%d body=%s", w.Code, w.Body.String())
+			}
+			f.assertContent(t, want, "source")
+			if _, err := os.Stat(filepath.Join(f.root, "original.mp4")); !os.IsNotExist(err) {
+				t.Fatalf("source still exists: %v", err)
+			}
+			if got := f.d.copies.Load() > 0; got != tc.wantBackups {
+				t.Fatalf("copies=%d, want backups=%v", f.d.copies.Load(), tc.wantBackups)
+			}
+		})
 	}
 }
 
 // A destination created by another writer after the existence check must
 // survive a MOVE that then fails.
 func TestSameDirectoryMoveKeepsRecreatedDestination(t *testing.T) {
-	f := setupMoveFixture(t, func(root string) driver.Driver {
-		d := &renameOnlyDriver{root: root}
-		d.claimDestination.Store(true)
-		return d
-	})
-	if err := os.WriteFile(filepath.Join(f.root, "original.mp4"), []byte("source"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	w := f.move()
-	if w.Code != http.StatusInternalServerError {
+	d := &moveDriver{flagged: true}
+	d.claimDestination.Store(true)
+	f := setupMoveFixture(t, d)
+	f.write(t, "original.mp4", "source")
+	if w := f.move(f.src, f.dst); w.Code != http.StatusInternalServerError {
 		t.Fatalf("MOVE status=%d want=%d body=%s", w.Code, http.StatusInternalServerError, w.Body.String())
 	}
-	if b, err := os.ReadFile(filepath.Join(f.root, "renamed.mp4")); err != nil || string(b) != "other writer" {
-		t.Fatalf("failed MOVE destroyed the destination created by another writer: %v", err)
-	}
-	if b, err := os.ReadFile(filepath.Join(f.root, "original.mp4")); err != nil || string(b) != "source" {
-		t.Fatalf("failed MOVE destroyed the source: %v", err)
-	}
-	f.assertNoTransfer(t)
+	f.assertContent(t, "renamed.mp4", "other writer")
+	f.assertContent(t, "original.mp4", "source")
 }
 
-// A failing dead-property transaction must undo the move.
+// A failing dead-property transaction must undo the rename.
 func TestSameDirectoryMoveRollsBackOnTransactionFailure(t *testing.T) {
-	f := setupRenameFixture(t)
-	if err := os.WriteFile(filepath.Join(f.root, "original.mp4"), []byte("source"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	f := setupMoveFixture(t, &moveDriver{flagged: true})
+	f.write(t, "original.mp4", "source")
 	if err := db.GetDb().Create(&model.WebDAVProperty{Path: f.src, Namespace: "urn:test", Name: "label"}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -216,10 +214,7 @@ func TestSameDirectoryMoveRollsBackOnTransactionFailure(t *testing.T) {
 	if !errors.Is(err, injected) {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	f.assertNoTransfer(t)
-	if b, err := os.ReadFile(filepath.Join(f.root, "original.mp4")); err != nil || string(b) != "source" {
-		t.Fatalf("rollback lost source: %v", err)
-	}
+	f.assertContent(t, "original.mp4", "source")
 	if _, err := os.Stat(filepath.Join(f.root, "renamed.mp4")); !os.IsNotExist(err) {
 		t.Fatalf("rollback left destination: %v", err)
 	}
@@ -227,66 +222,24 @@ func TestSameDirectoryMoveRollsBackOnTransactionFailure(t *testing.T) {
 	if err := db.GetDb().Find(&props).Error; err != nil || len(props) != 1 || props[0].Path != f.src {
 		t.Fatalf("dead properties did not roll back: %+v, %v", props, err)
 	}
+	if f.d.copies.Load() != 0 {
+		t.Fatalf("rollback copied file data: copies=%d", f.d.copies.Load())
+	}
 }
 
-// A source recreated while the dead-property transaction was running must be
-// preserved by the rollback instead of overwritten.
+// A source name recreated while the transaction was running is not overwritten:
+// the driver refuses the reverse rename and both objects stay.
 func TestSameDirectoryMoveRollbackPreservesRecreatedSource(t *testing.T) {
-	f := setupRenameFixture(t)
-	if err := os.WriteFile(filepath.Join(f.root, "original.mp4"), []byte("original content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	f := setupMoveFixture(t, &moveDriver{flagged: true})
+	f.write(t, "original.mp4", "original content")
 	m, err := moveWithRollback(f.ctx, f.src, f.dst, f.mount, f.mount, "original.mp4", "renamed.mp4", false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(f.root, "original.mp4"), []byte("new content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	f.write(t, "original.mp4", "new content")
 	if err := m.rollback(); err == nil {
-		content, _ := os.ReadFile(filepath.Join(f.root, "original.mp4"))
-		t.Fatalf("rollback should refuse to overwrite a recreated source; source now contains %q", content)
+		t.Fatal("rollback of a taken source name should fail")
 	}
-	for name, want := range map[string]string{"original.mp4": "new content", "renamed.mp4": "original content"} {
-		if b, err := os.ReadFile(filepath.Join(f.root, name)); err != nil || string(b) != want {
-			t.Fatalf("rollback changed %s: %v", name, err)
-		}
-	}
-	f.assertNoTransfer(t)
-}
-
-// A cross-directory rollback renames the object back to its source name inside
-// the destination directory before moving it home. A source name recreated in
-// the meantime must survive that first rename and still stop the second step.
-func TestCrossDirectoryMoveRollbackPreservesRecreatedSource(t *testing.T) {
-	f := setupRenameFixture(t)
-	srcDir, dstDir := path.Join(f.mount, "a"), path.Join(f.mount, "b")
-	src, dst := path.Join(srcDir, "original.mp4"), path.Join(dstDir, "renamed.mp4")
-	for _, dir := range []string{"a", "b"} {
-		if err := os.MkdirAll(filepath.Join(f.root, dir), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(f.root, "a", "original.mp4"), []byte("original content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	m, err := moveWithRollback(f.ctx, src, dst, dstDir, srcDir, "original.mp4", "renamed.mp4", false, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.root, "a", "original.mp4"), []byte("new content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.rollback(); err == nil {
-		t.Fatal("rollback should refuse to overwrite a recreated source")
-	}
-	for name, want := range map[string]string{
-		path.Join("a", "original.mp4"): "new content",
-		path.Join("b", "original.mp4"): "original content",
-	} {
-		if b, err := os.ReadFile(filepath.Join(f.root, name)); err != nil || string(b) != want {
-			t.Fatalf("rollback changed %s: %v", name, err)
-		}
-	}
-	f.assertNoTransfer(t)
+	f.assertContent(t, "original.mp4", "new content")
+	f.assertContent(t, "renamed.mp4", "original content")
 }

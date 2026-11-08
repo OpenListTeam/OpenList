@@ -34,21 +34,12 @@ func slashClean(name string) string {
 	return path.Clean(name)
 }
 
-func moveResource(ctx context.Context, src, dstDir, srcDir, srcName, dstName string, onMoved ...func()) error {
+func moveResource(ctx context.Context, src, dstDir, srcDir, srcName, dstName string) error {
 	if srcDir == dstDir {
-		if err := fs.Rename(ctx, src, dstName); err != nil {
-			return err
-		}
-		for _, fn := range onMoved {
-			fn()
-		}
-		return nil
+		return fs.Rename(ctx, src, dstName)
 	}
 	if _, err := fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir); err != nil {
 		return err
-	}
-	for _, fn := range onMoved {
-		fn()
 	}
 	if srcName != dstName {
 		return fs.Rename(ctx, path.Join(dstDir, srcName), dstName)
@@ -223,97 +214,17 @@ func copyMutation(ctx context.Context, dstPath, stagePath string, dstBackup *fil
 	}
 }
 
-func isSameStorage(src, dstDir string) bool {
-	srcStorage, _, srcErr := op.GetStorageAndActualPath(src)
-	dstStorage, _, dstErr := op.GetStorageAndActualPath(dstDir)
-	if srcErr == nil && dstErr == nil && srcStorage != nil && dstStorage != nil {
-		if s1, s2 := srcStorage.GetStorage(), dstStorage.GetStorage(); s1 != nil && s2 != nil {
-			// Virtual/composite storage drivers manage underlying replicas or chunked directories.
-			// They require source backup to protect against partial/asymmetric operations.
-			if s1.Driver == "Alias" || s2.Driver == "Alias" || s1.Driver == "Chunk" || s2.Driver == "Chunk" {
-				return false
-			}
-			if s1 == s2 && path.Dir(src) == dstDir {
-				return true
-			}
-			return s1 == s2
-		}
-	}
-	if path.Dir(src) == dstDir {
-		return true
-	}
-	return false
+// canRenameInPlace reports whether a same-directory rename of src can skip the
+// source backup. The rollback is a reverse rename, which is only safe when the
+// driver guarantees that a rename never overwrites an existing object.
+func canRenameInPlace(src string) bool {
+	storage, _, err := op.GetStorageAndActualPath(src)
+	return err == nil && storage.Config().NoOverwriteRename
 }
 
-// ensurePathFree reports whether a rollback may write to name. It only rules
-// out a name that is already taken: a writer claiming the name between this
-// probe and the write is still overwritten, and closing that window needs an
-// atomic no-replace rename the driver interface does not offer. Only a missing
-// object counts as free, so a failed lookup cannot become an overwrite.
-func ensurePathFree(ctx context.Context, name string) error {
-	if _, err := fs.Get(ctx, name, &fs.GetArgs{}); err == nil {
-		return errors.Errorf("rollback target %s is occupied by another object", name)
-	} else if !errs.IsObjectNotFound(err) {
-		return errors.WithMessagef(err, "cannot determine whether %s is free", name)
-	}
-	return nil
-}
-
-func restoreSameStorageMove(ctx context.Context, src, dst, srcDir, dstDir, srcName, dstName string) (bool, error) {
-	if srcDir == dstDir {
-		if _, err := fs.Get(ctx, dst, &fs.GetArgs{}); err == nil {
-			if err := ensurePathFree(ctx, src); err != nil {
-				return false, errors.WithMessagef(err, "keeping %s and %s untouched", src, dst)
-			}
-			if err := fs.Rename(ctx, dst, srcName); err != nil {
-				return false, errors.WithMessagef(err, "failed to rename %s back to %s", dst, srcName)
-			}
-			return true, nil
-		}
-		if _, err := fs.Get(ctx, src, &fs.GetArgs{}); err == nil {
-			return true, nil
-		}
-		return false, errors.Errorf("neither destination %s nor source %s exists", dst, src)
-	}
-
-	currentDstPath := dst
-	if srcName != dstName {
-		if _, err := fs.Get(ctx, dst, &fs.GetArgs{}); err == nil {
-			intermediate := path.Join(dstDir, srcName)
-			if err := ensurePathFree(ctx, intermediate); err != nil {
-				return false, errors.WithMessagef(err, "keeping %s and %s untouched", intermediate, dst)
-			}
-			if err := fs.Rename(ctx, dst, srcName); err != nil {
-				return false, errors.WithMessagef(err, "failed to rename %s to %s in %s", dst, srcName, dstDir)
-			}
-			currentDstPath = intermediate
-		} else {
-			intermediate := path.Join(dstDir, srcName)
-			if _, err := fs.Get(ctx, intermediate, &fs.GetArgs{}); err == nil {
-				currentDstPath = intermediate
-			}
-		}
-	}
-
-	if _, err := fs.Get(ctx, currentDstPath, &fs.GetArgs{}); err == nil {
-		if err := ensurePathFree(ctx, src); err != nil {
-			return false, errors.WithMessagef(err, "keeping %s and %s untouched", src, currentDstPath)
-		}
-		if _, err := fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), currentDstPath, srcDir); err != nil {
-			return false, errors.WithMessagef(err, "failed to move %s back to %s", currentDstPath, srcDir)
-		}
-		return true, nil
-	}
-
-	if _, err := fs.Get(ctx, src, &fs.GetArgs{}); err == nil {
-		return true, nil
-	}
-	return false, errors.Errorf("failed to locate resource at %s or %s for rollback", currentDstPath, src)
-}
-
-func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string, dstExisted, sameStorage bool) (*fileMutation, error) {
+func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string, dstExisted, renameInPlace bool) (*fileMutation, error) {
 	var srcBackup *fileBackup
-	if !sameStorage {
+	if !renameInPlace {
 		// Keep a source copy so a partially completed cross-storage MOVE can be undone.
 		var err error
 		srcBackup, err = newFileBackup(ctx, src, true)
@@ -333,13 +244,13 @@ func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, ds
 		}
 		if !dstBackup.renamed {
 			if err := removeIfExists(ctx, dst); err != nil {
-				mutation := moveMutation(ctx, src, dst, srcDir, dstDir, srcName, dstName, srcBackup, dstBackup)
+				mutation := moveMutation(ctx, src, dst, dstDir, srcName, dstName, srcBackup, dstBackup)
 				return mutation, errors.WithMessage(err, "failed to remove destination after creating rollback copy")
 			}
 		}
 	}
-	mutation := moveMutation(ctx, src, dst, srcDir, dstDir, srcName, dstName, srcBackup, dstBackup)
-	if err := moveResource(ctx, src, dstDir, srcDir, srcName, dstName, func() { mutation.moved = true }); err != nil {
+	mutation := moveMutation(ctx, src, dst, dstDir, srcName, dstName, srcBackup, dstBackup)
+	if err := moveResource(ctx, src, dstDir, srcDir, srcName, dstName); err != nil {
 		// The destination may have been claimed by another writer after the
 		// existence check, so a surviving source does not prove that anything
 		// at dst belongs to this MOVE. Leave it alone rather than delete it.
@@ -349,7 +260,7 @@ func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, ds
 	return mutation, nil
 }
 
-func moveMutation(ctx context.Context, src, dst, srcDir, dstDir, srcName, dstName string, srcBackup, dstBackup *fileBackup) *fileMutation {
+func moveMutation(ctx context.Context, src, dst, dstDir, srcName, dstName string, srcBackup, dstBackup *fileBackup) *fileMutation {
 	var paths []string
 	if srcBackup != nil {
 		paths = append(paths, srcBackup.backupPath)
@@ -381,10 +292,12 @@ func moveMutation(ctx context.Context, src, dst, srcDir, dstDir, srcName, dstNam
 				srcRestored = true
 			}
 		} else if m.moved {
-			var err error
-			srcRestored, err = restoreSameStorageMove(rollbackCtx, src, dst, srcDir, dstDir, srcName, dstName)
-			if err != nil {
-				rollbackErrs = append(rollbackErrs, err)
+			// No source backup means a same-directory rename on a driver that
+			// never overwrites, so a taken source name cannot be clobbered here.
+			if err := fs.Rename(rollbackCtx, dst, srcName); err != nil {
+				rollbackErrs = append(rollbackErrs, errors.WithMessagef(err, "failed to rename %s back to %s", dst, srcName))
+			} else {
+				srcRestored = true
 			}
 		} else {
 			if _, err := fs.Get(rollbackCtx, src, &fs.GetArgs{}); err == nil {
@@ -496,8 +409,8 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	err = runDeadPropsFileMutation(ctx,
 		func(tx *gorm.DB) error { return moveDeadProps(tx, src, dst) },
 		func() (*fileMutation, error) {
-			sameStorage := !srcInfo.IsDir() && isSameStorage(src, dstDir)
-			return moveWithRollback(ctx, src, dst, dstDir, srcDir, srcName, dstName, dstExisted && overwrite, sameStorage)
+			renameInPlace := srcDir == dstDir && !srcInfo.IsDir() && canRenameInPlace(src)
+			return moveWithRollback(ctx, src, dst, dstDir, srcDir, srcName, dstName, dstExisted && overwrite, renameInPlace)
 		},
 	)
 	if err != nil {

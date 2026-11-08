@@ -14,6 +14,10 @@ type Config struct {
 	Alert string `json:"alert"`
 	// whether to support overwrite upload
 	NoOverwriteUpload bool `json:"-"`
+	// Rename never replaces an existing object at the target name: the server
+	// either rejects the conflict or keeps both objects. WebDAV MOVE relies on
+	// this to undo a same-directory rename without keeping a copy of the source.
+	NoOverwriteRename bool `json:"-"`
 	ProxyRangeOption  bool `json:"-"`
 	// if the driver returns Link without URL, this should be set to true
 	NoLinkURL bool `json:"-"`

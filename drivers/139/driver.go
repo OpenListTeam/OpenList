@@ -36,7 +36,11 @@ type Yun139 struct {
 }
 
 func (d *Yun139) Config() driver.Config {
-	return config
+	c := config
+	// Verified for personal_new only: /file/update onto an existing name keeps
+	// both files and gives the renamed one a timestamp suffix.
+	c.NoOverwriteRename = d.Addition.Type == MetaPersonalNew
+	return c
 }
 
 func (d *Yun139) GetAddition() driver.Additional {
