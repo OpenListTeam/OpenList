@@ -216,10 +216,17 @@ func copyMutation(ctx context.Context, dstPath, stagePath string, dstBackup *fil
 
 // canRenameInPlace reports whether a same-directory rename of src can skip the
 // source backup. The rollback is a reverse rename, which is only safe when the
-// driver guarantees that a rename never overwrites an existing object.
+// driver guarantees that a rename never overwrites an existing object. A
+// balanced mount picks a storage per operation, so every one behind the path
+// must give that guarantee.
 func canRenameInPlace(src string) bool {
-	storage, _, err := op.GetStorageAndActualPath(src)
-	return err == nil && storage.Config().NoOverwriteRename
+	storages := op.GetStoragesByPath(src)
+	for _, s := range storages {
+		if !s.Config().NoOverwriteRename {
+			return false
+		}
+	}
+	return len(storages) > 0
 }
 
 func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string, dstExisted, renameInPlace bool) (*fileMutation, error) {

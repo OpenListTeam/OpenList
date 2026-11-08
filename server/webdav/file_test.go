@@ -28,6 +28,7 @@ import (
 type moveDriver struct {
 	local.Local
 	root             string
+	name             string
 	flagged          bool
 	copies           atomic.Int32
 	claimDestination atomic.Bool
@@ -37,6 +38,9 @@ type moveDriver struct {
 func (d *moveDriver) Config() driver.Config {
 	c := d.Local.Config()
 	c.Name = "WebDAVMoveRegression"
+	if d.name != "" {
+		c.Name = d.name
+	}
 	c.NoOverwriteRename = d.flagged
 	return c
 }
@@ -173,6 +177,35 @@ func TestMoveSourceBackupDependsOnDriverGuarantee(t *testing.T) {
 				t.Fatalf("copies=%d, want backups=%v", f.d.copies.Load(), tc.wantBackups)
 			}
 		})
+	}
+}
+
+// A balanced mount hands each operation to the next storage, so the check and
+// the rename can land on different ones. The backup may only be skipped when
+// every storage behind the path declares the guarantee.
+func TestRenameInPlaceNeedsEveryBalancedStorageToDeclare(t *testing.T) {
+	f := setupMoveFixture(t, &moveDriver{flagged: true})
+	plain := &moveDriver{name: "WebDAVMoveRegressionPlain"}
+	op.RegisterDriver(func() driver.Driver { return plain })
+	addition, err := utils.Json.MarshalToString(map[string]string{"root_folder_path": f.root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := op.CreateStorage(context.Background(), model.Storage{
+		Driver: "WebDAVMoveRegressionPlain", MountPath: f.mount + ".balance", Addition: addition,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := op.DeleteStorageById(context.Background(), id); err != nil {
+			t.Error(err)
+		}
+	})
+	for i := 0; i < 4; i++ {
+		if canRenameInPlace(f.src) {
+			t.Fatalf("call %d: skipping the backup is unsafe while a storage behind the path does not declare the guarantee", i)
+		}
 	}
 }
 
