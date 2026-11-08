@@ -330,3 +330,25 @@ func TestMultipartCleanupStaleDirs(t *testing.T) {
 	}
 	_ = os.RemoveAll(freshDir)
 }
+
+func TestMultipartUploadRejectsObjectMismatch(t *testing.T) {
+	ctx := context.Background()
+	b, _ := setupMultipartBackend(t)
+	uploadID, err := b.CreateMultipartUpload(ctx, "mp", "a/", nil)
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	if _, err := b.UploadPart(ctx, "mp", "b/", uploadID, 1, 1, strings.NewReader("x")); s3ErrorCode(err) != gofakes3.ErrNoSuchUpload {
+		t.Fatalf("UploadPart with mismatched object error = %v, want NoSuchUpload", err)
+	}
+	if _, _, err := b.CompleteMultipartUpload(ctx, "mp", "b/", uploadID, nil); s3ErrorCode(err) != gofakes3.ErrNoSuchUpload {
+		t.Fatalf("CompleteMultipartUpload with mismatched object error = %v, want NoSuchUpload", err)
+	}
+	if _, err := b.HeadObject(ctx, "mp", "b/"); s3ErrorCode(err) != gofakes3.ErrNoSuchKey {
+		t.Fatalf("mismatched object HeadObject error = %v, want NoSuchKey", err)
+	}
+	if _, ok := b.uploads.Load(uploadID); !ok {
+		t.Fatal("upload was removed after mismatched requests")
+	}
+	b.AbortMultipartUpload(ctx, "mp", "a/", uploadID)
+}

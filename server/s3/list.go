@@ -5,14 +5,11 @@ package s3
 import (
 	"context"
 	"path"
-	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/gofakes3"
-	log "github.com/sirupsen/logrus"
 )
 
 // S3 ListObjects responses contain at most 1,000 keys.
@@ -77,14 +74,98 @@ func (p *objectPage) finish() *gofakes3.ObjectList {
 	return p.result
 }
 
+type listCandidate struct {
+	key       string
+	entry     model.Obj
+	marker    *model.S3Marker
+	directory bool
+}
+
+func markerCandidates(markers []model.S3Marker, fdPath, name string, includeExact bool) []listCandidate {
+	candidates := make(map[string]listCandidate)
+	add := func(candidate listCandidate) {
+		if existing, ok := candidates[candidate.key]; ok {
+			existing.directory = existing.directory || candidate.directory
+			if candidate.marker != nil {
+				existing.marker = candidate.marker
+			}
+			candidates[candidate.key] = existing
+			return
+		}
+		candidates[candidate.key] = candidate
+	}
+
+	prefix := fdPath
+	if prefix != "" {
+		prefix += "/"
+	}
+	for i := range markers {
+		marker := &markers[i]
+		trimmed := strings.TrimSuffix(marker.Key, "/")
+		if trimmed == "" {
+			if marker.Key == "/" && fdPath == "" && name == "" {
+				add(listCandidate{key: marker.Key, marker: marker})
+			}
+			continue
+		}
+		parent := ""
+		child := trimmed
+		if idx := strings.LastIndexByte(trimmed, '/'); idx >= 0 {
+			parent = trimmed[:idx]
+			child = trimmed[idx+1:]
+		}
+		if parent == fdPath && strings.HasPrefix(child, name) {
+			add(listCandidate{key: marker.Key, marker: marker})
+		}
+		if includeExact && marker.Key == prefix && name == "" {
+			add(listCandidate{key: marker.Key, marker: marker})
+		}
+
+		if !strings.HasPrefix(trimmed, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(trimmed, prefix)
+		if rest == "" {
+			continue
+		}
+		child = rest
+		if idx := strings.IndexByte(child, '/'); idx >= 0 {
+			child = child[:idx]
+		}
+		if !strings.HasPrefix(child, name) {
+			continue
+		}
+		virtualKey := prefix + child + "/"
+		if virtualKey != marker.Key {
+			add(listCandidate{key: virtualKey, directory: true})
+		}
+	}
+
+	result := make([]listCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		result = append(result, candidate)
+	}
+	return result
+}
+
 func (b *s3Backend) listPage(
 	ctx context.Context,
 	bucket, fdPath, name string,
 	addPrefix bool,
 	page gofakes3.ListBucketPage,
 ) (*gofakes3.ObjectList, error) {
+	return b.listPageWithMarkers(ctx, bucket, fdPath, name, addPrefix, page, nil)
+}
+
+func (b *s3Backend) listPageWithMarkers(
+	ctx context.Context,
+	bucket, fdPath, name string,
+	addPrefix bool,
+	page gofakes3.ListBucketPage,
+	markers []model.S3Marker,
+) (*gofakes3.ObjectList, error) {
 	result := newObjectPage(page)
-	_, err := b.walkPage(ctx, bucket, fdPath, name, addPrefix, result)
+	_, err := b.walkPage(ctx, bucket, fdPath, name, addPrefix, result, markers, true)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +178,8 @@ func (b *s3Backend) walkPage(
 	bucket, fdPath, name string,
 	addPrefix bool,
 	page *objectPage,
+	markers []model.S3Marker,
+	includeExactMarker bool,
 ) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -104,72 +187,81 @@ func (b *s3Backend) walkPage(
 
 	fp := path.Join(bucket, fdPath)
 	dirEntries, err := b.listDir(ctx, fp)
-	if err != nil {
+	markerEntries := markerCandidates(markers, fdPath, name, includeExactMarker)
+	if err != nil && len(markerEntries) == 0 {
 		return false, err
 	}
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 
-	// workaround as s3 can't have empty files in directories, useful in deletions
-	if len(dirEntries) == 0 {
-		if !strings.HasPrefix(emptyObjectName, name) {
-			return true, nil
-		}
-		item := &gofakes3.Content{
-			// Key:          gofakes3.URLEncode(path.Join(fdPath, emptyObjectName)),
-			Key:          path.Join(fdPath, emptyObjectName),
-			LastModified: gofakes3.NewContentTime(time.Now()),
-			ETag:         getFileHash(nil), // No entry, so no hash
-			Size:         0,
-			StorageClass: gofakes3.StorageStandard,
-		}
-		log.Debugf("Adding empty object %s to response", item.Key)
-		return page.addContent(item), nil
-	}
-
 	// Emit entries in the order their keys have in a flat S3 keyspace. A
 	// directory sorts as if it carried its trailing slash, so "b.txt" comes
-	// before "b/..." as it does in a real bucket. Without this a listing
-	// resumed from a marker could silently skip or repeat keys.
-	dirEntries = slices.Clone(dirEntries)
-	sort.Slice(dirEntries, func(i, j int) bool {
-		return listSortKey(dirEntries[i]) < listSortKey(dirEntries[j])
-	})
-
+	// before "b/..." as it does in a real bucket.
+	candidates := make([]listCandidate, 0, len(dirEntries)+len(markerEntries))
 	for _, entry := range dirEntries {
 		object := entry.GetName()
-
-		// workround for control-chars detect
-		objectPath := path.Join(fdPath, object)
-
 		if !strings.HasPrefix(object, name) {
 			continue
 		}
-
+		objectPath := path.Join(fdPath, object)
+		key := objectPath
 		if entry.IsDir() {
-			// S3 common prefixes include the delimiter, e.g. "base/20261009T020008/".
-			// Clients such as barman-cloud ignore prefixes without it.
-			subtreePrefix := objectPath + "/"
-			if addPrefix {
-				// response.AddPrefix(gofakes3.URLEncode(subtreePrefix))
-				if !page.addPrefix(subtreePrefix) {
+			key += "/"
+		}
+		candidates = append(candidates, listCandidate{key: key, entry: entry, directory: entry.IsDir()})
+	}
+	candidates = append(candidates, markerEntries...)
+	merged := make(map[string]listCandidate, len(candidates))
+	for _, candidate := range candidates {
+		if existing, ok := merged[candidate.key]; ok {
+			existing.directory = existing.directory || candidate.directory
+			if candidate.entry != nil {
+				existing.entry = candidate.entry
+			}
+			if candidate.marker != nil {
+				existing.marker = candidate.marker
+			}
+			merged[candidate.key] = existing
+		} else {
+			merged[candidate.key] = candidate
+		}
+	}
+	candidates = candidates[:0]
+	for _, candidate := range merged {
+		candidates = append(candidates, candidate)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].key < candidates[j].key
+	})
+
+	for _, candidate := range candidates {
+		if candidate.marker != nil {
+			if addPrefix && candidate.marker.Key != fdPath+"/" {
+				if !page.addPrefix(candidate.marker.Key) {
 					return false, nil
 				}
 				continue
 			}
-			// A marker beyond this subtree lets us avoid an upstream directory read.
-			if subtreePrefix <= page.marker && !strings.HasPrefix(page.marker, subtreePrefix) {
+			item := &gofakes3.Content{
+				Key:          candidate.marker.Key,
+				LastModified: gofakes3.NewContentTime(candidate.marker.Modified),
+				ETag:         getFileHash(nil),
+				Size:         0,
+				StorageClass: gofakes3.StorageStandard,
+			}
+			if !page.addContent(item) {
+				return false, nil
+			}
+			if !candidate.directory {
 				continue
 			}
-			keepGoing, err := b.walkPage(ctx, bucket, objectPath, "", false, page)
-			if err != nil || !keepGoing {
-				return keepGoing, err
-			}
-		} else {
+		}
+
+		if !candidate.directory {
+			entry := candidate.entry
 			item := &gofakes3.Content{
-				// Key:          gofakes3.URLEncode(objectPath),
-				Key:          objectPath,
+				Key:          candidate.key,
 				LastModified: gofakes3.NewContentTime(entry.ModTime()),
 				ETag:         getFileHash(entry),
 				Size:         entry.GetSize(),
@@ -178,16 +270,25 @@ func (b *s3Backend) walkPage(
 			if !page.addContent(item) {
 				return false, nil
 			}
+			continue
+		}
+
+		if addPrefix {
+			if !page.addPrefix(candidate.key) {
+				return false, nil
+			}
+			continue
+		}
+		if page.marker != "" && candidate.key <= page.marker && !strings.HasPrefix(page.marker, candidate.key) {
+			continue
+		}
+		keepGoing, err := b.walkPage(ctx, bucket, strings.TrimSuffix(candidate.key, "/"), "", false, page, markers, false)
+		if err != nil && err != gofakes3.ErrNoSuchKey {
+			return keepGoing, err
+		}
+		if !keepGoing {
+			return false, nil
 		}
 	}
 	return true, nil
-}
-
-// listSortKey returns the name used to order directory entries so that the
-// emitted keys follow S3 lexicographic order.
-func listSortKey(entry model.Obj) string {
-	if entry.IsDir() {
-		return entry.GetName() + "/"
-	}
-	return entry.GetName()
 }
