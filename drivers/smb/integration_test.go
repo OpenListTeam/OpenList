@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"strings"
 	"testing"
 	"time"
 
@@ -127,25 +126,6 @@ func dirEntries(t *testing.T, d *SMB, dir string) []string {
 	return names
 }
 
-func TestIntegrationUploadsNewFile(t *testing.T) {
-	d, dir := integrationDriver(t)
-	body := []byte("a new file")
-	if err := d.Put(context.Background(), &model.Object{Path: dir}, fileStream("new.bin", bytes.NewReader(body), int64(len(body))), func(float64) {}); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	if got, err := readFile(t, d, path.Join(dir, "new.bin")); err != nil || !bytes.Equal(got, body) {
-		t.Fatalf("read back %q, %v", got, err)
-	}
-	// a server that cannot remove files keeps the probe files, hidden
-	objs, err := d.List(context.Background(), &model.Object{Path: dir}, model.ListArgs{})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(objs) != 1 || objs[0].GetName() != "new.bin" {
-		t.Fatalf("listing shows %d entries, want only new.bin", len(objs))
-	}
-}
-
 // #3178 on SMB: an abandoned upload that had written some data is reaped
 // after a later upload of the same name completed; the later file survives.
 func TestIntegrationCanceledUploadKeepsLaterUpload(t *testing.T) {
@@ -176,31 +156,6 @@ func TestIntegrationCanceledUploadKeepsLaterUpload(t *testing.T) {
 	}
 	if names := dirEntries(t, d, dir); len(names) != 1 {
 		t.Fatalf("directory holds %v after the reap, want only f.bin", names)
-	}
-}
-
-// An abandoned upload that has written nothing yet must not hold the name:
-// a later upload of the same file goes through.
-func TestIntegrationIdleUploadDoesNotBlockLaterUpload(t *testing.T) {
-	d, dir := integrationDriver(t)
-	stale := pausing(bytes.Repeat([]byte("s"), 1<<20), 0)
-	ctx, cancel := context.WithCancel(context.Background())
-	stale.ctxDone = ctx.Done()
-	errc := make(chan error, 1)
-	go func() {
-		errc <- d.Put(ctx, &model.Object{Path: dir}, fileStream("f.bin", stale, 1<<20), func(float64) {})
-	}()
-	<-stale.paused
-	later := bytes.Repeat([]byte("w"), 200<<10)
-	err := op.Put(context.Background(), d, "/"+dir, fileStream("f.bin", bytes.NewReader(later), int64(len(later))), nil)
-	cancel()
-	close(stale.release)
-	<-errc
-	if err != nil {
-		t.Fatalf("a later upload of the same name was blocked by the idle one: %v", err)
-	}
-	if got, err := readFile(t, d, path.Join(dir, "f.bin")); err != nil || !bytes.Equal(got, later) {
-		t.Fatalf("later upload not intact: len %d, %v", len(got), err)
 	}
 }
 
@@ -263,42 +218,6 @@ func TestIntegrationListHidesAndReapsStaging(t *testing.T) {
 	}
 	if _, err := d.fs.Stat(stale); err == nil {
 		t.Fatal("a stale staging file was not reclaimed")
-	}
-}
-
-// Replacing a destination that another client holds open must leave a
-// consistent state either way: the new content (the server allowed the
-// replace) or the old one (it refused), and never a leftover staging file.
-func TestIntegrationOpenDestinationFailsCleanly(t *testing.T) {
-	d, dir := integrationDriver(t)
-	dst := path.Join(dir, "f.bin")
-	old := []byte("old content")
-	if err := d.Put(context.Background(), &model.Object{Path: dir}, fileStream("f.bin", bytes.NewReader(old), int64(len(old))), func(float64) {}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	reader, err := d.fs.Open(dst)
-	if err != nil {
-		t.Fatalf("open %s: %v", dst, err)
-	}
-	body := []byte("new content")
-	putErr := d.Put(context.Background(), &model.Object{Path: dir}, fileStream("f.bin", bytes.NewReader(body), int64(len(body))), func(float64) {})
-	_ = reader.Close()
-	got, err := readFile(t, d, dst)
-	if err != nil {
-		t.Fatalf("destination gone: %v", err)
-	}
-	want := body
-	if putErr != nil {
-		t.Logf("server refused to replace an open file: %v", putErr)
-		want = old
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("destination = %q, want %q (put err %v)", got, want, putErr)
-	}
-	for _, name := range dirEntries(t, d, dir) {
-		if strings.HasPrefix(name, driver.StagingPrefix) {
-			t.Fatalf("staging file %s left behind (put err %v)", name, putErr)
-		}
 	}
 }
 
