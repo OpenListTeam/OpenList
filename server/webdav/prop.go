@@ -172,9 +172,9 @@ var liveProps = map[xml.Name]struct {
 // TODO(nigeltao) merge props and allprop?
 
 // Props returns the status of the properties named pnames for resource name.
-func props(tx *gorm.DB, ctx context.Context, ls LockSystem, name string, fi model.Obj, pnames []xml.Name) ([]Propstat, error) {
+func props(ctx context.Context, ls LockSystem, name string, fi model.Obj, pnames []xml.Name) ([]Propstat, error) {
 	isDir := fi.IsDir()
-	deadProps, err := getDeadProps(tx, name)
+	deadProps, err := getDeadProps(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -199,9 +199,9 @@ func props(tx *gorm.DB, ctx context.Context, ls LockSystem, name string, fi mode
 }
 
 // Propnames returns the property names defined for resource name.
-func propnames(tx *gorm.DB, name string, fi model.Obj) ([]xml.Name, error) {
+func propnames(ctx context.Context, name string, fi model.Obj) ([]xml.Name, error) {
 	isDir := fi.IsDir()
-	deadProps, err := getDeadProps(tx, name)
+	deadProps, err := getDeadProps(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -218,8 +218,8 @@ func propnames(tx *gorm.DB, name string, fi model.Obj) ([]xml.Name, error) {
 }
 
 // Allprop returns the properties defined for resource name and the properties named in include.
-func allprop(tx *gorm.DB, ctx context.Context, ls LockSystem, name string, fi model.Obj, include []xml.Name) ([]Propstat, error) {
-	pnames, err := propnames(tx, name, fi)
+func allprop(ctx context.Context, ls LockSystem, name string, fi model.Obj, include []xml.Name) ([]Propstat, error) {
+	pnames, err := propnames(ctx, name, fi)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func allprop(tx *gorm.DB, ctx context.Context, ls LockSystem, name string, fi mo
 			pnames = append(pnames, pn)
 		}
 	}
-	return props(tx, ctx, ls, name, fi, pnames)
+	return props(ctx, ls, name, fi, pnames)
 }
 
 // Patch patches the properties of resource name.
@@ -306,12 +306,16 @@ loop:
 	return []Propstat{pstat}, nil
 }
 
-func getDeadProps(tx *gorm.DB, path string) (map[xml.Name]Property, error) {
-	var rows []model.WebDAVProperty
-	if tx == nil {
-		return nil, errors.New("webdav property transaction is not initialized")
+func getDeadProps(ctx context.Context, path string) (map[xml.Name]Property, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	if err := tx.Where("path = ?", path).Find(&rows).Error; err != nil {
+	database := db.GetDb()
+	if database == nil {
+		return nil, errors.New("webdav property database is not initialized")
+	}
+	var rows []model.WebDAVProperty
+	if err := database.WithContext(ctx).Where("path = ?", path).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	props := make(map[xml.Name]Property, len(rows))
@@ -326,23 +330,26 @@ func getDeadProps(tx *gorm.DB, path string) (map[xml.Name]Property, error) {
 }
 
 func withDeadPropsTransaction(ctx context.Context, fn func(*gorm.DB) error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	database := db.GetDb()
 	if database == nil {
 		return errors.New("webdav property database is not initialized")
 	}
-	var transaction *gorm.DB
-	err := database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		transaction = tx
+	return database.Transaction(func(tx *gorm.DB) error {
 		var probe int
-		if err := tx.Raw("SELECT 1").Scan(&probe).Error; err != nil {
+		if err := tx.WithContext(ctx).Raw("SELECT 1").Scan(&probe).Error; err != nil {
 			return err
 		}
-		return fn(tx)
+		if err := fn(tx.WithContext(ctx)); err != nil {
+			return err
+		}
+		return ctx.Err()
 	})
-	if err != nil && transaction != nil {
-		_ = transaction.Rollback().Error
-	}
-	return err
 }
 
 func escapeXML(s string) string {
