@@ -276,10 +276,14 @@ func TestSameDirectoryMoveRollbackKeepsMovedFileWhenRenameOutcomeIsUnknown(t *te
 	if err == nil {
 		t.Fatal("the lost reply should surface as an error")
 	}
+	// Another writer takes the source name meanwhile; a name check could not
+	// tell that file from the original source.
+	f.write(t, "original.mp4", "other writer")
 	if err := m.rollback(); err == nil {
-		t.Fatal("rollback should report that the source location is unknown")
+		t.Fatal("rollback should report that the rename outcome is unknown")
 	}
 	f.assertContent(t, "renamed.mp4", "source")
+	f.assertContent(t, "original.mp4", "other writer")
 	backups, _ := filepath.Glob(filepath.Join(f.root, ".openlist-backup-*"))
 	if len(backups) != 1 {
 		t.Fatalf("the replaced destination should stay in its backup, found %v", backups)

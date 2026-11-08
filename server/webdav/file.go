@@ -230,7 +230,7 @@ func canRenameInPlace(src string) bool {
 }
 
 // undoInPlaceRename rolls back a rename that has no source backup.
-func undoInPlaceRename(ctx context.Context, moved bool, src, dst, srcName string, dstBackup *fileBackup) error {
+func undoInPlaceRename(ctx context.Context, moved bool, dst, srcName string, dstBackup *fileBackup) error {
 	if moved {
 		if err := fs.Rename(ctx, dst, srcName); err != nil {
 			// dst holds the only copy of the source; restoring the old
@@ -239,25 +239,11 @@ func undoInPlaceRename(ctx context.Context, moved bool, src, dst, srcName string
 		}
 	} else if dstBackup != nil {
 		// A rename that returned an error may still have been applied, and then
-		// dst holds the only copy of the source. Ask the storage, not the cache.
-		if err := ensureSourceInPlace(ctx, src); err != nil {
-			return errors.WithMessage(err, "keeping the old destination in its backup")
-		}
+		// dst holds the only copy of the source. Nothing here can tell that apart
+		// from a rename that did not happen, so keep the old destination aside.
+		return errors.Errorf("rename outcome unknown; the old destination is kept at %s", dstBackup.backupPath)
 	}
 	return dstBackup.restore(ctx)
-}
-
-func ensureSourceInPlace(ctx context.Context, src string) error {
-	objs, err := fs.List(ctx, path.Dir(src), &fs.ListArgs{Refresh: true, NoLog: true})
-	if err != nil {
-		return errors.WithMessagef(err, "cannot confirm that %s is still in place", src)
-	}
-	for _, obj := range objs {
-		if obj.GetName() == path.Base(src) {
-			return nil
-		}
-	}
-	return errors.Errorf("%s is not in place after a failed rename", src)
 }
 
 func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string, dstExisted, renameInPlace bool) (*fileMutation, error) {
@@ -279,12 +265,12 @@ func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, ds
 		}
 		if !dstBackup.renamed {
 			if err := removeIfExists(ctx, dst); err != nil {
-				mutation := moveMutation(ctx, src, dst, dstDir, srcName, dstName, srcBackup, dstBackup)
+				mutation := moveMutation(ctx, dst, dstDir, srcName, dstName, srcBackup, dstBackup)
 				return mutation, errors.WithMessage(err, "failed to remove destination after creating rollback copy")
 			}
 		}
 	}
-	mutation := moveMutation(ctx, src, dst, dstDir, srcName, dstName, srcBackup, dstBackup)
+	mutation := moveMutation(ctx, dst, dstDir, srcName, dstName, srcBackup, dstBackup)
 	if err := moveResource(ctx, src, dstDir, srcDir, srcName, dstName); err != nil {
 		return mutation, err
 	}
@@ -292,7 +278,7 @@ func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, ds
 	return mutation, nil
 }
 
-func moveMutation(ctx context.Context, src, dst, dstDir, srcName, dstName string, srcBackup, dstBackup *fileBackup) *fileMutation {
+func moveMutation(ctx context.Context, dst, dstDir, srcName, dstName string, srcBackup, dstBackup *fileBackup) *fileMutation {
 	var paths []string
 	if srcBackup != nil {
 		paths = append(paths, srcBackup.backupPath)
@@ -306,7 +292,7 @@ func moveMutation(ctx context.Context, src, dst, dstDir, srcName, dstName string
 		rollback: func() error {
 			rollbackCtx := context.WithoutCancel(ctx)
 			if srcBackup == nil {
-				return undoInPlaceRename(rollbackCtx, m.moved, src, dst, srcName, dstBackup)
+				return undoInPlaceRename(rollbackCtx, m.moved, dst, srcName, dstBackup)
 			}
 			var rollbackErrs []error
 			candidates := []string{dst}
