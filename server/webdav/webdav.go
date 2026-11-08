@@ -531,9 +531,14 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 		return http.StatusNotFound, err
 	}
 
-	// TODO(rost): Returning 405 Method Not Allowed might not be appropriate.
 	if err != nil {
-		return http.StatusMethodNotAllowed, err
+		if errors.Is(err, errs.PermissionDenied) {
+			return http.StatusForbidden, err
+		}
+		if errors.Is(err, errs.UploadNotSupported) || errs.IsNotImplementError(err) || errs.IsNotSupportError(err) {
+			return http.StatusMethodNotAllowed, err
+		}
+		return http.StatusInternalServerError, err
 	}
 	fi, err = fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {

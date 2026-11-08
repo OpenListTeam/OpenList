@@ -133,15 +133,15 @@ func (cm *CacheManager) SetStorageDetails(storage driver.Driver, details *model.
 		return
 	}
 	expiration := time.Minute * time.Duration(storage.GetStorage().CacheExpiration)
-	cm.detailCache.SetWithTTL(utils.GetActualMountPath(storage.GetStorage().MountPath), details, expiration)
+	cm.detailCache.SetWithTTL(utils.FixAndCleanPath(storage.GetStorage().MountPath), details, expiration)
 }
 
 func (cm *CacheManager) GetStorageDetails(storage driver.Driver) (*model.StorageDetails, bool) {
-	return cm.detailCache.Get(utils.GetActualMountPath(storage.GetStorage().MountPath))
+	return cm.detailCache.Get(utils.FixAndCleanPath(storage.GetStorage().MountPath))
 }
 
 func (cm *CacheManager) InvalidateStorageDetails(storage driver.Driver) {
-	cm.detailCache.Delete(utils.GetActualMountPath(storage.GetStorage().MountPath))
+	cm.detailCache.Delete(utils.FixAndCleanPath(storage.GetStorage().MountPath))
 }
 
 // clears all caches

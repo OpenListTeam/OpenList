@@ -1,8 +1,11 @@
 package torrent
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -67,9 +70,15 @@ func TestCASWireFormatIsLegacyCompatible(t *testing.T) {
 			t.Fatalf("CAS payload missing %q: %#v", key, payload)
 		}
 	}
+	if _, exists := payload["comment"]; exists {
+		t.Fatal("legacy CAS with empty comment unexpectedly contains comment field")
+	}
 	decoded, err := DecodeCAS(encoded, DefaultParseLimits())
 	if err != nil {
 		t.Fatalf("DecodeCAS() error = %v", err)
+	}
+	if decoded.Comment != "" {
+		t.Fatal("legacy CAS unexpectedly gained a comment")
 	}
 	if decoded.Files[0].Hashes.MD5 != strings.Repeat("1", 32) {
 		t.Fatalf("DecodeCAS() MD5 = %q", decoded.Files[0].Hashes.MD5)
@@ -156,5 +165,327 @@ func TestDecodeSeedHonorsSizeLimit(t *testing.T) {
 	limits.MaxBytes = int64(len(data) - 1)
 	if _, err := DecodeSeed(data, "oss", limits); err == nil {
 		t.Fatal("DecodeSeed() accepted input above MaxBytes")
+	}
+}
+
+func TestDecodeOSSRecomputesAvailableHashes(t *testing.T) {
+	for _, global := range []bool{false, true} {
+		seed := testSeed()
+		seed.AvailableHashes = []string{"invented"}
+		seed.AvailablePieceHashes = []string{"invented"}
+		if global {
+			seed.GlobalPieces = append([]string(nil), seed.Files[0].Hashes.Pieces.SHA1...)
+		}
+		data, err := EncodeOSS(seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !global && strings.Contains(string(data), "global_pieces") {
+			t.Fatal("legacy OSS unexpectedly contains global_pieces")
+		}
+		decoded, err := DecodeOSS(data, DefaultParseLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(decoded.AvailableHashes, ",") != "md5,sha1,sha256" ||
+			strings.Join(decoded.AvailablePieceHashes, ",") != "md5,sha1,sha256" {
+			t.Fatalf("summaries not recomputed: %v / %v", decoded.AvailableHashes, decoded.AvailablePieceHashes)
+		}
+	}
+	seed := testSeed()
+	seed.Files[0].Hashes = SeedHashes{}
+	seed.AvailableHashes = []string{"md5", "sha1", "sha256"}
+	seed.AvailablePieceHashes = []string{"md5", "sha1", "sha256"}
+	data, err := EncodeOSS(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeOSS(data, DefaultParseLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.AvailableHashes) != 0 || len(decoded.AvailablePieceHashes) != 0 {
+		t.Fatal("untrusted hash summaries survived OSS decoding")
+	}
+}
+
+func TestUpdateTorrentCommentPreservesOriginalInfo(t *testing.T) {
+	for _, noncanonical := range []bool{false, true} {
+		name := "canonical"
+		if noncanonical {
+			name = "noncanonical"
+		}
+		t.Run(name, func(t *testing.T) {
+			seed := testSeed()
+			seed.Comment = "old comment"
+			data, err := EncodeSeed(seed, "torrent")
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, err := BencodeDecode(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := value.(map[string]interface{})
+			info := root["info"].(map[string]interface{})
+			info["private"] = int64(1)
+			info["future-info"] = map[string]interface{}{"binary": []byte{0, 255, 1}, "value": int64(7)}
+			root["future-root"] = []interface{}{[]byte{0, 255}, int64(9)}
+			extension := root[OpenListExtensionKey].(map[string]interface{})
+			extension["future-extension"] = []interface{}{[]byte("keep"), int64(3)}
+			data, err = BencodeEncode(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonicalInfo, err := BencodeEncode(info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if noncanonical {
+				keys := make([]string, 0, len(info))
+				for key := range info {
+					keys = append(keys, key)
+				}
+				sort.Sort(sort.Reverse(sort.StringSlice(keys)))
+				var raw bytes.Buffer
+				raw.WriteByte('d')
+				for _, key := range keys {
+					encodedKey, err := BencodeEncode(key)
+					if err != nil {
+						t.Fatal(err)
+					}
+					encodedValue, err := BencodeEncode(info[key])
+					if err != nil {
+						t.Fatal(err)
+					}
+					if key == "private" {
+						encodedValue = []byte("i01e")
+					}
+					raw.Write(encodedKey)
+					raw.Write(encodedValue)
+				}
+				raw.WriteByte('e')
+				if bytes.Equal(raw.Bytes(), canonicalInfo) {
+					t.Fatal("fixture unexpectedly canonical")
+				}
+				data = bytes.Replace(data, canonicalInfo, raw.Bytes(), 1)
+			}
+			before, err := rawBencodeRoot(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantHash := sha1.Sum(before["info"])
+			parsed, err := Decode(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(parsed.InfoHash, wantHash[:]) {
+				t.Fatal("Decode did not hash the original info bytes")
+			}
+			for _, comment := range []string{"new comment 注释", ""} {
+				updated, err := UpdateSeedComment(data, ".TORRENT", comment)
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := rawBencodeRoot(updated)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for key, raw := range before {
+					if key != "comment" && key != OpenListExtensionKey && !bytes.Equal(raw, after[key]) {
+						t.Fatalf("updating comment changed raw field %q", key)
+					}
+				}
+				parsed, err := Decode(updated)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if parsed.Comment != comment || parsed.OpenList.Comment != comment || !bytes.Equal(parsed.InfoHash, wantHash[:]) {
+					t.Fatal("updated comments or original infohash do not match")
+				}
+				value, err := BencodeDecode(after[OpenListExtensionKey])
+				if err != nil {
+					t.Fatal(err)
+				}
+				updatedExtension := value.(map[string]interface{})
+				oldUnknown, err := BencodeEncode(extension["future-extension"])
+				if err != nil {
+					t.Fatal(err)
+				}
+				newUnknown, err := BencodeEncode(updatedExtension["future-extension"])
+				if err != nil || !bytes.Equal(oldUnknown, newUnknown) {
+					t.Fatal("unknown x-openlist metadata changed")
+				}
+			}
+		})
+	}
+}
+
+func TestUpdateSeedCommentContainers(t *testing.T) {
+	seed := testSeed()
+	data, err := EncodeOSS(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := UpdateSeedComment(data, ".OSS", "updated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := DecodeOSS(updated, DefaultParseLimits())
+	if err != nil || parsed.Comment != "updated" || parsed.Files[0].Hashes.SHA256 != seed.Files[0].Hashes.SHA256 {
+		t.Fatalf("OSS comment update lost metadata: %v", err)
+	}
+	cas, err := EncodeCAS(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, comment := range []string{"updated", ""} {
+		updated, err := UpdateSeedComment(cas, "cas", comment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := DecodeCAS(updated, DefaultParseLimits())
+		if err != nil || parsed.Comment != comment {
+			t.Fatalf("CAS comment update failed: %v", err)
+		}
+	}
+	if _, err := UpdateSeedComment(data, "unknown", "updated"); err == nil {
+		t.Fatal("unsupported comment container accepted")
+	}
+	if _, err := UpdateSeedComment([]byte("invalid"), "torrent", "updated"); err == nil {
+		t.Fatal("invalid torrent accepted")
+	}
+}
+
+func TestUpdateStandardTorrentCommentDoesNotAddExtension(t *testing.T) {
+	data, err := EncodeSeed(testSeed(), "torrent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := BencodeDecode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := value.(map[string]interface{})
+	delete(root, OpenListExtensionKey)
+	data, err = BencodeEncode(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := UpdateSeedComment(data, "torrent", "standard comment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Decode(updated)
+	if err != nil || parsed.Comment != "standard comment" || parsed.OpenList != nil {
+		t.Fatalf("standard torrent extension/comment changed unexpectedly: %v", err)
+	}
+}
+
+func TestCASCommentAcrossFormats(t *testing.T) {
+	for _, multi := range []bool{false, true} {
+		for _, format := range []string{"oss", "torrent"} {
+			seed := testSeed()
+			seed.Comment = "共享注释"
+			if multi {
+				second := seed.Files[0]
+				second.Path = "second.bin"
+				seed.Files[0].Size = DefaultPieceSize * 2
+				seed.Files = append(seed.Files, second)
+			}
+			data, err := EncodeSeed(seed, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := DecodeSeed(data, format, DefaultParseLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			cas, err := EncodeCAS(parsed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := base64.StdEncoding.DecodeString(string(cas))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, input := range [][]byte{cas, raw} {
+				fromCAS, err := DecodeCAS(input, DefaultParseLimits())
+				if err != nil || fromCAS.Comment != seed.Comment || len(fromCAS.Files) != len(seed.Files) {
+					t.Fatalf("%s -> CAS lost comment/files (multi=%v): %v", format, multi, err)
+				}
+				oss, err := EncodeOSS(fromCAS)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fromOSS, err := DecodeOSS(oss, DefaultParseLimits())
+				if err != nil || fromOSS.Comment != seed.Comment {
+					t.Fatalf("CAS -> OSS lost comment: %v", err)
+				}
+			}
+		}
+	}
+}
+
+func TestUpdateCASCommentPreservesUnknownFieldsAndWrapper(t *testing.T) {
+	seed := testSeed()
+	seed.Comment = "old comment"
+	encoded, err := EncodeCAS(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(string(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &original); err != nil {
+		t.Fatal(err)
+	}
+	original["future-number"] = json.RawMessage(`9007199254740993123456789`)
+	original["future-metadata"] = json.RawMessage(`{"nested":["keep",true,7]}`)
+	raw, err = json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, isBase64 := range []bool{false, true} {
+		input := raw
+		if isBase64 {
+			input = []byte(base64.StdEncoding.EncodeToString(raw))
+		}
+		input = append(append([]byte(" \n"), input...), []byte("\n ")...)
+		for _, comment := range []string{"新注释", ""} {
+			updated, err := UpdateSeedComment(input, ".CAS", comment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := updated
+			if isBase64 {
+				content, err = base64.StdEncoding.DecodeString(string(updated))
+				if err != nil {
+					t.Fatalf("base64 wrapper changed: %v", err)
+				}
+			} else if len(updated) == 0 || updated[0] != '{' {
+				t.Fatal("plain CAS wrapper changed")
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(content, &fields); err != nil {
+				t.Fatal(err)
+			}
+			for key, value := range original {
+				if key != "comment" && !bytes.Equal(value, fields[key]) {
+					t.Fatalf("CAS comment update changed field %q", key)
+				}
+			}
+			parsed, err := DecodeCAS(updated, DefaultParseLimits())
+			if err != nil || parsed.Comment != comment {
+				t.Fatalf("CAS comment update failed: %v", err)
+			}
+			if comment == "" {
+				if _, exists := fields["comment"]; exists {
+					t.Fatal("cleared CAS comment field was not removed")
+				}
+			}
+		}
 	}
 }

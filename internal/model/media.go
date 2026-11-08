@@ -23,10 +23,17 @@ type MediaScanPath struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index"                json:"-"`
 
-	MediaType    MediaType  `gorm:"size:32;index;not null" json:"media_type"`  // 所属媒体类型
-	Name         string     `json:"name"`                                      // 路径名称（用于前端筛选显示）
-	Path         string     `gorm:"not null"             json:"path"`          // VFS 扫描路径
-	PathMerge    bool       `gorm:"default:false"        json:"path_merge"`    // 路径合并模式（子文件夹作为一个条目）
+	MediaType MediaType `gorm:"size:32;index;not null" json:"media_type"` // 所属媒体类型
+	Name      string    `json:"name"`                                     // 路径名称（用于前端筛选显示）
+	Path      string    `gorm:"not null"             json:"path"`         // VFS 扫描路径
+	PathMerge bool      `gorm:"default:false"        json:"path_merge"`   // 路径合并模式（子文件夹作为一个条目）
+	// MergeDepth 合并模式的固定层级深度（相对扫描根，0 表示自动）。
+	//   0 = 旧行为：逐层向下，第一个「直接包含媒体文件」的文件夹作为一个条目
+	//   N = 第 N 层文件夹整体作为一个条目，内部的媒体文件（含更深层子目录）都算选集
+	// 扫描根的直接子文件夹是第 1 层，所以 /电视剧/<剧名>/第N季/... 应填 1，
+	// 整部剧聚合为一条记录，只刮削一次。名字形如「第一季 / Season 1 / S01」的
+	// 目录即使被层级规则选中，也会被自动上移到剧名目录，不会单独成条。
+	MergeDepth   int        `gorm:"default:0"            json:"merge_depth"`
 	TypeTag      string     `json:"type_tag"`                                  // 类型标签：电影、电视剧等
 	ContentTags  string     `json:"content_tags"`                              // 内容标签：喜剧、惊悚等（逗号分隔）
 	EnableScrape bool       `gorm:"default:true"         json:"enable_scrape"` // 是否启用刮削
@@ -115,6 +122,10 @@ type EpisodeInfo struct {
 	FileName string `json:"file_name"` // 原始文件名（含扩展名）
 	Index    int    `json:"index"`     // 序号，默认0，文件名开头有数字则取该数字
 	Title    string `json:"title"`     // 选集标题（去掉序号后的文件名，不含扩展名）
+	// Season 季号，0 表示未识别（按第 1 季展示）。
+	// 扫描时会从「第一季 / Season 1 / S01」这类子目录名解析出来，
+	// 一部剧的多个季合并成一条记录后，靠它才能在播放器 / Emby 里按季分开。
+	Season int `json:"season,omitempty"`
 }
 
 // MediaScanProgress 扫描进度（内存中维护，不持久化）

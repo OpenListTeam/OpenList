@@ -114,10 +114,18 @@ func FsStream(c *gin.Context) {
 		common.ErrorStrResp(c, "seed sidecar generation requires synchronous upload", 400)
 		return
 	}
+	// CAS 的分片大小由文件大小决定；大小未知时无法在流式读取过程中切对边界，
+	// 读完再补算也不可能（数据已经写走）。在落盘前拒绝，避免「主文件已写入、
+	// sidecar 阶段才失败」的不一致。
+	if generateSeed && size < 0 && seedSidecarWantsCAS(c) {
+		common.ErrorStrResp(c, "CAS sidecar generation requires a known file size: send Content-Length or X-File-Size", 400)
+		return
+	}
 	var seedHasher *torrent.HashWriter
 	var uploadReader io.Reader = c.Request.Body
 	if generateSeed {
-		seedHasher = torrent.NewHashWriter(seedPieceSize(c), seedPieceSize(c), 0)
+		sliceSize := uploadSeedSliceSize(c, size)
+		seedHasher = torrent.NewHashWriter(sliceSize, sliceSize, 0)
 		uploadReader = io.TeeReader(c.Request.Body, seedHasher)
 	}
 	s := &stream.FileStream{
@@ -237,7 +245,8 @@ func FsForm(c *gin.Context) {
 	var seedHasher *torrent.HashWriter
 	var uploadReader io.Reader = f
 	if generateSeed {
-		seedHasher = torrent.NewHashWriter(seedPieceSize(c), seedPieceSize(c), 0)
+		sliceSize := uploadSeedSliceSize(c, file.Size)
+		seedHasher = torrent.NewHashWriter(sliceSize, sliceSize, 0)
 		uploadReader = io.TeeReader(f, seedHasher)
 	}
 	s := &stream.FileStream{
@@ -297,11 +306,6 @@ func shouldGenerateUploadSeed(c *gin.Context, path string) bool {
 }
 
 func seedPieceSize(c *gin.Context) int64 {
-	for _, format := range strings.Split(strings.ToLower(c.GetHeader("X-Seed-Sidecars")), ",") {
-		if strings.TrimSpace(format) == "cas" {
-			return torrent.DefaultPieceSize
-		}
-	}
 	value := c.GetHeader("X-Seed-Piece-Size")
 	if value == "" {
 		return torrent.DefaultPieceSize
@@ -311,6 +315,39 @@ func seedPieceSize(c *gin.Context) int64 {
 		return torrent.DefaultPieceSize
 	}
 	return size
+}
+
+// seedSidecarFormats 返回本次上传要生成的种子格式串。
+// 请求头优先（X-Seed-Sidecars / X-Seed-Format），其次全局策略。
+func seedSidecarFormats(c *gin.Context) string {
+	formatsHeader := strings.TrimSpace(c.GetHeader("X-Seed-Sidecars"))
+	if formatsHeader == "" {
+		formatsHeader = strings.TrimSpace(c.GetHeader("X-Seed-Format"))
+	}
+	if formatsHeader == "" {
+		formatsHeader = configuredSeedFormats()
+	}
+	return formatsHeader
+}
+
+// seedSidecarWantsCAS reports whether this upload asks for a .cas sidecar.
+func seedSidecarWantsCAS(c *gin.Context) bool {
+	for _, format := range strings.Split(strings.ToLower(seedSidecarFormats(c)), ",") {
+		if strings.TrimSpace(format) == "cas" {
+			return true
+		}
+	}
+	return false
+}
+
+// uploadSeedSliceSize 返回上传时计算哈希应使用的分片大小。
+// CAS 的分片由文件大小唯一决定（CASSliceSize），请求头里的 piece size 对它无效；
+// 其它格式沿用请求头/默认值。
+func uploadSeedSliceSize(c *gin.Context, fileSize int64) int64 {
+	if seedSidecarWantsCAS(c) {
+		return torrent.CASSliceSize(fileSize)
+	}
+	return seedPieceSize(c)
 }
 
 func configuredSeedFormats() string {
@@ -331,14 +368,7 @@ func configuredSeedFormats() string {
 // main file is stored, so a bad X-Seed-* header cannot leave a partially
 // uploaded file behind.
 func validateUploadSeedRequest(c *gin.Context) error {
-	formatsHeader := strings.TrimSpace(c.GetHeader("X-Seed-Sidecars"))
-	if formatsHeader == "" {
-		formatsHeader = strings.TrimSpace(c.GetHeader("X-Seed-Format"))
-	}
-	if formatsHeader == "" {
-		formatsHeader = configuredSeedFormats()
-	}
-	if _, err := fs.NormalizeSeedFormats(strings.Split(formatsHeader, ",")); err != nil {
+	if _, err := fs.NormalizeSeedFormats(strings.Split(seedSidecarFormats(c), ",")); err != nil {
 		return err
 	}
 	if raw := strings.TrimSpace(c.GetHeader("X-Seed-Hash-Matrix")); raw != "" {
@@ -358,15 +388,8 @@ func writeUploadSeedSidecar(c *gin.Context, dir, name string, expectedSize int64
 	if expectedSize >= 0 && hasher.GetTotalWritten() != expectedSize {
 		return fmt.Errorf("seed sidecar requires a complete stream: read %d of %d bytes", hasher.GetTotalWritten(), expectedSize)
 	}
-	seed := torrent.NewSeed(name, "OpenList", seedPieceSize(c))
-	formatsHeader := strings.TrimSpace(c.GetHeader("X-Seed-Sidecars"))
-	if formatsHeader == "" {
-		formatsHeader = strings.TrimSpace(c.GetHeader("X-Seed-Format"))
-	}
-	if formatsHeader == "" {
-		formatsHeader = configuredSeedFormats()
-	}
-	formats, err := fs.NormalizeSeedFormats(strings.Split(formatsHeader, ","))
+	seed := torrent.NewSeed(name, "OpenList", uploadSeedSliceSize(c, expectedSize))
+	formats, err := fs.NormalizeSeedFormats(strings.Split(seedSidecarFormats(c), ","))
 	if err != nil {
 		return err
 	}
