@@ -27,12 +27,12 @@ import (
 // existing name. It counts Copy calls, which a rename needs no data transfer for.
 type moveDriver struct {
 	local.Local
-	root             string
 	name             string
 	flagged          bool
 	copies           atomic.Int32
 	claimDestination atomic.Bool
 	claimed          atomic.Bool
+	loseReplyFor     string
 }
 
 func (d *moveDriver) Config() driver.Config {
@@ -65,7 +65,14 @@ func (d *moveDriver) Rename(ctx context.Context, obj model.Obj, name string) err
 	if _, err := os.Lstat(target); err == nil && d.flagged {
 		return errors.New("destination already exists")
 	}
-	return d.Local.Rename(ctx, obj, name)
+	if err := d.Local.Rename(ctx, obj, name); err != nil {
+		return err
+	}
+	// Like a cloud call whose reply is lost after the server applied it.
+	if d.loseReplyFor == obj.GetName() {
+		return errors.New("connection lost after the rename was applied")
+	}
+	return nil
 }
 
 type moveFixture struct {
@@ -81,7 +88,6 @@ type moveFixture struct {
 func setupMoveFixture(t *testing.T, d *moveDriver) *moveFixture {
 	t.Helper()
 	root := t.TempDir()
-	d.root = root
 	database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "test.db")), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -257,6 +263,26 @@ func TestSameDirectoryMoveRollsBackOnTransactionFailure(t *testing.T) {
 	}
 	if f.d.copies.Load() != 0 {
 		t.Fatalf("rollback copied file data: copies=%d", f.d.copies.Load())
+	}
+}
+
+// A rename that reports an error may still have been applied. The replaced
+// destination must not be restored over the only copy of the source.
+func TestSameDirectoryMoveRollbackKeepsMovedFileWhenRenameOutcomeIsUnknown(t *testing.T) {
+	f := setupMoveFixture(t, &moveDriver{flagged: true, loseReplyFor: "original.mp4"})
+	f.write(t, "original.mp4", "source")
+	f.write(t, "renamed.mp4", "old destination")
+	m, err := moveWithRollback(f.ctx, f.src, f.dst, f.mount, f.mount, "original.mp4", "renamed.mp4", true, true)
+	if err == nil {
+		t.Fatal("the lost reply should surface as an error")
+	}
+	if err := m.rollback(); err == nil {
+		t.Fatal("rollback should report that the source location is unknown")
+	}
+	f.assertContent(t, "renamed.mp4", "source")
+	backups, _ := filepath.Glob(filepath.Join(f.root, ".openlist-backup-*"))
+	if len(backups) != 1 {
+		t.Fatalf("the replaced destination should stay in its backup, found %v", backups)
 	}
 }
 
