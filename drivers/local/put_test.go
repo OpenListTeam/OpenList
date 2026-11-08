@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,15 @@ import (
 type blockedReader struct {
 	started chan struct{}
 	release chan struct{}
+}
+
+type cancelOnEOFReader struct {
+	cancel context.CancelFunc
+}
+
+func (r cancelOnEOFReader) Read([]byte) (int, error) {
+	r.cancel()
+	return 0, io.EOF
 }
 
 func (r blockedReader) Read([]byte) (int, error) {
@@ -256,7 +266,7 @@ func TestPutRejectsOverwriteOfReadOnlyFile(t *testing.T) {
 	}
 }
 
-func TestPutReplacesFileInReadOnlyDirectory(t *testing.T) {
+func TestPutRejectsReadOnlyDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("file permission bits are not supported on Windows")
 	}
@@ -278,15 +288,30 @@ func TestPutReplacesFileInReadOnlyDirectory(t *testing.T) {
 		Obj:    &model.Object{Name: "test.bin", Size: 3},
 		Reader: bytes.NewReader([]byte("new")),
 	}
-	if err := (&Local{}).Put(context.Background(), &model.Object{Path: root}, file, nil); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := (&Local{}).Put(context.Background(), &model.Object{Path: root}, file, nil); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Put error = %v, want permission denied", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "new" {
-		t.Fatalf("file contents = %q, want %q", got, "new")
+	if string(got) != "old" {
+		t.Fatalf("file contents = %q, want original contents", got)
+	}
+}
+
+func TestPutRejectsCancellationAfterCopy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	root := t.TempDir()
+	file := &stream.FileStream{
+		Obj:    &model.Object{Name: "test.bin"},
+		Reader: cancelOnEOFReader{cancel: cancel},
+	}
+	if err := (&Local{}).Put(ctx, &model.Object{Path: root}, file, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Put error = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "test.bin")); !os.IsNotExist(err) {
+		t.Fatalf("canceled upload was published: err = %v", err)
 	}
 }
 

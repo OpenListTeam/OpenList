@@ -24,6 +24,9 @@ func (rf readerFunc) Read(p []byte) (n int, err error) { return rf(p) }
 // - context has been added in order to propagate cancellation
 // - I do not return the number of bytes written, has it is not useful in my use case
 func CopyWithCtx(ctx context.Context, out io.Writer, in io.Reader, size int64, progress func(percentage float64)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Copy will call the Reader and Writer interface multiple time, in order
 	// to copy by chunk (avoiding loading the whole file in memory).
 	// I insert the ability to cancel before read time as it is the earliest
@@ -40,6 +43,11 @@ func CopyWithCtx(ctx context.Context, out io.Writer, in io.Reader, size int64, p
 		default:
 			// otherwise just run default io.Reader implementation
 			n, err := in.Read(p)
+			select {
+			case <-ctx.Done():
+				return n, ctx.Err()
+			default:
+			}
 			if s > 0 && (err == nil || err == io.EOF) {
 				finish += int64(n)
 				progress(float64(finish) / float64(s))
