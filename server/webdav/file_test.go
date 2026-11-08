@@ -260,19 +260,24 @@ func TestSameDirectoryMoveRollsBackOnTransactionFailure(t *testing.T) {
 	}
 }
 
-// A source name recreated while the transaction was running is not overwritten:
-// the driver refuses the reverse rename and both objects stay.
-func TestSameDirectoryMoveRollbackPreservesRecreatedSource(t *testing.T) {
+// When the reverse rename fails, the destination holds the only copy of the
+// source, so the replaced destination must not be restored over it.
+func TestSameDirectoryMoveRollbackKeepsMovedFileWhenReverseRenameFails(t *testing.T) {
 	f := setupMoveFixture(t, &moveDriver{flagged: true})
-	f.write(t, "original.mp4", "original content")
-	m, err := moveWithRollback(f.ctx, f.src, f.dst, f.mount, f.mount, "original.mp4", "renamed.mp4", false, true)
+	f.write(t, "original.mp4", "source")
+	f.write(t, "renamed.mp4", "old destination")
+	m, err := moveWithRollback(f.ctx, f.src, f.dst, f.mount, f.mount, "original.mp4", "renamed.mp4", true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.write(t, "original.mp4", "new content")
 	if err := m.rollback(); err == nil {
-		t.Fatal("rollback of a taken source name should fail")
+		t.Fatal("rollback should report the failed reverse rename")
 	}
+	f.assertContent(t, "renamed.mp4", "source")
 	f.assertContent(t, "original.mp4", "new content")
-	f.assertContent(t, "renamed.mp4", "original content")
+	backups, _ := filepath.Glob(filepath.Join(f.root, ".openlist-backup-*"))
+	if len(backups) != 1 {
+		t.Fatalf("the replaced destination should stay in its backup, found %v", backups)
+	}
 }
