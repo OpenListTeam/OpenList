@@ -211,7 +211,7 @@ func (y *Cloud189PC) put(ctx context.Context, url string, headers map[string]str
 }
 
 func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool) ([]model.Obj, error) {
-    pageSize := 1000  // 每一页返回的文件数量
+	pageSize := 1000 // 每一页返回的文件数量
 	res := make([]model.Obj, 0, 100)
 	for pageNum := 1; ; pageNum++ {
 		resp, err := y.getFilesWithPage(ctx, fileId, isFamily, pageNum, pageSize, y.OrderBy, y.OrderDirection)
@@ -222,10 +222,10 @@ func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool)
 		if resp.FileListAO.Count == 0 {
 			break
 		}
-		
+
 		FolderCount := len(resp.FileListAO.FolderList) // 当前文件夹总数
-        FileCount := len(resp.FileListAO.FileList) // 当前文件总数
-        PageCount := FolderCount + FileCount // 当前页数总数
+		FileCount := len(resp.FileListAO.FileList)     // 当前文件总数
+		PageCount := FolderCount + FileCount           // 当前页数总数
 
 		for i := 0; i < FolderCount; i++ {
 			res = append(res, &resp.FileListAO.FolderList[i])
@@ -234,11 +234,11 @@ func (y *Cloud189PC) getFiles(ctx context.Context, fileId string, isFamily bool)
 			resp.FileListAO.FileList[i].ParentID = fileId
 			res = append(res, &resp.FileListAO.FileList[i])
 		}
-		
+
 		// 当前文件数量小于设定数量则跳出
 		if PageCount < pageSize {
-            break
-        }
+			break
+		}
 	}
 	return res, nil
 }
@@ -1148,12 +1148,12 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 		go func() {
 			torrentData, err := GenerateTorrent(capturedFileName, fileSize, fileMd5Hex, silceMd5Hexs, sliceSize, pieceSHA1Hashes)
 			if err != nil {
-				utils.Log.Warnf("生成 torrent 失败: %v", err)
+				utils.Log.Warnf("failed to generate torrent: %v", err)
 				return
 			}
 			infoHash, _ := GetInfoHashHex(torrentData)
 			torrentName := capturedFileName + ".cas.torrent"
-			utils.Log.Infof("已生成 torrent: %s (info_hash: %s, size: %d bytes)",
+			utils.Log.Infof("generated torrent: %s (info_hash: %s, size: %d bytes)",
 				torrentName, infoHash, len(torrentData))
 
 			// 将 torrent 文件上传到同一目录（使用 FastUpload，因为 torrent 文件很小）
@@ -1169,9 +1169,9 @@ func (y *Cloud189PC) StreamUpload(ctx context.Context, dstDir model.Obj, file mo
 			}
 			_, uploadErr := y.FastUpload(context.Background(), capturedDstDir, torrentFileStream, func(p float64) {}, capturedIsFamily, false)
 			if uploadErr != nil {
-				utils.Log.Warnf("上传 torrent 文件失败: %v", uploadErr)
+				utils.Log.Warnf("failed to upload torrent file: %v", uploadErr)
 			} else {
-				utils.Log.Infof("torrent 文件已上传: %s", torrentName)
+				utils.Log.Infof("torrent file uploaded: %s", torrentName)
 				op.Cache.DeleteDirectory(y, capturedDstDir.GetPath())
 			}
 		}()
@@ -1408,12 +1408,12 @@ func (y *Cloud189PC) fastUpload(ctx context.Context, dstDir model.Obj, file mode
 		go func() {
 			torrentData, err := GenerateTorrent(capturedFileName, size, fileMd5Hex, sliceMd5Hexs, sliceSize, pieceSHA1Hashes)
 			if err != nil {
-				utils.Log.Warnf("生成 torrent 失败: %v", err)
+				utils.Log.Warnf("failed to generate torrent: %v", err)
 				return
 			}
 			infoHash, _ := GetInfoHashHex(torrentData)
 			torrentName := capturedFileName + ".cas.torrent"
-			utils.Log.Infof("已生成 torrent: %s (info_hash: %s, size: %d bytes)",
+			utils.Log.Infof("generated torrent: %s (info_hash: %s, size: %d bytes)",
 				torrentName, infoHash, len(torrentData))
 
 			// 将 torrent 文件上传到同一目录
@@ -1429,9 +1429,9 @@ func (y *Cloud189PC) fastUpload(ctx context.Context, dstDir model.Obj, file mode
 			}
 			_, uploadErr := y.fastUpload(context.Background(), capturedDstDir, torrentFileStream, func(p float64) {}, capturedIsFamily, false, false)
 			if uploadErr != nil {
-				utils.Log.Warnf("上传 torrent 文件失败: %v", uploadErr)
+				utils.Log.Warnf("failed to upload torrent file: %v", uploadErr)
 			} else {
-				utils.Log.Infof("torrent 文件已上传: %s", torrentName)
+				utils.Log.Infof("torrent file uploaded: %s", torrentName)
 				op.Cache.DeleteDirectory(y, capturedDstDir.GetPath())
 			}
 		}()
@@ -1619,7 +1619,10 @@ func (y *Cloud189PC) OldUploadCommit(ctx context.Context, fileCommitUrl string, 
 //  1. initMultiUpload（仅传 lazyCheck=1）
 //  2. checkTransSecond（用 fileMd5 + sliceMd5 检查云端是否已存在文件数据）
 //  3. commitMultiUploadFile（提交并返回文件对象）
-func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, fileMD5 string, sliceMD5s []string, sliceSize int64, overwrite bool) (model.Obj, error) {
+//
+// sliceMD5 是最终分片摘要，sliceMD5s 是可选的逐片 MD5 列表。
+// 摘要优先：它才是云端比较的值，逐片列表只用来在缺摘要时推算。
+func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fileName string, fileSize int64, fileMD5 string, sliceMD5 string, sliceMD5s []string, sliceSize int64, overwrite bool) (model.Obj, error) {
 	isFamily := y.isFamily()
 
 	// 统一 MD5 为大写（天翼云盘要求大写）
@@ -1630,17 +1633,7 @@ func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fil
 		sliceSize = partSize(fileSize)
 	}
 
-	// 计算 sliceMd5（与上传时一致的算法）
-	sliceMd5Hex := fileMD5Upper
-	if len(sliceMD5s) > 1 {
-		upperSliceMD5s := make([]string, len(sliceMD5s))
-		for i, s := range sliceMD5s {
-			upperSliceMD5s[i] = strings.ToUpper(s)
-		}
-		sliceMd5Hex = strings.ToUpper(utils.GetMD5EncodeStr(strings.Join(upperSliceMD5s, "\n")))
-	} else if len(sliceMD5s) == 1 {
-		sliceMd5Hex = strings.ToUpper(sliceMD5s[0])
-	}
+	sliceMd5Hex := casSliceDigest(fileMD5Upper, sliceMD5, sliceMD5s)
 
 	fullUrl := "https://upload.cloud.189.cn"
 	if isFamily {
@@ -1665,7 +1658,7 @@ func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fil
 	if _, err := y.request(fullUrl+"/initMultiUpload", "GET", func(req *resty.Request) {
 		req.SetContext(ctx)
 	}, initParams, &uploadInfo, isFamily); err != nil {
-		return nil, fmt.Errorf("initMultiUpload 失败: %w", err)
+		return nil, fmt.Errorf("initMultiUpload failed: %w", err)
 	}
 	uploadFileId := uploadInfo.Data.UploadFileID
 
@@ -1684,10 +1677,10 @@ func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fil
 	if _, err := y.request(fullUrl+"/checkTransSecond", "GET", func(req *resty.Request) {
 		req.SetContext(ctx)
 	}, checkParams, &checkResp, isFamily); err != nil {
-		return nil, fmt.Errorf("秒传检查失败: %w", err)
+		return nil, fmt.Errorf("rapid upload check failed: %w", err)
 	}
 	if checkResp.Data.FileDataExists != 1 {
-		return nil, fmt.Errorf("秒传失败：云端不存在该文件（fileMD5=%s, sliceMD5=%s, size=%d）", fileMD5Upper, sliceMd5Hex, fileSize)
+		return nil, fmt.Errorf("rapid upload failed: the file does not exist in the cloud (fileMD5=%s, sliceMD5=%s, size=%d)", fileMD5Upper, sliceMd5Hex, fileSize)
 	}
 
 	// Step 3: commitMultiUploadFile（传 fileMd5 + sliceMd5）
@@ -1703,7 +1696,7 @@ func (y *Cloud189PC) rapidUploadByCAS(ctx context.Context, dstDir model.Obj, fil
 	if _, err := y.request(fullUrl+"/commitMultiUploadFile", "GET", func(req *resty.Request) {
 		req.SetContext(ctx)
 	}, commitParams, &resp, isFamily); err != nil {
-		return nil, fmt.Errorf("提交上传失败: %w", err)
+		return nil, fmt.Errorf("commit upload failed: %w", err)
 	}
 
 	return resp.toFile(), nil

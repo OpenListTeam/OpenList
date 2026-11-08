@@ -24,10 +24,15 @@ type Sharing struct {
 }
 
 func (s *Sharing) Valid() bool {
+	return s.Usable() && !s.LimitReached()
+}
+
+func (s *SharingDB) LimitReached() bool {
+	return s.MaxAccessed > 0 && s.Accessed >= s.MaxAccessed
+}
+
+func (s *Sharing) Usable() bool {
 	if s.Disabled {
-		return false
-	}
-	if s.MaxAccessed > 0 && s.Accessed >= s.MaxAccessed {
 		return false
 	}
 	if len(s.Files) == 0 {
