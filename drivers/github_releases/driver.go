@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
@@ -188,29 +187,4 @@ func (d *GithubReleases) Link(ctx context.Context, file model.Obj, args model.Li
 		Header: http.Header{},
 	}
 	return &link, nil
-}
-
-func (d *GithubReleases) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
-	// TODO create folder, optional
-	return nil, errs.NotImplement
-}
-
-func (d *GithubReleases) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// TODO move obj, optional
-	return nil, errs.NotImplement
-}
-
-func (d *GithubReleases) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
-	// TODO rename obj, optional
-	return nil, errs.NotImplement
-}
-
-func (d *GithubReleases) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// TODO copy obj, optional
-	return nil, errs.NotImplement
-}
-
-func (d *GithubReleases) Remove(ctx context.Context, obj model.Obj) error {
-	// TODO remove obj, optional
-	return errs.NotImplement
 }

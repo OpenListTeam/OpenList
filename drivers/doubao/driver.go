@@ -234,11 +234,6 @@ func (d *Doubao) Rename(ctx context.Context, srcObj model.Obj, newName string) e
 	return err
 }
 
-func (d *Doubao) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// TODO copy obj, optional
-	return nil, errs.NotImplement
-}
-
 func (d *Doubao) Remove(ctx context.Context, obj model.Obj) error {
 	if err := d.WaitLimit(ctx); err != nil {
 		return err
@@ -295,13 +290,6 @@ func (d *Doubao) ListArchive(ctx context.Context, obj model.Obj, args model.Arch
 
 func (d *Doubao) Extract(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) (*model.Link, error) {
 	// TODO return link of file args.InnerPath in the archive obj, return errs.NotImplement to use an internal archive tool, optional
-	return nil, errs.NotImplement
-}
-
-func (d *Doubao) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) ([]model.Obj, error) {
-	// TODO extract args.InnerPath path in the archive srcObj to the dstDir location, optional
-	// a folder with the same name as the archive file needs to be created to store the extracted results if args.PutIntoNewDir
-	// return errs.NotImplement to use an internal archive tool
 	return nil, errs.NotImplement
 }
 
