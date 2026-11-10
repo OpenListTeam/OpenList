@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,7 +107,11 @@ func Start() {
 	if conf.Conf.Log.Filter.Enable {
 		r.Use(middlewares.FilteredLogger())
 	} else {
-		r.Use(gin.LoggerWithWriter(log.StandardLogger().Out))
+		// 原生媒体回调的鉴权值位于查询参数中，不将此端点写入访问日志。
+		// 其余请求保持原日志行为；业务错误由回调状态及下载任务呈现。
+		r.Use(gin.LoggerWithConfig(gin.LoggerConfig{Output: log.StandardLogger().Out, Skip: func(c *gin.Context) bool {
+			return strings.HasSuffix(c.Request.URL.Path, "/api/public/feishu/callback")
+		}}))
 	}
 	r.Use(gin.RecoveryWithWriter(log.StandardLogger().Out))
 

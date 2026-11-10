@@ -51,6 +51,9 @@ func initFilterList() {
 }
 
 func skiperDecider(c *gin.Context) bool {
+	if strings.HasSuffix(c.Request.URL.Path, "/api/public/feishu/callback") {
+		return true
+	}
 	// every filter need metch all condithon as filter match
 	// so if any condithon not metch, skip this filter
 	// all filters misatch, log this request
