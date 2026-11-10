@@ -6,6 +6,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/meeting"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
@@ -326,6 +327,7 @@ type AddOfflineDownloadReq struct {
 	Path         string   `json:"path"`
 	Tool         string   `json:"tool"`
 	DeletePolicy string   `json:"delete_policy"`
+	Cookie       string   `json:"cookie"`
 }
 
 func AddOfflineDownload(c *gin.Context) {
@@ -338,6 +340,17 @@ func AddOfflineDownload(c *gin.Context) {
 	var req AddOfflineDownloadReq
 	if err := c.ShouldBind(&req); err != nil {
 		common.ErrorResp(c, err, 400)
+		return
+	}
+	// 在创建任何任务前检查整批凭据范围，避免先创建部分任务再发现混用了平台。
+	if req.Tool == meeting.Name {
+		// 新工具允许无 Cookie 匿名解析，但整批链接仍须在创建任何任务前校验。
+		if err := meeting.ValidateBatch(req.Urls, req.Cookie); err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+	} else if req.Cookie != "" {
+		common.ErrorStrResp(c, "Cookie 仅适用于会议视频下载工具", 400)
 		return
 	}
 	reqPath, err := user.JoinPath(req.Path)
@@ -367,6 +380,7 @@ func AddOfflineDownload(c *gin.Context) {
 			DstDirPath:   reqPath,
 			Tool:         req.Tool,
 			DeletePolicy: tool.DeletePolicy(req.DeletePolicy),
+			SourceCookie: req.Cookie,
 		})
 		if err != nil {
 			common.ErrorResp(c, err, 500)

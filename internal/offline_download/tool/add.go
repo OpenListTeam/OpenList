@@ -44,6 +44,8 @@ type AddURLArgs struct {
 	DstDirPath   string
 	Tool         string
 	DeletePolicy DeletePolicy
+	// SourceCookie 只用于本次媒体任务，不能进入普通下载器参数或公开任务信息。
+	SourceCookie string
 }
 
 func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, error) {
@@ -190,7 +192,16 @@ func AddURL(ctx context.Context, args *AddURLArgs) (task.TaskExtensionInfo, erro
 		TempDir:      tempDir,
 		DeletePolicy: deletePolicy,
 		Toolname:     args.Tool,
+		SourceCookie: args.SourceCookie,
 		tool:         tool,
+	}
+	// 仅需要可靠提交日志的工具实现此接口；落盘失败时不接收任务。
+	// 提前固定 ID，使进程在队列防抖窗口重启后仍可恢复同一个媒体作业。
+	if durable, ok := tool.(interface{ PrepareTask(*DownloadTask) error }); ok {
+		t.SetID(uid)
+		if err := durable.PrepareTask(t); err != nil {
+			return nil, err
+		}
 	}
 	DownloadTaskManager.Add(t)
 	return t, nil

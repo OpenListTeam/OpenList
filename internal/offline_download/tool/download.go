@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"time"
@@ -20,14 +21,18 @@ import (
 
 type DownloadTask struct {
 	task.TaskExtension
-	Url               string       `json:"url"`
-	DstDirPath        string       `json:"dst_dir_path"`
-	TempDir           string       `json:"temp_dir"`
-	DeletePolicy      DeletePolicy `json:"delete_policy"`
-	Toolname          string       `json:"toolname"`
-	Status            string       `json:"-"`
-	Signal            chan int     `json:"-"`
-	GID               string       `json:"-"`
+	Url          string       `json:"url"`
+	DstDirPath   string       `json:"dst_dir_path"`
+	TempDir      string       `json:"temp_dir"`
+	DeletePolicy DeletePolicy `json:"delete_policy"`
+	Toolname     string       `json:"toolname"`
+	// Cookie 由媒体工具在接收任务前加密，明确禁止队列 JSON 和 API 序列化明文。
+	SourceCookie string `json:"-"`
+	// MeetingCookie 是独立会议工具生成的任务级密文，支持队列恢复，不能保存明文。
+	MeetingCookie     string   `json:"meeting_cookie,omitempty"`
+	Status            string   `json:"-"`
+	Signal            chan int `json:"-"`
+	GID               string   `json:"-"`
 	tool              Tool
 	callStatusRetried int
 }
@@ -45,7 +50,19 @@ func (t *DownloadTask) Run() error {
 	}
 	if err := t.tool.Run(t); !errs.IsNotSupportError(err) {
 		if err == nil {
-			return t.Transfer()
+			// 源获取刚结束时也检查取消，避免已取消的媒体任务继续创建上传任务。
+			if err := t.Ctx().Err(); err != nil {
+				return err
+			}
+			if err := t.Transfer(); err != nil {
+				return err
+			}
+			// 媒体工具需要在交接后确认转存队列已持久化，防止进程重启
+			// 落在队列防抖窗口。可选接口不改变其他下载工具的执行行为。
+			if durable, ok := t.tool.(interface{ AfterTransfer(*DownloadTask) error }); ok {
+				return durable.AfterTransfer(t)
+			}
+			return nil
 		}
 		return err
 	}
@@ -224,3 +241,18 @@ func (t *DownloadTask) GetStatus() string {
 }
 
 var DownloadTaskManager *tache.Manager[*DownloadTask]
+
+// SetCancelFunc 为有外部持久化作业的工具同步保存取消意图；普通工具继续
+// 使用原取消函数。恢复出的任务尚无运行时 tool 指针时，从注册表取得工具。
+func (t *DownloadTask) SetCancelFunc(cancel context.CancelFunc) {
+	t.Base.SetCancelFunc(func() {
+		cancel()
+		provider := t.tool
+		if provider == nil {
+			provider, _ = Tools.Get(t.Toolname)
+		}
+		if durable, ok := provider.(interface{ OnCancel(*DownloadTask) }); ok {
+			durable.OnCancel(t)
+		}
+	})
+}

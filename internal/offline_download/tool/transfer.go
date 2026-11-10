@@ -38,12 +38,13 @@ func (t *TransferTask) Run() error {
 		} else {
 			return err
 		}
-		if t.DstStorage == nil {
-			if dstStorage, _, err := op.GetStorageAndActualPath(t.DstStorageMp); err == nil {
-				t.DstStorage = dstStorage
-			} else {
-				return err
-			}
+	}
+	// 从本地缓存上传的任务没有 SrcStorageMp，但重启反序列化后同样需要
+	if t.DstStorage == nil {
+		if dstStorage, _, err := op.GetStorageAndActualPath(t.DstStorageMp); err == nil {
+			t.DstStorage = dstStorage
+		} else {
+			return err
 		}
 	}
 	t.ClearEndTime()
