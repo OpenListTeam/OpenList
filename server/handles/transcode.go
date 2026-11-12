@@ -97,11 +97,19 @@ func TranscodePlay(c *gin.Context) {
 		common.ErrorStrResp(c, "Guest user is disabled, login please", 401)
 		return
 	}
-	if !CanUserAccessPath(user, req.Path) {
+	// Keep transcoding on the same canonical VFS path as the regular file APIs.
+	// Their request path is relative to the user's base_path; skipping this
+	// normalization makes a /MAIN user look up /MAIN/DISK2 as a storage mount.
+	reqPath, err := user.JoinPath(req.Path)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
+	if !CanUserAccessPath(user, reqPath) {
 		common.ErrorStrResp(c, "path is not accessible", 403)
 		return
 	}
-	obj, err := fs.Get(c.Request.Context(), req.Path, &fs.GetArgs{NoLog: true})
+	obj, err := fs.Get(c.Request.Context(), reqPath, &fs.GetArgs{NoLog: true})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
@@ -136,7 +144,7 @@ func TranscodePlay(c *gin.Context) {
 	}
 
 	// 同一用户重复请求同一文件：直接复用进行中的任务，避免重复 ffprobe 与重复转码。
-	if exist, ok := mgr.Scheduler.FindReusable(ownerID, req.Path); ok {
+	if exist, ok := mgr.Scheduler.FindReusable(ownerID, reqPath); ok {
 		respondTranscodeJob(c, apiURL, exist)
 		return
 	}
@@ -146,7 +154,7 @@ func TranscodePlay(c *gin.Context) {
 	// 高达 MaxBufferLimit (默认系统内存 5%) 的大缓冲。这是降低 Go 进程内存
 	// 占用最有效的方法。如果不是本地驱动则退回到 HTTP 签名 URL。
 	var sourceURL string
-	if localFile, ok := resolveLocalFilePath(req.Path); ok {
+	if localFile, ok := resolveLocalFilePath(reqPath); ok {
 		// ffmpeg 接受本地路径作为输入，无需 file:// 前缀
 		sourceURL = localFile
 		fmt.Printf("[transcode] using local file path for ffmpeg: %s\n", localFile)
@@ -165,8 +173,8 @@ func TranscodePlay(c *gin.Context) {
 			)
 			return
 		}
-		signedPath := sign.Sign(req.Path)
-		sourceURL = fmt.Sprintf("%s/d%s?sign=%s", base, encodePath(req.Path), signedPath)
+		signedPath := sign.Sign(reqPath)
+		sourceURL = fmt.Sprintf("%s/d%s?sign=%s", base, encodePath(reqPath), signedPath)
 	}
 	if !transcode.ValidSourceInput(sourceURL) {
 		common.ErrorStrResp(c, "unsupported transcode source", 400)
@@ -175,7 +183,7 @@ func TranscodePlay(c *gin.Context) {
 
 	// 创建 Job
 	job := transcode.NewJob()
-	job.Path = req.Path
+	job.Path = reqPath
 	job.OwnerID = ownerID
 	job.SourceURL = sourceURL
 	// 配额预检：ProbeSource 会起一个最长 30s 的 ffprobe 子进程，
