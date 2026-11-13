@@ -65,7 +65,7 @@ func (d *SftpDriver) GetConfig() *sftpd.Config {
 func (d *SftpDriver) GetFileSystem(sc *ssh.ServerConn) (sftpd.FileSystem, error) {
 	userObj, err := op.GetUserByName(sc.User())
 	if err != nil {
-		return nil, err
+		return nil, protocolAuthError(err)
 	}
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, conf.UserKey, userObj)
@@ -84,7 +84,8 @@ func (d *SftpDriver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, erro
 	}
 	guest, err := op.GetGuest()
 	if err != nil {
-		return nil, err
+		utils.Log.Errorf("sftp guest auth failed: %+v", err)
+		return nil, protocolAuthError(err)
 	}
 	if guest.Disabled || !guest.CanFTPAccess() {
 		return nil, errors.New("user is not allowed to access via SFTP")
@@ -106,12 +107,18 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 		if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
 			err = common.HandleLdapLogin(conn.User(), pass)
 		}
-	} else if setting.GetBool(conf.LdapLoginEnabled) && model.CanFTPAccess(int32(setting.GetInt(conf.LdapDefaultPermission, 0))) {
+	} else if canLdapAutoRegister(err) && setting.GetBool(conf.LdapLoginEnabled) && model.CanFTPAccess(int32(setting.GetInt(conf.LdapDefaultPermission, 0))) {
 		userObj, err = tryLdapLoginAndRegister(conn.User(), pass)
 	}
 	if err != nil {
-		model.LoginCache.Set(ip, count+1)
-		return nil, err
+		failure := common.ClassifyAuthError(err)
+		if failure.CountAsAuthFailure {
+			model.LoginCache.Set(ip, count+1)
+		}
+		if failure.Code >= 500 {
+			utils.Log.Errorf("sftp auth failed: %+v", err)
+		}
+		return nil, protocolAuthError(err)
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
 		model.LoginCache.Set(ip, count+1)
@@ -124,14 +131,15 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 func (d *SftpDriver) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	userObj, err := op.GetUserByName(conn.User())
 	if err != nil {
-		return nil, err
+		return nil, protocolAuthError(err)
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
 		return nil, errors.New("user is not allowed to access via SFTP")
 	}
 	keys, _, err := op.GetSSHPublicKeyByUserId(userObj.ID, 1, -1)
 	if err != nil {
-		return nil, err
+		utils.Log.Errorf("sftp public key lookup failed: %+v", err)
+		return nil, protocolAuthError(err)
 	}
 	marshal := string(key.Marshal())
 	for _, sk := range keys {

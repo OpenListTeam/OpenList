@@ -20,8 +20,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 			admin, err := op.GetAdmin()
 			if err != nil {
-				common.ErrorResp(c, err, 500)
-				c.Abort()
+				common.ErrorDatabaseOrInternal(c, err)
 				return
 			}
 			common.GinAppendValues(c, conf.UserKey, admin)
@@ -32,8 +31,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 		if token == "" {
 			guest, err := op.GetGuest()
 			if err != nil {
-				common.ErrorResp(c, err, 500)
-				c.Abort()
+				common.ErrorDatabaseOrInternal(c, err)
 				return
 			}
 			if !allowDisabledGuest && guest.Disabled {
@@ -54,8 +52,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 		}
 		user, err := op.GetUserByName(userClaims.Username)
 		if err != nil {
-			common.ErrorResp(c, err, 401)
-			c.Abort()
+			common.ErrorUserLookupResp(c, err)
 			return
 		}
 		// validate password timestamp
@@ -80,8 +77,7 @@ func Authn(c *gin.Context) {
 	if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 		admin, err := op.GetAdmin()
 		if err != nil {
-			common.ErrorResp(c, err, 500)
-			c.Abort()
+			common.ErrorDatabaseOrInternal(c, err)
 			return
 		}
 		common.GinAppendValues(c, conf.UserKey, admin)
@@ -92,8 +88,7 @@ func Authn(c *gin.Context) {
 	if token == "" {
 		guest, err := op.GetGuest()
 		if err != nil {
-			common.ErrorResp(c, err, 500)
-			c.Abort()
+			common.ErrorDatabaseOrInternal(c, err)
 			return
 		}
 		common.GinAppendValues(c, conf.UserKey, guest)
@@ -109,8 +104,7 @@ func Authn(c *gin.Context) {
 	}
 	user, err := op.GetUserByName(userClaims.Username)
 	if err != nil {
-		common.ErrorResp(c, err, 401)
-		c.Abort()
+		common.ErrorUserLookupResp(c, err)
 		return
 	}
 	// validate password timestamp

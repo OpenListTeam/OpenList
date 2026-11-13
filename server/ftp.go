@@ -124,7 +124,8 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 	if user == "anonymous" || user == "guest" {
 		userObj, err = op.GetGuest()
 		if err != nil {
-			return nil, err
+			utils.Log.Errorf("ftp guest auth failed: %+v", err)
+			return nil, protocolAuthError(err)
 		}
 	} else {
 		userObj, err = op.GetUserByName(user)
@@ -133,12 +134,18 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 			if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
 				err = common.HandleLdapLogin(user, pass)
 			}
-		} else if setting.GetBool(conf.LdapLoginEnabled) && model.CanFTPAccess(int32(setting.GetInt(conf.LdapDefaultPermission, 0))) {
+		} else if canLdapAutoRegister(err) && setting.GetBool(conf.LdapLoginEnabled) && model.CanFTPAccess(int32(setting.GetInt(conf.LdapDefaultPermission, 0))) {
 			userObj, err = tryLdapLoginAndRegister(user, pass)
 		}
 		if err != nil {
-			model.LoginCache.Set(ip, count+1)
-			return nil, err
+			failure := common.ClassifyAuthError(err)
+			if failure.CountAsAuthFailure {
+				model.LoginCache.Set(ip, count+1)
+			}
+			if failure.Code >= 500 {
+				utils.Log.Errorf("ftp auth failed: %+v", err)
+			}
+			return nil, protocolAuthError(err)
 		}
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {

@@ -167,6 +167,8 @@ func embyImage(c *gin.Context, id string, segs []string, allowAnon bool) {
 	var lib *embyLibrary
 	if user, ok := embyAuth(c); ok {
 		lib = loadEmbyLibrary(user)
+	} else if c.IsAborted() {
+		return
 	} else if allowAnon {
 		// Emby 客户端的封面 URL 不带 token，只能允许匿名访问；
 		// 但必须按访客身份做权限过滤，否则等于把整个媒体库（含 hidden、
