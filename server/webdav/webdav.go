@@ -320,7 +320,10 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	}
 	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
-		return http.StatusNotFound, err
+		if errs.IsNotFoundError(err) {
+			return http.StatusNotFound, err
+		}
+		return http.StatusInternalServerError, err
 	}
 	if fi.IsDir() {
 		if r.Method == http.MethodHead {
@@ -896,7 +899,7 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 		if errs.IsNotFoundError(err) {
 			return http.StatusNotFound, err
 		}
-		return http.StatusMethodNotAllowed, err
+		return http.StatusInternalServerError, err
 	}
 	depth := infiniteDepth
 	if hdr := r.Header.Get("Depth"); hdr != "" {
