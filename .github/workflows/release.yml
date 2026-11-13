@@ -25,9 +25,8 @@ jobs:
     needs: prerelease
     strategy:
       matrix:
-        build-type: [ 'standard', 'lite' ]
         target-platform: [ '', 'android', 'freebsd', 'linux_musl', 'linux_musl_arm' ]
-    name: Release ${{ matrix.target-platform && format('{0} ', matrix.target-platform) || '' }}${{ matrix.build-type == 'lite' && 'Lite' || '' }}
+    name: Release ${{ matrix.target-platform && format('{0} ', matrix.target-platform) || '' }}
     runs-on: ubuntu-latest
     steps:
 
@@ -64,7 +63,7 @@ jobs:
 
       - name: Build
         run: |
-          bash build.sh release ${{ matrix.build-type == 'lite' && 'lite' || '' }} ${{ matrix.target-platform }}
+          bash build.sh release ${{ matrix.target-platform }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
