@@ -31,9 +31,6 @@ import (
 // requests are turned into an asynchronous task.
 const MaxSeedGenerateSyncSize = 1 * 1024 * 1024 * 1024
 
-// SeedGenerateNeedsAsync reports whether the given files must be generated
-// asynchronously because they exceed the synchronous size limit. It resolves
-// each path and sums the file sizes, returning the first error encountered.
 func SeedGenerateNeedsAsync(ctx context.Context, user *model.User, paths []string) (bool, error) {
 	// 目录要先展开才知道真实体积，这里顺便完成权限与可读性校验
 	entries, err := ExpandSeedSources(ctx, user, paths, false)
