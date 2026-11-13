@@ -296,6 +296,40 @@ func MustSaveDriverStorage(driver driver.Driver) {
 	}
 }
 
+// Retrying is required because several drivers persist rotating credentials
+// here (115 Open, PikPak, OneDrive...). The server invalidates the previous
+// token as soon as a new one is issued, so a lost write leaves the storage with
+// a permanently unusable token once the process restarts.
+const (
+	storageSaveAttempts  = 5
+	storageSaveBaseDelay = 200 * time.Millisecond
+)
+
+func isTransientDBError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "sqlite_busy") ||
+		strings.Contains(msg, "database table is locked")
+}
+
+func updateStorageWithRetry(storage *model.Storage) error {
+	var err error
+	delay := storageSaveBaseDelay
+	for attempt := 0; attempt < storageSaveAttempts; attempt++ {
+		if err = db.UpdateStorage(storage); err == nil {
+			return nil
+		}
+		if !isTransientDBError(err) {
+			return err
+		}
+		if attempt < storageSaveAttempts-1 {
+			time.Sleep(delay)
+			delay *= 2
+		}
+	}
+	return err
+}
+
 func saveDriverStorage(driver driver.Driver) error {
 	storage := driver.GetStorage()
 	addition := driver.GetAddition()
@@ -304,7 +338,7 @@ func saveDriverStorage(driver driver.Driver) error {
 		return errors.Wrap(err, "error while marshal addition")
 	}
 	storage.Addition = str
-	err = db.UpdateStorage(storage)
+	err = updateStorageWithRetry(storage)
 	if err != nil {
 		return errors.WithMessage(err, "failed update storage in database")
 	}
