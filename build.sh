@@ -85,11 +85,35 @@ AssertStaticBinary() {
   return 0
 }
 
+# Select the standard (non-lite) frontend dist tarball from a release asset list.
+# Released frontend versions still publish both `openlist-frontend-dist-<ver>.tar.gz`
+# and `openlist-frontend-dist-lite-<ver>.tar.gz`, so match the standard name exactly
+# instead of relying on the lite artifact being absent. Exactly one match is required:
+# a silent mismatch would hand a multi-line or empty string to curl.
+ResolveFrontendDistURL() {
+  local assets="$1"
+  local releaseName="$2"
+  local url
+  local count
+
+  url=$(printf '%s\n' "$assets" | grep -E "openlist-frontend-dist-v[0-9][^/]*\.tar\.gz$" || true)
+  count=$(printf '%s\n' "$url" | grep -c . || true)
+  if [ "$count" -ne 1 ]; then
+    echo "Error: expected exactly 1 standard frontend dist tarball in $releaseName, got $count" >&2
+    if [ "$count" -gt 0 ]; then
+      printf '%s\n' "$url" >&2
+    fi
+    return 1
+  fi
+
+  printf '%s\n' "$url"
+}
+
 FetchWebRolling() {
   pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/edge\"")
   pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[].browser_download_url')
-  
-  pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist" | grep "\.tar\.gz$")
+
+  pre_release_tar_url=$(ResolveFrontendDistURL "$pre_release_assets" "edge")
 
   curl -fsSL "$pre_release_tar_url" -o dist.tar.gz
   rm -rf public/dist && mkdir -p public/dist
@@ -100,7 +124,7 @@ FetchWebRolling() {
 FetchWebRelease() {
   release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/latest\"")
   release_assets=$(echo "$release_json" | jq -r '.assets[].browser_download_url')
-  release_tar_url=$(echo "$release_assets" | grep "openlist-frontend-dist" | grep "\.tar\.gz$")
+  release_tar_url=$(ResolveFrontendDistURL "$release_assets" "${webVersion:-latest}")
   
   curl -fsSL "$release_tar_url" -o dist.tar.gz
   rm -rf public/dist && mkdir -p public/dist
