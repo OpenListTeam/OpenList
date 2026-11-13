@@ -2,7 +2,6 @@ package zip
 
 import (
 	"io"
-	stdpath "path"
 	"regexp"
 	"strings"
 
@@ -49,57 +48,52 @@ func (z *Zip) List(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) ([]
 	if err != nil {
 		return nil, err
 	}
-	if args.InnerPath == "/" {
-		ret := make([]model.Obj, 0)
-		passVerified := false
-		var dir *model.Object
-		for _, file := range zipReader.File {
-			if !passVerified && file.IsEncrypted() {
-				file.SetPassword(args.Password)
-				rc, e := file.Open()
-				if e != nil {
-					return nil, filterPassword(e)
-				}
-				_ = rc.Close()
-				passVerified = true
-			}
-			name := strings.TrimSuffix(decodeName(file.Name, isEFS(file.Flags)), "/")
-			if strings.Contains(name, "/") {
-				// 有些压缩包不压缩第一个文件夹
-				strs := strings.Split(name, "/")
-				if dir == nil && len(strs) == 2 {
-					dir = &model.Object{
-						Name:     strs[0],
-						Modified: ss[0].ModTime(),
-						IsFolder: true,
-					}
-				}
-				continue
-			}
-			ret = append(ret, tool.MakeModelObj(&WrapFileInfo{FileInfo: file.FileInfo(), efs: isEFS(file.Flags)}))
-		}
-		if len(ret) == 0 && dir != nil {
-			ret = append(ret, dir)
-		}
-		return ret, nil
-	} else {
-		innerPath := strings.TrimPrefix(args.InnerPath, "/") + "/"
-		ret := make([]model.Obj, 0)
-		exist := false
-		for _, file := range zipReader.File {
-			name := decodeName(file.Name, isEFS(file.Flags))
-			dir := stdpath.Dir(strings.TrimSuffix(name, "/")) + "/"
-			if dir != innerPath {
-				continue
-			}
-			exist = true
-			ret = append(ret, tool.MakeModelObj(&WrapFileInfo{file.FileInfo(), isEFS(file.Flags)}))
-		}
-		if !exist {
-			return nil, errs.ObjectNotFound
-		}
-		return ret, nil
+	innerPath := strings.Trim(strings.TrimPrefix(args.InnerPath, "/"), "/")
+	prefix := ""
+	if innerPath != "" && innerPath != "." {
+		prefix = innerPath + "/"
 	}
+	ret := make([]model.Obj, 0)
+	seenDir := make(map[string]bool)
+	passVerified := false
+	for _, file := range zipReader.File {
+		name := strings.TrimSuffix(decodeName(file.Name, isEFS(file.Flags)), "/")
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(name, prefix)
+		if rest == "" {
+			continue
+		}
+		if !passVerified && file.IsEncrypted() {
+			file.SetPassword(args.Password)
+			rc, e := file.Open()
+			if e != nil {
+				return nil, filterPassword(e)
+			}
+			_ = rc.Close()
+			passVerified = true
+		}
+		// 压缩包可能只记录文件路径，不记录目录条目：把更深层的路径
+		// 折叠成当前层的合成目录，避免子目录在预览里整体消失。
+		if idx := strings.Index(rest, "/"); idx >= 0 {
+			dirName := rest[:idx]
+			if !seenDir[dirName] {
+				seenDir[dirName] = true
+				ret = append(ret, &model.Object{
+					Name:     dirName,
+					Modified: ss[0].ModTime(),
+					IsFolder: true,
+				})
+			}
+			continue
+		}
+		ret = append(ret, tool.MakeModelObj(&WrapFileInfo{FileInfo: file.FileInfo(), efs: isEFS(file.Flags)}))
+	}
+	if len(ret) == 0 {
+		return nil, errs.ObjectNotFound
+	}
+	return ret, nil
 }
 
 func (z *Zip) Extract(ss []*stream.SeekableStream, args model.ArchiveInnerArgs) (io.ReadCloser, int64, error) {
