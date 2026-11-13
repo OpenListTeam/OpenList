@@ -29,7 +29,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -915,44 +914,41 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 
 	mw := multistatusWriter{w: w}
 
-	err = withDeadPropsTransaction(ctx, func(tx *gorm.DB) error {
-		walkFn := func(currentPath string, info model.Obj, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			var pstats []Propstat
-			if pf.Propname != nil {
-				pnames, err := propnames(tx, currentPath, info)
-				if err != nil {
-					return err
-				}
-				pstat := Propstat{Status: http.StatusOK}
-				for _, xmlname := range pnames {
-					pstat.Props = append(pstat.Props, Property{XMLName: xmlname})
-				}
-				pstats = append(pstats, pstat)
-			} else if pf.Allprop != nil {
-				pstats, walkErr = allprop(tx, ctx, h.LockSystem, currentPath, info, pf.Prop)
-			} else {
-				pstats, walkErr = props(tx, ctx, h.LockSystem, currentPath, info, pf.Prop)
-			}
-			if walkErr != nil {
-				return walkErr
-			}
-			href := path.Join(h.Prefix, strings.TrimPrefix(currentPath, user.BasePath))
-			if href != "/" && info.IsDir() {
-				href += "/"
-			}
-			return mw.write(makePropstatResponse(href, pstats))
-		}
-
-		if walkErr := walkFS(ctx, depth, reqPath, fi, walkFn); walkErr != nil {
+	walkFn := func(currentPath string, info model.Obj, walkErr error) error {
+		if walkErr != nil {
 			return walkErr
 		}
-		return mw.close()
-	})
-	if err != nil {
-		return http.StatusInternalServerError, err
+		var pstats []Propstat
+		if pf.Propname != nil {
+			pnames, err := propnames(ctx, currentPath, info)
+			if err != nil {
+				return err
+			}
+			pstat := Propstat{Status: http.StatusOK}
+			for _, xmlname := range pnames {
+				pstat.Props = append(pstat.Props, Property{XMLName: xmlname})
+			}
+			pstats = append(pstats, pstat)
+		} else if pf.Allprop != nil {
+			pstats, walkErr = allprop(ctx, h.LockSystem, currentPath, info, pf.Prop)
+		} else {
+			pstats, walkErr = props(ctx, h.LockSystem, currentPath, info, pf.Prop)
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		href := path.Join(h.Prefix, strings.TrimPrefix(currentPath, user.BasePath))
+		if href != "/" && info.IsDir() {
+			href += "/"
+		}
+		return mw.write(makePropstatResponse(href, pstats))
+	}
+
+	if walkErr := walkFS(ctx, depth, reqPath, fi, walkFn); walkErr != nil {
+		return http.StatusInternalServerError, walkErr
+	}
+	if closeErr := mw.close(); closeErr != nil {
+		return http.StatusInternalServerError, closeErr
 	}
 	return 0, nil
 }
