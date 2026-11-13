@@ -3,7 +3,6 @@ package local
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -24,6 +23,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/times"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	_ "golang.org/x/image/webp"
 )
@@ -424,24 +424,57 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *Local) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	fullPath := filepath.Join(dstDir.GetPath(), stream.GetName())
-	out, err := os.Create(fullPath)
+	fullPath, err := resolveSymlinkFile(filepath.Join(dstDir.GetPath(), stream.GetName()))
 	if err != nil {
 		return err
 	}
+	perm := os.FileMode(0o666)
+	stat, statErr := os.Stat(fullPath)
+	if statErr == nil {
+		perm = stat.Mode().Perm()
+		check, err := os.OpenFile(fullPath, os.O_WRONLY, 0)
+		if err != nil {
+			return err
+		}
+		_ = check.Close()
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	tempPath := filepath.Join(filepath.Dir(fullPath), ".openlist-upload-"+uuid.NewString())
+	out, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	tempPath = out.Name()
 	defer func() {
 		_ = out.Close()
-		if errors.Is(err, context.Canceled) {
-			_ = os.Remove(fullPath)
+		if err != nil {
+			_ = os.Remove(tempPath)
 		}
 	}()
 	err = utils.CopyWithCtx(ctx, out, stream, stream.GetSize(), up)
 	if err != nil {
 		return err
 	}
-	err = os.Chtimes(fullPath, stream.ModTime(), stream.ModTime())
-	if err != nil {
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if err = out.Close(); err != nil {
+		return err
+	}
+	if err = os.Chtimes(tempPath, stream.ModTime(), stream.ModTime()); err != nil {
 		log.Errorf("[local] failed to change time of %s: %s", fullPath, err)
+	}
+	if statErr == nil {
+		if err = os.Chmod(tempPath, perm); err != nil {
+			return err
+		}
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if err = os.Rename(tempPath, fullPath); err != nil {
+		return err
 	}
 	if d.directoryMap.Has(dstDir.GetPath()) {
 		d.directoryMap.UpdateDirSize(dstDir.GetPath())
