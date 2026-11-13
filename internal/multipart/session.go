@@ -9,6 +9,7 @@ import (
 	"os"
 	stdpath "path"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,12 @@ const (
 // WindowSlots bounds the per-session disk footprint to WindowSlots*ChunkSize.
 var WindowSlots = 8
 
+// AttemptIdleTimeout releases a pipeline attempt whose driver has been starved
+// of data that long: the client stopped sending, so the attempt stops holding
+// the destination, while the session stays failed_retriable and resumable for
+// the rest of its TTL. Tests shrink it.
+var AttemptIdleTimeout = 10 * time.Minute
+
 const (
 	// defaultSessionTTL is the sliding inactivity timeout; it also serves as the
 	// grace period during which finished sessions remain queryable.
@@ -43,12 +50,23 @@ const (
 	gcInterval        = time.Minute
 )
 
+// supersedeJoinTimeout bounds the wait for a superseded attempt to return.
+// Teardown is prompt (the context is canceled and the window closed); the
+// bound only keeps a driver stuck on network I/O from blocking init. Tests
+// shrink it.
+var supersedeJoinTimeout = 10 * time.Second
+
 var (
 	ErrSessionNotFound = errors.New("multipart upload session not found")
 	ErrNotOwner        = errors.New("multipart upload session belongs to another user")
 	// errAborted wraps context.Canceled so a driver blocked on the stream sees
 	// the abort as a canceled request and runs its cancellation cleanup.
 	errAborted = fmt.Errorf("multipart upload aborted: %w", context.Canceled)
+	// ErrPreviousUploadRunning refuses an init while an earlier attempt still
+	// runs and may write the same destination; retry shortly.
+	ErrPreviousUploadRunning = errors.New("a previous upload to this path is still stopping, retry shortly")
+	// errAttemptIdle marks an attempt released by AttemptIdleTimeout.
+	errAttemptIdle = errors.New("no data from the client, upload attempt released")
 )
 
 // putFile is the pipeline tail: resolve the storage and run the regular upload
@@ -87,17 +105,68 @@ type Session struct {
 	attempt  int
 	win      *Window
 	done     chan struct{}
+	end      *attemptEnd // how the attempt behind done ended, once it did
 	cancel   context.CancelFunc
 	prevCRCs []uint32
 	prevSet  []bool
+	// released is set when the attempt is let go for idleness; the attempt
+	// turns it into failed_retriable once it has actually returned
+	released error
 
 	storagePct atomic.Uint64 // math.Float64bits of the driver progress (0-100)
 	lastActive atomic.Int64  // unix nano
 }
 
+// attemptEnd records how one pipeline attempt ended. finishAttempt fills it
+// in before the attempt's done channel closes; a chunk sent to that attempt
+// reports it even when a later attempt has started meanwhile.
+type attemptEnd struct {
+	state State
+	err   error
+}
+
 func (s *Session) touch() { s.lastActive.Store(time.Now().UnixNano()) }
 
-func (s *Session) setStoragePct(p float64) { s.storagePct.Store(math.Float64bits(p)) }
+// awaitAttempt blocks until the running pipeline attempt has fully returned
+// and reports whether it did before ctx ended. Callers must not hold
+// Manager.mu. It is only a handover barrier: the attempt is already being torn
+// down by terminate.
+func (s *Session) awaitAttempt(ctx context.Context) bool {
+	s.mu.Lock()
+	done := s.done
+	s.mu.Unlock()
+	if done == nil {
+		return true
+	}
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// setStoragePct records the driver's progress, which keeps the session alive
+// while storage works on bytes the client already sent.
+func (s *Session) setStoragePct(p float64) {
+	s.storagePct.Store(math.Float64bits(p))
+	s.touch()
+}
+
+// touchingReader keeps a session alive while the bytes of a chunk arrive, so a
+// slow client is not mistaken for a gone one halfway through a chunk.
+type touchingReader struct {
+	r io.Reader
+	s *Session
+}
+
+func (t touchingReader) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if n > 0 {
+		t.s.touch()
+	}
+	return n, err
+}
 
 // Snapshot is the wire representation of a session used by all endpoints.
 type SessionSnapshot struct {
@@ -166,9 +235,15 @@ type InitReq struct {
 // upload tasks not being persisted); a restart drops them and the ring files
 // are swept on the next start.
 type Manager struct {
-	mu     sync.Mutex
-	byID   map[string]*Session
-	byKey  map[string]string
+	mu    sync.Mutex
+	byID  map[string]*Session
+	byKey map[string]string
+	// dropped sessions whose attempt has not returned yet, by destination
+	// path: such an attempt may still write the destination, so no new upload
+	// of that path starts until it returns
+	retiring map[string]map[*Session]struct{}
+	// destination paths an Init is working on, see lockPath
+	inits  map[string]chan struct{}
 	gcOnce sync.Once
 	ttl    time.Duration // 0 means defaultSessionTTL; tests shrink it per instance
 }
@@ -211,6 +286,19 @@ func hashesQualifyResume(old, new map[*utils.HashType]string) bool {
 	return shared
 }
 
+// sameHashes reports whether both inits sent exactly the same hashes.
+func sameHashes(a, b map[*utils.HashType]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for t, av := range a {
+		if bv, ok := b[t]; !ok || bv != av {
+			return false
+		}
+	}
+	return true
+}
+
 // StartGC sweeps ring files orphaned by a previous run and starts the expiry
 // loop. It is called at server startup so orphans are reclaimed even if no
 // multipart upload ever happens again; Init also calls it, so embedders that
@@ -234,30 +322,75 @@ func (m *Manager) ensureGC() {
 }
 
 func (m *Manager) gc() {
-	deadline := time.Now().Add(-m.sessionTTL()).UnixNano()
+	now := time.Now()
+	deadline := now.Add(-m.sessionTTL()).UnixNano()
 	m.mu.Lock()
-	var expired []*Session
+	var expired, live []*Session
 	for _, s := range m.byID {
 		if s.lastActive.Load() < deadline {
 			expired = append(expired, s)
+		} else {
+			live = append(live, s)
 		}
 	}
 	m.mu.Unlock()
 	for _, s := range expired {
 		m.terminate(s, errors.New("multipart upload session expired"))
 	}
+	for _, s := range live {
+		s.mu.Lock()
+		if s.state == StateReceiving && s.released == nil && s.win != nil && s.win.StarvedFor(now) > AttemptIdleTimeout {
+			s.releaseIdleAttemptLocked()
+		}
+		s.mu.Unlock()
+	}
 }
 
-// terminate aborts a session (if still receiving) and drops it from the maps.
+// terminate aborts a session (unless it already finished) and drops it from
+// the maps. An attempt that has not returned yet keeps the destination taken
+// until it does: up to then it may still write it.
 func (m *Manager) terminate(s *Session, cause error) {
 	s.mu.Lock()
-	if s.state == StateReceiving {
+	if s.state == StateReceiving || s.state == StateFailedRetriable {
+		// a dropped session must not start another attempt either
 		s.state = StateAborted
 		s.err = cause
 	}
 	s.killAttemptLocked()
+	done := s.done
 	s.mu.Unlock()
-	m.remove(s)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeLocked(s)
+	if done == nil || isClosed(done) {
+		return
+	}
+	if m.retiring == nil {
+		m.retiring = make(map[string]map[*Session]struct{})
+	}
+	if m.retiring[s.Path] == nil {
+		m.retiring[s.Path] = make(map[*Session]struct{})
+	}
+	m.retiring[s.Path][s] = struct{}{}
+	go func() {
+		<-done
+		m.mu.Lock()
+		delete(m.retiring[s.Path], s)
+		if len(m.retiring[s.Path]) == 0 {
+			delete(m.retiring, s.Path)
+		}
+		m.mu.Unlock()
+	}()
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 // killAttemptLocked stops the running pipeline attempt: the context cancel
@@ -273,9 +406,28 @@ func (s *Session) killAttemptLocked() {
 	}
 }
 
+// releaseIdleAttemptLocked stops an attempt whose client went silent. The
+// session only becomes failed_retriable (and refillable) once the attempt
+// has returned, so a refill never overlaps the released attempt. The window
+// error wraps context.Canceled, so the driver cleans up as it does for a
+// canceled request. The caller must hold s.mu.
+func (s *Session) releaseIdleAttemptLocked() {
+	s.released = fmt.Errorf("%w after %s: %w", errAttemptIdle, AttemptIdleTimeout, context.Canceled)
+	if s.cancel != nil {
+		s.cancel()
+	}
+	if s.win != nil {
+		_ = s.win.CloseWithError(s.released)
+	}
+}
+
 func (m *Manager) remove(s *Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.removeLocked(s)
+}
+
+func (m *Manager) removeLocked(s *Session) {
 	delete(m.byID, s.ID)
 	key := sessionKey(s.Creator.ID, s.Path, s.Size)
 	if m.byKey[key] == s.ID {
@@ -306,7 +458,21 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 	if req.ChunkSize <= 0 {
 		return SessionSnapshot{}, false, fmt.Errorf("invalid chunk size %d", req.ChunkSize)
 	}
+	// refused before any upload of the path makes way for it
+	if _, err := chunkCount(req.Size, req.ChunkSize); err != nil {
+		return SessionSnapshot{}, false, err
+	}
 	key := sessionKey(req.User.ID, req.Path, req.Size)
+
+	// waiting for another init of the same destination and for old attempts to
+	// let go of it share one bound
+	ctx, cancel := context.WithTimeout(context.Background(), supersedeJoinTimeout)
+	defer cancel()
+	unlock, err := m.lockPath(ctx, req.Path)
+	if err != nil {
+		return SessionSnapshot{}, false, err
+	}
+	defer unlock()
 
 	m.mu.Lock()
 	if id, ok := m.byKey[key]; ok {
@@ -314,24 +480,48 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 			s.mu.Lock()
 			st := s.state
 			s.mu.Unlock()
-			// failed_retriable resumes unconditionally: nothing of the old
-			// attempt survives except CRCs, and the re-fill CRC check catches
-			// a changed file. A receiving session still holds data, so it only
-			// resumes when hashes prove it is the same file.
-			if st == StateFailedRetriable ||
+			// failed_retriable needs no proof: nothing of the old attempt
+			// survives except CRCs, and the re-fill CRC check catches a changed
+			// file. But the next attempt hands storage the session's hashes,
+			// and a driver may finish from those alone (rapid upload), so the
+			// init must describe the file with the same ones. A receiving
+			// session still holds data, so it only resumes when hashes prove
+			// it is the same file.
+			if (st == StateFailedRetriable && sameHashes(s.Hashes, req.Hashes)) ||
 				(st == StateReceiving && hashesQualifyResume(s.Hashes, req.Hashes)) {
 				m.mu.Unlock()
 				s.touch()
 				return s.Snapshot(), true, nil
 			}
-			// finished session, or same path+size without proof of identity:
-			// drop the old session and start fresh
-			m.mu.Unlock()
-			m.terminate(s, errors.New("superseded by a new upload of the same path and size"))
-			m.mu.Lock()
+		}
+	}
+	// a new upload: every other session for this destination makes way for it,
+	// whatever its size or user (a finished session, the same path and size
+	// without proof of identity, another file altogether)
+	var others []*Session
+	for _, s := range m.byID {
+		if s.Path == req.Path {
+			others = append(others, s)
 		}
 	}
 	m.mu.Unlock()
+	for _, s := range others {
+		m.terminate(s, errors.New("superseded by a new upload of the same path"))
+	}
+	m.mu.Lock()
+	old := make([]*Session, 0, len(m.retiring[req.Path]))
+	for s := range m.retiring[req.Path] {
+		old = append(old, s)
+	}
+	m.mu.Unlock()
+	// wait for old attempts to let go of the destination before a new one
+	// starts writing it: two drivers writing the same path interleave their
+	// output, and an old one may clean up after the new one
+	for _, s := range old {
+		if !s.awaitAttempt(ctx) {
+			return SessionSnapshot{}, false, ErrPreviousUploadRunning
+		}
+	}
 
 	dstDir, name := stdpath.Split(req.Path)
 	s := &Session{
@@ -365,6 +555,37 @@ func (m *Manager) Init(req InitReq) (SessionSnapshot, bool, error) {
 	return snap, false, nil
 }
 
+// lockPath makes the calling Init the only one working on a destination path
+// until unlock is called, so deciding to start an upload and starting it
+// cannot interleave with another init of the same destination. It gives up
+// with ErrPreviousUploadRunning once ctx ends.
+func (m *Manager) lockPath(ctx context.Context, key string) (unlock func(), err error) {
+	for {
+		m.mu.Lock()
+		busy, ok := m.inits[key]
+		if !ok {
+			if m.inits == nil {
+				m.inits = make(map[string]chan struct{})
+			}
+			mine := make(chan struct{})
+			m.inits[key] = mine
+			m.mu.Unlock()
+			return func() {
+				m.mu.Lock()
+				delete(m.inits, key)
+				m.mu.Unlock()
+				close(mine)
+			}, nil
+		}
+		m.mu.Unlock()
+		select {
+		case <-busy:
+		case <-ctx.Done():
+			return nil, ErrPreviousUploadRunning
+		}
+	}
+}
+
 // startAttemptLocked builds a fresh window and spawns the pipeline goroutine.
 // The caller must hold s.mu.
 func (m *Manager) startAttemptLocked(s *Session) error {
@@ -372,13 +593,17 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	if err != nil {
 		return err
 	}
+	// a refill must resend what the failed attempt received, unchanged
+	win.ExpectCRCs(s.prevCRCs, s.prevSet)
 	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), conf.UserKey, s.Creator))
 	done := make(chan struct{})
 	s.win = win
 	s.cancel = cancel
 	s.done = done
+	s.end = &attemptEnd{}
 	s.state = StateReceiving
 	s.err = nil
+	s.released = nil
 	s.setStoragePct(0)
 
 	fileStream := &stream.FileStream{
@@ -396,9 +621,19 @@ func (m *Manager) startAttemptLocked(s *Session) error {
 	dstDir := s.DstDir
 	put := putFile // capture: the seam must not be read after spawn
 	go func() {
-		err := put(ctx, dstDir, fileStream, s.setStoragePct)
-		s.finishAttempt(win, err)
-		close(done)
+		var err error
+		defer func() {
+			// the driver runs on this goroutine, outside gin's Recovery and the
+			// task workers' recover: a panicking driver must fail the upload,
+			// not take the whole server down
+			if r := recover(); r != nil {
+				utils.Log.Errorf("multipart upload pipeline panicked: %v\n%s", r, debug.Stack())
+				err = fmt.Errorf("upload pipeline panicked: %v", r)
+			}
+			s.finishAttempt(win, err)
+			close(done)
+		}()
+		err = put(ctx, dstDir, fileStream, s.setStoragePct)
 	}()
 	return nil
 }
@@ -416,8 +651,14 @@ func (s *Session) finishAttempt(win *Window, err error) {
 	if s.win == win {
 		s.win = nil
 	}
-	s.prevCRCs, s.prevSet = crcs, set
+	s.prevCRCs, s.prevSet = mergeCRCs(s.prevCRCs, s.prevSet, crcs, set)
 	switch {
+	case s.state == StateFailedPermanent:
+		// a chunk failed validation: whatever the driver made of the stream,
+		// it is not the client's file
+		if s.err == nil {
+			s.err = err
+		}
 	case err == nil:
 		s.state = StateCompleted
 		s.err = nil
@@ -427,6 +668,12 @@ func (s *Session) finishAttempt(win *Window, err error) {
 		if s.err == nil {
 			s.err = err
 		}
+	case s.released != nil:
+		// released for idleness: retriable whatever the driver made of the
+		// closed stream, and with a reason the client can act on
+		s.state = StateFailedRetriable
+		s.err = s.released
+		s.attempt++
 	case isPermanentPutError(err):
 		s.state = StateFailedPermanent
 		s.err = err
@@ -435,6 +682,29 @@ func (s *Session) finishAttempt(win *Window, err error) {
 		s.err = err
 		s.attempt++
 	}
+	// no other attempt starts before this one is recorded as ended
+	if s.end != nil {
+		s.end.state, s.end.err = s.state, s.err
+	}
+}
+
+// mergeCRCs adds the checksums an attempt recorded to those of earlier
+// attempts: every chunk any of them received keeps guarding a refill, also
+// when a later attempt failed before getting that far.
+func mergeCRCs(crcs []uint32, set []bool, add []uint32, addSet []bool) ([]uint32, []bool) {
+	if len(set) < len(addSet) {
+		grownSet := make([]bool, len(addSet))
+		copy(grownSet, set)
+		grown := make([]uint32, len(addSet))
+		copy(grown, crcs)
+		crcs, set = grown, grownSet
+	}
+	for i, ok := range addSet {
+		if ok {
+			crcs[i], set[i] = add[i], true
+		}
+	}
+	return crcs, set
 }
 
 func isPermanentPutError(err error) bool {
@@ -463,6 +733,10 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
+	if idx < 0 {
+		// refused before anything is looked up by it under the session lock
+		return s.Snapshot(), fmt.Errorf("chunk index %d out of range", idx)
+	}
 	s.touch()
 
 	s.mu.Lock()
@@ -470,9 +744,9 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 	case StateReceiving:
 	case StateFailedRetriable:
 		if idx != 0 {
-			snap := s.snapshotLocked()
+			snap, cause := s.snapshotLocked(), s.err
 			s.mu.Unlock()
-			return snap, fmt.Errorf("upload attempt failed, resend from chunk 0 to retry: %w", s.err)
+			return snap, fmt.Errorf("upload attempt failed, resend from chunk 0 to retry: %w", cause)
 		}
 		if err := m.startAttemptLocked(s); err != nil {
 			snap := s.snapshotLocked()
@@ -484,19 +758,23 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 		s.mu.Unlock()
 		return snap, nil // idempotent: stragglers after rapid-upload/finish succeed
 	default:
-		snap := s.snapshotLocked()
+		snap, st, cause := s.snapshotLocked(), s.state, s.err
 		s.mu.Unlock()
-		return snap, fmt.Errorf("session is %s: %w", s.state, s.err)
+		return snap, fmt.Errorf("session is %s: %w", st, cause)
 	}
-	win := s.win
-	var prevCRC uint32
-	hasPrev := false
-	if idx < len(s.prevSet) && s.prevSet[idx] {
-		prevCRC, hasPrev = s.prevCRCs[idx], true
-	}
+	win, done, end := s.win, s.done, s.end
 	s.mu.Unlock()
 
-	crc, err := win.WriteChunk(idx, body)
+	_, err = win.WriteChunk(idx, touchingReader{body, s})
+	if errors.Is(err, ErrChunkChanged) {
+		err := fmt.Errorf("chunk %d content changed between attempts, aborting", idx)
+		s.mu.Lock()
+		s.state = StateFailedPermanent
+		s.err = err
+		s.killAttemptLocked()
+		s.mu.Unlock()
+		return s.Snapshot(), err
+	}
 	if err != nil {
 		// A closed window means the pipeline ended while this chunk was in
 		// flight — rapid upload makes this the NORMAL case: the driver
@@ -505,31 +783,28 @@ func (m *Manager) Chunk(user *model.User, id string, idx int, body io.Reader) (S
 		// wait for the verdict instead of racing it, then absorb the chunk
 		// idempotently if the upload in fact succeeded.
 		if errors.Is(err, ErrClosed) || errors.Is(err, context.Canceled) {
-			s.mu.Lock()
-			done := s.done
-			s.mu.Unlock()
 			select {
 			case <-done:
 			case <-time.After(10 * time.Second): // pipeline teardown is µs-scale; never expected
 			}
 		}
 		s.mu.Lock()
-		completed := s.state == StateCompleted
+		// the verdict of the attempt this chunk was sent to: a later attempt
+		// may have started and ended meanwhile
+		st, cause := s.state, s.err
+		if end != nil && end.state != "" {
+			st, cause = end.state, end.err
+		}
 		snap := s.snapshotLocked()
 		s.mu.Unlock()
-		if completed {
+		if st == StateCompleted {
 			return snap, nil
 		}
+		if st != StateReceiving && cause != nil {
+			// the window only closed because the attempt ended; say why
+			return snap, fmt.Errorf("upload failed (%s): %w", st, cause)
+		}
 		return snap, err
-	}
-	if hasPrev && crc != prevCRC {
-		err := fmt.Errorf("chunk %d content changed between attempts, aborting", idx)
-		s.mu.Lock()
-		s.state = StateFailedPermanent
-		s.err = err
-		s.killAttemptLocked()
-		s.mu.Unlock()
-		return s.Snapshot(), err
 	}
 	return s.Snapshot(), nil
 }
@@ -546,8 +821,11 @@ func (m *Manager) Complete(ctx context.Context, user *model.User, id string) (Se
 		s.mu.Lock()
 		st := s.state
 		done := s.done
+		// a closed window holds no chunks any more: its attempt is ending,
+		// so wait for the verdict instead of counting. Count first: a window
+		// still open after the count was open during it
 		if st == StateReceiving && s.win != nil {
-			if ws := s.win.Snapshot(); ws.ReceivedBytes < s.Size {
+			if ws := s.win.Snapshot(); ws.ReceivedBytes < s.Size && !s.win.Closed() {
 				snap := s.snapshotLocked()
 				s.mu.Unlock()
 				return snap, fmt.Errorf("cannot complete: %d of %d bytes received", ws.ReceivedBytes, s.Size)
@@ -557,10 +835,8 @@ func (m *Manager) Complete(ctx context.Context, user *model.User, id string) (Se
 		if st != StateReceiving {
 			break
 		}
-		select {
-		case <-done:
-		case <-ctx.Done():
-			return s.Snapshot(), ctx.Err()
+		if err := m.awaitVerdict(ctx, s, done); err != nil {
+			return s.Snapshot(), err
 		}
 	}
 	s.touch()
@@ -573,6 +849,23 @@ func (m *Manager) Complete(ctx context.Context, user *model.User, id string) (Se
 		return snap, nil
 	}
 	return snap, fmt.Errorf("upload failed (%s): %w", st, serr)
+}
+
+// awaitVerdict waits for the attempt to end. The client waiting meanwhile
+// keeps the session alive, however long storage takes.
+func (m *Manager) awaitVerdict(ctx context.Context, s *Session, done <-chan struct{}) error {
+	tick := time.NewTicker(max(m.sessionTTL()/3, time.Millisecond))
+	defer tick.Stop()
+	for {
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+			s.touch()
+		}
+	}
 }
 
 // Status looks a session up by id.

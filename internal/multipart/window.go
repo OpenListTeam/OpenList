@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -28,6 +30,12 @@ var (
 	// frontier after waiting WindowWaitTimeout; the client should back off and
 	// resend it later (flow control, not a failure).
 	ErrOutOfWindow = errors.New("chunk is out of the receiving window")
+	// ErrChunkChanged means a chunk differs from what an earlier attempt
+	// received for the same index; the reader never saw it.
+	ErrChunkChanged = errors.New("chunk content changed between attempts")
+	// ErrTooManyChunks refuses a declared size with more chunks than a chunk
+	// index can number.
+	ErrTooManyChunks = errors.New("file has more chunks than an upload can number")
 )
 
 // WindowWaitTimeout bounds how long WriteChunk blocks waiting for its slot.
@@ -63,8 +71,17 @@ type Window struct {
 
 	crcs   []uint32
 	crcSet []bool
+	// checksums an earlier attempt recorded, see ExpectCRCs
+	expect    []uint32
+	expectSet []bool
 
 	err error
+
+	// idle detection (see StarvedFor): waitSince is when Read began waiting
+	// for data and is zero while it is not waiting; lastFill is when the last
+	// chunk byte arrived, in unix nanoseconds
+	waitSince time.Time
+	lastFill  atomic.Int64
 }
 
 // Snapshot describes the receiving state, used for status responses and resume.
@@ -83,6 +100,11 @@ func NewWindow(dir, id string, chunkSize, totalSize int64, slots int) (*Window, 
 	if chunkSize <= 0 || totalSize <= 0 || slots <= 0 {
 		return nil, fmt.Errorf("invalid window params: chunkSize=%d totalSize=%d slots=%d", chunkSize, totalSize, slots)
 	}
+	// counted before anything is created for it
+	total, err := chunkCount(totalSize, chunkSize)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -91,7 +113,6 @@ func NewWindow(dir, id string, chunkSize, totalSize int64, slots int) (*Window, 
 	if err != nil {
 		return nil, err
 	}
-	total := int((totalSize + chunkSize - 1) / chunkSize)
 	w := &Window{
 		f:         f,
 		path:      path,
@@ -101,14 +122,27 @@ func NewWindow(dir, id string, chunkSize, totalSize int64, slots int) (*Window, 
 		slots:     slots,
 		slotState: make([]uint8, slots),
 		slotChunk: make([]int, slots),
-		crcs:      make([]uint32, total),
-		crcSet:    make([]bool, total),
+		// crcs and crcSet grow as chunks arrive: the declared size alone
+		// must not allocate anything per chunk
 	}
 	for i := range w.slotChunk {
 		w.slotChunk[i] = -1
 	}
 	w.cond = sync.NewCond(&w.mu)
 	return w, nil
+}
+
+// chunkCount is the number of chunks of chunkSize that totalSize bytes take,
+// counted without overflowing. More than a chunk index can number are refused.
+func chunkCount(totalSize, chunkSize int64) (int, error) {
+	n := totalSize / chunkSize
+	if totalSize%chunkSize != 0 {
+		n++
+	}
+	if n > math.MaxInt32 {
+		return 0, fmt.Errorf("%d bytes in chunks of %d: %w", totalSize, chunkSize, ErrTooManyChunks)
+	}
+	return int(n), nil
 }
 
 func (w *Window) TotalChunks() int { return w.total }
@@ -207,7 +241,7 @@ func (w *Window) WriteChunk(idx int, r io.Reader) (uint32, error) {
 	w.mu.Unlock()
 
 	h := crc32.NewIEEE()
-	n, err := utils.CopyWithBufferN(io.NewOffsetWriter(f, int64(slot)*w.chunkSize), io.TeeReader(r, h), length)
+	n, err := utils.CopyWithBufferN(io.NewOffsetWriter(f, int64(slot)*w.chunkSize), io.TeeReader(fillReader{r, &w.lastFill}, h), length)
 	if err == nil {
 		// the body must contain exactly one chunk
 		var b [1]byte
@@ -235,11 +269,31 @@ func (w *Window) WriteChunk(idx int, r io.Reader) (uint32, error) {
 		w.slotChunk[slot] = -1
 		return 0, err
 	}
+	sum := h.Sum32()
+	if idx < len(w.expectSet) && w.expectSet[idx] && sum != w.expect[idx] {
+		// never hand a changed chunk to the reader: storage that finished on
+		// it would keep a file that is neither the old nor the new one
+		w.slotState[slot] = slotFree
+		w.slotChunk[slot] = -1
+		w.cond.Broadcast()
+		return sum, fmt.Errorf("chunk %d: %w", idx, ErrChunkChanged)
+	}
 	w.slotState[slot] = slotReady
-	w.crcs[idx] = h.Sum32()
+	if grow := idx + 1 - len(w.crcs); grow > 0 {
+		w.crcs = append(w.crcs, make([]uint32, grow)...)
+		w.crcSet = append(w.crcSet, make([]bool, grow)...)
+	}
+	w.crcs[idx] = sum
 	w.crcSet[idx] = true
 	w.cond.Broadcast()
-	return w.crcs[idx], nil
+	return sum, nil
+}
+
+// ExpectCRCs makes WriteChunk refuse a chunk whose checksum differs from the
+// one an earlier attempt recorded for it, before the reader can see it. Call
+// it before the window is shared.
+func (w *Window) ExpectCRCs(crcs []uint32, set []bool) {
+	w.expect, w.expectSet = crcs, set
 }
 
 // Read serves the reassembled stream in order, blocking until the next chunk
@@ -251,10 +305,12 @@ func (w *Window) Read(p []byte) (int, error) {
 	w.mu.Lock()
 	for {
 		if w.err != nil {
+			w.waitSince = time.Time{}
 			w.mu.Unlock()
 			return 0, w.err
 		}
 		if w.readPos >= w.totalSize {
+			w.waitSince = time.Time{}
 			w.mu.Unlock()
 			return 0, io.EOF
 		}
@@ -269,6 +325,7 @@ func (w *Window) Read(p []byte) (int, error) {
 			}
 			off := int64(slot)*w.chunkSize + (w.readPos - chunkStart)
 			f := w.f
+			w.waitSince = time.Time{}
 			w.mu.Unlock()
 
 			read, err := f.ReadAt(p[:n], off)
@@ -295,8 +352,45 @@ func (w *Window) Read(p []byte) (int, error) {
 			}
 			return 0, err
 		}
+		if w.waitSince.IsZero() {
+			w.waitSince = time.Now()
+		}
 		w.cond.Wait()
 	}
+}
+
+// fillReader records when the last chunk byte arrived (see StarvedFor).
+type fillReader struct {
+	r    io.Reader
+	last *atomic.Int64
+}
+
+func (f fillReader) Read(p []byte) (int, error) {
+	n, err := f.r.Read(p)
+	if n > 0 {
+		f.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+// StarvedFor reports how long the reader has been blocked waiting for data
+// while no chunk byte arrived: the time since it began waiting or since the
+// last byte came in, whichever is later. It is zero while the reader is not
+// waiting — a driver busy with the storage is backpressure, not starvation.
+func (w *Window) StarvedFor(now time.Time) time.Duration {
+	w.mu.Lock()
+	since := w.waitSince
+	w.mu.Unlock()
+	if since.IsZero() {
+		return 0
+	}
+	if last := time.Unix(0, w.lastFill.Load()); last.After(since) {
+		since = last
+	}
+	if d := now.Sub(since); d > 0 {
+		return d
+	}
+	return 0
 }
 
 // Close makes all pending and future operations fail with ErrClosed and removes
@@ -333,6 +427,14 @@ func (w *Window) CloseWithError(sticky error) error {
 	return err
 }
 
+// Closed reports whether the window stopped taking chunks: its upload attempt
+// is over or being torn down.
+func (w *Window) Closed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.err != nil
+}
+
 // Snapshot reports the receiving state for status responses and resume discovery.
 func (w *Window) Snapshot() Snapshot {
 	w.mu.Lock()
@@ -364,8 +466,9 @@ func (w *Window) Snapshot() Snapshot {
 }
 
 // CRCs returns a copy of the per-chunk CRC32 table and which entries are set.
-// It remains readable after Close, so the session can compare re-filled chunks
-// against a previous attempt.
+// The table ends after the last chunk received; any chunk past its end was
+// never received. It remains readable after Close, so the session can compare
+// re-filled chunks against a previous attempt.
 func (w *Window) CRCs() ([]uint32, []bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

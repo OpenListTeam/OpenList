@@ -6,7 +6,10 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"math"
 	"math/rand"
+	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -521,7 +524,42 @@ func TestCRCsSurviveClose(t *testing.T) {
 	if !set[0] || crcs[0] != want {
 		t.Fatalf("CRCs after Close = (%08x, %v), want (%08x, true)", crcs[0], set[0], want)
 	}
-	if set[1] {
+	if len(set) > 1 && set[1] {
 		t.Fatal("chunk 1 crc should not be set")
+	}
+}
+
+// The declared size is the client's word. One whose chunks cannot be counted
+// is refused before anything is created for it, and a size that can be counted
+// gets nothing allocated per chunk before chunks arrive.
+func TestNewWindowWithHugeSizes(t *testing.T) {
+	dir := t.TempDir()
+	if w, err := NewWindow(dir, "overflow", 1<<20, math.MaxInt64, 4); !errors.Is(err, ErrTooManyChunks) {
+		if w != nil {
+			_ = w.Close()
+		}
+		t.Fatalf("NewWindow for math.MaxInt64 bytes = %v, want ErrTooManyChunks", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("a refused window left %d files behind", len(entries))
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	w, err := NewWindow(dir, "petabyte", 1<<20, 1<<50, 4) // 2^30 chunks
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	runtime.ReadMemStats(&after)
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 1<<20 {
+		t.Fatalf("NewWindow allocated %d bytes up front for a 1 PiB upload", grown)
+	}
+	data := genData(1 << 20)
+	if _, err := w.WriteChunk(0, bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	if crcs, set := w.CRCs(); len(set) != 1 || !set[0] || crcs[0] != crc32.ChecksumIEEE(data) {
+		t.Fatalf("CRCs after chunk 0 = %v %v", crcs, set)
 	}
 }
