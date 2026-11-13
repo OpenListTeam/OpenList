@@ -17,6 +17,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -295,7 +296,7 @@ loop:
 			}
 			return nil
 		})
-		if err == nil || !strings.Contains(err.Error(), "database is locked") {
+		if err == nil || !errs.IsDatabaseBusy(err) {
 			break
 		}
 		time.Sleep(time.Duration(attempt+1) * 20 * time.Millisecond)
