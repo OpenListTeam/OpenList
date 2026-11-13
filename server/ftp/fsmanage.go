@@ -36,7 +36,10 @@ func Mkdir(ctx context.Context, path string) error {
 	return fs.MakeDir(ctx, reqPath)
 }
 
-func Remove(ctx context.Context, path string) error {
+// Remove deletes a file or an empty directory, like os.Remove: a missing path
+// or a directory that still has entries is an error. With recursive set, a
+// directory is removed with its contents (SITE RMDIR).
+func Remove(ctx context.Context, path string, recursive bool) error {
 	user := ctx.Value(conf.UserKey).(*model.User)
 	if !user.CanRemove() || !user.CanFTPManage() {
 		return errs.PermissionDenied
@@ -54,6 +57,25 @@ func Remove(ctx context.Context, path string) error {
 	}
 	if err = RemoveStage(reqPath); !errors.Is(err, errs.ObjectNotFound) {
 		return err
+	}
+	obj, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
+	if err != nil {
+		return err
+	}
+	if obj.IsDir() && !recursive {
+		// fs.List leaves out entries the user cannot read or that are hidden,
+		// so ask the storage itself whether the directory is empty.
+		storage, actualPath, err := op.GetStorageAndActualPath(reqPath)
+		if err != nil {
+			return err
+		}
+		entries, err := op.List(ctx, storage, actualPath, model.ListArgs{ReqPath: reqPath, Refresh: true})
+		if err != nil {
+			return err
+		}
+		if len(entries) > 0 {
+			return errors.New("directory not empty")
+		}
 	}
 	return fs.Remove(ctx, reqPath)
 }

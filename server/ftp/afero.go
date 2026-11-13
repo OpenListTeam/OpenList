@@ -50,11 +50,11 @@ func (a *AferoAdapter) OpenFile(_ string, _ int, _ os.FileMode) (afero.File, err
 }
 
 func (a *AferoAdapter) Remove(name string) error {
-	return Remove(a.ctx, name)
+	return Remove(a.ctx, name, false)
 }
 
 func (a *AferoAdapter) RemoveAll(path string) error {
-	return a.Remove(path)
+	return Remove(a.ctx, path, true)
 }
 
 func (a *AferoAdapter) Rename(oldName, newName string) error {
