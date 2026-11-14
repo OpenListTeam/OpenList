@@ -30,6 +30,12 @@ func GetStorageAndActualPath(rawPath string) (storage driver.Driver, actualPath 
 	return
 }
 
+// GetStoragesByPath returns every storage that can serve rawPath, which is
+// more than one for balanced mounts. It does not advance the balance counter.
+func GetStoragesByPath(rawPath string) []driver.Driver {
+	return getStoragesByPath(utils.FixAndCleanPath(rawPath))
+}
+
 // GetStorageVirtualMountPath returns the deterministic virtual mount path
 // without advancing the balanced-storage counter.
 func GetStorageVirtualMountPath(rawPath string) (string, error) {
