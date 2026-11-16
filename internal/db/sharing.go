@@ -4,6 +4,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/pkg/errors"
+	"gorm.io/gorm"
 )
 
 func GetSharingById(id string) (*model.SharingDB, error) {
@@ -62,6 +63,13 @@ func CreateSharing(s *model.SharingDB) (string, error) {
 
 func UpdateSharing(s *model.SharingDB) error {
 	return errors.WithStack(db.Save(s).Error)
+}
+
+func TakeSharingSlot(id string) (bool, error) {
+	res := db.Model(&model.SharingDB{}).
+		Where("id = ? AND (max_accessed <= 0 OR accessed < max_accessed)", id).
+		UpdateColumn("accessed", gorm.Expr("accessed + 1"))
+	return res.RowsAffected > 0, errors.WithStack(res.Error)
 }
 
 func UpdateSharingId(oldId, newId string) error {

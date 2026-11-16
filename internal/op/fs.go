@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"net/url"
 	stdpath "path"
 	"strconv"
 	"strings"
@@ -48,7 +49,11 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 	}
 
-	objs, err, _ := listG.Do(key, func() ([]model.Obj, error) {
+	flightKey := key
+	if base, ok := ctx.Value(conf.ThumbnailBaseURLKey).(*url.URL); ok && storage.Config().NoCache {
+		flightKey += ":" + strconv.Quote(base.String())
+	}
+	objs, err, _ := listG.Do(flightKey, func() ([]model.Obj, error) {
 		dir, err := GetUnwrap(ctx, storage, path)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed get dir")
@@ -193,7 +198,7 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 
 	if !dirCacheExists || refreshList {
 		var obj model.Obj
-		list(ctx, storage, dir, model.ListArgs{Refresh: refreshList}, func(objs []model.Obj) error {
+		_, err := list(ctx, storage, dir, model.ListArgs{Refresh: refreshList}, func(objs []model.Obj) error {
 			for _, f := range objs {
 				if f.GetName() == name {
 					if excludeTemp && model.ObjHasMask(f, model.Temp) {
@@ -207,6 +212,10 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 		})
 		if obj != nil {
 			return obj, nil
+		}
+		// A file in the parent path means the object is missing, not a failed listing.
+		if err != nil && !errs.IsNotFoundError(err) && !errors.Is(errors.Cause(err), errs.NotFolder) {
+			return nil, errors.WithMessage(err, "failed to get obj")
 		}
 	}
 	log.Debugf("cant find obj with name: %s", name)

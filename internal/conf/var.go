@@ -18,6 +18,8 @@ var (
 	Conf       *Config
 	URL        *url.URL
 	ConfigPath string
+	// DataDir 程序数据目录（绝对路径），用于运行时文件（如本地缩略图）
+	DataDir string = "data"
 )
 
 var SlicesMap = make(map[string][]string)

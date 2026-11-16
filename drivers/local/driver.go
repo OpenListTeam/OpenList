@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	stdpath "path"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -68,8 +70,8 @@ func (d *Local) Init(ctx context.Context) error {
 		d.Addition.RootFolderPath = abs
 	}
 	if d.DirectorySize {
-		d.directoryMap.root = d.GetRootPath()
-		_, err := d.directoryMap.CalculateDirSize(d.GetRootPath())
+		d.directoryMap.root = filepath.Clean(d.GetRootPath())
+		_, err := d.directoryMap.CalculateDirSize(d.directoryMap.root)
 		if err != nil {
 			return err
 		}
@@ -151,12 +153,15 @@ func (d *Local) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 
 func (d *Local) FileInfoToObj(ctx context.Context, f fs.FileInfo, reqPath string, fullPath string) model.Obj {
 	thumb := ""
-	if d.Thumbnail {
-		if d.supportsThumbnail(f.Name()) {
-			thumb = common.GetApiUrl(ctx) + stdpath.Join("/d", reqPath, f.Name())
-			thumb = utils.EncodePath(thumb, true)
-			thumb += "?type=thumb&sign=" + sign.Sign(stdpath.Join(reqPath, f.Name()))
+	if d.Thumbnail && d.supportsThumbnail(f.Name()) {
+		base, ok := ctx.Value(conf.ThumbnailBaseURLKey).(*url.URL)
+		if !ok {
+			base = &url.URL{
+				Path:     stdpath.Join("/d", reqPath),
+				RawQuery: url.Values{"type": {"thumb"}, "sign": {sign.Sign(stdpath.Join(reqPath, f.Name()))}}.Encode(),
+			}
 		}
+		thumb = common.GetApiUrl(ctx) + base.JoinPath(url.PathEscape(f.Name())).String()
 	}
 	isFolder := f.IsDir() || isSymlinkDir(f, fullPath)
 	var size int64
@@ -356,7 +361,7 @@ func (d *Local) Copy(_ context.Context, srcObj, dstDir model.Obj) error {
 
 func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 	var err error
-	if utils.SliceContains([]string{"", "delete permanently"}, d.RecycleBinPath) {
+	if utils.SliceContains([]string{"", "delete permanently"}, d.RecycleBinPath) || ctx.Value(conf.RemovePermanentlyKey) != nil {
 		if obj.IsDir() {
 			err = os.RemoveAll(obj.GetPath())
 		} else {
@@ -383,6 +388,18 @@ func (d *Local) Remove(ctx context.Context, obj model.Obj) error {
 			dstPath = filepath.Join(recycleBinPath, objName+"_"+time.Now().Format("20060102150405"))
 		}
 		err = os.Rename(objPath, dstPath)
+		if isCrossDeviceError(err) {
+			err = d.copyForMove(objPath, dstPath)
+			if err != nil {
+				_ = os.RemoveAll(dstPath)
+			} else {
+				if obj.IsDir() {
+					err = os.RemoveAll(objPath)
+				} else {
+					err = os.Remove(objPath)
+				}
+			}
+		}
 	}
 	if err != nil {
 		return err

@@ -1,12 +1,21 @@
 package torrent
 
 import (
+	"bytes"
 	"crypto/md5"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"math"
+	"net/url"
+	"path"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -26,7 +35,228 @@ const (
 	CASFileMD5Key = "file_md5"
 	// CASCloudKey 云盘类型 key
 	CASCloudKey = "cloud"
+
+	// Cloud189 identifies the 天翼云 (189) PC driver CAS slice rule.
+	Cloud189 = "189"
+	// Cloud115 identifies the 115 driver rapid-upload rule (whole-file SHA1).
+	Cloud115 = "115"
+	// CloudAliyundriveOpen identifies the aliyundrive_open rapid-upload rule (whole-file SHA1).
+	CloudAliyundriveOpen = "aliyundrive_open"
+
+	// OpenListExtensionKey is the optional root-level extension key.
+	OpenListExtensionKey = "x-openlist"
+	// OSSFormat identifies OpenList sharing seed JSON documents.
+	OSSFormat = "openlist-sharing-seed"
+	// OSSVersion is the currently supported sharing seed schema version.
+	OSSVersion = 1
+	// DefaultMaxSeedSize bounds untrusted seed documents.
+	DefaultMaxSeedSize int64 = 10 * 1024 * 1024
+	// DefaultMaxSeedFiles bounds file-list fan-out in untrusted seeds.
+	DefaultMaxSeedFiles = 100000
 )
+
+// CASSliceSize 返回天翼云(189)上传时对该文件大小使用的分片大小。
+//
+// 这正是 189pc 上传链路（drivers/189pc/help.go 的 partSize）的逐字实现：
+// 分片大小只由文件大小决定，10MiB / 20MiB，更大的文件按 1999 片上限向上取
+// 10MiB 的整数倍（至少 5 倍）。上传、秒传、种子生成三处必须使用同一个值，
+// 否则计算出的 sliceMd5 与云端存储的摘要对不上。
+func CASSliceSize(size int64) int64 {
+	const DEFAULT = 1024 * 1024 * 10 // 10MiB
+	if size > DEFAULT*2*999 {
+		return int64(math.Max(math.Ceil((float64(size)/1999)/float64(DEFAULT)), 5) * DEFAULT)
+	}
+	if size > DEFAULT*999 {
+		return DEFAULT * 2 // 20MiB
+	}
+	return DEFAULT
+}
+
+// expectedCASPartCount 返回 189 上传循环对该文件切出的分片数：
+// size <= sliceSize 时只有 1 片，其余为 ceil(size/sliceSize)
+// （与 drivers/189pc fastUpload 的 count 计算完全一致）。
+func expectedCASPartCount(fileSize, sliceSize int64) int64 {
+	if fileSize <= 0 || sliceSize <= 0 {
+		return 0
+	}
+	if fileSize <= sliceSize {
+		return 1
+	}
+	return (fileSize + sliceSize - 1) / sliceSize
+}
+
+// CASPartCount 返回按天翼规则（CASSliceSize）切分后的分片数。
+func CASPartCount(fileSize int64) int64 {
+	return expectedCASPartCount(fileSize, CASSliceSize(fileSize))
+}
+
+// ClampSeedPieceSize 把值限制在 Seed 容器允许的 piece_size 范围内
+// （16KiB..64MiB，见 ValidateSeed）。
+//
+// 超大文件的 CAS 文件级分片可能超过 64MiB（约 117GiB 以上进入 70MiB 档），
+// 而种子级的 PieceSize 只是一个容器字段，不该因此让整个 .cas 无法解码：
+// 超出范围时退化为默认值，逐片哈希会按切法不符被丢弃，但最终摘要
+// （CASSliceMD5 / sliceMd5）仍然保留，秒传依旧可用。
+func ClampSeedPieceSize(size int64) int64 {
+	if size < 16*1024 || size > 64*1024*1024 {
+		return DefaultPieceSize
+	}
+	return size
+}
+
+// CASUniformSliceSize 返回所有文件共用的 CAS 分片大小。
+// 文件跨过分片档位（10MiB/20MiB…）时没有共用值，返回 false。
+// 种子级 piece_size 只能存一个值，只有共用时逐片哈希才能挂到种子上。
+func CASUniformSliceSize(files []SeedFile) (int64, bool) {
+	if len(files) == 0 {
+		return 0, false
+	}
+	size := CASSliceSize(files[0].Size)
+	for _, file := range files[1:] {
+		if CASSliceSize(file.Size) != size {
+			return 0, false
+		}
+	}
+	return size, true
+}
+
+// DropInconsistentCASParts 丢弃与给定分片大小对不上的逐片 MD5。
+//
+// 逐片列表只是附加信息，判重只看最终摘要（CASSliceMD5），所以切法不符时
+// 直接丢掉比留一份误导数据更安全。
+func (f *SeedFile) DropInconsistentCASParts(sliceSize int64) {
+	if f.Hashes.Pieces == nil {
+		return
+	}
+	if int64(len(f.Hashes.Pieces.MD5)) != expectedCASPartCount(f.Size, sliceSize) {
+		f.Hashes.Pieces.MD5 = nil
+	}
+	if len(f.Hashes.Pieces.MD5) == 0 && len(f.Hashes.Pieces.SHA1) == 0 && len(f.Hashes.Pieces.SHA256) == 0 {
+		f.Hashes.Pieces = nil
+	}
+}
+
+// Seed describes the portable OpenList sharing seed contract.
+type Seed struct {
+	Format    string        `json:"format"`
+	Version   int           `json:"version"`
+	Name      string        `json:"name"`
+	Comment   string        `json:"comment,omitempty"`
+	CreatedAt string        `json:"created_at"`
+	CreatedBy string        `json:"created_by"`
+	PieceSize int64         `json:"piece_size"`
+	Trackers  []string      `json:"trackers,omitempty"`
+	Channels  []SeedChannel `json:"channels,omitempty"`
+	Files     []SeedFile    `json:"files"`
+
+	// GlobalPieces contains whole-package SHA1 pieces over concatenated files.
+	// The optional OSS field preserves crossing pieces through format conversion.
+	GlobalPieces []string `json:"global_pieces,omitempty"`
+
+	// AvailableHashes / AvailablePieceHashes 表示种子整体已经带有哪些算法。
+	// BT 的 pieces 是整包的，跨文件时无法拆到单个文件上，所以前端要按这个
+	// 种子级字段判断 in seed，而不是逐个文件看 hashes。
+	AvailableHashes      []string `json:"available_hashes,omitempty"`
+	AvailablePieceHashes []string `json:"available_piece_hashes,omitempty"`
+}
+
+// SeedChannel contains only public storage discovery metadata.
+type SeedChannel struct {
+	Driver    string `json:"driver"`
+	MountPath string `json:"mount_path,omitempty"`
+}
+
+// SeedFile describes one relative file in a sharing seed.
+type SeedFile struct {
+	Path          string       `json:"path"`
+	Size          int64        `json:"size"`
+	Modified      string       `json:"modified,omitempty"`
+	Comment       string       `json:"comment,omitempty"`
+	Hashes        SeedHashes   `json:"hashes"`
+	Sources       []SeedSource `json:"sources,omitempty"`
+	CASSliceMD5   string       `json:"cas_slice_md5,omitempty"`
+	CASCreateTime string       `json:"cas_create_time,omitempty"`
+	// CASCloud 标识该文件 CAS 元数据所属的云盘类型（如 "189"）。留空视为 189。
+	CASCloud        string   `json:"cas_cloud,omitempty"`
+	MissingChannels []string `json:"missing_channels,omitempty"`
+}
+
+// SeedHashes contains whole-file and optional per-piece hashes.
+type SeedHashes struct {
+	MD5    string           `json:"md5,omitempty"`
+	SHA1   string           `json:"sha1,omitempty"`
+	SHA256 string           `json:"sha256,omitempty"`
+	GCID   string           `json:"gcid,omitempty"`
+	Pieces *SeedPieceHashes `json:"pieces,omitempty"`
+}
+
+// SeedPieceHashes contains independent per-file piece hashes.
+type SeedPieceHashes struct {
+	MD5    []string `json:"md5,omitempty"`
+	SHA1   []string `json:"sha1,omitempty"`
+	SHA256 []string `json:"sha256,omitempty"`
+}
+
+// SeedSource is an optional retrievable public or signed source URL.
+type SeedSource struct {
+	Type      string `json:"type"`
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	ShareID   string `json:"share_id,omitempty"`
+}
+
+// CASFileEntry describes one file inside a multi-file .cas payload.
+//
+// sliceMd5 是「最终分片摘要」，也就是云端真正拿来做判重的那个值；
+// 逐片 MD5 只是可选的附加信息（partsMd5），旧文件把它写在 slice_md5s 里。
+type CASFileEntry struct {
+	Name       string `json:"name"`
+	Size       int64  `json:"size"`
+	MD5        string `json:"md5"`
+	SliceMD5   string `json:"sliceMd5"`
+	CreateTime string `json:"create_time"`
+	// PartsMD5 每个分片的 MD5（大写十六进制）。分片规则由文件大小决定，
+	// 见 CASSliceSize；缺省时仅凭 sliceMd5 也能秒传。
+	PartsMD5 []string `json:"partsMd5,omitempty"`
+	// SliceMD5s 旧版字段名，含义同 PartsMD5，只读兼容。
+	SliceMD5s []string `json:"slice_md5s,omitempty"`
+	SliceSize int64    `json:"slice_size,omitempty"`
+	// Cloud 标识该 CAS 条目所属的云盘类型（如 "189"）；留空视为 189。
+	Cloud string `json:"cloud,omitempty"`
+}
+
+// CASPayload matches the reference .cas JSON payload. The five legacy fields
+// describe a single file (byte-for-byte compatible with the reference project);
+// the optional "files" array extends it to multi-file seeds, partsMd5/slice_size
+// preserve per-piece MD5, and comment preserves sharing metadata.
+type CASPayload struct {
+	Comment    string `json:"comment,omitempty"`
+	Name       string `json:"name"`
+	Size       int64  `json:"size"`
+	MD5        string `json:"md5"`
+	SliceMD5   string `json:"sliceMd5"`
+	CreateTime string `json:"create_time"`
+	// PartsMD5 每个分片的 MD5（大写十六进制），可选。
+	PartsMD5 []string `json:"partsMd5,omitempty"`
+	// SliceMD5s 旧版字段名，含义同 PartsMD5，只读兼容。
+	SliceMD5s []string `json:"slice_md5s,omitempty"`
+	SliceSize int64    `json:"slice_size,omitempty"`
+	// Cloud 标识该 CAS 载荷所属的云盘类型（如 "189"）；留空视为 189。
+	Cloud string         `json:"cloud,omitempty"`
+	Files []CASFileEntry `json:"files,omitempty"`
+}
+
+// ParseLimits controls resource use while parsing untrusted seeds.
+type ParseLimits struct {
+	MaxBytes int64
+	MaxFiles int
+	MaxDepth int
+}
+
+// DefaultParseLimits returns conservative public API limits.
+func DefaultParseLimits() ParseLimits {
+	return ParseLimits{MaxBytes: DefaultMaxSeedSize, MaxFiles: DefaultMaxSeedFiles, MaxDepth: 64}
+}
 
 // CASInfo 天翼云 CAS 秒传所需信息
 type CASInfo struct {
@@ -38,7 +268,8 @@ type CASInfo struct {
 	SliceMD5s []string
 	// SliceSize 分片大小（字节）
 	SliceSize int64
-	// Cloud 云盘类型标识
+	// Cloud 云盘类型标识。可为具体驱动名（如 "189"、"115"、"aliyundrive_open"），
+	// 或留空表示由使用方按目标驱动自行判定。不同类型的分片规则可能不同。
 	Cloud string
 }
 
@@ -86,6 +317,8 @@ type Torrent struct {
 	CreatedBy string
 	// CAS 天翼云 CAS 扩展信息（存储在 info 字典外部，不影响 info_hash）
 	CAS *CASInfo
+	// OpenList stores the portable extension outside info so info_hash stays standard.
+	OpenList *Seed
 }
 
 // NewTorrent 创建一个新的 torrent 结构
@@ -200,6 +433,12 @@ func (t *Torrent) Encode() ([]byte, error) {
 		}
 		rootDict[CASExtensionKey] = casDict
 	}
+	if t.OpenList != nil {
+		if err := ValidateSeed(t.OpenList, DefaultParseLimits()); err != nil {
+			return nil, fmt.Errorf("validate x-openlist: %w", err)
+		}
+		rootDict[OpenListExtensionKey] = seedToBencode(t.OpenList)
+	}
 
 	return BencodeEncode(rootDict)
 }
@@ -272,12 +511,12 @@ func Decode(data []byte) (*Torrent, error) {
 			return nil, fmt.Errorf("torrent: info is not a dict")
 		}
 
-		// 计算 info_hash
-		infoBytes, err := BencodeEncode(infoDict)
+		// Hash the original info bytes, including noncanonical ordering.
+		fields, err := rawBencodeRoot(data)
 		if err != nil {
-			return nil, fmt.Errorf("encode info for hash: %w", err)
+			return nil, err
 		}
-		infoHashRaw := sha1.Sum(infoBytes)
+		infoHashRaw := sha1.Sum(fields["info"])
 		t.InfoHash = infoHashRaw[:]
 
 		// 解析 info 字段
@@ -376,6 +615,20 @@ func Decode(data []byte) (*Torrent, error) {
 		}
 	}
 
+	if extension, ok := rootDict[OpenListExtensionKey]; ok {
+		seed, err := seedFromBencode(extension)
+		if err != nil {
+			return nil, fmt.Errorf("decode x-openlist: %w", err)
+		}
+		if err = ValidateSeed(seed, DefaultParseLimits()); err != nil {
+			return nil, fmt.Errorf("validate x-openlist: %w", err)
+		}
+		t.OpenList = seed
+	}
+	if err := ValidateTorrent(t, DefaultParseLimits()); err != nil {
+		return nil, err
+	}
+
 	return t, nil
 }
 
@@ -414,20 +667,23 @@ func (t *Torrent) HasCASInfo() bool {
 	return t.CAS != nil && t.CAS.FileMD5 != "" && t.CAS.SliceMD5 != ""
 }
 
-// BuildCASInfoFromMD5s 从分片 MD5 列表构建 CAS 信息
+// BuildCASInfoFromMD5s 从分片 MD5 列表构建 CAS 信息（默认按天翼云分片规则标记 cloud=189）。
+// 新代码应优先使用 BuildCASInfoFromMD5sWithCloud 显式指定云盘类型。
 func BuildCASInfoFromMD5s(fileMD5 string, sliceMD5s []string, sliceSize int64) *CASInfo {
-	sliceMD5 := fileMD5
-	if len(sliceMD5s) > 1 {
-		// 所有分片 MD5 用 \n 拼接后再取 MD5
-		joined := strings.Join(sliceMD5s, "\n")
-		sliceMD5 = strings.ToUpper(GetMD5Str(joined))
-	}
+	return BuildCASInfoFromMD5sWithCloud(fileMD5, sliceMD5s, sliceSize, Cloud189)
+}
+
+// BuildCASInfoFromMD5sWithCloud 从分片 MD5 列表构建 CAS 信息，并指定云盘类型标识。
+func BuildCASInfoFromMD5sWithCloud(fileMD5 string, sliceMD5s []string, sliceSize int64, cloud string) *CASInfo {
+	fileMD5 = strings.ToUpper(fileMD5)
+	sliceMD5s = upperStrings(sliceMD5s)
+	sliceMD5 := SliceMD5FromPieces(sliceMD5s, fileMD5)
 	return &CASInfo{
 		FileMD5:   fileMD5,
 		SliceMD5:  sliceMD5,
 		SliceMD5s: sliceMD5s,
 		SliceSize: sliceSize,
-		Cloud:     "189",
+		Cloud:     cloud,
 	}
 }
 
@@ -436,4 +692,1215 @@ func GetMD5Str(data string) string {
 	h := md5.New()
 	h.Write([]byte(data))
 	return strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
+}
+
+// ValidateTorrent checks standard BitTorrent invariants and portable paths.
+func ValidateTorrent(t *Torrent, limits ParseLimits) error {
+	if t == nil {
+		return fmt.Errorf("missing torrent")
+	}
+	if limits.MaxFiles <= 0 {
+		limits.MaxFiles = DefaultMaxSeedFiles
+	}
+	if err := validateSeedName(t.Info.Name); err != nil {
+		return fmt.Errorf("torrent: %w", err)
+	}
+	if t.Info.PieceLength <= 0 || t.Info.PieceLength > 1<<30 {
+		return fmt.Errorf("torrent: invalid piece length")
+	}
+	if len(t.Info.Pieces)%sha1.Size != 0 {
+		return fmt.Errorf("torrent: pieces length must be a multiple of %d", sha1.Size)
+	}
+	if len(t.Info.Files) > limits.MaxFiles {
+		return fmt.Errorf("torrent: too many files")
+	}
+	var total int64
+	if len(t.Info.Files) == 0 {
+		if t.Info.Length < 0 {
+			return fmt.Errorf("torrent: invalid file size")
+		}
+		total = t.Info.Length
+	} else {
+		seen := make(map[string]struct{}, len(t.Info.Files))
+		for _, file := range t.Info.Files {
+			filePath := strings.Join(file.Path, "/")
+			if err := validateRelativeSeedPath(filePath); err != nil {
+				return fmt.Errorf("torrent: %w", err)
+			}
+			if _, ok := seen[filePath]; ok {
+				return fmt.Errorf("torrent: duplicate file path %q", filePath)
+			}
+			seen[filePath] = struct{}{}
+			if file.Length < 0 || total > int64(^uint64(0)>>1)-file.Length {
+				return fmt.Errorf("torrent: invalid file size")
+			}
+			total += file.Length
+		}
+	}
+	expectedPieces := int64(0)
+	if total > 0 {
+		expectedPieces = (total-1)/t.Info.PieceLength + 1
+	}
+	if int64(len(t.Info.Pieces)/sha1.Size) != expectedPieces {
+		return fmt.Errorf("torrent: piece count mismatch")
+	}
+	return nil
+}
+
+// NewSeed creates a versioned OSS document with stable defaults.
+func NewSeed(name, createdBy string, pieceSize int64) *Seed {
+	if pieceSize <= 0 {
+		pieceSize = DefaultPieceSize
+	}
+	return &Seed{
+		Format:    OSSFormat,
+		Version:   OSSVersion,
+		Name:      name,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		CreatedBy: createdBy,
+		PieceSize: pieceSize,
+	}
+}
+
+// ValidateSeed rejects unsafe paths, malformed hashes and unreasonable resource use.
+func ValidateSeed(seed *Seed, limits ParseLimits) error {
+	if seed == nil {
+		return fmt.Errorf("missing seed")
+	}
+	if limits.MaxBytes <= 0 {
+		limits.MaxBytes = DefaultMaxSeedSize
+	}
+	if limits.MaxFiles <= 0 {
+		limits.MaxFiles = DefaultMaxSeedFiles
+	}
+	if seed.Format != OSSFormat {
+		return fmt.Errorf("unsupported seed format %q", seed.Format)
+	}
+	if seed.Version != OSSVersion {
+		return fmt.Errorf("unsupported seed version %d", seed.Version)
+	}
+	if err := validateSeedName(seed.Name); err != nil {
+		return err
+	}
+	if seed.CreatedAt == "" || seed.CreatedBy == "" {
+		return fmt.Errorf("created_at and created_by are required")
+	}
+	if seed.PieceSize < 16*1024 || seed.PieceSize > 64*1024*1024 {
+		return fmt.Errorf("piece_size must be between 16384 and 67108864")
+	}
+	if len(seed.Files) == 0 || len(seed.Files) > limits.MaxFiles {
+		return fmt.Errorf("file count must be between 1 and %d", limits.MaxFiles)
+	}
+	seen := make(map[string]struct{}, len(seed.Files))
+	var total int64
+	for i := range seed.Files {
+		file := &seed.Files[i]
+		if err := validateRelativeSeedPath(file.Path); err != nil {
+			return fmt.Errorf("file %d: %w", i, err)
+		}
+		if _, ok := seen[file.Path]; ok {
+			return fmt.Errorf("duplicate file path %q", file.Path)
+		}
+		seen[file.Path] = struct{}{}
+		if file.Size < 0 || total > int64(^uint64(0)>>1)-file.Size {
+			return fmt.Errorf("file %q has invalid size", file.Path)
+		}
+		total += file.Size
+		if err := validateSeedHashes(file.Hashes, file.Size, seed.PieceSize); err != nil {
+			return fmt.Errorf("file %q: %w", file.Path, err)
+		}
+		if file.CASSliceMD5 != "" && !validHexHash(file.CASSliceMD5, 32) {
+			return fmt.Errorf("file %q has an invalid CAS slice MD5", file.Path)
+		}
+		for _, source := range file.Sources {
+			if source.Type == "" || source.URL == "" {
+				return fmt.Errorf("file %q has an incomplete source", file.Path)
+			}
+			u, err := url.Parse(source.URL)
+			if err != nil || u.Scheme == "" {
+				return fmt.Errorf("file %q has an invalid source URL", file.Path)
+			}
+		}
+		for _, channel := range file.MissingChannels {
+			if strings.TrimSpace(channel) == "" || strings.ContainsAny(channel, "/\\\x00") {
+				return fmt.Errorf("file %q has an invalid missing channel", file.Path)
+			}
+		}
+	}
+	for _, channel := range seed.Channels {
+		if strings.TrimSpace(channel.Driver) == "" {
+			return fmt.Errorf("channel driver is required")
+		}
+		if strings.ContainsAny(channel.MountPath, "?#\x00") {
+			return fmt.Errorf("channel mount_path contains invalid characters")
+		}
+	}
+	return validateGlobalPieces(seed, total)
+}
+
+func validateGlobalPieces(seed *Seed, total int64) error {
+	if len(seed.GlobalPieces) == 0 {
+		return nil
+	}
+	expected := int64(0)
+	if total > 0 {
+		expected = (total-1)/seed.PieceSize + 1
+	}
+	if int64(len(seed.GlobalPieces)) != expected {
+		return fmt.Errorf("global SHA1 piece count is %d, expected %d", len(seed.GlobalPieces), expected)
+	}
+	for _, piece := range seed.GlobalPieces {
+		if !validHexHash(piece, sha1.Size*2) {
+			return fmt.Errorf("invalid global SHA1 piece hash")
+		}
+	}
+	var offset int64
+	for i, file := range seed.Files {
+		if offset%seed.PieceSize == 0 && file.Hashes.Pieces != nil {
+			count := file.Size / seed.PieceSize
+			if i == len(seed.Files)-1 && file.Size%seed.PieceSize != 0 {
+				count++
+			}
+			for j, piece := range file.Hashes.Pieces.SHA1 {
+				if int64(j) >= count {
+					break
+				}
+				if !strings.EqualFold(piece, seed.GlobalPieces[offset/seed.PieceSize+int64(j)]) {
+					return fmt.Errorf("file %q SHA1 piece %d conflicts with global pieces", file.Path, j)
+				}
+			}
+		}
+		offset += file.Size
+	}
+	return nil
+}
+
+func validateSeedName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00") {
+		return fmt.Errorf("invalid seed name %q", name)
+	}
+	return nil
+}
+
+func validateRelativeSeedPath(name string) error {
+	if name == "" || !utf8.ValidString(name) || strings.ContainsAny(name, "\\\x00") || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("invalid relative path %q", name)
+	}
+	cleaned := path.Clean(name)
+	if cleaned != name || cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("invalid relative path %q", name)
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return fmt.Errorf("invalid relative path %q", name)
+		}
+	}
+	return nil
+}
+
+func validateSeedHashes(hashes SeedHashes, size, pieceSize int64) error {
+	for name, value := range map[string]string{"md5": hashes.MD5, "sha1": hashes.SHA1, "sha256": hashes.SHA256} {
+		if value != "" && !validHexHash(value, map[string]int{"md5": 32, "sha1": 40, "sha256": 64}[name]) {
+			return fmt.Errorf("invalid %s hash", name)
+		}
+	}
+	if hashes.Pieces == nil {
+		return nil
+	}
+	expected := int64(0)
+	if size > 0 {
+		expected = (size-1)/pieceSize + 1
+	}
+	pieceSets := []struct {
+		name   string
+		width  int
+		values []string
+	}{
+		{"md5", 32, hashes.Pieces.MD5},
+		{"sha1", 40, hashes.Pieces.SHA1},
+		{"sha256", 64, hashes.Pieces.SHA256},
+	}
+	for _, set := range pieceSets {
+		if len(set.values) != 0 && int64(len(set.values)) != expected {
+			return fmt.Errorf("%s piece count is %d, expected %d", set.name, len(set.values), expected)
+		}
+		for _, value := range set.values {
+			if !validHexHash(value, set.width) {
+				return fmt.Errorf("invalid %s piece hash", set.name)
+			}
+		}
+	}
+	return nil
+}
+
+func validHexHash(value string, width int) bool {
+	if len(value) != width {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+// EncodeOSS serializes a validated seed as UTF-8 JSON.
+func EncodeOSS(seed *Seed) ([]byte, error) {
+	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(seed, "", "  ")
+}
+
+// DecodeOSS parses a bounded UTF-8 OSS document.
+func DecodeOSS(data []byte, limits ParseLimits) (*Seed, error) {
+	if limits.MaxBytes <= 0 {
+		limits.MaxBytes = DefaultMaxSeedSize
+	}
+	if int64(len(data)) > limits.MaxBytes {
+		return nil, fmt.Errorf("seed exceeds %d bytes", limits.MaxBytes)
+	}
+	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
+	if !utf8.Valid(data) {
+		return nil, fmt.Errorf("seed is not valid UTF-8")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var seed Seed
+	if err := decoder.Decode(&seed); err != nil {
+		return nil, fmt.Errorf("decode OSS: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("decode OSS: trailing data")
+	}
+	if err := ValidateSeed(&seed, limits); err != nil {
+		return nil, err
+	}
+	fillAvailableHashes(&seed, "")
+	return &seed, nil
+}
+
+// buildCASFileEntry computes the reference-compatible fields for one file.
+//
+// sliceMd5 写的是「最终分片摘要」——天翼判重时真正比较的就是这个值；逐片 MD5
+// 只是可选的附加信息（partsMd5）。分片大小由文件大小唯一决定（CASSliceSize），
+// 与 seed.PieceSize 无关。
+//
+// 逐片 MD5 只有在「确实按 CAS 分片大小算出来的」时才能使用：仅比较片数不够，
+// 15MiB 文件按 8MiB 切是 2 片、按 CAS 的 10MiB 切也是 2 片，但边界是
+// [8,7] 和 [10,5]，据此推出来的最终摘要会与云端不一致。因此要求
+// pieceSize（逐片哈希的实际切法）严格等于 CAS 分片大小。
+func buildCASFileEntry(file SeedFile, pieceSize int64) (CASFileEntry, error) {
+	if file.Hashes.MD5 == "" {
+		return CASFileEntry{}, fmt.Errorf("CAS requires a whole-file MD5 for %s", file.Path)
+	}
+	sliceSize := pieceSize
+	if file.CASCloud == "" || file.CASCloud == Cloud189 {
+		sliceSize = CASSliceSize(file.Size)
+	}
+	if sliceSize <= 0 {
+		sliceSize = DefaultPieceSize
+	}
+	var parts []string
+	if pieceSize == sliceSize && file.Hashes.Pieces != nil && len(file.Hashes.Pieces.MD5) > 0 {
+		candidate := upperStrings(file.Hashes.Pieces.MD5)
+		if int64(len(candidate)) == expectedCASPartCount(file.Size, sliceSize) {
+			parts = candidate
+		}
+	}
+	// 显式给出的最终摘要优先；缺省时才用切法已确认的逐片列表推
+	sliceMD5 := strings.ToUpper(file.CASSliceMD5)
+	if sliceMD5 == "" && len(parts) > 0 {
+		sliceMD5 = SliceMD5FromPieces(parts, file.Hashes.MD5)
+	}
+	if sliceMD5 == "" {
+		if file.Size > sliceSize {
+			return CASFileEntry{}, fmt.Errorf("CAS requires a final slice MD5 or per-slice MD5s computed at the CAS slice size for %s", file.Path)
+		}
+		sliceMD5 = strings.ToUpper(file.Hashes.MD5)
+	}
+	createTime := file.CASCreateTime
+	if createTime == "" {
+		createTime = fmt.Sprintf("%d", time.Now().Unix())
+	}
+	return CASFileEntry{
+		Name: path.Base(file.Path), Size: file.Size, MD5: strings.ToUpper(file.Hashes.MD5),
+		SliceMD5: sliceMD5, CreateTime: createTime,
+		PartsMD5: parts, SliceSize: sliceSize, Cloud: file.CASCloud,
+	}, nil
+}
+
+// EncodeCAS writes the reference-compatible base64 encoded JSON payload. A
+// single-file seed uses the legacy five fields; multiple files are stored in
+// the "files" array.
+func EncodeCAS(seed *Seed) ([]byte, error) {
+	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
+		return nil, err
+	}
+	if len(seed.Files) == 0 {
+		return nil, fmt.Errorf("CAS requires at least one file")
+	}
+	var payload CASPayload
+	if len(seed.Files) == 1 {
+		entry, err := buildCASFileEntry(seed.Files[0], seed.PieceSize)
+		if err != nil {
+			return nil, err
+		}
+		payload = CASPayload{
+			Name: entry.Name, Size: entry.Size, MD5: entry.MD5,
+			SliceMD5: entry.SliceMD5, CreateTime: entry.CreateTime,
+			PartsMD5: entry.PartsMD5, SliceSize: entry.SliceSize, Cloud: entry.Cloud,
+		}
+	} else {
+		entries := make([]CASFileEntry, 0, len(seed.Files))
+		var totalSize int64
+		for _, file := range seed.Files {
+			entry, err := buildCASFileEntry(file, seed.PieceSize)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, entry)
+			totalSize += entry.Size
+		}
+		payload = CASPayload{Name: seed.Name, Size: totalSize, Files: entries}
+	}
+	payload.Comment = seed.Comment
+	content, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	encoded := make([]byte, base64.StdEncoding.EncodedLen(len(content)))
+	base64.StdEncoding.Encode(encoded, content)
+	return encoded, nil
+}
+
+// DecodeCAS accepts both reference base64 JSON and raw JSON payloads.
+func DecodeCAS(data []byte, limits ParseLimits) (*Seed, error) {
+	if limits.MaxBytes <= 0 {
+		limits.MaxBytes = DefaultMaxSeedSize
+	}
+	if int64(len(data)) > limits.MaxBytes {
+		return nil, fmt.Errorf("CAS seed exceeds %d bytes", limits.MaxBytes)
+	}
+	data = bytes.TrimSpace(data)
+	decoded, err := base64.StdEncoding.DecodeString(string(data))
+	if err == nil {
+		data = decoded
+	}
+	var payload CASPayload
+	if err = json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("decode CAS: %w", err)
+	}
+	seed := NewSeed(payload.Name, "OpenList CAS", DefaultPieceSize)
+	seed.Comment = payload.Comment
+	entries := payload.Files
+	if len(entries) == 0 {
+		entries = []CASFileEntry{{
+			Name: payload.Name, Size: payload.Size, MD5: payload.MD5,
+			SliceMD5: payload.SliceMD5, CreateTime: payload.CreateTime,
+			PartsMD5: payload.PartsMD5, SliceMD5s: payload.SliceMD5s,
+			SliceSize: payload.SliceSize, Cloud: payload.Cloud,
+		}}
+	} else if len(entries) > limits.MaxFiles {
+		return nil, fmt.Errorf("CAS seed exceeds %d files", limits.MaxFiles)
+	}
+	// 种子里的 piece_size 是文件级分片规则的载体：189 由文件大小唯一决定，
+	// 其它云盘才信任载荷里声明的 slice_size。超大文件的 CAS 分片会超出
+	// Seed 容器的上限，这里只钳制容器字段，文件级分片仍按 CASSliceSize 计算。
+	seed.PieceSize = ClampSeedPieceSize(casEntrySliceSize(entries[0]))
+	for _, entry := range entries {
+		file, err := casEntryToSeedFile(entry)
+		if err != nil {
+			return nil, err
+		}
+		// 逐片哈希只在切法对得上时保留，否则只留最终摘要（判重够用）
+		file.DropInconsistentCASParts(seed.PieceSize)
+		seed.Files = append(seed.Files, file)
+	}
+	return seed, ValidateSeed(seed, limits)
+}
+
+// casEntrySliceSize 返回一条 CAS 条目应使用的分片大小。
+func casEntrySliceSize(entry CASFileEntry) int64 {
+	if entry.Cloud == "" || entry.Cloud == Cloud189 {
+		if size := CASSliceSize(entry.Size); size > 0 {
+			return size
+		}
+	}
+	if entry.SliceSize > 0 {
+		return entry.SliceSize
+	}
+	return DefaultPieceSize
+}
+
+// casEntryToSeedFile converts a CAS payload entry into a SeedFile, restoring the
+// per-piece MD5 list when it is present (partsMd5, or the legacy slice_md5s).
+//
+// sliceMd5 是判重用的最终摘要：多片文件的 sliceMd5 与整文件 MD5 通常不同，
+// 不能拿后者冒充。只有「文件不超过一片」或「载荷声明了与 CAS 规则一致的分片
+// 大小、且逐片列表完整」时才能得到可信摘要，其余情况视为无效载荷。
+func casEntryToSeedFile(entry CASFileEntry) (SeedFile, error) {
+	if entry.Name == "" || entry.Size < 0 || !validHexHash(entry.MD5, 32) {
+		return SeedFile{}, fmt.Errorf("invalid CAS payload")
+	}
+	parts := entry.PartsMD5
+	if len(parts) == 0 {
+		parts = entry.SliceMD5s
+	}
+	sliceSize := casEntrySliceSize(entry)
+	sliceMD5 := entry.SliceMD5
+	if sliceMD5 == "" {
+		switch {
+		case entry.Size <= sliceSize:
+			sliceMD5 = entry.MD5
+		case len(parts) > 0 && entry.SliceSize == sliceSize &&
+			int64(len(parts)) == expectedCASPartCount(entry.Size, sliceSize):
+			sliceMD5 = SliceMD5FromPieces(parts, entry.MD5)
+		default:
+			return SeedFile{}, fmt.Errorf("invalid CAS payload: %q spans more than one slice and carries no sliceMd5", entry.Name)
+		}
+	}
+	if !validHexHash(sliceMD5, 32) {
+		return SeedFile{}, fmt.Errorf("invalid CAS sliceMd5")
+	}
+	file := SeedFile{
+		Path: entry.Name, Size: entry.Size, CASCreateTime: entry.CreateTime,
+		CASSliceMD5: strings.ToLower(sliceMD5),
+		CASCloud:    entry.Cloud,
+		Hashes:      SeedHashes{MD5: strings.ToLower(entry.MD5)},
+	}
+	if len(parts) > 0 {
+		file.Hashes.Pieces = &SeedPieceHashes{MD5: lowerStrings(parts)}
+	}
+	return file, nil
+}
+
+// DetectFormat determines the seed container from a file name and content.
+func DetectFormat(fileName string, data []byte) string {
+	switch strings.ToLower(path.Ext(fileName)) {
+	case ".oss":
+		return "oss"
+	case ".torrent":
+		return "torrent"
+	case ".cas":
+		return "cas"
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && (trimmed[0] == '{' || bytes.HasPrefix(trimmed, []byte{0xef, 0xbb, 0xbf, '{'})) {
+		return "oss"
+	}
+	if len(trimmed) > 0 && trimmed[0] == 'd' {
+		return "torrent"
+	}
+	return "cas"
+}
+
+// DecodeSeed normalizes OSS, torrent and CAS containers to the OSS contract.
+func DecodeSeed(data []byte, format string, limits ParseLimits) (*Seed, error) {
+	if limits.MaxBytes <= 0 {
+		limits = DefaultParseLimits()
+	}
+	if int64(len(data)) > limits.MaxBytes {
+		return nil, fmt.Errorf("seed exceeds %d bytes", limits.MaxBytes)
+	}
+	switch strings.ToLower(strings.TrimPrefix(format, ".")) {
+	case "oss":
+		return DecodeOSS(data, limits)
+	case "torrent":
+		t, err := Decode(data)
+		if err != nil {
+			return nil, err
+		}
+		return SeedFromTorrent(t, limits)
+	case "cas":
+		return DecodeCAS(data, limits)
+	default:
+		return nil, fmt.Errorf("unsupported seed format %q", format)
+	}
+}
+
+// EncodeSeed converts a normalized seed to the requested container.
+func EncodeSeed(seed *Seed, format string) ([]byte, error) {
+	switch strings.ToLower(strings.TrimPrefix(format, ".")) {
+	case "oss":
+		return EncodeOSS(seed)
+	case "torrent":
+		t, diagnostics := TorrentFromSeed(seed)
+		if len(diagnostics) > 0 {
+			return nil, fmt.Errorf("cannot convert to torrent: %s", strings.Join(diagnostics, "; "))
+		}
+		return t.Encode()
+	case "cas":
+		return EncodeCAS(seed)
+	default:
+		return nil, fmt.Errorf("unsupported seed format %q", format)
+	}
+}
+
+// UpdateSeedComment changes container metadata without rebuilding torrent info.
+// CAS updates preserve unknown JSON fields and the original plain/base64 wrapper.
+func UpdateSeedComment(data []byte, format, comment string) ([]byte, error) {
+	if int64(len(comment)) > DefaultMaxSeedSize {
+		return nil, fmt.Errorf("comment exceeds %d bytes", DefaultMaxSeedSize)
+	}
+	if !utf8.ValidString(comment) {
+		return nil, fmt.Errorf("comment is not valid UTF-8")
+	}
+	switch strings.ToLower(strings.TrimPrefix(format, ".")) {
+	case "oss":
+		seed, err := DecodeOSS(data, DefaultParseLimits())
+		if err != nil {
+			return nil, err
+		}
+		seed.Comment = comment
+		return EncodeOSS(seed)
+	case "torrent":
+		if _, err := Decode(data); err != nil {
+			return nil, err
+		}
+		fields, err := rawBencodeRoot(data)
+		if err != nil {
+			return nil, err
+		}
+		if comment == "" {
+			delete(fields, "comment")
+		} else {
+			fields["comment"], err = BencodeEncode(comment)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if raw, ok := fields[OpenListExtensionKey]; ok {
+			value, err := BencodeDecode(raw)
+			if err != nil {
+				return nil, err
+			}
+			extension, ok := value.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("x-openlist is not a dictionary")
+			}
+			if comment == "" {
+				delete(extension, "comment")
+			} else {
+				extension["comment"] = comment
+			}
+			fields[OpenListExtensionKey], err = BencodeEncode(extension)
+			if err != nil {
+				return nil, err
+			}
+		}
+		keys := make([]string, 0, len(fields))
+		for key := range fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var output bytes.Buffer
+		output.WriteByte('d')
+		for _, key := range keys {
+			if err := bencodeEncodeString(&output, key); err != nil {
+				return nil, err
+			}
+			output.Write(fields[key])
+		}
+		output.WriteByte('e')
+		if int64(output.Len()) > DefaultMaxSeedSize {
+			return nil, fmt.Errorf("seed exceeds %d bytes", DefaultMaxSeedSize)
+		}
+		return output.Bytes(), nil
+	case "cas":
+		if _, err := DecodeCAS(data, DefaultParseLimits()); err != nil {
+			return nil, err
+		}
+		content := bytes.TrimSpace(data)
+		decoded, err := base64.StdEncoding.DecodeString(string(content))
+		encoded := err == nil
+		if encoded {
+			content = decoded
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(content, &fields); err != nil {
+			return nil, fmt.Errorf("decode CAS: %w", err)
+		}
+		if comment == "" {
+			delete(fields, "comment")
+		} else {
+			fields["comment"], err = json.Marshal(comment)
+			if err != nil {
+				return nil, err
+			}
+		}
+		content, err = json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+		if encoded {
+			output := make([]byte, base64.StdEncoding.EncodedLen(len(content)))
+			base64.StdEncoding.Encode(output, content)
+			content = output
+		}
+		if int64(len(content)) > DefaultMaxSeedSize {
+			return nil, fmt.Errorf("CAS seed exceeds %d bytes", DefaultMaxSeedSize)
+		}
+		return content, nil
+	default:
+		return nil, fmt.Errorf("unsupported seed format %q", format)
+	}
+}
+
+func rawBencodeRoot(data []byte) (map[string][]byte, error) {
+	if int64(len(data)) > DefaultMaxSeedSize {
+		return nil, fmt.Errorf("bencode: input exceeds %d bytes", DefaultMaxSeedSize)
+	}
+	if len(data) == 0 || data[0] != 'd' {
+		return nil, fmt.Errorf("torrent: root is not a dict")
+	}
+	reader := bytes.NewReader(data[1:])
+	fields := make(map[string][]byte)
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		if b == 'e' {
+			if reader.Len() != 0 {
+				return nil, fmt.Errorf("bencode: trailing data")
+			}
+			return fields, nil
+		}
+		if len(fields) >= DefaultMaxSeedFiles*4 {
+			return nil, fmt.Errorf("bencode: dictionary item limit exceeded")
+		}
+		if err := reader.UnreadByte(); err != nil {
+			return nil, err
+		}
+		key, err := bencodeDecodeString(reader)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := fields[string(key)]; exists {
+			return nil, fmt.Errorf("bencode: duplicate root key %q", key)
+		}
+		start := len(data) - reader.Len()
+		if _, err := bencodeDecodeValue(reader, 1); err != nil {
+			return nil, err
+		}
+		fields[string(key)] = data[start : len(data)-reader.Len()]
+	}
+}
+
+// DiagnoseConversion reports information missing for a lossless target conversion.
+func DiagnoseConversion(seed *Seed, format string) []string {
+	if err := ValidateSeed(seed, DefaultParseLimits()); err != nil {
+		return []string{err.Error()}
+	}
+	var diagnostics []string
+	switch strings.ToLower(strings.TrimPrefix(format, ".")) {
+	case "torrent":
+		// 解析自 .torrent 的种子自带整包 pieces，可直接重构，
+		// 不需要（也不能）按文件检查边界
+		if len(seed.GlobalPieces) > 0 {
+			break
+		}
+		for i, file := range seed.Files {
+			if file.Hashes.Pieces == nil || len(file.Hashes.Pieces.SHA1) == 0 {
+				diagnostics = append(diagnostics, fmt.Sprintf("%s: missing SHA-1 piece hashes", file.Path))
+			}
+			if len(seed.Files) > 1 && i < len(seed.Files)-1 && file.Size%seed.PieceSize != 0 {
+				diagnostics = append(diagnostics, fmt.Sprintf("%s: piece boundary crosses the next file", file.Path))
+			}
+		}
+	case "cas":
+		for _, file := range seed.Files {
+			if file.Hashes.MD5 == "" {
+				diagnostics = append(diagnostics, file.Path+": missing whole-file MD5")
+				continue
+			}
+			// 分片大小由文件大小决定，只有超过一片的文件才必须有最终摘要
+			sliceSize := CASSliceSize(file.Size)
+			if file.Size <= sliceSize || file.CASSliceMD5 != "" {
+				continue
+			}
+			if file.Hashes.Pieces == nil ||
+				int64(len(file.Hashes.Pieces.MD5)) != expectedCASPartCount(file.Size, sliceSize) {
+				diagnostics = append(diagnostics, file.Path+": missing final slice MD5 or complete per-slice MD5s")
+			}
+		}
+	case "oss":
+	default:
+		diagnostics = append(diagnostics, fmt.Sprintf("unsupported target format %q", format))
+	}
+	return diagnostics
+}
+
+// TorrentFromSeed constructs standard BitTorrent info/pieces plus x-openlist.
+func TorrentFromSeed(seed *Seed) (*Torrent, []string) {
+	diagnostics := DiagnoseConversion(seed, "torrent")
+	if len(diagnostics) > 0 {
+		return nil, diagnostics
+	}
+	t := &Torrent{
+		Info:         TorrentInfo{PieceLength: seed.PieceSize, Name: seed.Name},
+		Comment:      seed.Comment,
+		CreatedBy:    seed.CreatedBy,
+		CreationDate: time.Now().Unix(),
+		OpenList:     seed,
+	}
+	if parsed, err := time.Parse(time.RFC3339, seed.CreatedAt); err == nil {
+		t.CreationDate = parsed.Unix()
+	}
+	if len(seed.Trackers) > 0 {
+		t.Announce = seed.Trackers[0]
+		for _, tracker := range seed.Trackers {
+			t.AnnounceList = append(t.AnnounceList, []string{tracker})
+		}
+	}
+	for _, file := range seed.Files {
+		if len(seed.Files) == 1 {
+			t.Info.Name = path.Base(file.Path)
+			t.Info.Length = file.Size
+			t.Info.MD5Sum = file.Hashes.MD5
+		} else {
+			t.Info.Files = append(t.Info.Files, TorrentFile{
+				Length: file.Size,
+				Path:   strings.Split(file.Path, "/"),
+				MD5Sum: file.Hashes.MD5,
+			})
+		}
+	}
+	// 优先用解析时保留的整包 pieces（可能跨文件）；没有时才按文件拼接
+	if len(seed.GlobalPieces) > 0 {
+		for _, piece := range seed.GlobalPieces {
+			raw, err := hex.DecodeString(piece)
+			if err != nil || len(raw) != sha1.Size {
+				return nil, []string{"invalid global piece hash"}
+			}
+			t.Info.Pieces = append(t.Info.Pieces, raw...)
+		}
+	} else {
+		for _, file := range seed.Files {
+			if file.Hashes.Pieces == nil {
+				continue
+			}
+			for _, piece := range file.Hashes.Pieces.SHA1 {
+				raw, _ := hex.DecodeString(piece)
+				t.Info.Pieces = append(t.Info.Pieces, raw...)
+			}
+		}
+	}
+	if len(seed.Files) == 1 {
+		file := seed.Files[0]
+		cloud := file.CASCloud
+		if cloud == "" {
+			cloud = Cloud189
+		}
+		sliceSize := seed.PieceSize
+		if cloud == Cloud189 {
+			sliceSize = CASSliceSize(file.Size)
+		}
+		if sliceSize <= 0 {
+			sliceSize = DefaultPieceSize
+		}
+		if file.Hashes.MD5 != "" && file.CASSliceMD5 != "" {
+			t.CAS = &CASInfo{
+				FileMD5: strings.ToUpper(file.Hashes.MD5), SliceMD5: strings.ToUpper(file.CASSliceMD5),
+				SliceSize: sliceSize, Cloud: cloud,
+			}
+		} else if file.Hashes.MD5 != "" && file.Hashes.Pieces != nil &&
+			int64(len(file.Hashes.Pieces.MD5)) == expectedCASPartCount(file.Size, sliceSize) {
+			t.CAS = BuildCASInfoFromMD5sWithCloud(file.Hashes.MD5, upperStrings(file.Hashes.Pieces.MD5), sliceSize, cloud)
+		}
+	}
+	return t, nil
+}
+
+func validateOpenListTorrentConsistency(t *Torrent, seed *Seed) error {
+	if seed.PieceSize != t.Info.PieceLength {
+		return fmt.Errorf("x-openlist metadata conflicts with torrent info")
+	}
+	if seed.Name != t.Info.Name {
+		// 单文件 torrent 的 info.name 是文件名，而种子名可以不带扩展名
+		// （生成时 Info.Name = base(file.Path)、seed.Name = 用户起的名字），
+		// 不能因为这两者不同就判定整份种子损坏
+		nameOK := false
+		if len(t.Info.Files) == 0 && len(seed.Files) == 1 {
+			nameOK = t.Info.Name == path.Base(seed.Files[0].Path)
+		}
+		if !nameOK {
+			return fmt.Errorf("x-openlist metadata conflicts with torrent info")
+		}
+	}
+	if len(t.Info.Files) == 0 {
+		if len(seed.Files) != 1 || seed.Files[0].Size != t.Info.Length {
+			return fmt.Errorf("x-openlist file list conflicts with torrent info")
+		}
+	} else {
+		if len(seed.Files) != len(t.Info.Files) {
+			return fmt.Errorf("x-openlist file count conflicts with torrent info")
+		}
+		for i, file := range t.Info.Files {
+			if seed.Files[i].Path != strings.Join(file.Path, "/") || seed.Files[i].Size != file.Length {
+				return fmt.Errorf("x-openlist file %d conflicts with torrent info", i)
+			}
+		}
+	}
+	standardPieces := t.GetPieceHashes()
+	globalPieces := make([]string, 0, len(standardPieces))
+	if len(seed.GlobalPieces) > 0 && len(seed.GlobalPieces) != len(standardPieces) {
+		return fmt.Errorf("x-openlist global SHA1 pieces conflict with torrent info")
+	}
+	for i, piece := range standardPieces {
+		value := hex.EncodeToString(piece)
+		if len(seed.GlobalPieces) > 0 && !strings.EqualFold(seed.GlobalPieces[i], value) {
+			return fmt.Errorf("x-openlist global SHA1 piece %d conflicts with torrent info", i)
+		}
+		globalPieces = append(globalPieces, value)
+	}
+	check := *seed
+	check.GlobalPieces = globalPieces
+	return validateGlobalPieces(&check, t.GetTotalSize())
+}
+
+// seedHashAlgoOrder 固定算法输出顺序，避免 map 遍历导致 JSON 抖动。
+var seedHashAlgoOrder = []string{"md5", "sha1", "sha256"}
+
+// fillAvailableHashes 汇总种子整体已带的算法；extraPieceAlgo 用于补充
+// 「pieces 只存在于容器里、没挂到文件上」的算法（BT 的 sha1）。
+func fillAvailableHashes(seed *Seed, extraPieceAlgo string) {
+	if seed == nil {
+		return
+	}
+	whole := map[string]bool{}
+	pieces := map[string]bool{}
+	if len(seed.GlobalPieces) > 0 {
+		pieces["sha1"] = true
+	}
+	for _, f := range seed.Files {
+		if f.Hashes.MD5 != "" {
+			whole["md5"] = true
+		}
+		if f.Hashes.SHA1 != "" {
+			whole["sha1"] = true
+		}
+		if f.Hashes.SHA256 != "" {
+			whole["sha256"] = true
+		}
+		if f.Hashes.Pieces != nil {
+			if len(f.Hashes.Pieces.MD5) > 0 {
+				pieces["md5"] = true
+			}
+			if len(f.Hashes.Pieces.SHA1) > 0 {
+				pieces["sha1"] = true
+			}
+			if len(f.Hashes.Pieces.SHA256) > 0 {
+				pieces["sha256"] = true
+			}
+		}
+	}
+	if extraPieceAlgo != "" {
+		pieces[extraPieceAlgo] = true
+	}
+	seed.AvailableHashes = seed.AvailableHashes[:0]
+	seed.AvailablePieceHashes = seed.AvailablePieceHashes[:0]
+	for _, algo := range seedHashAlgoOrder {
+		if whole[algo] {
+			seed.AvailableHashes = append(seed.AvailableHashes, algo)
+		}
+		if pieces[algo] {
+			seed.AvailablePieceHashes = append(seed.AvailablePieceHashes, algo)
+		}
+	}
+}
+
+// SeedFromTorrent normalizes a standard torrent and preserves x-openlist when present.
+func SeedFromTorrent(t *Torrent, limits ParseLimits) (*Seed, error) {
+	if err := ValidateTorrent(t, limits); err != nil {
+		return nil, err
+	}
+	pieceHex := make([]string, 0, len(t.Info.Pieces)/sha1.Size)
+	for _, piece := range t.GetPieceHashes() {
+		pieceHex = append(pieceHex, hex.EncodeToString(piece))
+	}
+	if t.OpenList != nil {
+		if err := ValidateSeed(t.OpenList, limits); err != nil {
+			return nil, err
+		}
+		if err := validateOpenListTorrentConsistency(t, t.OpenList); err != nil {
+			return nil, err
+		}
+		// 记下整包 pieces：重新编码这个 torrent 时直接复用，不必按文件拼，
+		// 也就不会因为「piece 跨文件」被判成不可转换
+		t.OpenList.GlobalPieces = pieceHex
+		extra := ""
+		if len(pieceHex) > 0 {
+			extra = "sha1"
+		}
+		fillAvailableHashes(t.OpenList, extra)
+		return t.OpenList, nil
+	}
+	seed := NewSeed(t.Info.Name, t.CreatedBy, t.Info.PieceLength)
+	if seed.CreatedBy == "" {
+		seed.CreatedBy = "BitTorrent"
+	}
+	if t.CreationDate > 0 {
+		seed.CreatedAt = time.Unix(t.CreationDate, 0).UTC().Format(time.RFC3339)
+	}
+	seed.Comment = t.Comment
+	seed.Trackers = append(seed.Trackers, t.Announce)
+	for _, tier := range t.AnnounceList {
+		seed.Trackers = append(seed.Trackers, tier...)
+	}
+	seed.Trackers = uniqueNonEmpty(seed.Trackers)
+	seed.GlobalPieces = pieceHex
+	if len(t.Info.Files) == 0 {
+		hashes := SeedHashes{MD5: t.Info.MD5Sum}
+		if len(pieceHex) > 0 {
+			hashes.Pieces = &SeedPieceHashes{SHA1: pieceHex}
+		}
+		if t.CAS != nil {
+			hashes.MD5 = t.CAS.FileMD5
+			if hashes.Pieces == nil {
+				hashes.Pieces = &SeedPieceHashes{}
+			}
+			hashes.Pieces.MD5 = append([]string(nil), t.CAS.SliceMD5s...)
+		}
+		seed.Files = []SeedFile{{Path: t.Info.Name, Size: t.Info.Length, Hashes: hashes}}
+	} else {
+		// pieces 是整包的：跨文件时无法按文件均分（ValidateSeed 要求每个文件的
+		// 片数 = ceil(size/piece)），所以只在能整除时挂到文件上，
+		// 其余情况靠种子级的 AvailablePieceHashes 表示「已带该算法的 pieces」
+		var offset int64
+		for i, file := range t.Info.Files {
+			hashes := SeedHashes{MD5: file.MD5Sum}
+			pieceCount := int64(0)
+			if file.Length > 0 && t.Info.PieceLength > 0 {
+				pieceCount = (file.Length-1)/t.Info.PieceLength + 1
+			}
+			pieceOffset := offset / t.Info.PieceLength
+			aligned := offset%t.Info.PieceLength == 0 &&
+				(i == len(t.Info.Files)-1 || file.Length%t.Info.PieceLength == 0)
+			if aligned && pieceOffset+pieceCount <= int64(len(pieceHex)) {
+				hashes.Pieces = &SeedPieceHashes{SHA1: append([]string(nil), pieceHex[pieceOffset:pieceOffset+pieceCount]...)}
+			}
+			offset += file.Length
+			seed.Files = append(seed.Files, SeedFile{Path: strings.Join(file.Path, "/"), Size: file.Length, Hashes: hashes})
+		}
+	}
+	if err := ValidateSeed(seed, limits); err != nil {
+		return nil, err
+	}
+	extra := ""
+	if len(pieceHex) > 0 {
+		extra = "sha1"
+	}
+	fillAvailableHashes(seed, extra)
+	return seed, nil
+}
+
+func seedToBencode(seed *Seed) map[string]interface{} {
+	root := map[string]interface{}{
+		"format": seed.Format, "version": int64(seed.Version), "name": seed.Name,
+		"created_at": seed.CreatedAt, "created_by": seed.CreatedBy, "piece_size": seed.PieceSize,
+	}
+	if seed.Comment != "" {
+		root["comment"] = seed.Comment
+	}
+	if len(seed.Trackers) > 0 {
+		root["trackers"] = stringsToInterfaces(seed.Trackers)
+	}
+	channels := make([]interface{}, 0, len(seed.Channels))
+	for _, channel := range seed.Channels {
+		item := map[string]interface{}{"driver": channel.Driver}
+		if channel.MountPath != "" {
+			item["mount_path"] = channel.MountPath
+		}
+		channels = append(channels, item)
+	}
+	if len(channels) > 0 {
+		root["channels"] = channels
+	}
+	files := make([]interface{}, 0, len(seed.Files))
+	for _, file := range seed.Files {
+		item := map[string]interface{}{"path": file.Path, "size": file.Size, "hashes": hashesToBencode(file.Hashes)}
+		if file.Modified != "" {
+			item["modified"] = file.Modified
+		}
+		if file.Comment != "" {
+			item["comment"] = file.Comment
+		}
+		if file.CASSliceMD5 != "" {
+			item["cas_slice_md5"] = file.CASSliceMD5
+		}
+		if file.CASCreateTime != "" {
+			item["cas_create_time"] = file.CASCreateTime
+		}
+		if file.CASCloud != "" {
+			item["cas_cloud"] = file.CASCloud
+		}
+		if len(file.MissingChannels) > 0 {
+			item["missing_channels"] = stringsToInterfaces(file.MissingChannels)
+		}
+		sources := make([]interface{}, 0, len(file.Sources))
+		for _, source := range file.Sources {
+			s := map[string]interface{}{"type": source.Type, "url": source.URL}
+			if source.ExpiresAt != "" {
+				s["expires_at"] = source.ExpiresAt
+			}
+			if source.ShareID != "" {
+				s["share_id"] = source.ShareID
+			}
+			sources = append(sources, s)
+		}
+		if len(sources) > 0 {
+			item["sources"] = sources
+		}
+		files = append(files, item)
+	}
+	root["files"] = files
+	return root
+}
+
+func hashesToBencode(hashes SeedHashes) map[string]interface{} {
+	result := make(map[string]interface{})
+	if hashes.MD5 != "" {
+		result["md5"] = hashes.MD5
+	}
+	if hashes.SHA1 != "" {
+		result["sha1"] = hashes.SHA1
+	}
+	if hashes.SHA256 != "" {
+		result["sha256"] = hashes.SHA256
+	}
+	if hashes.Pieces != nil {
+		pieces := make(map[string]interface{})
+		if len(hashes.Pieces.MD5) > 0 {
+			pieces["md5"] = stringsToInterfaces(hashes.Pieces.MD5)
+		}
+		if len(hashes.Pieces.SHA1) > 0 {
+			pieces["sha1"] = stringsToInterfaces(hashes.Pieces.SHA1)
+		}
+		if len(hashes.Pieces.SHA256) > 0 {
+			pieces["sha256"] = stringsToInterfaces(hashes.Pieces.SHA256)
+		}
+		if len(pieces) > 0 {
+			result["pieces"] = pieces
+		}
+	}
+	return result
+}
+
+func seedFromBencode(value interface{}) (*Seed, error) {
+	root, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("extension is not a dictionary")
+	}
+	seed := &Seed{
+		Format: bString(root["format"]), Version: int(bInt(root["version"])), Name: bString(root["name"]),
+		Comment: bString(root["comment"]), CreatedAt: bString(root["created_at"]),
+		CreatedBy: bString(root["created_by"]), PieceSize: bInt(root["piece_size"]),
+		Trackers: bStrings(root["trackers"]),
+	}
+	for _, value := range bList(root["channels"]) {
+		item, ok := value.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("channel is not a dictionary")
+		}
+		seed.Channels = append(seed.Channels, SeedChannel{Driver: bString(item["driver"]), MountPath: bString(item["mount_path"])})
+	}
+	for _, value := range bList(root["files"]) {
+		item, ok := value.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("file is not a dictionary")
+		}
+		file := SeedFile{
+			Path: bString(item["path"]), Size: bInt(item["size"]), Modified: bString(item["modified"]), Comment: bString(item["comment"]),
+			CASSliceMD5: bString(item["cas_slice_md5"]), CASCreateTime: bString(item["cas_create_time"]),
+			CASCloud:        bString(item["cas_cloud"]),
+			MissingChannels: bStrings(item["missing_channels"]),
+		}
+		if hashes, ok := item["hashes"].(map[string]interface{}); ok {
+			file.Hashes = SeedHashes{MD5: bString(hashes["md5"]), SHA1: bString(hashes["sha1"]), SHA256: bString(hashes["sha256"])}
+			if pieces, ok := hashes["pieces"].(map[string]interface{}); ok {
+				file.Hashes.Pieces = &SeedPieceHashes{MD5: bStrings(pieces["md5"]), SHA1: bStrings(pieces["sha1"]), SHA256: bStrings(pieces["sha256"])}
+			}
+		}
+		for _, sourceValue := range bList(item["sources"]) {
+			source, ok := sourceValue.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("source is not a dictionary")
+			}
+			file.Sources = append(file.Sources, SeedSource{Type: bString(source["type"]), URL: bString(source["url"]), ExpiresAt: bString(source["expires_at"]), ShareID: bString(source["share_id"])})
+		}
+		seed.Files = append(seed.Files, file)
+	}
+	return seed, nil
+}
+
+func stringsToInterfaces(values []string) []interface{} {
+	result := make([]interface{}, len(values))
+	for i := range values {
+		result[i] = values[i]
+	}
+	return result
+}
+
+func bString(value interface{}) string {
+	switch value := value.(type) {
+	case []byte:
+		return string(value)
+	case string:
+		return value
+	default:
+		return ""
+	}
+}
+
+func bInt(value interface{}) int64 {
+	valueInt, _ := value.(int64)
+	return valueInt
+}
+
+func bList(value interface{}) []interface{} {
+	list, _ := value.([]interface{})
+	return list
+}
+
+func bStrings(value interface{}) []string {
+	list := bList(value)
+	result := make([]string, 0, len(list))
+	for _, item := range list {
+		if text := bString(item); text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func upperStrings(values []string) []string {
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = strings.ToUpper(value)
+	}
+	return result
+}
+
+func lowerStrings(values []string) []string {
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = strings.ToLower(value)
+	}
+	return result
+}
+
+func uniqueNonEmpty(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }

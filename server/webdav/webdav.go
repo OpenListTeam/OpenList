@@ -320,7 +320,10 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	}
 	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
-		return http.StatusNotFound, err
+		if errs.IsNotFoundError(err) {
+			return http.StatusNotFound, err
+		}
+		return http.StatusInternalServerError, err
 	}
 	if fi.IsDir() {
 		if r.Method == http.MethodHead {
@@ -531,9 +534,14 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 		return http.StatusNotFound, err
 	}
 
-	// TODO(rost): Returning 405 Method Not Allowed might not be appropriate.
 	if err != nil {
-		return http.StatusMethodNotAllowed, err
+		if errors.Is(err, errs.PermissionDenied) {
+			return http.StatusForbidden, err
+		}
+		if errors.Is(err, errs.UploadNotSupported) || errs.IsNotImplementError(err) || errs.IsNotSupportError(err) {
+			return http.StatusMethodNotAllowed, err
+		}
+		return http.StatusInternalServerError, err
 	}
 	fi, err = fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
@@ -799,6 +807,10 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 		w.Header().Set("Lock-Token", "<"+token+">")
 	}
 
+	// ld.Root is the storage path; the response's lockroot is the client's URL.
+	obj, err := fs.Get(ctx, ld.Root, &fs.GetArgs{})
+	ld.Root = lockRootHref(h.Prefix, user.BasePath, ld.Root, err == nil && obj.IsDir())
+
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	if created {
 		// This is "w.WriteHeader(http.StatusCreated)" and not "return
@@ -808,6 +820,16 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 	}
 	writeLockInfo(w, token, ld)
 	return 0, nil
+}
+
+// lockRootHref maps the storage path a lock is kept under back to the URL path
+// the client sees, like the hrefs PROPFIND writes.
+func lockRootHref(prefix, basePath, root string, isDir bool) string {
+	href := path.Join(prefix, strings.TrimPrefix(root, basePath))
+	if href != "/" && isDir {
+		href += "/"
+	}
+	return (&url.URL{Path: href}).EscapedPath()
 }
 
 func (h *Handler) handleUnlock(w http.ResponseWriter, r *http.Request) (status int, err error) {
@@ -877,7 +899,7 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 		if errs.IsNotFoundError(err) {
 			return http.StatusNotFound, err
 		}
-		return http.StatusMethodNotAllowed, err
+		return http.StatusInternalServerError, err
 	}
 	depth := infiniteDepth
 	if hdr := r.Header.Get("Depth"); hdr != "" {

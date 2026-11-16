@@ -1,9 +1,11 @@
 package handles
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/gin-gonic/gin"
 )
 
 func TestGetReadme(t *testing.T) {
@@ -249,6 +251,33 @@ func TestIsEncrypt(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("isEncrypt() = %v, want %v\nReason: %s",
 					got, tt.want, tt.reason)
+			}
+		})
+	}
+}
+
+func TestFsListReportsProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root, _ := prepareBackslashTraversalFs(t)
+	for _, tt := range []struct {
+		name       string
+		permission int32
+	}{
+		{name: "read only", permission: 0},
+		{name: "write content", permission: 1 << 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			user := setupBackslashTraversalTest(t, root, tt.permission)
+			recorder := invokeHandler(t, user, map[string]any{"path": "/"}, FsListSplit)
+			var resp struct {
+				Code int        `json:"code"`
+				Data FsListResp `json:"data"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.Code != 200 || resp.Data.Provider != "Local" {
+				t.Fatalf("got code=%d provider=%q, want 200 and Local; body=%s", resp.Code, resp.Data.Provider, recorder.Body.String())
 			}
 		})
 	}

@@ -5,7 +5,25 @@ import (
 	"encoding/xml"
 	"testing"
 	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 )
+
+// TestPartSizeMatchesCASSliceSize 上传分片与 CAS 秒传分片必须是同一个值，
+// 否则同一份字节算出的 sliceMd5 与云端摘要不一致，秒传永远命不中。
+func TestPartSizeMatchesCASSliceSize(t *testing.T) {
+	const tenMiB = 10 * 1024 * 1024
+	for _, size := range []int64{
+		0, 1, tenMiB, tenMiB + 1,
+		tenMiB*999 - 1, tenMiB * 999, tenMiB*999 + 1,
+		tenMiB * 2 * 999, tenMiB*2*999 + 1,
+		100 << 30,
+	} {
+		if got, want := partSize(size), torrent.CASSliceSize(size); got != want {
+			t.Fatalf("partSize(%d) = %d, CASSliceSize = %d", size, got, want)
+		}
+	}
+}
 
 func TestTimeUnmarshal(t *testing.T) {
 	tests := []struct {

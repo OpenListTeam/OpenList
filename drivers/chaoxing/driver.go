@@ -21,7 +21,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
-	"google.golang.org/appengine/log"
 )
 
 type ChaoXing struct {
@@ -55,13 +54,13 @@ func (d *ChaoXing) refreshCookie() error {
 func (d *ChaoXing) Init(ctx context.Context) error {
 	err := d.refreshCookie()
 	if err != nil {
-		log.Errorf(ctx, "%v", err)
+		utils.Log.Errorf("%v", err)
 	}
 	d.cron = cron.NewCron(time.Hour * 12)
 	d.cron.Do(func() {
 		err = d.refreshCookie()
 		if err != nil {
-			log.Errorf(ctx, "%v", err)
+			utils.Log.Errorf("%v", err)
 		}
 	})
 	return nil

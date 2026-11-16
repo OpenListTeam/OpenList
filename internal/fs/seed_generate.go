@@ -1,0 +1,788 @@
+package fs
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	stdpath "path"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/internal/task"
+	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/tache"
+	"github.com/pkg/errors"
+)
+
+// MaxSeedGenerateSyncSize bounds synchronous seed generation (1GB). Larger
+// requests are turned into an asynchronous task.
+const MaxSeedGenerateSyncSize = 1 * 1024 * 1024 * 1024
+
+func SeedGenerateNeedsAsync(ctx context.Context, user *model.User, paths []string) (bool, error) {
+	// 目录要先展开才知道真实体积，这里顺便完成权限与可读性校验
+	entries, err := ExpandSeedSources(ctx, user, paths, false)
+	if err != nil {
+		return false, err
+	}
+	if len(entries) == 0 {
+		return false, fmt.Errorf("no files found under the selected paths")
+	}
+	var total int64
+	for _, entry := range entries {
+		total += entry.Size
+		if total > MaxSeedGenerateSyncSize {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// SeedHashSelection controls whole-file and piece hash inclusion.
+type SeedHashSelection struct {
+	Whole  bool `json:"whole"`
+	Pieces bool `json:"pieces"`
+}
+
+// SeedHashMatrix controls the optional hash metadata stored in a seed.
+type SeedHashMatrix struct {
+	MD5    SeedHashSelection `json:"md5"`
+	SHA1   SeedHashSelection `json:"sha1"`
+	SHA256 SeedHashSelection `json:"sha256"`
+}
+
+// SeedGenerateParams carries a fully-resolved seed generation request, free of
+// any HTTP transport concerns so it can run synchronously or as a task.
+type SeedGenerateParams struct {
+	Paths               []string
+	Formats             []string
+	Name                string
+	Comment             string
+	FileComments        map[string]string
+	HashMatrix          SeedHashMatrix
+	PieceSize           int64
+	Trackers            []string
+	Channels            []torrent.SeedChannel
+	OutputPath          string
+	IncludeShare        bool
+	IncludeDirectSource bool
+	ShareFiles          []string
+	DirectFiles         []string
+
+	// PreserveStructure 目录展开后是否保留目录结构；默认 false（拍平成文件名）。
+	PreserveStructure bool
+	// Split 为 true 时每个文件生成一个种子；默认 false（全部合并成一个）。
+	Split bool
+
+	// OnProgress 可选：读取文件计算哈希时回调 (已读字节, 总字节)，用于任务进度展示。
+	OnProgress func(read, total int64)
+	// OnStage 可选：进入新阶段时回调，用于展示「正在计算哈希 2/5」这类状态文案。
+	OnStage func(stage string)
+}
+
+// SeedArtifact is one generated seed container.
+type SeedArtifact struct {
+	Format   string `json:"format"`
+	Name     string `json:"name"`
+	FileName string `json:"file_name"`
+	SeedData string `json:"seed_data"`
+	Size     int    `json:"size"`
+	Path     string `json:"path,omitempty"`
+}
+
+// DeriveSeedName 给出默认种子名：
+//   - 只选了一个文件/目录：用它的名字（文件去掉扩展名）；
+//   - 选了多个（合并成一个种子）：固定用 "torrent"。
+//
+// 后者是刻意的：多选往往来自不同目录，按「公共父目录」猜名字容易得到
+// 空串或毫无意义的目录名，不如给一个稳定的默认值，让用户自己改。
+func DeriveSeedName(paths []string) string {
+	if len(paths) == 0 {
+		return "torrent"
+	}
+	if len(paths) == 1 {
+		if name := seedBaseName(paths[0]); name != "" && name != "/" && name != "." {
+			return name
+		}
+	}
+	return "torrent"
+}
+
+// seedBaseName returns the file name without its extension.
+func seedBaseName(p string) string {
+	base := stdpath.Base(p)
+	return strings.TrimSuffix(base, stdpath.Ext(base))
+}
+
+// commonParentDir returns the longest common parent directory of the given paths.
+func commonParentDir(paths []string) string {
+	if len(paths) == 0 {
+		return "/"
+	}
+	parts := strings.Split(strings.Trim(stdpath.Dir(paths[0]), "/"), "/")
+	for _, p := range paths[1:] {
+		cur := strings.Split(strings.Trim(stdpath.Dir(p), "/"), "/")
+		n := 0
+		for n < len(parts) && n < len(cur) && parts[n] == cur[n] {
+			n++
+		}
+		parts = parts[:n]
+	}
+	if len(parts) == 0 {
+		return "/"
+	}
+	return "/" + strings.Join(parts, "/")
+}
+
+// NormalizeSeedFormats validates and deduplicates a list of seed format names.
+func NormalizeSeedFormats(rawFormats []string) ([]string, error) {
+	formats := append([]string(nil), rawFormats...)
+	if len(formats) == 1 && strings.TrimSpace(formats[0]) == "" {
+		formats[0] = setting.GetStr(conf.SeedDefaultFormat, "oss")
+	}
+	if len(formats) > 3 {
+		return nil, fmt.Errorf("at most three seed formats may be generated")
+	}
+	result := make([]string, 0, len(formats))
+	seen := make(map[string]struct{}, len(formats))
+	for _, rawFormat := range formats {
+		format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(rawFormat), "."))
+		if format == "bt" {
+			format = "torrent"
+		}
+		if format != "oss" && format != "torrent" && format != "cas" {
+			return nil, fmt.Errorf("unsupported seed format %q", rawFormat)
+		}
+		if _, exists := seen[format]; exists {
+			continue
+		}
+		seen[format] = struct{}{}
+		result = append(result, format)
+	}
+	return result, nil
+}
+
+func seedFormats(params SeedGenerateParams) ([]string, error) {
+	formats, err := NormalizeSeedFormats(params.Formats)
+	if err != nil {
+		return nil, err
+	}
+	if len(formats) == 0 {
+		formats = []string{setting.GetStr(conf.SeedDefaultFormat, "oss")}
+	}
+	return formats, nil
+}
+
+func seedMatrixEmpty(matrix SeedHashMatrix) bool {
+	return !matrix.MD5.Whole && !matrix.MD5.Pieces && !matrix.SHA1.Whole && !matrix.SHA1.Pieces && !matrix.SHA256.Whole && !matrix.SHA256.Pieces
+}
+
+func loadSeedDefaultMatrix() SeedHashMatrix {
+	var matrix SeedHashMatrix
+	if raw := strings.TrimSpace(setting.GetStr(conf.SeedDefaultMatrix)); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &matrix)
+	}
+	return matrix
+}
+
+func normalizedSeedMatrix(matrix SeedHashMatrix, formats []string) SeedHashMatrix {
+	if seedMatrixEmpty(matrix) {
+		matrix = loadSeedDefaultMatrix()
+	}
+	if seedMatrixEmpty(matrix) {
+		matrix = SeedHashMatrix{
+			MD5: SeedHashSelection{Whole: true, Pieces: true}, SHA1: SeedHashSelection{Whole: true, Pieces: true},
+			SHA256: SeedHashSelection{Whole: true, Pieces: true},
+		}
+	}
+	for _, format := range formats {
+		switch format {
+		case "torrent":
+			matrix.SHA1 = SeedHashSelection{Whole: true, Pieces: true}
+		case "cas":
+			matrix.MD5 = SeedHashSelection{Whole: true, Pieces: true}
+		}
+	}
+	return matrix
+}
+
+func canReuseListedHashes(hashInfo utils.HashInfo, matrix SeedHashMatrix) bool {
+	if matrix.MD5.Pieces || matrix.SHA1.Pieces || matrix.SHA256.Pieces {
+		return false
+	}
+	if matrix.MD5.Whole && hashInfo.GetHash(utils.MD5) == "" {
+		return false
+	}
+	if matrix.SHA1.Whole && hashInfo.GetHash(utils.SHA1) == "" {
+		return false
+	}
+	if matrix.SHA256.Whole && hashInfo.GetHash(utils.SHA256) == "" {
+		return false
+	}
+	return true
+}
+
+func applySeedMatrix(file *torrent.SeedFile, matrix SeedHashMatrix) {
+	if !matrix.MD5.Whole {
+		file.Hashes.MD5 = ""
+	}
+	if !matrix.SHA1.Whole {
+		file.Hashes.SHA1 = ""
+	}
+	if !matrix.SHA256.Whole {
+		file.Hashes.SHA256 = ""
+	}
+	if file.Hashes.Pieces == nil {
+		return
+	}
+	if !matrix.MD5.Pieces {
+		file.Hashes.Pieces.MD5 = nil
+	}
+	if !matrix.SHA1.Pieces {
+		file.Hashes.Pieces.SHA1 = nil
+	}
+	if !matrix.SHA256.Pieces {
+		file.Hashes.Pieces.SHA256 = nil
+	}
+	if len(file.Hashes.Pieces.MD5) == 0 && len(file.Hashes.Pieces.SHA1) == 0 && len(file.Hashes.Pieces.SHA256) == 0 {
+		file.Hashes.Pieces = nil
+	}
+}
+
+// EncodeGeneratedSeed serializes a seed in the requested container format.
+func EncodeGeneratedSeed(seed *torrent.Seed, format string, standardPieces []byte) ([]byte, error) {
+	if format != "torrent" {
+		return torrent.EncodeSeed(seed, format)
+	}
+	t := &torrent.Torrent{
+		Info:         torrent.TorrentInfo{Name: seed.Name, PieceLength: seed.PieceSize, Pieces: standardPieces},
+		Comment:      seed.Comment,
+		CreatedBy:    seed.CreatedBy,
+		CreationDate: time.Now().Unix(),
+		OpenList:     seed,
+	}
+	if len(seed.Trackers) > 0 {
+		t.Announce = seed.Trackers[0]
+		for _, tracker := range seed.Trackers {
+			t.AnnounceList = append(t.AnnounceList, []string{tracker})
+		}
+	}
+	if len(seed.Files) == 1 {
+		file := seed.Files[0]
+		t.Info.Name = stdpath.Base(file.Path)
+		t.Info.Length = file.Size
+		t.Info.MD5Sum = file.Hashes.MD5
+		casCloud := file.CASCloud
+		if casCloud == "" {
+			casCloud = torrent.Cloud189
+		}
+		if file.CASSliceMD5 != "" {
+			t.SetCASInfo(&torrent.CASInfo{
+				FileMD5: strings.ToUpper(file.Hashes.MD5), SliceMD5: strings.ToUpper(file.CASSliceMD5),
+				SliceSize: torrent.CASSliceSize(file.Size), Cloud: casCloud,
+			})
+		} else if file.Hashes.Pieces != nil && int64(len(file.Hashes.Pieces.MD5)) == torrent.CASPartCount(file.Size) {
+			t.SetCASInfo(torrent.BuildCASInfoFromMD5sWithCloud(file.Hashes.MD5, file.Hashes.Pieces.MD5, torrent.CASSliceSize(file.Size), casCloud))
+		}
+	} else {
+		for _, file := range seed.Files {
+			t.Info.Files = append(t.Info.Files, torrent.TorrentFile{Length: file.Size, Path: strings.Split(file.Path, "/"), MD5Sum: file.Hashes.MD5})
+		}
+	}
+	return t.Encode()
+}
+
+// GenerateSeedArtifacts reads each file once while computing the requested
+// hashes, then emits one or more seed containers. It has no HTTP dependency and
+// can be driven synchronously or from a background task.
+//
+// 目录会先递归展开；params.Split 为 true 时每个文件单独一个种子，
+// 否则全部合并成一个（默认）。
+func GenerateSeedArtifacts(ctx context.Context, user *model.User, params SeedGenerateParams) ([]SeedArtifact, *torrent.Seed, error) {
+	if len(params.Paths) == 0 {
+		return nil, nil, fmt.Errorf("invalid seed file count")
+	}
+	formats, err := seedFormats(params)
+	if err != nil {
+		return nil, nil, err
+	}
+	release, err := AcquireSeedHashSlot(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer release()
+	matrix := normalizedSeedMatrix(params.HashMatrix, formats)
+	casTarget := slices.Contains(formats, "cas")
+	pieceSize := params.PieceSize
+	if pieceSize <= 0 {
+		pieceSize = torrent.DefaultPieceSize
+	}
+
+	// 目录展开：拍平还是保留结构都在这里决定
+	entries, err := ExpandSeedSources(ctx, user, params.Paths, params.PreserveStructure)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(entries) == 0 {
+		return nil, nil, fmt.Errorf("no files found under the selected paths")
+	}
+	if casTarget {
+		// CAS 的分片大小由文件大小唯一决定（10/20 MiB…），用户配置对它无效。
+		// 所有文件同档时把种子级 piece_size 也对齐过去，逐片 MD5 与最终摘要就能同时写进 .cas。
+		size := torrent.CASSliceSize(entries[0].Size)
+		uniform := true
+		for _, entry := range entries[1:] {
+			if torrent.CASSliceSize(entry.Size) != size {
+				uniform = false
+				break
+			}
+		}
+		if uniform {
+			pieceSize = torrent.ClampSeedPieceSize(size)
+		}
+	}
+
+	seedName := strings.TrimSpace(params.Name)
+	if seedName == "" {
+		seedName = DeriveSeedName(params.Paths)
+	}
+
+	var total int64
+	for _, entry := range entries {
+		total += entry.Size
+	}
+	progress := &seedProgressReader{ctx: ctx, total: total, report: params.OnProgress}
+
+	groups := []seedGroup{{name: seedName, entries: entries}}
+	if params.Split && len(entries) > 1 {
+		groups = make([]seedGroup, 0, len(entries))
+		for _, entry := range entries {
+			groups = append(groups, seedGroup{
+				name:    seedBaseName(entry.SeedPath),
+				entries: []SeedSourceEntry{entry},
+			})
+		}
+	}
+
+	usedNames := make(map[string]int)
+	artifacts := make([]SeedArtifact, 0, len(formats)*len(groups))
+	var firstSeed *torrent.Seed
+	for _, group := range groups {
+		groupArtifacts, seed, buildErr := buildSeedGroup(
+			ctx, user, params, formats, matrix, pieceSize, group.name, group.entries, progress, usedNames,
+		)
+		if buildErr != nil {
+			return nil, nil, buildErr
+		}
+		artifacts = append(artifacts, groupArtifacts...)
+		if firstSeed == nil {
+			firstSeed = seed
+		}
+	}
+	return artifacts, firstSeed, nil
+}
+
+// seedGroup 是一次编码的单位：合并模式下只有一个（含全部文件），
+// 拆分模式下每个文件一个。
+type seedGroup struct {
+	name    string
+	entries []SeedSourceEntry
+}
+
+func buildSeedGroup(
+	ctx context.Context,
+	user *model.User,
+	params SeedGenerateParams,
+	formats []string,
+	matrix SeedHashMatrix,
+	pieceSize int64,
+	seedName string,
+	entries []SeedSourceEntry,
+	progress *seedProgressReader,
+	usedNames map[string]int,
+) ([]SeedArtifact, *torrent.Seed, error) {
+	seed := torrent.NewSeed(seedName, "OpenList", pieceSize)
+	seed.Comment = params.Comment
+	seed.Trackers = params.Trackers
+	seed.Channels = params.Channels
+	shareSet := make(map[string]bool, len(params.ShareFiles))
+	for _, p := range params.ShareFiles {
+		if strings.TrimSpace(p) != "" {
+			shareSet[p] = true
+		}
+	}
+	directSet := make(map[string]bool, len(params.DirectFiles))
+	for _, p := range params.DirectFiles {
+		if strings.TrimSpace(p) != "" {
+			directSet[p] = true
+		}
+	}
+	useGlobalShare := len(shareSet) == 0 && params.IncludeShare
+	useGlobalDirect := len(directSet) == 0 && params.IncludeDirectSource
+	hasShare := useGlobalShare || len(shareSet) > 0
+	hasDirect := useGlobalDirect || len(directSet) > 0
+
+	// CAS 目标的哈希切法由文件大小决定，与 piece_size 参数无关
+	casTarget := slices.Contains(formats, "cas")
+	if hasShare && !user.CanShare() {
+		return nil, nil, errs.PermissionDenied
+	}
+	if hasDirect && setting.GetBool(conf.SignAll) && !hasShare {
+		return nil, nil, fmt.Errorf("direct sources require an automatic share when global signing is enabled")
+	}
+	if (hasShare || hasDirect) && strings.TrimSpace(setting.GetStr(conf.SeedSiteURL)) == "" {
+		return nil, nil, fmt.Errorf("seed_site_url must be configured before embedding download sources")
+	}
+	globalHasher := torrent.NewHashWriter(pieceSize, pieceSize, 0)
+	fullPaths := make([]string, 0, len(entries))
+	for index, entry := range entries {
+		// 取消后不再继续处理下一个文件
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if params.OnStage != nil {
+			params.OnStage(fmt.Sprintf("hashing %d/%d: %s", index+1, len(entries), stdpath.Base(entry.SeedPath)))
+		}
+		requestedPath := entry.Requested
+		fullPath := entry.FullPath
+		seedPath := entry.SeedPath
+		modified := entry.Modified
+		storage, actualPath, err := op.GetStorageAndActualPath(fullPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		obj := entry.Obj
+		if obj == nil {
+			obj, err = op.Get(ctx, storage, actualPath)
+			if err != nil || obj.IsDir() {
+				return nil, nil, fmt.Errorf("seed path must be a readable file: %s", requestedPath)
+			}
+		}
+
+		hashInfo := obj.GetHash()
+		if canReuseListedHashes(hashInfo, matrix) {
+			seedFile := torrent.SeedFile{
+				Path:     seedPath,
+				Size:     obj.GetSize(),
+				Modified: modified,
+				Hashes: torrent.SeedHashes{
+					MD5:    strings.ToLower(hashInfo.GetHash(utils.MD5)),
+					SHA1:   strings.ToLower(hashInfo.GetHash(utils.SHA1)),
+					SHA256: strings.ToLower(hashInfo.GetHash(utils.SHA256)),
+				},
+			}
+			applySeedMatrix(&seedFile, matrix)
+			if comment := strings.TrimSpace(params.FileComments[requestedPath]); comment != "" {
+				seedFile.Comment = comment
+			} else if comment := strings.TrimSpace(params.FileComments[obj.GetName()]); comment != "" {
+				seedFile.Comment = comment
+			}
+			if useGlobalDirect || directSet[requestedPath] {
+				baseURL := strings.TrimRight(setting.GetStr(conf.SeedSiteURL), "/")
+				seedFile.Sources = []torrent.SeedSource{{Type: "openlist-direct", URL: baseURL + utils.EncodePath("/d"+fullPath)}}
+			}
+			seed.Files = append(seed.Files, seedFile)
+			fullPaths = append(fullPaths, fullPath)
+			continue
+		}
+
+		rc, err := openSeedSourceStream(ctx, fullPath, obj.GetSize())
+		if err != nil {
+			return nil, nil, fmt.Errorf("storage cannot stream %s: %w", requestedPath, err)
+		}
+		fileHasher := torrent.NewHashWriter(pieceSize, pieceSize, 0)
+		// CAS 的切法由文件大小决定，可能和 BT/OSS 的 piece_size 不同；
+		// 不一致时另开一个 hasher 只算分片 MD5（同一份字节，多算一遍而已），
+		// 最终摘要照样能写进 .cas，逐片列表则因切法不同而省略。
+		var casHasher *torrent.HashWriter
+		if casTarget {
+			if casSlice := torrent.CASSliceSize(obj.GetSize()); casSlice != pieceSize {
+				casHasher = torrent.NewHashWriter(casSlice, casSlice, 0)
+			}
+		}
+		sinks := []io.Writer{globalHasher, fileHasher}
+		if casHasher != nil {
+			sinks = append(sinks, casHasher)
+		}
+		progress.reader = rc
+		n, copyErr := io.Copy(io.MultiWriter(sinks...), progress)
+		progress.reader = nil
+		_ = rc.Close()
+		if copyErr != nil {
+			return nil, nil, fmt.Errorf("read %s: %w", requestedPath, copyErr)
+		}
+		if n != obj.GetSize() {
+			return nil, nil, fmt.Errorf("read %s: got %d of %d bytes", requestedPath, n, obj.GetSize())
+		}
+		fileHasher.Finish()
+		seedFile := fileHasher.BuildSeedFile(seedPath, modified)
+		if casTarget {
+			slicer := fileHasher
+			if casHasher != nil {
+				casHasher.Finish()
+				slicer = casHasher
+			}
+			seedFile.CASSliceMD5 = strings.ToLower(slicer.GetSliceMD5(seedFile.Hashes.MD5))
+		}
+		applySeedMatrix(&seedFile, matrix)
+		if comment := strings.TrimSpace(params.FileComments[requestedPath]); comment != "" {
+			seedFile.Comment = comment
+		} else if comment := strings.TrimSpace(params.FileComments[obj.GetName()]); comment != "" {
+			seedFile.Comment = comment
+		}
+		if useGlobalDirect || directSet[requestedPath] {
+			baseURL := strings.TrimRight(setting.GetStr(conf.SeedSiteURL), "/")
+			seedFile.Sources = []torrent.SeedSource{{Type: "openlist-direct", URL: baseURL + utils.EncodePath("/d"+fullPath)}}
+		}
+		seed.Files = append(seed.Files, seedFile)
+		fullPaths = append(fullPaths, fullPath)
+	}
+	globalHasher.Finish()
+	// 哈希读完，先把进度推到位，再进入编码阶段
+	progress.reportNow()
+	if params.OnStage != nil {
+		params.OnStage("generating seed files")
+	}
+	createdShares := make([]string, 0, len(seed.Files))
+	keepCreatedShares := false
+	defer func() {
+		if !keepCreatedShares {
+			for _, createdID := range createdShares {
+				_ = op.DeleteSharing(createdID)
+			}
+		}
+	}()
+	if hasShare {
+		for index, fullPath := range fullPaths {
+			// 目录展开后的文件用「目录/相对路径」与前端选择对应
+			if !useGlobalShare && !shareSet[entries[index].Requested] {
+				continue
+			}
+			sharing := &model.Sharing{
+				SharingDB: &model.SharingDB{Remark: "Transfer seed source"},
+				Files:     []string{fullPath}, Creator: user,
+			}
+			shareID, createErr := op.CreateSharing(sharing)
+			if createErr != nil {
+				return nil, nil, fmt.Errorf("create seed share: %w", createErr)
+			}
+			createdShares = append(createdShares, shareID)
+			seed.Files[index].Sources = []torrent.SeedSource{{
+				Type: "openlist-share", URL: strings.TrimRight(setting.GetStr(conf.SeedSiteURL), "/") + "/sd/" + shareID,
+				ShareID: shareID,
+			}}
+		}
+	}
+	if err := torrent.ValidateSeed(seed, torrent.DefaultParseLimits()); err != nil {
+		return nil, nil, err
+	}
+	outputPath := strings.TrimSpace(params.OutputPath)
+	artifacts := make([]SeedArtifact, 0, len(formats))
+	seenFormats := make(map[string]struct{}, len(formats))
+
+	// writeArtifact persists the encoded container into the destination folder
+	// when an output path is configured, returning the fully-populated artifact.
+	writeArtifact := func(format, fileName string, data []byte) (SeedArtifact, error) {
+		artifact := SeedArtifact{
+			Format:   format,
+			Name:     fileName,
+			FileName: fileName,
+			SeedData: base64.StdEncoding.EncodeToString(data),
+			Size:     len(data),
+		}
+		if outputPath == "" {
+			return artifact, nil
+		}
+		// 产物与源文件同名时写盘会覆盖源文件（例如从 xxx.mp4.cas 生成 .cas），
+		// 用户既丢了原始种子，又得到一个只描述元数据的种子。宁可失败也不静默覆盖。
+		target := stdpath.Join(outputPath, fileName)
+		for _, source := range entries {
+			if stdpath.Clean(source.FullPath) == stdpath.Clean(target) {
+				return artifact, fmt.Errorf("seed output %s would overwrite its own source file", target)
+			}
+		}
+		dstDir, err := user.JoinPath(outputPath)
+		if err != nil {
+			return artifact, err
+		}
+		meta, metaErr := op.GetNearestMeta(dstDir)
+		if metaErr != nil && !errors.Is(errors.Cause(metaErr), errs.MetaNotFound) {
+			return artifact, metaErr
+		}
+		if (!user.CanWriteContent() && !common.CanWriteContentBypassUserPerms(meta, dstDir)) || !common.CanWrite(user, meta, dstDir) {
+			return artifact, errs.PermissionDenied
+		}
+		fileStream := &stream.FileStream{
+			Ctx:    ctx,
+			Obj:    &model.Object{Name: fileName, Size: int64(len(data)), Modified: time.Now()},
+			Reader: bytes.NewReader(data), Mimetype: "application/octet-stream",
+		}
+		if err = PutDirectly(ctx, dstDir, fileStream); err != nil {
+			return artifact, err
+		}
+		artifact.Path = stdpath.Join(outputPath, fileName)
+		return artifact, nil
+	}
+
+	for _, requestedFormat := range formats {
+		format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(requestedFormat), "."))
+		if format == "bt" {
+			format = "torrent"
+		}
+		if _, exists := seenFormats[format]; exists {
+			continue
+		}
+		seenFormats[format] = struct{}{}
+
+		data, err := EncodeGeneratedSeed(seed, format, globalHasher.GetPieceHashes())
+		if err != nil {
+			return nil, nil, fmt.Errorf("generate %s seed: %w", format, err)
+		}
+		fileName := uniqueSeedFileName(stdpath.Base(seed.Name)+"."+format, usedNames)
+		artifact, err := writeArtifact(format, fileName, data)
+		if err != nil {
+			return nil, nil, err
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	keepCreatedShares = true
+	return artifacts, seed, nil
+}
+
+// seedProgressReader 在读取文件内容时按字节回报进度。
+// 多个文件复用同一个实例，done 跨文件累计，所以百分比反映整体进度而不是单文件。
+type seedProgressReader struct {
+	// ctx 用于响应任务取消：哈希大文件时要等整个文件读完才发现取消，
+	// 在 Read 里检查一次才能真正中断
+	ctx    context.Context
+	reader io.Reader
+	done   int64
+	total  int64
+	last   time.Time
+	report func(done, total int64)
+}
+
+func (p *seedProgressReader) Read(b []byte) (int, error) {
+	if p.ctx != nil {
+		if err := p.ctx.Err(); err != nil {
+			return 0, err
+		}
+	}
+	if p.reader == nil {
+		return 0, io.EOF
+	}
+	n, err := p.reader.Read(b)
+	if n > 0 {
+		p.done += int64(n)
+		p.reportProgress()
+	}
+	return n, err
+}
+
+// reportProgress 限流到约 2 次/秒，避免高频写任务状态拖慢哈希。
+func (p *seedProgressReader) reportProgress() {
+	if p.report == nil || time.Since(p.last) < 500*time.Millisecond {
+		return
+	}
+	p.reportNow()
+}
+
+// reportNow 立即回报一次当前进度（阶段切换、收尾时调用）。
+func (p *seedProgressReader) reportNow() {
+	if p.report == nil {
+		return
+	}
+	p.last = time.Now()
+	p.report(p.done, p.total)
+}
+
+// SeedGenerateTask generates seed containers asynchronously, writing them into
+// params.OutputPath so they appear in the target folder once done.
+type SeedGenerateTask struct {
+	task.TaskExtension
+	params SeedGenerateParams
+
+	statusMu sync.Mutex
+	status   string
+}
+
+// seedHashProgressEnd 哈希阶段占整体进度的比例：剩下的留给编码和写盘。
+const seedHashProgressEnd = 90.0
+
+func (t *SeedGenerateTask) GetName() string {
+	if len(t.params.Paths) == 1 {
+		return fmt.Sprintf("generate seed for %s", stdpath.Base(t.params.Paths[0]))
+	}
+	return fmt.Sprintf("generate seed for %d files", len(t.params.Paths))
+}
+
+func (t *SeedGenerateTask) GetStatus() string {
+	t.statusMu.Lock()
+	defer t.statusMu.Unlock()
+	if t.status == "" {
+		return "generating seed"
+	}
+	return t.status
+}
+
+func (t *SeedGenerateTask) setStatus(status string) {
+	t.statusMu.Lock()
+	t.status = status
+	t.statusMu.Unlock()
+}
+
+func (t *SeedGenerateTask) Run() error {
+	t.ClearEndTime()
+	t.SetStartTime(time.Now())
+	t.SetProgress(0)
+	t.setStatus("preparing")
+	defer func() { t.SetEndTime(time.Now()) }()
+
+	params := t.params
+	params.OnStage = func(stage string) {
+		t.setStatus(stage)
+	}
+	params.OnProgress = func(read, total int64) {
+		t.SetTotalBytes(total)
+		if total <= 0 {
+			return
+		}
+		progress := float64(read) / float64(total) * seedHashProgressEnd
+		if progress > seedHashProgressEnd {
+			progress = seedHashProgressEnd
+		}
+		t.SetProgress(progress)
+	}
+	_, _, err := GenerateSeedArtifacts(t.Ctx(), t.Creator, params)
+	if err == nil {
+		t.SetProgress(100)
+	}
+	return err
+}
+
+var SeedGenerateTaskManager *tache.Manager[*SeedGenerateTask]
+
+// AddSeedGenerateTask schedules an asynchronous seed generation task.
+func AddSeedGenerateTask(ctx context.Context, user *model.User, params SeedGenerateParams) (task.TaskExtensionInfo, error) {
+	t := &SeedGenerateTask{
+		TaskExtension: task.TaskExtension{
+			Creator: user,
+			ApiUrl:  common.GetApiUrl(ctx),
+		},
+		params: params,
+	}
+	SeedGenerateTaskManager.Add(t)
+	return t, nil
+}
