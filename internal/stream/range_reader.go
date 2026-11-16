@@ -20,7 +20,6 @@ var windowPool = sync.Pool{New: func() any {
 	return bufio.NewReaderSize(nil, windowSize)
 }}
 
-// fallbackLog counts degraded reads so the warning cannot flood the log.
 var fallbackLog atomic.Uint64
 
 func NewBufferedRangeReader(file io.ReaderAt, size int64) RangeReaderFunc {
@@ -49,9 +48,11 @@ func NewBufferedRangeReader(file io.ReaderAt, size int64) RangeReaderFunc {
 			return reader, nil
 		}
 		buffer := windowPool.Get().(*bufio.Reader)
-		buffer.Reset(reader.Reader)
-		reader.Reader = &bufferedRangeReader{buffer: buffer}
-		return reader, nil
+		buffer.Reset(reader)
+		return &RateLimitReader{
+			Ctx:    ctx,
+			Reader: &bufferedRangeReader{buffer: buffer},
+		}, nil
 	}
 }
 
