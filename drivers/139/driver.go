@@ -802,32 +802,31 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				return err
 			}
 
-			// 先上传前100个分片
-			err = d.uploadPersonalParts(ctx, partInfos, resp.Data.PartInfos, ss, p)
-			if err != nil {
-				return err
-			}
-
-			// 如果还有剩余分片，分批获取上传地址并上传
-			for i := 100; i < len(partInfos); i += 100 {
-				end := min(i+100, len(partInfos))
-				batchPartInfos := partInfos[i:end]
-				moredata := base.Json{
+			fetchUploadURLs := func(parts []PartInfo) ([]PersonalPartInfo, error) {
+				payload := base.Json{
 					"fileId":    resp.Data.FileId,
 					"uploadId":  resp.Data.UploadId,
-					"partInfos": batchPartInfos,
+					"partInfos": parts,
 					"commonAccountInfo": base.Json{
 						"account":     d.getAccount(),
 						"accountType": 1,
 					},
 				}
-				var moreresp PersonalUploadUrlResp
-				_, err = d.newPost(getUploadUrlPath, moredata, &moreresp)
+				var urls PersonalUploadUrlResp
+				_, err := d.newPost(getUploadUrlPath, payload, &urls)
+				return urls.Data.PartInfos, err
+			}
+
+			if err := d.uploadPersonalParts(ctx, firstPartInfos, resp.Data.PartInfos, fetchUploadURLs, ss, p); err != nil {
+				return err
+			}
+			for i := len(firstPartInfos); i < len(partInfos); i += 100 {
+				batch := partInfos[i:min(i+100, len(partInfos))]
+				urls, err := fetchUploadURLs(batch)
 				if err != nil {
 					return err
 				}
-				err = d.uploadPersonalParts(ctx, partInfos, moreresp.Data.PartInfos, ss, p)
-				if err != nil {
+				if err := d.uploadPersonalParts(ctx, batch, urls, fetchUploadURLs, ss, p); err != nil {
 					return err
 				}
 			}
