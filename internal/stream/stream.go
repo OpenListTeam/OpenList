@@ -279,6 +279,7 @@ func (ss *SeekableStream) RangeRead(httpRange http_range.Range) (io.Reader, erro
 		if err != nil {
 			return nil, err
 		}
+		rc = utils.NewReadCloser(rc, sync.OnceValue(rc.Close))
 		ss.Add(rc)
 		return rc, nil
 	}
@@ -371,19 +372,21 @@ type orderedReaders struct {
 
 func (o *orderedReaders) store(off int64, r io.Reader) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
-	if _, ok := o.m[off]; ok {
-		o.m[off] = r
-		return
+	previous, ok := o.m[off]
+	if !ok {
+		if o.m == nil {
+			o.m = make(map[int64]io.Reader)
+		}
+		i := sort.Search(len(o.keys), func(i int) bool { return o.keys[i] >= off })
+		o.keys = append(o.keys, 0)
+		copy(o.keys[i+1:], o.keys[i:])
+		o.keys[i] = off
 	}
-	if o.m == nil {
-		o.m = make(map[int64]io.Reader)
-	}
-	i := sort.Search(len(o.keys), func(i int) bool { return o.keys[i] >= off })
-	o.keys = append(o.keys, 0)
-	copy(o.keys[i+1:], o.keys[i:])
-	o.keys[i] = off
 	o.m[off] = r
+	o.mu.Unlock()
+	if c, ok := previous.(io.Closer); ok {
+		_ = c.Close()
+	}
 }
 
 func (o *orderedReaders) takeExact(off int64) (io.Reader, bool) {
@@ -487,7 +490,8 @@ func NewReadAtSeeker(ss *SeekableStream, offset int64, forceRange ...bool) (mode
 		}
 		r.readers.store(offset, reader)
 	} else {
-		r.readers.store(0, ss)
+		// Borrow the stream without closing it when a cached reader is discarded.
+		r.readers.store(0, struct{ io.Reader }{ss})
 	}
 	return r, nil
 }
@@ -513,6 +517,9 @@ func (r *RangeReadReadAtSeeker) getReaderAtOffset(off int64) (io.Reader, error) 
 		if cur+n == off {
 			return rr, nil
 		}
+		if c, ok := rr.(io.Closer); ok {
+			_ = c.Close()
+		}
 	}
 	reader, err := r.ss.RangeRead(http_range.Range{Start: off, Length: -1})
 	if err != nil {
@@ -534,12 +541,13 @@ func (r *RangeReadReadAtSeeker) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, err
 	}
 	n, err = io.ReadFull(rr, p)
-	if n > 0 {
-		off += int64(n)
-		switch err {
-		case nil:
-			r.readers.store(off, rr)
-		case io.ErrUnexpectedEOF:
+	if err == nil {
+		r.readers.store(off+int64(n), rr)
+	} else {
+		if c, ok := rr.(io.Closer); ok {
+			_ = c.Close()
+		}
+		if err == io.ErrUnexpectedEOF {
 			err = io.EOF
 		}
 	}
