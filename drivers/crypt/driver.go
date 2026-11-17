@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -19,6 +20,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	rcCrypt "github.com/rclone/rclone/backend/crypt"
@@ -30,7 +32,8 @@ import (
 type Crypt struct {
 	model.Storage
 	Addition
-	cipher *rcCrypt.Cipher
+	cipher     *rcCrypt.Cipher
+	thumbGroup singleflight.Group[struct{}]
 }
 
 const obfuscatedPrefix = "___Obfuscated___"
@@ -146,7 +149,7 @@ func (d *Crypt) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			Mask:     mask &^ model.Temp,
 			// discarding hash as it's encrypted
 		}
-		if !d.Thumbnail || !strings.HasPrefix(args.ReqPath, "/") {
+		if !d.Thumbnail || !strings.HasPrefix(args.ReqPath, "/") || objRes.IsFolder || utils.GetFileType(name) != conf.IMAGE {
 			result = append(result, objRes)
 			continue
 		}
@@ -170,7 +173,7 @@ func (a Addition) GetRootPath() string {
 	return a.RemotePath
 }
 
-func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
+func (d *Crypt) getActual(ctx context.Context, path string) (model.Obj, error) {
 	firstTryIsFolder, secondTry := guessPath(path)
 	remoteFullPath := stdpath.Join(d.RemotePath, d.encryptPath(path, firstTryIsFolder))
 	remoteObj, err := fs.Get(ctx, remoteFullPath, &fs.GetArgs{NoLog: true})
@@ -231,10 +234,39 @@ func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
 	}, nil
 }
 
+func (d *Crypt) Get(ctx context.Context, path string) (model.Obj, error) {
+	obj, err := d.getActual(ctx, path)
+	if err == nil {
+		return obj, nil
+	}
+	if !errs.IsObjectNotFound(err) || !isThumbPath(path) {
+		return nil, err
+	}
+	sourcePath, ok := thumbSourcePath(path)
+	if !ok {
+		return nil, err
+	}
+	sourceObj, sourceErr := op.Get(ctx, d, sourcePath)
+	if sourceErr != nil || sourceObj.IsDir() || utils.GetFileType(sourceObj.GetName()) != conf.IMAGE {
+		return nil, err
+	}
+	return d.newThumbObject(path, sourceObj), nil
+}
+
 // https://github.com/rclone/rclone/blob/v1.67.0/backend/crypt/cipher.go#L37
 const fileHeaderSize = 32
 
 func (d *Crypt) Link(ctx context.Context, file model.Obj, _ model.LinkArgs) (*model.Link, error) {
+	if thumb, ok := file.(*thumbObject); ok {
+		if err := d.ensureThumb(ctx, thumb); err != nil {
+			return nil, err
+		}
+		generatedObj, err := d.getActual(ctx, thumb.thumbPath)
+		if err != nil {
+			return nil, err
+		}
+		return d.Link(ctx, generatedObj, model.LinkArgs{})
+	}
 	remoteStorage, remoteActualPath, err := op.GetStorageAndActualPath(file.GetPath())
 	if err != nil {
 		return nil, err
