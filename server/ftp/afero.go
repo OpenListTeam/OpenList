@@ -36,6 +36,10 @@ func (a *AferoAdapter) Mkdir(name string, _ os.FileMode) error {
 }
 
 func (a *AferoAdapter) MkdirAll(path string, perm os.FileMode) error {
+	// Like os.MkdirAll, an existing directory is not an error (SITE MKDIR).
+	if info, err := a.Stat(path); err == nil && info.IsDir() {
+		return nil
+	}
 	return a.Mkdir(path, perm)
 }
 
