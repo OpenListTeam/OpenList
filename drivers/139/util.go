@@ -1078,68 +1078,100 @@ func (d *Yun139) getGroupCloudHost() string {
 	return d.GroupCloudHost
 }
 
-func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, uploadPartInfos []PersonalPartInfo, ss streamPkg.StreamSectionReader, p *driver.Progress) error {
-	// 确保数组以 PartNumber 从小到大排序
-	sort.Slice(uploadPartInfos, func(i, j int) bool {
-		return uploadPartInfos[i].PartNumber < uploadPartInfos[j].PartNumber
+var errUploadURLExpired = errors.New("139 upload URL expired")
+
+func matchUploadURLs(parts []PartInfo, urls []PersonalPartInfo) error {
+	if len(parts) != len(urls) {
+		return fmt.Errorf("139 returned %d upload URLs for %d parts", len(urls), len(parts))
+	}
+	sort.Slice(urls, func(i, j int) bool {
+		return urls[i].PartNumber < urls[j].PartNumber
 	})
-
-	for _, uploadPartInfo := range uploadPartInfos {
-		index := uploadPartInfo.PartNumber - 1
-		if index < 0 || index >= len(partInfos) {
-			return fmt.Errorf("invalid PartNumber %d: index out of bounds (partInfos length: %d)", uploadPartInfo.PartNumber, len(partInfos))
-		}
-		partSize := partInfos[index].PartSize
-		offset := partInfos[index].ParallelHashCtx.PartOffset
-		log.Debugf("[139] uploading part %+v/%+v", index, len(partInfos))
-
-		rd, getErr := ss.GetSectionReader(offset, partSize)
-		if getErr != nil {
-			return getErr
-		}
-
-		// Save progress before this part so retries don't double-count bytes
-		partDoneStart := p.Done
-		err := retry.Do(
-			func() error {
-				// Reset progress to the start of this part on each attempt
-				p.Done = partDoneStart
-				if _, seekErr := rd.Seek(0, io.SeekStart); seekErr != nil {
-					return seekErr
-				}
-				req, reqErr := http.NewRequestWithContext(ctx, http.MethodPut, uploadPartInfo.UploadUrl, io.TeeReader(rd, p))
-				if reqErr != nil {
-					return reqErr
-				}
-				req.Header.Set("Content-Type", "application/octet-stream")
-				req.Header.Set("Content-Length", fmt.Sprint(partSize))
-				req.Header.Set("Origin", "https://yun.139.com")
-				req.Header.Set("Referer", "https://yun.139.com/")
-				req.ContentLength = partSize
-
-				res, doErr := base.HttpClient.Do(req)
-				if doErr != nil {
-					return doErr
-				}
-				defer res.Body.Close()
-				log.Debugf("[139] uploaded: %+v", res)
-				if res.StatusCode != http.StatusOK {
-					body, _ := io.ReadAll(res.Body)
-					return fmt.Errorf("unexpected status code: %d, body: %s", res.StatusCode, string(body))
-				}
-				return nil
-			},
-			retry.Context(ctx),
-			retry.Attempts(3),
-			retry.DelayType(retry.BackOffDelay),
-			retry.Delay(time.Second),
-		)
-		ss.FreeSectionReader(rd)
-		if err != nil {
-			return err
+	for i, part := range parts {
+		if int64(urls[i].PartNumber) != part.PartNumber || urls[i].UploadUrl == "" {
+			return fmt.Errorf("139 did not return a valid upload URL for part %d", part.PartNumber)
 		}
 	}
 	return nil
+}
+
+func (d *Yun139) uploadPersonalParts(ctx context.Context, parts []PartInfo, urls []PersonalPartInfo, fetchURLs func([]PartInfo) ([]PersonalPartInfo, error), ss streamPkg.StreamSectionReader, p *driver.Progress) error {
+	if err := matchUploadURLs(parts, urls); err != nil {
+		return err
+	}
+	for i, part := range parts {
+		rd, err := ss.GetSectionReader(part.ParallelHashCtx.PartOffset, part.PartSize)
+		if err != nil {
+			return err
+		}
+
+		start := p.Done
+		upload := func(uploadURL string) error {
+			return retry.Do(func() error {
+				p.Done = start
+				if _, err := rd.Seek(0, io.SeekStart); err != nil {
+					return retry.Unrecoverable(err)
+				}
+				err := putPersonalPart(ctx, uploadURL, part.PartSize, io.TeeReader(rd, p))
+				if errors.Is(err, errUploadURLExpired) {
+					return retry.Unrecoverable(err)
+				}
+				return err
+			}, retry.Context(ctx), retry.Attempts(3), retry.LastErrorOnly(true), retry.DelayType(retry.BackOffDelay), retry.Delay(time.Second))
+		}
+
+		err = upload(urls[i].UploadUrl)
+		if errors.Is(err, errUploadURLExpired) && ctx.Err() == nil {
+			p.Done = start
+			// Renew this part and the rest of the batch under the same upload ID.
+			var refreshed []PersonalPartInfo
+			refreshed, err = fetchURLs(parts[i:])
+			if err == nil {
+				err = matchUploadURLs(parts[i:], refreshed)
+			}
+			if err == nil {
+				copy(urls[i:], refreshed)
+				err = upload(urls[i].UploadUrl)
+			}
+		}
+		ss.FreeSectionReader(rd)
+		if err != nil {
+			return fmt.Errorf("upload 139 part %d: %w", part.PartNumber, err)
+		}
+	}
+	return nil
+}
+
+func putPersonalPart(ctx context.Context, uploadURL string, size int64, body io.Reader) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Origin", "https://yun.139.com")
+	req.Header.Set("Referer", "https://yun.139.com/")
+	req.ContentLength = size
+
+	res, err := base.HttpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusOK {
+		return nil
+	}
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode == http.StatusForbidden {
+		var eosError struct {
+			Code    string
+			Message string
+		}
+		if xml.Unmarshal(raw, &eosError) == nil &&
+			(eosError.Code == "RequestExpired" || (eosError.Code == "AccessDenied" && eosError.Message == "Request has expired")) {
+			return errUploadURLExpired
+		}
+	}
+	return fmt.Errorf("unexpected status code: %d, body: %s", res.StatusCode, string(raw))
 }
 
 func (d *Yun139) getDiskQuotaDetail(ctx context.Context) (*DiskQuotaDetail, error) {
