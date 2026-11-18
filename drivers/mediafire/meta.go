@@ -42,7 +42,7 @@ var config = driver.Config{
 	NoUpload:          false,
 	NeedMs:            false,
 	DefaultRoot:       "/",
-	CheckStatus:       false,
+	CheckStatus:       true,
 	Alert:             "",
 	NoOverwriteUpload: true,
 }
