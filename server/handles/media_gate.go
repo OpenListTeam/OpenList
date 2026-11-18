@@ -161,14 +161,14 @@ func MediaTypeEnabledList() []model.MediaType {
 
 // LookUpAppKeyUser 按明文应用密钥查找对应用户与密钥记录。
 // Emby 与 Subsonic 的所有密钥认证都走这里，避免两套实现产生行为差异。
-func LookUpAppKeyUser(key string) (*model.User, *model.MediaAppKey, bool) {
+func LookUpAppKeyUser(key string) (*model.User, *model.MediaAppKey, error) {
 	key = strings.TrimSpace(key)
 	if !strings.HasPrefix(key, "olmp_") {
-		return nil, nil, false
+		return nil, nil, errs.WrongPassword
 	}
 	keys, err := db.ListMediaAppKeysByPrefix(media.AppKeyPrefix(key))
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, err
 	}
 	for i := range keys {
 		plain, err := media.DecryptAppKey(keys[i].Secret)
@@ -179,13 +179,16 @@ func LookUpAppKeyUser(key string) (*model.User, *model.MediaAppKey, bool) {
 			continue
 		}
 		user, err := op.GetUserById(keys[i].UserID)
-		if err != nil || user.Disabled || user.IsGuest() {
-			return nil, nil, false
+		if err != nil {
+			return nil, nil, err
+		}
+		if user.Disabled || user.IsGuest() {
+			return nil, nil, errs.WrongPassword
 		}
 		db.TouchMediaAppKey(keys[i].ID)
-		return user, &keys[i], true
+		return user, &keys[i], nil
 	}
-	return nil, nil, false
+	return nil, nil, errs.WrongPassword
 }
 
 // SignedStreamURL 构造带签名的 /d 直链（绝对地址，供 Emby/Subsonic/STRM 使用）

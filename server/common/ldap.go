@@ -18,6 +18,10 @@ import (
 
 var ErrFailedLdapAuth = errors.New("failed to auth")
 
+func ldapUnmatchedUserError() error {
+	return errors.WithMessage(ErrFailedLdapAuth, "user does not exist or too many entries returned")
+}
+
 func HandleLdapLogin(username, password string) error {
 	// Auth start
 	ldapServer := setting.GetStr(conf.LdapServer)
@@ -55,7 +59,9 @@ func HandleLdapLogin(username, password string) error {
 		return errors.WithMessagef(err, "failed login ldap: LDAP search failed")
 	}
 	if len(sr.Entries) != 1 {
-		return errors.New("failed login ldap: user does not exist or too many entries returned")
+		// Treat unmatched / ambiguous LDAP search results as credential failures so
+		// auth callers keep 401 + lockout counting instead of a misleading 500.
+		return ldapUnmatchedUserError()
 	}
 	userDN := sr.Entries[0].DN
 
