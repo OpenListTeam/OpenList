@@ -2,10 +2,11 @@ package smb
 
 import (
 	"context"
-	"errors"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -18,6 +19,10 @@ import (
 
 type SMB struct {
 	lastConnTime atomic.Int64
+	publishMode  atomic.Int32 // see publishModeFor
+	probeMu      sync.Mutex
+	staging      driver.StagingInUse
+	inPlace      driver.KeyedMutex // uploads of a file written in place take turns
 	model.Storage
 	Addition
 	fs *smb2.Share
@@ -35,6 +40,7 @@ func (d *SMB) Init(ctx context.Context) error {
 	if !strings.Contains(d.Addition.Address, ":") {
 		d.Addition.Address = d.Addition.Address + ":445"
 	}
+	d.publishMode.Store(publishUnknown)
 	return d._initFS(ctx)
 }
 
@@ -58,6 +64,16 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	d.updateLastConnTime()
 	files := make([]model.Obj, 0, len(rawFiles))
 	for _, f := range rawFiles {
+		if !f.IsDir() {
+			if created, ok := driver.StagingCreated(d.GetStorage(), f.Name()); ok {
+				// an upload in progress; reclaim the ones a killed process left
+				p := path.Join(fullPath, f.Name())
+				if d.staging.Reclaimable(p, created, f.ModTime()) {
+					_ = d.fs.Remove(p)
+				}
+				continue
+			}
+		}
 		file := model.Object{
 			Path:     path.Join(fullPath, f.Name()),
 			Name:     f.Name(),
@@ -182,24 +198,57 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	if err := d.checkConn(ctx); err != nil {
 		return err
 	}
-	fullPath := filepath.Join(dstDir.GetPath(), stream.GetName())
-	out, err := d.fs.Create(fullPath)
+	dir := dstDir.GetPath()
+	fullPath := filepath.Join(dir, stream.GetName())
+	mode := d.publishModeFor(dir)
+	target, flag := fullPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC
+	switch mode {
+	case publishStaged:
+		name := driver.StagingName(d.GetStorage())
+		target, flag = filepath.Join(dir, name), os.O_RDWR|os.O_CREATE|os.O_EXCL
+		// released after the staging file is renamed or removed
+		release := d.staging.Hold(path.Join(dir, name))
+		defer release()
+	case publishInPlace:
+		// in turn with other uploads of the file, so that what a failed one
+		// removes is all its own
+		unlock, err := d.inPlace.Lock(ctx, fullPath)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	case publishNewOnly:
+		flag = os.O_RDWR | os.O_CREATE | os.O_EXCL
+	}
+	out, err := d.fs.OpenFile(target, flag, 0o666)
 	if err != nil {
 		d.cleanLastConnTime()
+		if mode == publishNewOnly {
+			if _, serr := d.fs.Stat(fullPath); serr == nil {
+				return errCannotReplace
+			}
+		}
 		return err
 	}
 	d.updateLastConnTime()
 	defer func() {
 		_ = out.Close()
-		if errors.Is(err, context.Canceled) {
-			_ = d.fs.Remove(fullPath)
+		// remove what this upload wrote: its staging file, never a destination
+		// another upload may own by now, or the file it created, or cut short
+		// to write in place in its turn, which must not pass for the file
+		if err != nil {
+			_ = d.fs.Remove(target)
 		}
 	}()
 	err = utils.CopyWithCtx(ctx, out, driver.NewLimitedUploadStream(ctx, stream), stream.GetSize(), up)
-	if err != nil {
+	if err != nil || target == fullPath {
 		return err
 	}
-	return nil
+	if err = out.Close(); err != nil {
+		return err
+	}
+	err = d.fs.Rename(target, fullPath)
+	return err
 }
 
 func (d *SMB) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
