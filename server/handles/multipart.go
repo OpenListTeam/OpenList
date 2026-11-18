@@ -125,10 +125,22 @@ func MultipartInit(c *gin.Context) {
 		Hashes:    h,
 	})
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		common.ErrorResp(c, err, multipartInitErrCode(err))
 		return
 	}
 	common.SuccessResp(c, MultipartInitResp{SessionSnapshot: snap, Resumed: resumed})
+}
+
+// multipartInitErrCode: 409 asks the client to retry an init shortly, as an
+// earlier upload is still letting go of the destination.
+func multipartInitErrCode(err error) int {
+	if errors.Is(err, multipart.ErrPreviousUploadRunning) {
+		return 409
+	}
+	if errors.Is(err, multipart.ErrTooManyChunks) {
+		return 400
+	}
+	return 500
 }
 
 // MultipartChunk ingests one chunk. Chunks are idempotent and may be sent
@@ -156,10 +168,19 @@ func MultipartChunk(c *gin.Context) {
 	}
 	_, _ = utils.CopyWithBuffer(io.Discard, io.LimitReader(c.Request.Body, limit))
 	if err != nil {
-		common.ErrorWithDataResp(c, err, multipartErrCode(err), snap)
+		common.ErrorWithDataResp(c, err, multipartErrCode(err), snapshotData(snap))
 		return
 	}
 	common.SuccessResp(c, snap)
+}
+
+// snapshotData keeps error responses free of an all-zero snapshot: a session
+// that was never found has nothing to report, so the envelope carries null.
+func snapshotData(snap multipart.SessionSnapshot) any {
+	if snap.ID == "" {
+		return nil
+	}
+	return snap
 }
 
 // MultipartComplete waits for the pipeline outcome and reports it, mirroring
@@ -169,7 +190,7 @@ func MultipartComplete(c *gin.Context) {
 	id := c.GetHeader("X-Upload-Id")
 	snap, err := multipart.DefaultManager.Complete(c.Request.Context(), user, id)
 	if err != nil {
-		common.ErrorWithDataResp(c, err, multipartErrCode(err), snap)
+		common.ErrorWithDataResp(c, err, multipartErrCode(err), snapshotData(snap))
 		return
 	}
 	common.SuccessResp(c, snap)
