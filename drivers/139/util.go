@@ -777,6 +777,28 @@ func (d *Yun139) shareGetObj(reqPath string) (model.Obj, error) {
 	return currentObj, nil
 }
 
+// 139 download URLs are short-lived presigned links (personal OBS URLs
+// declare 15 minutes via X-Amz-Expires). Cache them no longer than the
+// declared lifetime so the link cache never serves expired signatures.
+const defaultLinkExpiration = 14 * time.Minute
+
+func linkExpiration(u string) *time.Duration {
+	ttl := defaultLinkExpiration
+	if parsed, err := url.Parse(u); err == nil {
+		q := parsed.Query()
+		if signed, err := time.Parse("20060102T150405Z", q.Get("X-Amz-Date")); err == nil {
+			if seconds, err := strconv.ParseInt(q.Get("X-Amz-Expires"), 10, 64); err == nil && seconds > 0 {
+				ttl = time.Until(signed.Add(time.Duration(seconds) * time.Second)) - time.Minute
+			}
+		}
+	}
+	return &ttl
+}
+
+func newLink(u string) *model.Link {
+	return &model.Link{URL: u, Expiration: linkExpiration(u)}
+}
+
 func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string) (*model.Link, error) {
 	data := base.Json{
 		"getContentInfoFromOutLinkReq": base.Json{
@@ -797,12 +819,12 @@ func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string)
 		if res.PresentURL == "" {
 			return nil, fmt.Errorf("failed to get preview link")
 		}
-		return &model.Link{URL: res.PresentURL}, nil
+		return newLink(res.PresentURL), nil
 	}
 
 	if d.getAccount() == "" {
 		if res.PresentURL != "" {
-			return &model.Link{URL: res.PresentURL}, nil
+			return newLink(res.PresentURL), nil
 		}
 		return nil, fmt.Errorf("139 share download requires account authentication")
 	}
@@ -823,13 +845,13 @@ func (d *Yun139) shareGetLinkWithRef(ref shareRef, coID string, linkType string)
 		return nil, err
 	}
 	if downloadResp.Data.ExtInfo.CDNDownloadURL != "" {
-		return &model.Link{URL: downloadResp.Data.ExtInfo.CDNDownloadURL}, nil
+		return newLink(downloadResp.Data.ExtInfo.CDNDownloadURL), nil
 	}
 	if downloadResp.Data.RedrURL != "" {
-		return &model.Link{URL: downloadResp.Data.RedrURL}, nil
+		return newLink(downloadResp.Data.RedrURL), nil
 	}
 	if downloadResp.Data.DownloadURL != "" {
-		return &model.Link{URL: downloadResp.Data.DownloadURL}, nil
+		return newLink(downloadResp.Data.DownloadURL), nil
 	}
 
 	log.Debugf("[139Share] content info without embedded download url: %s", string(body))
