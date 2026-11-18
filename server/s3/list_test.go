@@ -215,12 +215,14 @@ func TestListPageDoesNotReturnEmptyDirectoryMarkerForDifferentPrefix(t *testing.
 		},
 	}
 
-	got, err := b.listPage(context.Background(), "bucket", "empty", "not-the-marker", false, gofakes3.ListBucketPage{MaxKeys: 10})
-	if err != nil {
-		t.Fatalf("listPage() error = %v", err)
-	}
-	if len(got.Contents) != 0 {
-		t.Fatalf("contents = %#v, want empty", got.Contents)
+	for _, name := range []string{"", "not-the-marker"} {
+		got, err := b.listPage(context.Background(), "bucket", "empty", name, false, gofakes3.ListBucketPage{MaxKeys: 10})
+		if err != nil {
+			t.Fatalf("listPage(%q) error = %v", name, err)
+		}
+		if len(got.Contents) != 0 {
+			t.Fatalf("listPage(%q) contents = %#v, want empty", name, got.Contents)
+		}
 	}
 }
 
