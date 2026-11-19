@@ -48,6 +48,17 @@ func ServeWebDAV(c *gin.Context) {
 }
 
 func WebDAVAuth(c *gin.Context) {
+	if middlewares.IsUnixFileTrusted(c) {
+		admin, err := op.GetAdmin()
+		if err != nil {
+			common.ErrorResp(c, err, http.StatusInternalServerError)
+			c.Abort()
+			return
+		}
+		common.GinAppendValues(c, conf.UserKey, admin)
+		c.Next()
+		return
+	}
 	// check count of login
 	ip := c.ClientIP()
 	guest, _ := op.GetGuest()
