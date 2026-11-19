@@ -211,6 +211,9 @@ func (d *Onedrive) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *Onedrive) Remove(ctx context.Context, obj model.Obj) error {
+	if d.RemoveWay == "delete" {
+		return d.deletePermanently(ctx, obj)
+	}
 	url := d.GetMetaUrl(false, obj.GetPath())
 	_, err := d.Request(url, http.MethodDelete, nil, nil)
 	return err
