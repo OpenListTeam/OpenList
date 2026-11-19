@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -21,6 +22,10 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
+
+// removeTimeout bounds the torrent-remove request, which cannot use the
+// already-cancelled task context.
+const removeTimeout = 15 * time.Second
 
 type Transmission struct {
 	client *transmissionrpc.Client
@@ -130,7 +135,11 @@ func (t *Transmission) Remove(task *tool.DownloadTask) error {
 	if err != nil {
 		return err
 	}
-	err = t.client.TorrentRemove(task.Ctx(), transmissionrpc.TorrentRemovePayload{
+	// Remove runs after the task context has been cancelled (see
+	// DownloadTask.Run), so detach from the cancellation but keep a timeout.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(task.Ctx()), removeTimeout)
+	defer cancel()
+	err = t.client.TorrentRemove(ctx, transmissionrpc.TorrentRemovePayload{
 		IDs:             []int64{gid},
 		DeleteLocalData: false,
 	})
