@@ -611,6 +611,20 @@ func (d *CloudreveV4) upS3(ctx context.Context, file model.FileStreamer, u FileU
 	}
 
 	// s3LikeFinishUpload
+	return d.completeS3Upload(ctx, u, s3Type, etags)
+}
+
+// completeS3Upload submits the collected part ETags to finalize an S3-like
+// multipart upload, then notifies Cloudreve through the callback endpoint so it
+// can finish the session on its side.
+func (d *CloudreveV4) completeS3Upload(ctx context.Context, u FileUploadResp, s3Type string, etags []string) error {
+	if err := d.completeS3Multipart(ctx, u, s3Type, etags); err != nil {
+		return err
+	}
+	return d.request(http.MethodGet, "/callback/"+s3Type+"/"+u.SessionID+"/"+u.CallbackSecret, nil, nil)
+}
+
+func (d *CloudreveV4) completeS3Multipart(ctx context.Context, u FileUploadResp, s3Type string, etags []string) error {
 	bodyBuilder := &strings.Builder{}
 	bodyBuilder.WriteString("<CompleteMultipartUpload>")
 	for i, etag := range etags {
@@ -644,7 +658,58 @@ func (d *CloudreveV4) upS3(ctx context.Context, file model.FileStreamer, u FileU
 		body, _ := io.ReadAll(res.Body)
 		return fmt.Errorf("up status: %d, error: %s", res.StatusCode, string(body))
 	}
+	return nil
+}
 
-	// 上传成功发送回调请求
-	return d.request(http.MethodGet, "/callback/"+s3Type+"/"+u.SessionID+"/"+u.CallbackSecret, nil, nil)
+// createUploadSession asks Cloudreve to open a resumable upload session. The
+// returned storage policy and part URLs decide how the payload has to be sent.
+// asNewVersion forces the upload to be stored as a new version of an existing
+// file, which is the only way Cloudreve accepts a session for an existing path.
+func (d *CloudreveV4) createUploadSession(ctx context.Context, dstDir model.Obj, name string, size int64, modTime time.Time, mimeType string, asNewVersion bool) (FileUploadResp, error) {
+	var (
+		u      FileUploadResp
+		r      FileResp
+		params = map[string]string{
+			"page_size":       "10",
+			"uri":             dstDir.GetPath(),
+			"order_by":        "created_at",
+			"order_direction": "asc",
+			"page":            "0",
+		}
+	)
+	if err := d.request(http.MethodGet, "/file", func(req *resty.Request) {
+		req.SetContext(ctx)
+		req.SetQueryParams(params)
+	}, &r); err != nil {
+		return u, err
+	}
+	body := base.Json{
+		"uri":           dstDir.GetPath() + "/" + name,
+		"size":          size,
+		"policy_id":     r.StoragePolicy.ID,
+		"last_modified": modTime.UnixMilli(),
+		"mime_type":     mimeType,
+	}
+	if d.EnableVersionUpload || asNewVersion {
+		body["entity_type"] = "version"
+	}
+	err := d.request(http.MethodPut, "/file/upload", func(req *resty.Request) {
+		req.SetContext(ctx)
+		req.SetBody(body)
+	}, &u)
+	return u, err
+}
+
+// deleteUploadSession drops a session that will never be completed, so
+// Cloudreve does not keep it until it expires.
+func (d *CloudreveV4) deleteUploadSession(u FileUploadResp) {
+	if u.SessionID == "" {
+		return
+	}
+	_ = d.request(http.MethodDelete, "/file/upload", func(req *resty.Request) {
+		req.SetBody(base.Json{
+			"id":  u.SessionID,
+			"uri": u.URI,
+		})
+	}, nil)
 }

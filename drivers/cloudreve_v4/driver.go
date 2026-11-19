@@ -264,37 +264,7 @@ func (d *CloudreveV4) Put(ctx context.Context, dstDir model.Obj, file model.File
 			})
 		}, nil)
 	}
-	var p StoragePolicy
-	var r FileResp
-	var u FileUploadResp
-	var err error
-	params := map[string]string{
-		"page_size":       "10",
-		"uri":             dstDir.GetPath(),
-		"order_by":        "created_at",
-		"order_direction": "asc",
-		"page":            "0",
-	}
-	err = d.request(http.MethodGet, "/file", func(req *resty.Request) {
-		req.SetQueryParams(params)
-	}, &r)
-	if err != nil {
-		return err
-	}
-	p = r.StoragePolicy
-	body := base.Json{
-		"uri":           dstDir.GetPath() + "/" + file.GetName(),
-		"size":          file.GetSize(),
-		"policy_id":     p.ID,
-		"last_modified": file.ModTime().UnixMilli(),
-		"mime_type":     "",
-	}
-	if d.EnableVersionUpload {
-		body["entity_type"] = "version"
-	}
-	err = d.request(http.MethodPut, "/file/upload", func(req *resty.Request) {
-		req.SetBody(body)
-	}, &u)
+	u, err := d.createUploadSession(ctx, dstDir, file.GetName(), file.GetSize(), file.ModTime(), "", false)
 	if err != nil {
 		return err
 	}
@@ -318,12 +288,7 @@ func (d *CloudreveV4) Put(ctx context.Context, dstDir model.Obj, file model.File
 	}
 	if err != nil {
 		// 删除失败的会话
-		_ = d.request(http.MethodDelete, "/file/upload", func(req *resty.Request) {
-			req.SetBody(base.Json{
-				"id":  u.SessionID,
-				"uri": u.URI,
-			})
-		}, nil)
+		d.deleteUploadSession(u)
 		return err
 	}
 	return nil
