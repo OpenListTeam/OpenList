@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -332,6 +333,47 @@ func (d *GoogleDrive) batchGetTargetFilesInfo(targetIds []string) map[string]Fil
 	return result
 }
 
+type uploadRequestDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+type uploadRequestBody struct {
+	io.Reader
+	closed    chan struct{}
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func newUploadRequestBody(reader io.Reader) *uploadRequestBody {
+	return &uploadRequestBody{Reader: reader, closed: make(chan struct{})}
+}
+
+func (body *uploadRequestBody) Close() error {
+	body.closeOnce.Do(func() {
+		if closer, ok := body.Reader.(io.Closer); ok {
+			body.closeErr = closer.Close()
+		}
+		close(body.closed)
+	})
+	return body.closeErr
+}
+
+func doUploadRequest(client uploadRequestDoer, req *http.Request) ([]byte, error) {
+	body := req.Body.(*uploadRequestBody)
+	res, err := client.Do(req)
+	if err != nil {
+		// net/http may close a request body asynchronously after Do returns.
+		// The caller can release its pooled section reader only after that close.
+		<-body.closed
+		return nil, err
+	}
+
+	data, _ := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	<-body.closed
+	return data, nil
+}
+
 func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, url string, up driver.UpdateProgress) error {
 	defaultChunkSize := d.ChunkSize * 1024 * 1024
 	ss, err := stream.NewStreamSectionReader(file, int(defaultChunkSize), &up)
@@ -350,24 +392,26 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 		if err != nil {
 			return err
 		}
-		limitedReader := driver.NewLimitedUploadStream(ctx, reader)
 		err = retry.Do(func() error {
-			reader.Seek(0, io.SeekStart)
-			req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, limitedReader)
-			if err != nil {
+			if _, err := reader.Seek(0, io.SeekStart); err != nil {
 				return err
 			}
+			body := newUploadRequestBody(driver.NewLimitedUploadStream(ctx, reader))
+			req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, body)
+			if err != nil {
+				_ = body.Close()
+				return err
+			}
+			req.ContentLength = chunkSize
 			req.Header = map[string][]string{
 				"Authorization":  {"Bearer " + d.AccessToken},
 				"Content-Length": {strconv.FormatInt(chunkSize, 10)},
 				"Content-Range":  {fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, file.GetSize())},
 			}
-			res, err := base.HttpClient.Do(req)
+			bytes, err := doUploadRequest(base.HttpClient, req)
 			if err != nil {
 				return err
 			}
-			defer res.Body.Close()
-			bytes, _ := io.ReadAll(res.Body)
 			var e Error
 			utils.Json.Unmarshal(bytes, &e)
 			if e.Error.Code != 0 {
