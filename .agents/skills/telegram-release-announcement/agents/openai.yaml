@@ -1,0 +1,4 @@
+interface:
+  display_name: "以 Telegram 富文本整理更新公告"
+  short_description: "自行读取 Git 版本差异与源码，整理中英双语更新公告并写入 Telegram 富文本剪贴板"
+  default_prompt: "使用 $telegram-release-announcement，从当前项目的 Git 记录整理最新版本的更新公告，以 Telegram 富文本写入剪贴板。"
