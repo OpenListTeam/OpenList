@@ -130,19 +130,26 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				req.Header.Add("Authorization", "Bearer "+token)
 				req.Header.Add("Content-Type", w.FormDataContentType())
 				req.Header.Add("Platform", "open_platform")
+				// 123 上传网关可能无法处理大型 chunked 请求体；multipart 的三段长度均已知。
+				req.ContentLength = int64(head.Len()) + size + int64(tail.Len())
 
+				startedAt := time.Now()
 				res, err := base.HttpClient.Do(req)
 				if err != nil {
 					return err
 				}
 				defer res.Body.Close()
-				if res.StatusCode != 200 {
-					return fmt.Errorf("slice %d upload failed, status code: %d", partNumber, res.StatusCode)
-				}
 				b.Reset()
-				_, err = b.ReadFrom(res.Body)
+				_, err = b.ReadFrom(io.LimitReader(res.Body, (1<<20)+1))
 				if err != nil {
-					return err
+					return fmt.Errorf("slice %d upload response read failed: %w", partNumber, err)
+				}
+				if b.Len() > 1<<20 {
+					return fmt.Errorf("slice %d upload response too large", partNumber)
+				}
+				if res.StatusCode != http.StatusOK {
+					return fmt.Errorf("slice %d upload failed, status code: %d, duration: %s, response: %s",
+						partNumber, res.StatusCode, time.Since(startedAt), strings.TrimSpace(b.String()))
 				}
 				var resp BaseResp
 				err = json.Unmarshal(b.Bytes(), &resp)
