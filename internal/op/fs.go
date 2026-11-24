@@ -72,10 +72,8 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 		if !args.SkipHook {
 			// call hooks
-			// The hook reads this slice asynchronously. With nothing pending,
-			// mergePendingState returns it unchanged and the sort below reorders
-			// it in place. Copy the slice for the hook so that sort cannot race
-			// it. The cached slice is still the merged listing.
+			// The post-merge sort reorders this slice in place when nothing is
+			// pending. Copy it first; the hook reads asynchronously.
 			hookFiles := files
 			if listResortMayWrite(storage) {
 				hookFiles = slices.Clone(files)
@@ -141,9 +139,7 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 	return objs, nil
 }
 
-// listResortMayWrite reports whether the post-merge sort can reorder the
-// listing in place. SortFiles and ExtractFolder return without writing when
-// their settings are empty.
+// listResortMayWrite reports whether the cache-path sort below may write the listing.
 func listResortMayWrite(storage driver.Driver) bool {
 	if storage.Config().NoCache {
 		return false
