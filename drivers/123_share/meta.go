@@ -12,6 +12,7 @@ type Addition struct {
 	//OrderBy        string `json:"order_by" type:"select" options:"file_name,size,update_at" default:"file_name"`
 	//OrderDirection string `json:"order_direction" type:"select" options:"asc,desc" default:"asc"`
 	AccessToken string `json:"accesstoken" type:"text"`
+	TempDirID   int64  `json:"temp_dir_id" type:"number" default:"0" help:"Directory ID for transfer share files. (123Open Only)"`
 }
 
 var config = driver.Config{
