@@ -433,3 +433,132 @@ func TestPendingGCReclaimsUnvisitedExpiredDirs(t *testing.T) {
 		}
 	})
 }
+
+// objsObserve is invoked from the process-wide update hook. Tests publish a
+// callback here instead of replacing objsUpdateHooks, which List reads from
+// another goroutine.
+type objsObserveFunc func(parent string, objs []model.Obj)
+
+var objsObserve atomic.Pointer[objsObserveFunc]
+
+func init() {
+	RegisterObjsUpdateHook(func(_ context.Context, parent string, objs []model.Obj) {
+		if observe := objsObserve.Load(); observe != nil {
+			(*observe)(parent, objs)
+		}
+	})
+}
+
+func withObjsObserve(t *testing.T, fn objsObserveFunc) {
+	t.Helper()
+	objsObserve.Store(&fn)
+	t.Cleanup(func() { objsObserve.Store(nil) })
+}
+
+// TestUpdateHookDoesNotShareResortSlice covers a List with nothing pending.
+// mergePendingState then returns the caller's slice, and the post-merge name
+// sort plus folder-front reorders it in place. The objs-update hook is already
+// running on that slice, so the two must not share a backing array.
+func TestUpdateHookDoesNotShareResortSlice(t *testing.T) {
+	d := newLagDriver(t)
+	d.Storage.OrderBy = "name"
+	d.Storage.OrderDirection = "asc"
+	d.Storage.ExtractFolder = "front"
+	d.mu.Lock()
+	d.files["/dir"] = []string{"b", "a.txt", "c.txt"}
+	d.mu.Unlock()
+
+	hookObjs := make(chan []model.Obj, 1)
+	wantParent := Key(d, "/dir")
+	withObjsObserve(t, func(parent string, objs []model.Obj) {
+		if parent != wantParent {
+			return
+		}
+		// Touch every slot. With -race this races the in-place re-sort when
+		// the hook was handed the slice that sort still owns.
+		for _, obj := range objs {
+			_ = obj.GetName()
+			_ = obj.IsDir()
+		}
+		select {
+		case hookObjs <- objs:
+		default:
+		}
+	})
+
+	names := listNames(t, d, true)
+	if !slices.Equal(names, []string{"b", "a.txt", "c.txt"}) {
+		t.Fatalf("listing order = %v, want folder b then a.txt, c.txt", names)
+	}
+
+	var seen []model.Obj
+	select {
+	case seen = <-hookObjs:
+	case <-time.After(2 * time.Second):
+		t.Fatal("objs update hook did not run")
+	}
+	if len(seen) == 0 {
+		t.Fatal("hook received an empty listing")
+	}
+	cache, ok := Cache.dirCache.Get(wantParent)
+	if !ok || len(cache.objs) == 0 {
+		t.Fatal("directory cache missing after list")
+	}
+	if &seen[0] == &cache.objs[0] {
+		t.Fatal("update hook and cached listing share a slice that is sorted in place")
+	}
+}
+
+// A pending add is still merged and ordered when folder-front sorting is on,
+// including while an update hook reads the pre-merge listing.
+func TestPendingAddRespectsFolderFrontWithUpdateHook(t *testing.T) {
+	d := newLagDriver(t)
+	d.Storage.OrderBy = "name"
+	d.Storage.OrderDirection = "asc"
+	d.Storage.ExtractFolder = "front"
+	d.mu.Lock()
+	d.files["/dir"] = []string{"b", "old.bin"}
+	d.mu.Unlock()
+	d.setHidden("aaa.bin", true)
+	putFile(t, d, "aaa.bin")
+
+	hookObjs := make(chan []model.Obj, 1)
+	wantParent := Key(d, "/dir")
+	withObjsObserve(t, func(parent string, objs []model.Obj) {
+		if parent != wantParent {
+			return
+		}
+		for _, obj := range objs {
+			_ = obj.GetName()
+			_ = obj.IsDir()
+		}
+		select {
+		case hookObjs <- append([]model.Obj(nil), objs...):
+		default:
+		}
+	})
+
+	names := listNames(t, d, true)
+	if !slices.Equal(names, []string{"b", "aaa.bin", "old.bin"}) {
+		t.Fatalf("listing order = %v, want folder b then aaa.bin, old.bin", names)
+	}
+	select {
+	case seen := <-hookObjs:
+		if slices.Contains(seenNames(seen), "aaa.bin") {
+			t.Fatalf("hook should see the remote listing without the pending add, got %v", seenNames(seen))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("objs update hook did not run")
+	}
+	if _, err := getFile(d, "aaa.bin"); err != nil {
+		t.Fatalf("get pending add: %v", err)
+	}
+}
+
+func seenNames(objs []model.Obj) []string {
+	names := make([]string, len(objs))
+	for i, obj := range objs {
+		names[i] = obj.GetName()
+	}
+	return names
+}

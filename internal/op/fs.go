@@ -3,6 +3,7 @@ package op
 import (
 	"context"
 	stdpath "path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -71,9 +72,17 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 		if !args.SkipHook {
 			// call hooks
+			// The hook reads this slice asynchronously. With nothing pending,
+			// mergePendingState returns it unchanged and the sort below reorders
+			// it in place. Copy the slice for the hook so that sort cannot race
+			// it. The cached slice is still the merged listing.
+			hookFiles := files
+			if listResortMayWrite(storage) {
+				hookFiles = slices.Clone(files)
+			}
 			go func(reqPath string, files []model.Obj) {
 				HandleObjsUpdateHook(context.WithoutCancel(ctx), reqPath, files)
-			}(utils.GetFullPath(storage.GetStorage().MountPath, path), files)
+			}(utils.GetFullPath(storage.GetStorage().MountPath, path), hookFiles)
 		}
 
 		if !storage.Config().NoCache {
@@ -130,6 +139,20 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 	}
 	return objs, nil
+}
+
+// listResortMayWrite reports whether the post-merge sort can reorder the
+// listing in place. SortFiles and ExtractFolder return without writing when
+// their settings are empty.
+func listResortMayWrite(storage driver.Driver) bool {
+	if storage.Config().NoCache {
+		return false
+	}
+	st := storage.GetStorage()
+	if storage.Config().LocalSort && st.OrderBy != "" {
+		return true
+	}
+	return st.ExtractFolder != ""
 }
 
 // Get object from list of files
