@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -62,12 +63,14 @@ func (d *QuarkUCTV) Init(ctx context.Context) error {
 			// 通过query token获取code -> refresh token
 			code, err := d.getCode(ctx1)
 			if err != nil {
-				return err
+				// 获取授权码失败，重置状态并重新获取二维码
+				return d.reInit(ctx)
 			}
 			// 通过code获取refresh token
 			err = d.getRefreshTokenByTV(ctx1, code, false)
 			if err != nil {
-				return err
+				// 换取凭证失败，重置状态并重试扫码流程
+				return d.reInit(ctx)
 			}
 		}
 	}
@@ -75,7 +78,7 @@ func (d *QuarkUCTV) Init(ctx context.Context) error {
 	if d.QuarkUCTVCommon.AccessToken == "" {
 		err := d.getRefreshTokenByTV(ctx1, d.Addition.RefreshToken, true)
 		if err != nil {
-			return err
+			return d.handleInvalidRefreshToken(ctx, err)
 		}
 	}
 
@@ -85,6 +88,22 @@ func (d *QuarkUCTV) Init(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// reInit 重置授权状态，用于在登录凭证失效或过期时触发重新扫码流程
+func (d *QuarkUCTV) reInit(ctx context.Context) error {
+	d.Addition.QueryToken = ""
+	op.MustSaveDriverStorage(d)
+	return d.Init(ctx)
+}
+
+// handleInvalidRefreshToken 检查是否为 Refresh Token 无效错误，若是则触发重新扫码
+func (d *QuarkUCTV) handleInvalidRefreshToken(ctx context.Context, err error) error {
+	if strings.Contains(err.Error(), "Refresh Token无效") {
+		d.Addition.RefreshToken = ""
+		return d.reInit(ctx)
+	}
+	return err
 }
 
 func (d *QuarkUCTV) Drop(ctx context.Context) error {
