@@ -71,26 +71,30 @@ func GenerateMetaTreeFromFolderTraversal(r ArchiveReader) (bool, []model.ObjTree
 		if isNewFolder {
 			// 将 文件夹 添加到 父文件夹
 			// 考虑压缩包仅记录文件的路径，不记录文件夹
-			// 循环创建所有父文件夹
+			// 从新目录向上逐层创建缺失的父目录；遇到已存在的父节点就挂上并停止，
+			// 不要把已存在的节点重复挂到根上，也不要把根节点挂到自己身上
+			// （会造成 JSON 序列化无限递归/OOM）。
 			parentDir := filepath.Dir(dir)
+			child := dirObj
 			for {
 				parentDirObj := dirMap[parentDir]
-				if parentDirObj == nil {
-					parentDirObj = &model.ObjectTree{}
-					if parentDir != "." {
-						parentDirObj.IsFolder = true
-						parentDirObj.Name = filepath.Base(parentDir)
-						parentDirObj.Modified = file.FileInfo().ModTime()
-					}
-					dirMap[parentDir] = parentDirObj
-				}
-				parentDirObj.Children = append(parentDirObj.Children, dirObj)
-
-				parentDir = filepath.Dir(parentDir)
-				if dirMap[parentDir] != nil {
+				if parentDirObj != nil {
+					parentDirObj.Children = append(parentDirObj.Children, child)
 					break
 				}
-				dirObj = parentDirObj
+				parentDirObj = &model.ObjectTree{}
+				if parentDir != "." {
+					parentDirObj.IsFolder = true
+					parentDirObj.Name = filepath.Base(parentDir)
+					parentDirObj.Modified = file.FileInfo().ModTime()
+				}
+				dirMap[parentDir] = parentDirObj
+				parentDirObj.Children = append(parentDirObj.Children, child)
+				if parentDir == "." {
+					break
+				}
+				child = parentDirObj
+				parentDir = filepath.Dir(parentDir)
 			}
 		}
 	}
