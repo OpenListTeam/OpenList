@@ -18,7 +18,7 @@ func TestSeedSaveTaskFinishPreservesCancellation(t *testing.T) {
 			task.SetCtx(ctx)
 			task.SetState(state)
 			task.Finish(nil)
-			if task.GetState() != tache.StateCanceled || task.GetStatus() != "已取消" {
+			if task.GetState() != tache.StateCanceled || task.GetStatus() != "canceled" {
 				t.Fatalf("state=%v status=%q", task.GetState(), task.GetStatus())
 			}
 		})

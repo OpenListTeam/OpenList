@@ -18,6 +18,27 @@ import (
 // seedMaxDirDepth 目录递归深度上限，防止异常的深层目录把请求拖死。
 const seedMaxDirDepth = 64
 
+// seedContainerExts 是「种子容器本身」的扩展名。
+//
+// 对种子文件再生成种子没有意义：产物描述的是这个几百字节的元数据文件
+// （seed-of-seed），而 .cas/.oss/.torrent 的产物名与源文件完全同名，
+// 写盘时会把原始种子覆盖掉——用户只会看到「多了一个 .cas，视频却没秒传进来」。
+// 目录展开时跳过它们，显式选中时直接拒绝。
+var seedContainerExts = map[string]struct{}{
+	".oss": {}, ".torrent": {}, ".cas": {},
+}
+
+// IsSeedContainerName reports whether name is a transfer-seed container
+// (.oss/.torrent/.cas/.cas.torrent) rather than real content.
+func IsSeedContainerName(name string) bool {
+	lower := strings.ToLower(name)
+	if strings.HasSuffix(lower, ".cas.torrent") {
+		return true
+	}
+	_, ok := seedContainerExts[stdpath.Ext(lower)]
+	return ok
+}
+
 // SeedSourceEntry 是展开目录后真正要打包进种子的一个文件。
 type SeedSourceEntry struct {
 	// Requested 用户视角路径：目录展开出来的文件为「目录/相对路径」，
@@ -79,6 +100,9 @@ func ExpandSeedSources(ctx context.Context, user *model.User, paths []string, pr
 				return nil, err
 			}
 			continue
+		}
+		if IsSeedContainerName(obj.GetName()) {
+			return nil, fmt.Errorf("%s is a transfer seed file: generating a seed from it would overwrite the source file; select the file it describes instead", requestedPath)
 		}
 		raw = append(raw, rawSeedEntry{
 			requested: requestedPath,
@@ -187,6 +211,11 @@ func walkSeedDir(ctx context.Context, user *model.User, requestedDir, fullDir, r
 			if err := walkSeedDir(ctx, user, requestedDir, childFull, childRel, out, depth+1); err != nil {
 				return err
 			}
+			continue
+		}
+		// 目录里常和正片放在一起的 .cas/.oss/.torrent 是种子元数据，
+		// 不是要打包的内容，跳过即可（否则生成的种子包含自己的元数据）
+		if IsSeedContainerName(name) {
 			continue
 		}
 		*out = append(*out, rawSeedEntry{

@@ -8,5 +8,6 @@ import (
 )
 
 func openSQLite(dsn string) gorm.Dialector {
-	return sqlite.Open(dsn)
+	return sqlite.Open(appendDSNParams(dsn,
+		"_journal=WAL&_vacuum=incremental&_busy_timeout=10000&_synchronous=NORMAL"))
 }

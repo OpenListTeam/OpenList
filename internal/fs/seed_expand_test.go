@@ -130,6 +130,25 @@ func TestDedupeSeedPathsExt(t *testing.T) {
 	}
 }
 
+// TestIsSeedContainerName 种子容器文件不能当成内容打包：从 xxx.mp4.cas 生成 .cas
+// 会产出同名文件直接覆盖源种子，用户只会得到一个描述元数据的种子。
+func TestIsSeedContainerName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"a.mp4.cas":         true,
+		"a.mp4.cas.torrent": true,
+		"A.MP4.CAS":         true,
+		"a.oss":             true,
+		"a.torrent":         true,
+		"a.mp4":             false,
+		"a.cast":            false,
+		"cas":               false,
+	} {
+		if got := IsSeedContainerName(name); got != want {
+			t.Fatalf("IsSeedContainerName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestExpandSeedSourcesVFSVisibilityAndSplit(t *testing.T) {
 	if db.GetDb() == nil {
 		memoryDB, err := gorm.Open(sqlite.Open("file:seed_expand_vfs?mode=memory&cache=shared"), &gorm.Config{})

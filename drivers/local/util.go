@@ -22,6 +22,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/disintegration/imaging"
+	log "github.com/sirupsen/logrus"
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
@@ -442,6 +443,69 @@ func (m *DirectoryMap) DeleteDirNode(dirname string) error {
 	}
 
 	return nil
+}
+
+func (d *Local) copyForMove(srcPath, dstPath string) error {
+	info, err := os.Lstat(srcPath)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeDevice != 0 {
+		return errors.New("cannot copy a device")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return d.copySymlinkForMove(srcPath, dstPath)
+	}
+	if info.Mode()&os.ModeNamedPipe != 0 {
+		if err = copyNamedPipe(dstPath, info.Mode(), os.FileMode(d.mkdirPerm)); err != nil {
+			return err
+		}
+		// Some platforms skip named pipes, so keep the source when nothing was created.
+		_, err = os.Lstat(dstPath)
+		return err
+	}
+	if !info.IsDir() {
+		if err = utils.CopyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+		preserveModTime(dstPath, info)
+		return nil
+	}
+
+	if err = os.MkdirAll(dstPath, os.FileMode(d.mkdirPerm)); err != nil {
+		return err
+	}
+	files, err := readDir(srcPath)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err = d.copyForMove(filepath.Join(srcPath, file.Name()), filepath.Join(dstPath, file.Name())); err != nil {
+			return err
+		}
+	}
+	if err = os.Chmod(dstPath, info.Mode()); err != nil {
+		return err
+	}
+	preserveModTime(dstPath, info)
+	return nil
+}
+
+func preserveModTime(dstPath string, info os.FileInfo) {
+	if err := os.Chtimes(dstPath, info.ModTime(), info.ModTime()); err != nil {
+		log.Errorf("[local] failed to change time of %s: %s", dstPath, err)
+	}
+}
+
+func (d *Local) copySymlinkForMove(srcPath, dstPath string) error {
+	linkOrig, err := os.Readlink(srcPath)
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(dstPath), os.FileMode(d.mkdirPerm)); err != nil {
+		return err
+	}
+	return os.Symlink(linkOrig, dstPath)
 }
 
 func (d *Local) tryCopy(srcPath, dstPath string, info os.FileInfo) error {
