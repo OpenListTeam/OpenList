@@ -22,6 +22,7 @@ type Addition struct {
 	HideUploading       bool   `json:"hide_uploading"`
 	OrderBy             string `json:"order_by" type:"select" options:"name,size,updated_at,created_at" default:"name" required:"true"`
 	OrderDirection      string `json:"order_direction" type:"select" options:"asc,desc" default:"asc" required:"true"`
+	DisableDirectUpload bool   `json:"disable_direct_upload" default:"false" help:"Let the browser upload straight to the storage policy (S3/KS3 only) instead of relaying through the server. Turn it off if the bucket CORS rules do not allow this site or do not expose the ETag header."`
 }
 
 var config = driver.Config{
