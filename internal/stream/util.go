@@ -208,6 +208,8 @@ func (s *cachedSectionReader) GetSectionReader(off, length int64) (io.ReadSeeker
 }
 func (*cachedSectionReader) FreeSectionReader(sr io.ReadSeeker) {}
 
+var errSectionReaderClosed = errors.New("section reader closed")
+
 type hybridSectionReader struct {
 	file       model.FileStreamer
 	fileOffset int64
@@ -230,8 +232,50 @@ func (ss *hybridSectionReader) DiscardSection(off int64, length int64) error {
 }
 
 type blockRefReadSeeker struct {
-	io.ReadSeeker
-	b buffer.Block
+	ras    buffer.ReadAtSeeker
+	b      buffer.Block
+	mu     sync.Mutex
+	closed bool
+}
+
+func (sr *blockRefReadSeeker) Read(p []byte) (int, error) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	if sr.closed || sr.ras == nil {
+		return 0, errSectionReaderClosed
+	}
+	return sr.ras.Read(p)
+}
+
+func (sr *blockRefReadSeeker) ReadAt(p []byte, off int64) (int, error) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	if sr.closed || sr.ras == nil {
+		return 0, errSectionReaderClosed
+	}
+	return sr.ras.ReadAt(p, off)
+}
+
+func (sr *blockRefReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	if sr.closed || sr.ras == nil {
+		return 0, errSectionReaderClosed
+	}
+	return sr.ras.Seek(offset, whence)
+}
+
+func (sr *blockRefReadSeeker) close() (buffer.Block, bool) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	if sr.closed {
+		return nil, false
+	}
+	sr.closed = true
+	b := sr.b
+	sr.b = nil
+	sr.ras = nil
+	return b, true
 }
 
 // 线程不安全
@@ -268,9 +312,9 @@ func (ss *hybridSectionReader) GetSectionReader(off, length int64) (io.ReadSeeke
 		if _, err := rs.Seek(0, io.SeekStart); err != nil {
 			return nil, fmt.Errorf("failed to reset cached block reader: %w", err)
 		}
-		return &blockRefReadSeeker{rs, b}, nil
+		return &blockRefReadSeeker{ras: rs, b: b}, nil
 	}
-	return &blockRefReadSeeker{io.NewSectionReader(b, 0, length), b}, nil
+	return &blockRefReadSeeker{ras: io.NewSectionReader(b, 0, length), b: b}, nil
 }
 
 func (ss *hybridSectionReader) get() buffer.Block {
@@ -291,8 +335,8 @@ func (ss *hybridSectionReader) put(b buffer.Block) {
 
 func (ss *hybridSectionReader) FreeSectionReader(rs io.ReadSeeker) {
 	if sr, ok := rs.(*blockRefReadSeeker); ok {
-		ss.put(sr.b)
-		sr.b = nil
-		sr.ReadSeeker = nil
+		if b, closed := sr.close(); closed && b != nil {
+			ss.put(b)
+		}
 	}
 }
