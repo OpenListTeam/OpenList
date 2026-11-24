@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"strconv"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -341,46 +340,64 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 
 	var offset int64 = 0
 	url += "?includeItemsFromAllDrives=true&supportsAllDrives=true"
-	for offset < file.GetSize() {
+	totalSize := file.GetSize()
+	for offset < totalSize {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
 		}
-		chunkSize := min(file.GetSize()-offset, defaultChunkSize)
+		chunkSize := min(totalSize-offset, defaultChunkSize)
 		reader, err := ss.GetSectionReader(offset, chunkSize)
 		if err != nil {
 			return err
 		}
-		limitedReader := driver.NewLimitedUploadStream(ctx, reader)
+		isLastChunk := offset+chunkSize == totalSize
 		err = retry.Do(func() error {
-			reader.Seek(0, io.SeekStart)
-			req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, limitedReader)
+			var bodyReader io.Reader = reader
+			if ra, ok := reader.(io.ReaderAt); ok {
+				bodyReader = io.NewSectionReader(ra, 0, chunkSize)
+			} else if _, err := reader.Seek(0, io.SeekStart); err != nil {
+				return err
+			}
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, driver.NewLimitedUploadStream(ctx, bodyReader))
 			if err != nil {
 				return err
 			}
-			req.Header = map[string][]string{
-				"Authorization":  {"Bearer " + d.AccessToken},
-				"Content-Length": {strconv.FormatInt(chunkSize, 10)},
-				"Content-Range":  {fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, file.GetSize())},
-			}
+			req.ContentLength = chunkSize
+			req.Header.Set("Authorization", "Bearer "+d.AccessToken)
+			req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, totalSize))
+
 			res, err := base.HttpClient.Do(req)
 			if err != nil {
 				return err
 			}
 			defer res.Body.Close()
-			bytes, _ := io.ReadAll(res.Body)
-			var e Error
-			utils.Json.Unmarshal(bytes, &e)
-			if e.Error.Code != 0 {
-				if e.Error.Code == 401 {
-					err = d.refreshToken()
-					if err != nil {
-						return err
-					}
+
+			body, _ := io.ReadAll(res.Body)
+			if isLastChunk {
+				if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated {
+					return nil
 				}
-				return fmt.Errorf("%s: %v", e.Error.Message, e.Error.Errors)
+			} else if res.StatusCode == http.StatusPermanentRedirect {
+				return nil
 			}
-			up(float64(offset+chunkSize) / float64(file.GetSize()) * 100)
-			return nil
+
+			var e Error
+			_ = utils.Json.Unmarshal(body, &e)
+			if res.StatusCode == http.StatusUnauthorized || e.Error.Code == http.StatusUnauthorized {
+				if refreshErr := d.refreshToken(); refreshErr != nil {
+					return refreshErr
+				}
+			}
+			if e.Error.Code != 0 {
+				err = fmt.Errorf("status %d: %s: %v", res.StatusCode, e.Error.Message, e.Error.Errors)
+			} else {
+				err = fmt.Errorf("unexpected status %d: %s", res.StatusCode, string(body))
+			}
+			if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusGone {
+				return retry.Unrecoverable(err)
+			}
+			return err
 		},
 			retry.Context(ctx),
 			retry.Attempts(3),
@@ -391,6 +408,7 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 			return err
 		}
 		offset += chunkSize
+		up(float64(offset) / float64(totalSize) * 100)
 	}
 	return nil
 }
