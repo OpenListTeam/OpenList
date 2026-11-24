@@ -34,7 +34,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 		if link.RangeReader == nil {
 			r = r.WithContext(context.WithValue(r.Context(), conf.RequestHeaderKey, r.Header))
 		}
-		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), size, rrf)
+		return net.ServeHTTP(w, r, linkFileName(file, link), file.ModTime(), size, rrf)
 	}
 
 	if link.RangeReader != nil {
@@ -43,7 +43,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 		if size <= 0 {
 			size = file.GetSize()
 		}
-		return net.ServeHTTP(w, r, file.GetName(), file.ModTime(), size, link.RangeReader)
+		return net.ServeHTTP(w, r, linkFileName(file, link), file.ModTime(), size, link.RangeReader)
 	}
 
 	//transparent proxy
@@ -55,7 +55,7 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 	defer res.Body.Close()
 
 	maps.Copy(w.Header(), res.Header)
-	w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(file.GetName()))
+	w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(linkFileName(file, link)))
 	w.WriteHeader(res.StatusCode)
 	if r.Method == http.MethodHead {
 		return nil
@@ -67,8 +67,17 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 	})
 	return err
 }
+
+// linkFileName returns link.FileName when set, otherwise file.GetName().
+func linkFileName(file model.Obj, link *model.Link) string {
+	if link.FileName != "" {
+		return link.FileName
+	}
+	return file.GetName()
+}
+
 func attachHeader(w http.ResponseWriter, file model.Obj, link *model.Link) {
-	fileName := file.GetName()
+	fileName := linkFileName(file, link)
 	w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(fileName))
 	w.Header().Set("Content-Type", utils.GetMimeType(fileName))
 	size := link.ContentLength

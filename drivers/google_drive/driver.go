@@ -52,16 +52,34 @@ func (d *GoogleDrive) List(ctx context.Context, dir model.Obj, args model.ListAr
 }
 
 func (d *GoogleDrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	url := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?includeItemsFromAllDrives=true&supportsAllDrives=true", file.GetID())
-	_, err := d.request(url, http.MethodGet, nil, nil)
+	fileID := file.GetID()
+	metaURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s", fileID)
+
+	var meta FileMeta
+	_, err := d.request(metaURL, http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParam("fields", FileLinkFields)
+	}, &meta)
 	if err != nil {
 		return nil, err
 	}
+
+	if !meta.Capabilities.CanDownload {
+		return nil, fmt.Errorf("file %q cannot be downloaded: download capability is not granted", fileID)
+	}
+
+	strategy, err := resolveDownloadStrategy(meta.MimeType)
+	if err != nil {
+		return nil, err
+	}
+
 	link := model.Link{
-		URL: url + "&alt=media&acknowledgeAbuse=true",
+		URL: buildDownloadURL(fileID, strategy),
 		Header: http.Header{
 			"Authorization": []string{"Bearer " + d.AccessToken},
 		},
+	}
+	if strategy.Kind == kindExport {
+		link.FileName = exportedFileName(file.GetName(), strategy.Extension)
 	}
 	return &link, nil
 }
