@@ -9,6 +9,7 @@ import (
 	stdpath "path"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -28,6 +29,11 @@ import (
 type Chunk struct {
 	model.Storage
 	Addition
+	staging    driver.StagingInUse
+	publishing driver.KeyedMutex
+	// what the remote does with folder renames (folderRename*), found out by
+	// the first staged upload
+	folderRename atomic.Int32
 }
 
 func (d *Chunk) Config() driver.Config {
@@ -46,6 +52,8 @@ func (d *Chunk) Init(ctx context.Context) error {
 		return errors.New("chunk folder prefix must not be empty")
 	}
 	d.RemotePath = utils.FixAndCleanPath(d.RemotePath)
+	// an edited storage keeps its driver, and its remote may be another one
+	d.folderRename.Store(folderRenameUnknown)
 	return nil
 }
 
@@ -85,6 +93,7 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 	chunkSizes := []int64{-1}
 	h := make(map[*utils.HashType]string)
 	var first model.Obj
+	gap := false
 	for _, o := range chunkObjs {
 		if o.IsDir() {
 			continue
@@ -100,7 +109,12 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 			continue
 		}
 		idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
-		if err != nil {
+		if err != nil || idx < 0 {
+			continue
+		}
+		if idx >= len(chunkObjs) {
+			// numbered past the entries there are: a part before it is missing
+			gap = true
 			continue
 		}
 		totalSize += o.GetSize()
@@ -119,23 +133,14 @@ func (d *Chunk) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 	}
 	reqDir, _ := stdpath.Split(path)
-	// 文件块不完整时，返回文件夹对象
-	if chunkSizes[0] == -1 {
-		return &model.Object{
-			Path:     stdpath.Join(reqDir, chunkName),
-			Name:     chunkName,
-			IsFolder: true,
-			Modified: d.Modified,
-		}, nil
+	// a folder without a complete set of parts is no file of this name: List
+	// shows it as a folder under its own name, and Get finds it by that name
+	if gap || chunkSizes[0] == -1 {
+		return nil, errs.ObjectNotFound
 	}
 	for i, l := 1, len(chunkSizes)-1; i < l; i++ {
 		if chunkSizes[i] == 0 {
-			return &model.Object{
-				Path:     stdpath.Join(reqDir, chunkName),
-				Name:     chunkName,
-				IsFolder: true,
-				Modified: d.Modified,
-			}, nil
+			return nil, errs.ObjectNotFound
 		}
 	}
 	objRes := chunkObject{
@@ -175,6 +180,18 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		}
 		rawName := obj.GetName()
 		if obj.IsDir() {
+			p := stdpath.Join(remoteActualDir, rawName)
+			if d.staging.Held(p) {
+				// the version an upload in progress is replacing
+				continue
+			}
+			if created, ok := driver.StagingCreated(d.GetStorage(), rawName); ok {
+				// an upload in progress; reclaim the ones a killed process left
+				if d.staging.Reclaimable(p, created, obj.ModTime()) {
+					_ = op.Remove(ctx, remoteStorage, p)
+				}
+				continue
+			}
 			if name, ok := strings.CutPrefix(rawName, d.ChunkPrefix); ok {
 				resultIdx := len(result)
 				result = append(result, nil)
@@ -190,6 +207,7 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 					chunkSizes := []int64{-1}
 					h := make(map[*utils.HashType]string)
 					var first model.Obj
+					gap := false
 					for _, o := range chunkObjs {
 						if o.IsDir() {
 							continue
@@ -205,7 +223,13 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 							continue
 						}
 						idx, err := strconv.Atoi(strings.TrimSuffix(o.GetName(), d.CustomExt))
-						if err != nil {
+						if err != nil || idx < 0 {
+							continue
+						}
+						if idx >= len(chunkObjs) {
+							// numbered past the entries there are: a part
+							// before it is missing
+							gap = true
 							continue
 						}
 						totalSize += o.GetSize()
@@ -224,7 +248,7 @@ func (d *Chunk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 						}
 					}
 					// 文件块不完整时，返回文件夹对象
-					if chunkSizes[0] == -1 {
+					if gap || chunkSizes[0] == -1 {
 						result[resultIdx] = &model.Object{
 							Name:     rawName,
 							Size:     obj.GetSize(),
@@ -464,20 +488,52 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 	if err != nil {
 		return err
 	}
-	if (d.Thumbnail && dstDir.GetName() == ".thumbnails") || (d.ChunkLargeFileOnly && file.GetSize() <= d.PartSize) {
+	if d.Thumbnail && dstDir.GetName() == ".thumbnails" {
 		return op.Put(ctx, remoteStorage, stdpath.Join(remoteActualPath, dstDir.GetPath()), file, up)
 	}
+	parent := stdpath.Join(remoteActualPath, dstDir.GetPath())
+	name := d.ChunkPrefix + file.GetName()
+	if d.ChunkLargeFileOnly && file.GetSize() <= d.PartSize {
+		// written whole, in turn with other uploads of the file, as dropping
+		// the chunked form must not hit a version written meanwhile
+		unlock, err := d.publishing.Lock(ctx, stdpath.Join(parent, name))
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		if err := op.Put(ctx, remoteStorage, parent, file, up); err != nil {
+			return err
+		}
+		return d.dropOtherForm(ctx, remoteStorage, parent, name, true)
+	}
+	staging, release, err := d.stage(ctx, remoteStorage, parent)
+	if err != nil {
+		return err
+	}
+	if staging == "" {
+		return d.putInPlace(ctx, remoteStorage, parent, name, file, up)
+	}
+	// released after the staging folder is moved into place or removed
+	defer release()
+	if err := d.putParts(ctx, remoteStorage, staging, file, up); err != nil {
+		_ = op.Remove(context.WithoutCancel(ctx), remoteStorage, staging)
+		return err
+	}
+	return d.publish(ctx, remoteStorage, parent, staging, name)
+}
+
+// putParts uploads the hash markers and the parts of file into dir.
+func (d *Chunk) putParts(ctx context.Context, remoteStorage driver.Driver, dir string, file model.FileStreamer, up driver.UpdateProgress) error {
 	upReader := &driver.ReaderUpdatingProgress{
 		Reader:         file,
 		UpdateProgress: up,
 	}
-	dst := stdpath.Join(remoteActualPath, dstDir.GetPath(), d.ChunkPrefix+file.GetName())
 	skipHookCtx := context.WithValue(ctx, conf.SkipHookKey, struct{}{})
 	if d.StoreHash {
 		for ht, value := range file.GetHash().All() {
-			_ = op.Put(skipHookCtx, remoteStorage, dst, &stream.FileStream{
+			_ = op.Put(skipHookCtx, remoteStorage, dir, &stream.FileStream{
 				Obj: &model.Object{
-					Name:     fmt.Sprintf("hash_%s_%s%s", ht.Name, value, d.CustomExt),
+					Name:     d.hashMarkerName(ht, value),
 					Size:     1,
 					Modified: file.ModTime(),
 				},
@@ -492,9 +548,8 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		fullPartCount--
 		tailSize = d.PartSize
 	}
-	partIndex := 0
-	for partIndex < fullPartCount {
-		err = op.Put(skipHookCtx, remoteStorage, dst, &stream.FileStream{
+	for partIndex := 0; partIndex < fullPartCount; partIndex++ {
+		err := op.Put(skipHookCtx, remoteStorage, dir, &stream.FileStream{
 			Obj: &model.Object{
 				Name:     d.getPartName(partIndex),
 				Size:     d.PartSize,
@@ -504,12 +559,10 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 			Reader:   io.LimitReader(upReader, d.PartSize),
 		}, nil)
 		if err != nil {
-			_ = op.Remove(ctx, remoteStorage, dst)
 			return err
 		}
-		partIndex++
 	}
-	err = op.Put(ctx, remoteStorage, dst, &stream.FileStream{
+	return op.Put(ctx, remoteStorage, dir, &stream.FileStream{
 		Obj: &model.Object{
 			Name:     d.getPartName(fullPartCount),
 			Size:     tailSize,
@@ -518,14 +571,23 @@ func (d *Chunk) Put(ctx context.Context, dstDir model.Obj, file model.FileStream
 		Mimetype: file.GetMimetype(),
 		Reader:   upReader,
 	}, nil)
-	if err != nil {
-		_ = op.Remove(ctx, remoteStorage, dst)
-	}
-	return err
 }
 
 func (d *Chunk) getPartName(part int) string {
 	return fmt.Sprintf("%d%s", part, d.CustomExt)
+}
+
+func (d *Chunk) hashMarkerName(ht *utils.HashType, value string) string {
+	return fmt.Sprintf("hash_%s_%s%s", ht.Name, value, d.CustomExt)
+}
+
+// partCount returns how many parts putParts stores a file of size in.
+func (d *Chunk) partCount(size int64) int {
+	full := int(size / d.PartSize)
+	if size%d.PartSize == 0 && full > 0 {
+		return full
+	}
+	return full + 1
 }
 
 func (d *Chunk) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
