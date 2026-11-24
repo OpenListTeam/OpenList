@@ -156,7 +156,8 @@ func (d *Onedrive) Request(url string, method string, callback base.ReqCallback,
 			if err != nil {
 				return nil, err
 			}
-			return d.Request(url, method, callback, resp)
+			// retry once with the refreshed token, never loop on a bad token
+			return d.Request(url, method, callback, resp, true)
 		}
 		return nil, errors.New(e.Error.Message)
 	}
@@ -310,7 +311,7 @@ func (d *Onedrive) getDrive(ctx context.Context) (*DriveResp, error) {
 	var resp DriveResp
 	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
 		req.SetContext(ctx)
-	}, &resp, true)
+	}, &resp)
 	if err != nil {
 		return nil, err
 	}

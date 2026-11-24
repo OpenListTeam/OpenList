@@ -96,18 +96,21 @@ type ArchiveDecompressArgs struct {
 }
 
 type SharingListArgs struct {
-	Refresh bool
-	Pwd     string
+	Refresh  bool
+	Pwd      string
+	ClientIP string
 }
 
 type SharingArchiveMetaArgs struct {
 	ArchiveMetaArgs
-	Pwd string
+	Pwd      string
+	ClientIP string
 }
 
 type SharingArchiveListArgs struct {
 	ArchiveListArgs
-	Pwd string
+	Pwd      string
+	ClientIP string
 }
 
 type SharingLinkArgs struct {

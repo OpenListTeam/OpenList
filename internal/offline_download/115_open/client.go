@@ -122,7 +122,7 @@ func (o *Open115) Status(task *tool.DownloadTask) (*tool.Status, error) {
 			s.Completed = t.IsDone()
 			s.TotalBytes = t.Size
 			if t.IsFailed() {
-				s.Err = fmt.Errorf(t.GetStatus())
+				s.Err = fmt.Errorf("%s", t.GetStatus())
 			}
 			return s, nil
 		}

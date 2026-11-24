@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -366,6 +367,14 @@ func (y *Cloud189PC) Remove(ctx context.Context, obj model.Obj) error {
 	return y.WaitBatchTask("DELETE", resp.TaskID, time.Millisecond*200)
 }
 
+func familyTransferTempName(srcName string) string {
+	ext := path.Ext(srcName)
+	if ext == "" {
+		ext = ".transfer"
+	}
+	return fmt.Sprintf("0%s%s", uuid.NewString(), ext)
+}
+
 func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (newObj model.Obj, err error) {
 	overwrite := true
 	isFamily := y.isFamily()
@@ -399,7 +408,7 @@ func (y *Cloud189PC) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 		srcName := stream.GetName()
 		stream = &WrapFileStreamer{
 			FileStreamer: stream,
-			Name:         fmt.Sprintf("0%s.transfer", uuid.NewString()),
+			Name:         familyTransferTempName(srcName),
 		}
 
 		// 使用家庭云上传

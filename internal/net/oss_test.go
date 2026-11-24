@@ -18,7 +18,7 @@ func TestNewOSSClientUsesEnvironmentHTTPSProxy(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "")
 	t.Setenv("http_proxy", "")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
-	t.Setenv("https_proxy", "")
+	t.Setenv("https_proxy", "http://127.0.0.1:7890")
 	t.Setenv("NO_PROXY", "")
 	t.Setenv("no_proxy", "")
 
@@ -31,9 +31,13 @@ func TestNewOSSClientUsesEnvironmentHTTPSProxy(t *testing.T) {
 		t.Fatal("expected OSS client to use a custom HTTP client")
 	}
 
-	transport, ok := client.HTTPClient.Transport.(*http.Transport)
+	safe, ok := client.HTTPClient.Transport.(*safeTransport)
 	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", client.HTTPClient.Transport)
+		t.Fatalf("expected *safeTransport, got %T", client.HTTPClient.Transport)
+	}
+	transport, ok := safe.base.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected safe transport to wrap *http.Transport, got %T", safe.base)
 	}
 
 	if transport.Proxy == nil {

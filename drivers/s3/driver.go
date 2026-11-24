@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -229,9 +230,14 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 		return nil, errs.NotImplement
 	}
 	path := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
+	contentType, _ := ctx.Value(conf.DirectUploadContentTypeKey).(string)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
 	req, _ := d.directUploadClient.PutObjectRequest(&s3.PutObjectInput{
-		Bucket: &d.Bucket,
-		Key:    &path,
+		Bucket:      &d.Bucket,
+		Key:         &path,
+		ContentType: &contentType,
 	})
 	if req == nil {
 		return nil, fmt.Errorf("failed to create PutObject request")
@@ -243,6 +249,7 @@ func (d *S3) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj
 	return &model.HttpDirectUploadInfo{
 		UploadURL: link,
 		Method:    "PUT",
+		Headers:   map[string]string{"Content-Type": contentType},
 	}, nil
 }
 

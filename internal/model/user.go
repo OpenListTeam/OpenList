@@ -23,11 +23,12 @@ const (
 const (
 	StaticHashSalt = "https://github.com/alist-org/alist"
 
-	InvalidUsernameOrPassword = "Invalid username or password"
-	Invalid2FACode            = "Invalid 2FA code"
-	TooManyAttempts           = "Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later."
-	GuestCannotUpdateProfile  = "Guest user can not update profile"
-	GuestCannotGenerate2FA    = "Guest user can not generate 2FA code"
+	InvalidUsernameOrPassword      = "Invalid username or password"
+	Invalid2FACode                 = "Invalid 2FA code"
+	TooManyAttempts                = "Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later."
+	DatabaseTemporarilyUnavailable = "database temporarily unavailable"
+	GuestCannotUpdateProfile       = "Guest user can not update profile"
+	GuestCannotGenerate2FA         = "Guest user can not generate 2FA code"
 )
 
 var LoginCache = cache.NewMemCache[int]()

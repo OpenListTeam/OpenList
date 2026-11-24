@@ -9,6 +9,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/authn"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -37,9 +38,11 @@ func BeginAuthnLogin(c *gin.Context) {
 	if username := c.Query("username"); username != "" {
 		var user *model.User
 		user, err = db.GetUserByName(username)
-		if err == nil {
-			options, sessionData, err = authnInstance.BeginLogin(user)
+		if err != nil {
+			common.ErrorUserLookupResp(c, err)
+			return
 		}
+		options, sessionData, err = authnInstance.BeginLogin(user)
 	} else { // client-side discoverable login
 		options, sessionData, err = authnInstance.BeginDiscoverableLogin()
 	}
@@ -88,7 +91,7 @@ func FinishAuthnLogin(c *gin.Context) {
 	if username := c.Query("username"); username != "" {
 		user, err = db.GetUserByName(username)
 		if err != nil {
-			common.ErrorResp(c, err, 400)
+			common.ErrorUserLookupResp(c, err)
 			return
 		}
 		_, err = authnInstance.FinishLogin(user, sessionData, c.Request)
@@ -107,6 +110,10 @@ func FinishAuthnLogin(c *gin.Context) {
 		}, sessionData, c.Request)
 	}
 	if err != nil {
+		if errs.IsDatabaseBusy(err) {
+			common.ErrorUserLookupResp(c, err)
+			return
+		}
 		common.ErrorResp(c, err, 400)
 		return
 	}

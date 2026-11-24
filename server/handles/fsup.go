@@ -1,19 +1,25 @@
 package handles
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/url"
 	stdpath "path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
+	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
@@ -97,6 +103,31 @@ func FsStream(c *gin.Context) {
 	if len(mimetype) == 0 {
 		mimetype = utils.GetMimeType(name)
 	}
+	generateSeed := shouldGenerateUploadSeed(c, dir)
+	if generateSeed {
+		if err = validateUploadSeedRequest(c); err != nil {
+			common.ErrorStrResp(c, err.Error(), 400)
+			return
+		}
+	}
+	if generateSeed && asTask {
+		common.ErrorStrResp(c, "seed sidecar generation requires synchronous upload", 400)
+		return
+	}
+	// CAS 的分片大小由文件大小决定；大小未知时无法在流式读取过程中切对边界，
+	// 读完再补算也不可能（数据已经写走）。在落盘前拒绝，避免「主文件已写入、
+	// sidecar 阶段才失败」的不一致。
+	if generateSeed && size < 0 && seedSidecarWantsCAS(c) {
+		common.ErrorStrResp(c, "CAS sidecar generation requires a known file size: send Content-Length or X-File-Size", 400)
+		return
+	}
+	var seedHasher *torrent.HashWriter
+	var uploadReader io.Reader = c.Request.Body
+	if generateSeed {
+		sliceSize := uploadSeedSliceSize(c, size)
+		seedHasher = torrent.NewHashWriter(sliceSize, sliceSize, 0)
+		uploadReader = io.TeeReader(c.Request.Body, seedHasher)
+	}
 	s := &stream.FileStream{
 		Obj: &model.Object{
 			Name:     name,
@@ -104,7 +135,7 @@ func FsStream(c *gin.Context) {
 			Modified: getLastModified(c),
 			HashInfo: utils.NewHashInfoByMap(h),
 		},
-		Reader:       c.Request.Body,
+		Reader:       uploadReader,
 		Mimetype:     mimetype,
 		WebPutAsTask: asTask,
 	}
@@ -117,6 +148,12 @@ func FsStream(c *gin.Context) {
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
+	}
+	if generateSeed {
+		if err = writeUploadSeedSidecar(c, dir, name, size, seedHasher); err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
 	}
 	if t == nil {
 		common.SuccessResp(c)
@@ -194,6 +231,24 @@ func FsForm(c *gin.Context) {
 	if len(mimetype) == 0 {
 		mimetype = utils.GetMimeType(name)
 	}
+	generateSeed := shouldGenerateUploadSeed(c, dir)
+	if generateSeed {
+		if err = validateUploadSeedRequest(c); err != nil {
+			common.ErrorStrResp(c, err.Error(), 400)
+			return
+		}
+	}
+	if generateSeed && asTask {
+		common.ErrorStrResp(c, "seed sidecar generation requires synchronous upload", 400)
+		return
+	}
+	var seedHasher *torrent.HashWriter
+	var uploadReader io.Reader = f
+	if generateSeed {
+		sliceSize := uploadSeedSliceSize(c, file.Size)
+		seedHasher = torrent.NewHashWriter(sliceSize, sliceSize, 0)
+		uploadReader = io.TeeReader(f, seedHasher)
+	}
 	s := &stream.FileStream{
 		Obj: &model.Object{
 			Name:     name,
@@ -201,7 +256,7 @@ func FsForm(c *gin.Context) {
 			Modified: getLastModified(c),
 			HashInfo: utils.NewHashInfoByMap(h),
 		},
-		Reader:       f,
+		Reader:       uploadReader,
 		Mimetype:     mimetype,
 		WebPutAsTask: asTask,
 	}
@@ -218,6 +273,12 @@ func FsForm(c *gin.Context) {
 		common.ErrorResp(c, err, 500)
 		return
 	}
+	if generateSeed {
+		if err = writeUploadSeedSidecar(c, dir, name, file.Size, seedHasher); err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+	}
 	if t == nil {
 		common.SuccessResp(c)
 		return
@@ -225,4 +286,145 @@ func FsForm(c *gin.Context) {
 	common.SuccessResp(c, gin.H{
 		"task": getTaskInfo(t),
 	})
+}
+
+func shouldGenerateUploadSeed(c *gin.Context, path string) bool {
+	if strings.TrimSpace(c.GetHeader("X-Seed-Sidecars")) != "" {
+		return true
+	}
+	policy := strings.ToLower(strings.TrimSpace(c.GetHeader("X-Generate-Seed")))
+	if policy != "" && policy != "inherit" {
+		return policy == "on" || policy == "true" || policy == "1"
+	}
+	if storage := op.GetBalancedStorage(path); storage != nil {
+		policy = strings.ToLower(strings.TrimSpace(storage.GetStorage().SeedPolicy))
+	}
+	if policy == "" || policy == "inherit" {
+		policy = strings.ToLower(setting.GetStr(conf.SeedAutoGeneratePolicy, "off"))
+	}
+	return (policy == "on" || policy == "true" || policy == "1") && configuredSeedFormats() != ""
+}
+
+func seedPieceSize(c *gin.Context) int64 {
+	value := c.GetHeader("X-Seed-Piece-Size")
+	if value == "" {
+		return torrent.DefaultPieceSize
+	}
+	size, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || size <= 0 || size > 1<<30 {
+		return torrent.DefaultPieceSize
+	}
+	return size
+}
+
+// seedSidecarFormats 返回本次上传要生成的种子格式串。
+// 请求头优先（X-Seed-Sidecars / X-Seed-Format），其次全局策略。
+func seedSidecarFormats(c *gin.Context) string {
+	formatsHeader := strings.TrimSpace(c.GetHeader("X-Seed-Sidecars"))
+	if formatsHeader == "" {
+		formatsHeader = strings.TrimSpace(c.GetHeader("X-Seed-Format"))
+	}
+	if formatsHeader == "" {
+		formatsHeader = configuredSeedFormats()
+	}
+	return formatsHeader
+}
+
+// seedSidecarWantsCAS reports whether this upload asks for a .cas sidecar.
+func seedSidecarWantsCAS(c *gin.Context) bool {
+	for _, format := range strings.Split(strings.ToLower(seedSidecarFormats(c)), ",") {
+		if strings.TrimSpace(format) == "cas" {
+			return true
+		}
+	}
+	return false
+}
+
+// uploadSeedSliceSize 返回上传时计算哈希应使用的分片大小。
+// CAS 的分片由文件大小唯一决定（CASSliceSize），请求头里的 piece size 对它无效；
+// 其它格式沿用请求头/默认值。
+func uploadSeedSliceSize(c *gin.Context, fileSize int64) int64 {
+	if seedSidecarWantsCAS(c) {
+		return torrent.CASSliceSize(fileSize)
+	}
+	return seedPieceSize(c)
+}
+
+func configuredSeedFormats() string {
+	policies := make(map[string]string)
+	if err := json.Unmarshal([]byte(setting.GetStr(conf.SeedFormatPolicies)), &policies); err != nil {
+		return ""
+	}
+	formats := make([]string, 0, 3)
+	for _, format := range []string{"oss", "torrent", "cas"} {
+		if strings.EqualFold(strings.TrimSpace(policies[format]), "on") {
+			formats = append(formats, format)
+		}
+	}
+	return strings.Join(formats, ",")
+}
+
+// validateUploadSeedRequest rejects invalid seed sidecar headers before the
+// main file is stored, so a bad X-Seed-* header cannot leave a partially
+// uploaded file behind.
+func validateUploadSeedRequest(c *gin.Context) error {
+	if _, err := fs.NormalizeSeedFormats(strings.Split(seedSidecarFormats(c), ",")); err != nil {
+		return err
+	}
+	if raw := strings.TrimSpace(c.GetHeader("X-Seed-Hash-Matrix")); raw != "" {
+		var matrix SeedHashMatrix
+		if err := json.Unmarshal([]byte(raw), &matrix); err != nil {
+			return fmt.Errorf("invalid seed hash matrix: %w", err)
+		}
+	}
+	return nil
+}
+
+func writeUploadSeedSidecar(c *gin.Context, dir, name string, expectedSize int64, hasher *torrent.HashWriter) error {
+	if hasher == nil {
+		return nil
+	}
+	hasher.Finish()
+	if expectedSize >= 0 && hasher.GetTotalWritten() != expectedSize {
+		return fmt.Errorf("seed sidecar requires a complete stream: read %d of %d bytes", hasher.GetTotalWritten(), expectedSize)
+	}
+	seed := torrent.NewSeed(name, "OpenList", uploadSeedSliceSize(c, expectedSize))
+	formats, err := fs.NormalizeSeedFormats(strings.Split(seedSidecarFormats(c), ","))
+	if err != nil {
+		return err
+	}
+	matrix := SeedHashMatrix{}
+	if rawMatrix := strings.TrimSpace(c.GetHeader("X-Seed-Hash-Matrix")); rawMatrix != "" {
+		if err = json.Unmarshal([]byte(rawMatrix), &matrix); err != nil {
+			return fmt.Errorf("invalid seed hash matrix: %w", err)
+		}
+	}
+	matrix = normalizedSeedMatrix(matrix, formats)
+	seedFile := hasher.BuildSeedFile(name, getLastModified(c).UTC().Format(time.RFC3339))
+	applySeedMatrix(&seedFile, matrix)
+	seed.Files = []torrent.SeedFile{seedFile}
+	seen := make(map[string]struct{}, 3)
+	for _, rawFormat := range formats {
+		format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(rawFormat), "."))
+		if format == "bt" {
+			format = "torrent"
+		}
+		if _, exists := seen[format]; exists {
+			continue
+		}
+		seen[format] = struct{}{}
+		data, err := fs.EncodeGeneratedSeed(seed, format, hasher.GetPieceHashes())
+		if err != nil {
+			return fmt.Errorf("generate %s seed sidecar: %w", format, err)
+		}
+		sidecar := &stream.FileStream{
+			Ctx:    c.Request.Context(),
+			Obj:    &model.Object{Name: name + "." + format, Size: int64(len(data)), Modified: time.Now()},
+			Reader: bytes.NewReader(data), Mimetype: "application/octet-stream",
+		}
+		if err = fs.PutDirectly(c.Request.Context(), dir, sidecar, true); err != nil {
+			return fmt.Errorf("upload %s seed sidecar: %w", format, err)
+		}
+	}
+	return nil
 }

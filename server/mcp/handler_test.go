@@ -200,8 +200,10 @@ func TestInitializeNegotiatesUnsupportedProtocolVersion(t *testing.T) {
 func TestCreateSessionPrunesUserSessionLimit(t *testing.T) {
 	srv := newTestServer(nil)
 	var firstSessionID string
+	baseTime := time.Now()
 	for i := range maxUserSessions {
 		currentSession := srv.createSession(1)
+		currentSession.lastUsedAt = baseTime.Add(time.Duration(i))
 		if i == 0 {
 			firstSessionID = currentSession.id
 		}
@@ -223,8 +225,10 @@ func TestCreateSessionPrunesUserSessionLimit(t *testing.T) {
 func TestCreateSessionPrunesGlobalSessionLimit(t *testing.T) {
 	srv := newTestServer(nil)
 	var firstSessionID string
+	baseTime := time.Now()
 	for i := range maxSessions {
 		currentSession := srv.createSession(uint(i + 1))
+		currentSession.lastUsedAt = baseTime.Add(time.Duration(i))
 		if i == 0 {
 			firstSessionID = currentSession.id
 		}

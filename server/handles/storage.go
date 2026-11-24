@@ -29,6 +29,8 @@ type detailWithIndex struct {
 }
 
 func makeStorageResp(ctx *gin.Context, storages []model.Storage) []*StorageResp {
+	waitCtx, cancel := context.WithTimeout(ctx.Request.Context(), time.Second*3)
+	defer cancel()
 	ret := make([]*StorageResp, len(storages))
 	detailsChan := make(chan detailWithIndex, len(storages))
 	workerCount := 0
@@ -50,9 +52,10 @@ func makeStorageResp(ctx *gin.Context, storages []model.Storage) []*StorageResp 
 		}
 		workerCount++
 		go func(dri driver.Driver, idx int) {
-			details, e := op.GetStorageDetails(ctx, dri)
+			details, e := op.GetStorageDetails(waitCtx, dri)
 			if e != nil {
-				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) {
+				if !errors.Is(e, errs.NotImplement) && !errors.Is(e, errs.StorageNotInit) &&
+					!errors.Is(e, context.DeadlineExceeded) && !errors.Is(e, context.Canceled) {
 					log.Errorf("failed get %s details: %+v", dri.GetStorage().MountPath, e)
 				}
 			}

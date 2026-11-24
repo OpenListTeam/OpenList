@@ -42,6 +42,33 @@ func TestExtractFastLoginCookies(t *testing.T) {
 	}
 }
 
+func TestYunClientInfoClientType(t *testing.T) {
+	tests := []struct {
+		name       string
+		clientType string
+		want       string
+	}{
+		{
+			name: "default web client",
+			want: "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
+		},
+		{
+			name:       "pc client",
+			clientType: "pc",
+			want:       "||13|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := Yun139{Addition: Addition{ClientType: tt.clientType}}
+			if got := d.yunClientInfo(); got != tt.want {
+				t.Fatalf("yunClientInfo() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCredentialState(t *testing.T) {
 	tests := []struct {
 		name string
