@@ -66,7 +66,6 @@ func (a *QBittorrent) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	s := &tool.Status{}
 	s.TotalBytes = info.Size
 	s.FileName = info.Name
-	s.FileSize = info.Size
 	if info.Size > 0 {
 		s.Progress = float64(info.Completed) / float64(info.Size) * 100
 	} else {

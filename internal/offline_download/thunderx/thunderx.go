@@ -122,7 +122,6 @@ func (t *ThunderX) Status(task *tool.DownloadTask) (*tool.Status, error) {
 			if err != nil {
 				s.TotalBytes = 0
 			}
-			s.FileSize = s.TotalBytes
 			if t.Phase == "PHASE_TYPE_ERROR" {
 				s.Err = errors.New(t.Message)
 			}

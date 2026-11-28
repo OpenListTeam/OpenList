@@ -101,7 +101,6 @@ func (a *Aria2) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		Err:        err,
 		TotalBytes: total,
 		FileName:   fileNameFromStatus(info),
-		FileSize:   total,
 	}
 	if total > 0 {
 		s.Progress = float64(downloaded) / float64(total) * 100

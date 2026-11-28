@@ -160,10 +160,7 @@ func (t *Transmission) Status(task *tool.DownloadTask) (*tool.Status, error) {
 	if info.Name != nil {
 		s.FileName = *info.Name
 	}
-	if info.SizeWhenDone != nil {
-		s.TotalBytes = int64(*info.SizeWhenDone / 8)
-		s.FileSize = s.TotalBytes
-	}
+	s.TotalBytes = sizeWhenDoneBytes(&info)
 
 	switch *info.Status {
 	case transmissionrpc.TorrentStatusCheckWait,
@@ -181,6 +178,17 @@ func (t *Transmission) Status(task *tool.DownloadTask) (*tool.Status, error) {
 		s.Err = errors.Errorf("[transmission] unknown status occurred downloading %s, err: %s", task.GID, *info.ErrorString)
 	}
 	return s, nil
+}
+
+// sizeWhenDoneBytes converts Transmission sizeWhenDone to a byte count.
+// The RPC value is already bytes. transmissionrpc stores it as cunits.Bits:
+// UnmarshalJSON multiplies by 8 through cunits.ImportInByte, so divide by 8
+// to recover the original byte count.
+func sizeWhenDoneBytes(info *transmissionrpc.Torrent) int64 {
+	if info == nil || info.SizeWhenDone == nil {
+		return 0
+	}
+	return int64(*info.SizeWhenDone / 8)
 }
 
 var _ tool.Tool = (*Transmission)(nil)
