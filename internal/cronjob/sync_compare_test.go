@@ -129,6 +129,54 @@ func TestObjectsDifferWithChecksum(t *testing.T) {
 	}
 }
 
+// TestObjectsDifferTreatsTypeDifferenceAsChange 覆盖目录与文件类型不同的比较。
+// 即使大小相同（例如目录大小计算开启），类型不同也必须重建。
+func TestObjectsDifferTreatsTypeDifferenceAsChange(t *testing.T) {
+	srcFile := &model.Object{Name: "node", Size: 4, IsFolder: false}
+	dstDir := &model.Object{Name: "node", Size: 4, IsFolder: true}
+
+	needSync, err := objectsDiffer(srcFile, dstDir, SyncArgs{Size: true})
+	if err != nil {
+		t.Fatalf("unexpected compare error: %+v", err)
+	}
+	if !needSync {
+		t.Fatal("a file replacing an equal-sized directory must sync")
+	}
+
+	needSync, err = objectsDiffer(dstDir, srcFile, SyncArgs{Size: true})
+	if err != nil {
+		t.Fatalf("unexpected compare error: %+v", err)
+	}
+	if !needSync {
+		t.Fatal("a directory replacing an equal-sized file must sync")
+	}
+}
+
+// TestObjectsDifferFallsBackToSizeWithoutChecksum 覆盖仅启用 checksum 但无公共哈希的情况。
+// Local 存储不提供哈希；此时不能把所有文件都判定为一致，必须回退到 size。
+func TestObjectsDifferFallsBackToSizeWithoutChecksum(t *testing.T) {
+	src := &model.Object{Name: "file.txt", Size: 10}
+	dst := &model.Object{Name: "file.txt", Size: 20}
+
+	needSync, err := objectsDiffer(src, dst, SyncArgs{Checksum: true})
+	if err != nil {
+		t.Fatalf("unexpected compare error: %+v", err)
+	}
+	if !needSync {
+		t.Fatal("checksum without common hashes should fall back to size")
+	}
+
+	// 大小相同且无哈希时不应判定为需要同步。
+	dst.Size = 10
+	needSync, err = objectsDiffer(src, dst, SyncArgs{Checksum: true})
+	if err != nil {
+		t.Fatalf("unexpected compare error: %+v", err)
+	}
+	if needSync {
+		t.Fatal("checksum fallback should not sync equal-size files")
+	}
+}
+
 // TestHashesEqualRequireSameHashType 覆盖哈希比较的边界。
 // 只有一侧提供哈希时不能判定为“相同”，必须返回 comparable=false。
 func TestHashesEqualRequireSameHashType(t *testing.T) {

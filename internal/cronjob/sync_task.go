@@ -531,19 +531,34 @@ func getObject(ctx context.Context, path string) (model.Obj, error) {
 
 // objectsDiffer 判断目标对象是否需要重新复制。
 func objectsDiffer(srcObj, dstObj model.Obj, args SyncArgs) (bool, error) {
+	// 目录与文件类型不同时必须重建，不能只看 size/hash：
+	// 例如开启了目录大小计算时，同名目录可能与源文件大小相同。
+	if srcObj.IsDir() != dstObj.IsDir() {
+		return true, nil
+	}
+
 	// checksum 优先：只有两侧提供相同类型的非空哈希时才可比较。
+	checksumComparable := false
 	if args.Checksum {
 		same, comparable, err := hashesEqual(srcObj, dstObj)
 		if err != nil {
 			return false, err
 		}
 		if comparable {
-			return !same, nil
+			checksumComparable = true
+			if !same {
+				return true, nil
+			}
 		}
 	}
 
 	// 如果用户未选择任何比较方式，默认使用 size，避免“看起来启用了同步但什么都不复制”。
 	compareSize := args.Size || (!args.Size && !args.MTime && !args.Checksum)
+	// 仅启用 checksum 但两侧没有公共哈希时，checksum 无法判定；
+	// 此时回退到 size，避免不同大小的文件被误判为一致（如 Local 存储不提供哈希）。
+	if args.Checksum && !checksumComparable && !args.Size && !args.MTime {
+		compareSize = true
+	}
 	if compareSize && srcObj.GetSize() != dstObj.GetSize() {
 		return true, nil
 	}
