@@ -404,6 +404,30 @@ func TestSyncRejectsOverlappingSameStoragePaths(t *testing.T) {
 	}
 }
 
+// TestSyncExtraDirectoryKeepsProtectedDescendant 覆盖目标端多余目录内的排除规则。
+// 目录本身不在源端，但其中的 *.log 受排除规则保护时，目录与受保护文件都必须保留。
+func TestSyncExtraDirectoryKeepsProtectedDescendant(t *testing.T) {
+	srcRoot := t.TempDir()
+	dstRoot := t.TempDir()
+	srcMount := registerLocalStorage(t, srcRoot)
+	dstMount := registerLocalStorage(t, dstRoot)
+
+	writeTestFile(t, srcRoot, "keep.txt", "keep")
+	writeTestFile(t, dstRoot, "archive/keep.log", "protected log")
+	writeTestFile(t, dstRoot, "archive/plain.txt", "extra plain file")
+
+	runSyncAndWait(t, SyncArgs{
+		Src:     srcMount,
+		Dst:     dstMount,
+		Exclude: "*.log",
+	})
+
+	// 受保护的日志及其所在目录必须保留。
+	assertTestFile(t, dstRoot, "archive/keep.log", "protected log")
+	// 目录内未受保护的文件应被删除。
+	assertTestFileAbsent(t, dstRoot, "archive/plain.txt")
+}
+
 // TestCronSchedulerTickRunsExpiredJob 覆盖调度器真实 tick 到期触发逻辑。
 // 不等待 30 秒 ticker，而是直接调用每次 tick 执行的 tickCronJobs。
 func TestCronSchedulerTickRunsExpiredJob(t *testing.T) {

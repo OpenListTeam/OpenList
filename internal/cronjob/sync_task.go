@@ -196,18 +196,33 @@ func pathsOverlap(a, b string) bool {
 // syncDir 递归同步一个目录。
 // extra 对象会在复制前删除（delete-before）；新增或变化的文件先删旧对象再入复制队列。
 func (t *SyncTask) syncDir(ctx context.Context, filters *syncFilters, srcPath, dstPath string, depth int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// 目录级过滤与深度限制要在列出内容之前生效，避免对被排除/超深目录发起多余请求
+	// （列出虚拟挂载点等本身可能产生网络开销）。
+	if depth > 0 {
+		relPath := relativePath(t.Args.Src, srcPath)
+		if filters.excluded(relPath) {
+			return nil
+		}
+		if t.depthExceeded(depth) {
+			return nil
+		}
+	}
+
 	// Refresh 确保比较的是当前远端状态，而不是可能过期的目录缓存。
-	srcObjs, err := listObjects(ctx, srcPath, true)
+	srcObjs, err := listObjects(ctx, srcPath, true, false)
 	if err != nil {
 		return errors.WithMessagef(err, "failed list source %s", srcPath)
 	}
-	dstObjs, err := listObjects(ctx, dstPath, true)
+	dstObjs, err := listObjects(ctx, dstPath, true, true)
 	if err != nil {
 		return errors.WithMessagef(err, "failed list destination %s", dstPath)
 	}
 
 	// delete-before 第一步：删除目标端多余对象。
-	for name := range dstObjs {
+	for name, dstObj := range dstObjs {
 		if _, exists := srcObjs[name]; exists {
 			continue
 		}
@@ -217,11 +232,19 @@ func (t *SyncTask) syncDir(ctx context.Context, filters *syncFilters, srcPath, d
 		if filters.excluded(relativePath(t.Args.Dst, extraPath)) {
 			continue
 		}
-		t.Status = fmt.Sprintf("deleting extra object %s", extraPath)
-		if err := fs.Remove(ctx, extraPath); err != nil {
-			// 单个多余对象删除失败不阻塞其他同步项，但最终任务要标记失败。
-			log.Errorf("cronjob sync failed to remove extra object %s: %+v", extraPath, err)
-			return errors.WithMessagef(err, "failed remove extra destination object %s", extraPath)
+		// 目标端独有的目录可能仍包含被排除/受保护的后代；必须先递归清理，
+		// 只有确认目录内没有需要保留的内容后才删除目录本身。
+		if dstObj.IsDir() {
+			removed, err := t.removeExtraDir(ctx, filters, extraPath, depth+1)
+			if err != nil {
+				return err
+			}
+			if !removed {
+				continue
+			}
+		}
+		if err := t.removeExtraObject(ctx, extraPath); err != nil {
+			return err
 		}
 	}
 
@@ -279,7 +302,7 @@ func (t *SyncTask) syncFile(ctx context.Context, filters *syncFilters, srcPath, 
 	_, _, _ = relPath, depth, filters
 
 	// 这里刻意使用 Refresh 重新列出父目录，避免目录列表和对象详情来自不同版本缓存。
-	dstObjs, err := listObjects(ctx, stdpath.Dir(dstPath), true)
+	dstObjs, err := listObjects(ctx, stdpath.Dir(dstPath), true, true)
 	if err != nil {
 		return errors.WithMessagef(err, "failed list destination parent %s", stdpath.Dir(dstPath))
 	}
@@ -318,6 +341,63 @@ func (t *SyncTask) syncFile(ctx context.Context, filters *syncFilters, srcPath, 
 		t.TotalTasks = len(t.ChildTaskIDs)
 	}
 	return nil
+}
+
+// removeExtraDir 递归删除目标端独有的目录。
+// 返回 false 表示目录内仍有被过滤规则保护的内容，目录本身必须保留。
+func (t *SyncTask) removeExtraDir(ctx context.Context, filters *syncFilters, dirPath string, depth int) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	// 超出深度限制时不深入：目录内可能仍有受保护内容，保守地保留整个目录。
+	if t.depthExceeded(depth) {
+		return false, nil
+	}
+	objs, err := listObjects(ctx, dirPath, true, false)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed list extra directory %s", dirPath)
+	}
+	allRemoved := true
+	for name, obj := range objs {
+		childPath := stdpath.Join(dirPath, name)
+		if filters.excluded(relativePath(t.Args.Dst, childPath)) {
+			allRemoved = false
+			continue
+		}
+		if obj.IsDir() {
+			removed, err := t.removeExtraDir(ctx, filters, childPath, depth+1)
+			if err != nil {
+				return false, err
+			}
+			if !removed {
+				allRemoved = false
+				continue
+			}
+		}
+		if err := t.removeExtraObject(ctx, childPath); err != nil {
+			return false, err
+		}
+	}
+	return allRemoved, nil
+}
+
+// removeExtraObject 删除一个目标端多余对象；删除前检查取消，避免取消后仍持续删除。
+func (t *SyncTask) removeExtraObject(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	t.Status = fmt.Sprintf("deleting extra object %s", path)
+	if err := fs.Remove(ctx, path); err != nil {
+		log.Errorf("cronjob sync failed to remove extra object %s: %+v", path, err)
+		return errors.WithMessagef(err, "failed remove extra destination object %s", path)
+	}
+	return nil
+}
+
+// depthExceeded 判断是否已经超过配置的最大递归深度。
+// MaxDepth 为 0 表示不限制。
+func (t *SyncTask) depthExceeded(depth int) bool {
+	return t.Args.MaxDepth > 0 && depth >= t.Args.MaxDepth
 }
 
 // waitChildTasks 等待所有复制子任务进入终态，并更新同步任务的总进度。
@@ -381,15 +461,17 @@ func (t *SyncTask) cancelChildTasks() {
 }
 
 // listObjects 列出虚拟路径下当前真实存在的对象，并按名称建立索引。
-func listObjects(ctx context.Context, path string, refresh bool) (map[string]model.Obj, error) {
+// allowMissing 为 true 时“对象不存在”等价于空目录（用于目标目录尚未创建的场景）；
+// 源目录必须传 false，避免目录消失被误判为空并从目标端删除全部内容。
+func listObjects(ctx context.Context, path string, refresh bool, allowMissing bool) (map[string]model.Obj, error) {
 	storage, actualPath, err := op.GetStorageAndActualPath(path)
 	if err != nil {
 		return nil, err
 	}
 	objs, err := op.List(ctx, storage, actualPath, model.ListArgs{Refresh: refresh})
 	if err != nil {
-		// 目标目录不存在等价于空目录；后续 fs.Copy/MakeDir 会创建缺失目录。
-		if errs.IsObjectNotFound(err) {
+		if allowMissing && errs.IsObjectNotFound(err) {
+			// 目标目录不存在等价于空目录；后续 fs.Copy/MakeDir 会创建缺失目录。
 			return map[string]model.Obj{}, nil
 		}
 		return nil, err
@@ -397,6 +479,13 @@ func listObjects(ctx context.Context, path string, refresh bool) (map[string]mod
 	result := make(map[string]model.Obj, len(objs))
 	for _, obj := range objs {
 		result[obj.GetName()] = obj
+	}
+	// op.List 只返回存储本身的内容，不包含挂在虚拟目录下的子存储。
+	// 这些子存储本身是虚拟目录，源端扫描必须包含它们，否则目标端同名目录会被当作多余对象删除。
+	for _, obj := range op.GetStorageVirtualFilesByPath(path) {
+		if _, exists := result[obj.GetName()]; !exists {
+			result[obj.GetName()] = obj
+		}
 	}
 	return result, nil
 }
