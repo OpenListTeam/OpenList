@@ -33,7 +33,8 @@ type BaiduNetdisk struct {
 	Addition
 
 	uploadThread int
-	vipType      int // 会员类型，0普通用户(4G/4M)、1普通会员(10G/16M)、2超级会员(20G/32M)
+	vipType      int       // 会员类型，0普通用户(4G/4M)、1普通会员(10G/16M)、2超级会员(20G/32M)
+	cooldown     *cooldown // shared pause after Baidu rate limiting (31034)
 }
 
 var ErrUploadIDExpired = errors.New("uploadid expired")
@@ -47,6 +48,9 @@ func (d *BaiduNetdisk) GetAddition() driver.Additional {
 }
 
 func (d *BaiduNetdisk) Init(ctx context.Context) error {
+	if d.cooldown == nil {
+		d.cooldown = newCooldown()
+	}
 	d.uploadThread, _ = strconv.Atoi(d.UploadThread)
 	if d.uploadThread < 1 {
 		d.uploadThread, d.UploadThread = 1, "1"
@@ -110,7 +114,7 @@ func (d *BaiduNetdisk) Move(ctx context.Context, srcObj, dstDir model.Obj) (mode
 			"newname": srcObj.GetName(),
 		},
 	}
-	_, err := d.manage("move", data)
+	_, err := d.manage(ctx, "move", data)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +133,7 @@ func (d *BaiduNetdisk) Rename(ctx context.Context, srcObj model.Obj, newName str
 			"newname": newName,
 		},
 	}
-	_, err := d.manage("rename", data)
+	_, err := d.manage(ctx, "rename", data)
 	if err != nil {
 		return nil, err
 	}
@@ -151,13 +155,18 @@ func (d *BaiduNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) error
 			"newname": srcObj.GetName(),
 		},
 	}
-	_, err := d.manage("copy", data)
+	_, err := d.manage(ctx, "copy", data)
 	return err
 }
 
 func (d *BaiduNetdisk) Remove(ctx context.Context, obj model.Obj) error {
 	data := []string{obj.GetPath()}
-	_, err := d.manage("delete", data)
+	_, err := d.manage(ctx, "delete", data)
+	if e, ok := asAPIError(err); ok && e.NotExist() {
+		// already gone: deleting is idempotent
+		log.Debugf("[baidu_netdisk] %s already removed (errno %d)", obj.GetPath(), e.Errno)
+		return nil
+	}
 	return err
 }
 

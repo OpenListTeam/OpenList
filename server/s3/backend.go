@@ -341,9 +341,13 @@ func (b *s3Backend) DeleteMulti(ctx context.Context, bucketName string, objects 
 	for _, object := range objects {
 		if err := b.deleteObject(ctx, bucketName, object); err != nil {
 			log.Errorf("delete object failed: %v", err)
+			code := gofakes3.ErrInternal
+			if gofakes3.HasErrorCode(err, gofakes3.ErrSlowDown) {
+				code = gofakes3.ErrSlowDown
+			}
 			result.Error = append(result.Error, gofakes3.ErrorResult{
-				Code:    gofakes3.ErrInternal,
-				Message: gofakes3.ErrInternal.Message(),
+				Code:    code,
+				Message: code.Message(),
 				Key:     object,
 			})
 		} else {
@@ -374,10 +378,15 @@ func (b *s3Backend) deleteObject(ctx context.Context, bucketName, objectName str
 	// S3 does not report an error when attemping to delete a key that does not exist, so
 	// we need to skip IsNotExist errors.
 	if _, err := fs.Get(context.WithValue(ctx, conf.MetaKey, fmeta), fp, &fs.GetArgs{}); err != nil && !errs.IsObjectNotFound(err) {
-		return err
+		return mapBackendError(err)
 	}
 
-	fs.Remove(ctx, fp)
+	// Report failures (op.Remove already treats a missing object as success) so
+	// clients retry instead of leaving the object behind; rate limiting becomes
+	// 503 SlowDown, which S3 clients retry with backoff.
+	if err := fs.Remove(ctx, fp); err != nil {
+		return mapBackendError(err)
+	}
 	return nil
 }
 
