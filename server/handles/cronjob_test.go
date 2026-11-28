@@ -42,6 +42,10 @@ func TestMain(m *testing.M) {
 		panic(fmt.Sprintf("failed create cron_sync task data: %+v", err))
 	}
 
+	// 发布存储加载完成信号：sync 的恢复函数会等待该信号（与真实启动流程一致）。
+	// 必须在 RegisterSyncHandler 之前发送，否则恢复时会一直等待而阻塞。
+	conf.SendStoragesLoadedSignal()
+
 	// sync Handler 的创建校验依赖注册表；这里与启动流程保持一致。
 	cronjob.RegisterSyncHandler()
 

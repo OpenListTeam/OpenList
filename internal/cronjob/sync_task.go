@@ -33,6 +33,9 @@ type SyncTask struct {
 	task.TaskExtension
 	// Args 是本次同步的完整参数。
 	Args SyncArgs `json:"args"`
+	// CronJobID 是触发本次同步的计划任务 ID；0 表示手动创建的同步任务。
+	// 持久化该字段用于重启后恢复调度器的运行互斥。
+	CronJobID uint `json:"cron_job_id,omitempty"`
 	// Status 是人类可读的执行阶段描述，不参与 JSON 持久化以节省空间。
 	Status string `json:"-"`
 	// ChildTaskIDs 记录本任务提交给 CopyTaskManager 的所有复制任务。
@@ -115,6 +118,14 @@ func (t *SyncTask) Run() error {
 	// 子任务跟踪与 tache 记录解耦，保证任何退出路径都能取消并等待尚未完成的复制。
 	t.startChildTracking()
 
+	// 恢复执行：重启或重试时任务已带有持久化的子任务 ID。
+	// 此时不能再重新规划（重复的 delete-before 扫描会删除部分上传的文件并重复写入），
+	// 只等待已提交的复制任务收敛即可。
+	if len(t.ChildTaskIDs) > 0 {
+		t.Status = "resuming pending copy tasks"
+		return t.waitChildTasks(ctx)
+	}
+
 	// 支持单个文件同步：此时目标是目标目录下的同名文件。
 	if !srcObj.IsDir() {
 		// 单文件源也必须经过排除规则；这里给它一个相对于同步根的路径，
@@ -178,13 +189,16 @@ func (t *SyncTask) finishChildTracking() {
 }
 
 // trackChild 记录一个新排队的复制子任务。
+// 先写入待等待集合再追加到持久化列表，保证取消逻辑不会漏掉刚提交的子任务。
 func (t *SyncTask) trackChild(id string) {
 	t.childMu.Lock()
-	defer t.childMu.Unlock()
 	if t.childPending == nil {
 		t.childPending = make(map[string]struct{})
 	}
 	t.childPending[id] = struct{}{}
+	t.ChildTaskIDs = append(t.ChildTaskIDs, id)
+	t.TotalTasks = len(t.ChildTaskIDs)
+	t.childMu.Unlock()
 }
 
 // sweepChildTasks 轮询所有待完成子任务，返回已完成数、失败数与仍未完成数。
@@ -466,8 +480,7 @@ func (t *SyncTask) syncFile(ctx context.Context, filters *syncFilters, srcPath, 
 	}
 	// 跨存储复制会返回 CopyTaskManager 中的任务；同存储原生复制可能同步完成并返回 nil。
 	if info != nil {
-		t.ChildTaskIDs = append(t.ChildTaskIDs, info.GetID())
-		t.TotalTasks = len(t.ChildTaskIDs)
+		t.trackChild(info.GetID())
 	}
 	// 记录目标端将出现的文件，避免后续同名比较绕过目录快照。
 	dstObjs[stdpath.Base(dstPath)] = srcObj
@@ -737,6 +750,11 @@ func RegisterSyncHandler() {
 					if err := validateSyncArgs(args); err != nil {
 						return err
 					}
+					// 在创建/编辑时就编译过滤规则，让非法 glob/regexp 在持久化前被拒绝，
+					// 而不是等到任务真正运行时才失败。
+					if _, err := newSyncFilters(args); err != nil {
+						return err
+					}
 					// 创建/编辑时也要检查路径互套；不能等到定时触发时才暴露配置错误。
 					return validateSyncPaths(args)
 				},
@@ -763,25 +781,37 @@ func runSync(ctx context.Context, raw json.RawMessage) error {
 	}
 
 	syncTask := &SyncTask{Args: args}
+	if jobID, ok := CronJobIDFromContext(ctx); ok {
+		syncTask.CronJobID = jobID
+	}
+	// 独立注册运行中的同步任务：即使管理器中该任务的记录被用户删除，
+	// 调度器的运行锁也能保持到同步真正结束，避免与后续运行重叠。
+	activeSyncs.Store(syncTask.GetID(), syncTask)
+	defer activeSyncs.Delete(syncTask.GetID())
+
 	SyncTaskManager.Add(syncTask)
-	return waitForSyncTask(ctx, syncTask.GetID())
+	return waitForSyncTask(ctx, syncTask)
 }
 
+// activeSyncs 记录当前进程内所有正在运行的同步编排任务。
+// 它独立于 SyncTaskManager 的记录，用于防止记录被删除后运行锁被提前释放。
+var activeSyncs sync.Map
+
 // waitForSyncTask 阻塞等待 SyncTask 进入终态；调用方通常是调度器后台 goroutine。
-func waitForSyncTask(ctx context.Context, taskID string) error {
+// 这里直接等待任务对象本身，而不是通过管理器查询，避免记录被删除时提前返回 nil。
+func waitForSyncTask(ctx context.Context, syncTask *SyncTask) error {
 	for {
 		select {
 		case <-ctx.Done():
 			// 调度器停止时取消编排任务；SyncTask 会进一步取消复制子任务。
-			SyncTaskManager.Cancel(taskID)
+			if SyncTaskManager != nil {
+				SyncTaskManager.Cancel(syncTask.GetID())
+			}
+			syncTask.Cancel()
 			return ctx.Err()
 		default:
 		}
 
-		syncTask, ok := SyncTaskManager.GetByID(taskID)
-		if !ok {
-			return fmt.Errorf("sync task %s disappeared", taskID)
-		}
 		switch syncTask.GetState() {
 		case tache.StateSucceeded:
 			return nil

@@ -3,14 +3,18 @@ package cronjob
 import (
 	"encoding/json"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
 // getTaskDataFunc 返回 tache 的任务恢复函数。
 // 这里先从数据库读取 JSON 文本，再转成 tache 需要的 []byte。
+// 与 db.GetTaskDataFunc 一致，恢复前等待存储加载完成，
+// 否则恢复的同步任务可能在嵌套挂载解析到父存储或初始化完成前就失败。
 func getTaskDataFunc(key string) func() ([]byte, error) {
 	return func() ([]byte, error) {
+		<-conf.StoragesLoadSignal()
 		item, err := db.GetTaskDataByType(key)
 		if err != nil {
 			return nil, err

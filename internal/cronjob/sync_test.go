@@ -456,6 +456,34 @@ func TestSweepChildTasksCountsMissingRecordAsFailed(t *testing.T) {
 	}
 }
 
+// TestSchedulerRestoreGuardBlocksDuplicateRun 覆盖重启后调度器运行互斥的恢复。
+// 恢复的 SyncTask 携带 CronJobID 且尚未终态时，同一计划任务不能被再次启动。
+func TestSchedulerRestoreGuardBlocksDuplicateRun(t *testing.T) {
+	job := &model.CronJob{ID: 424242}
+	syncTask := &SyncTask{Args: SyncArgs{Src: "/a", Dst: "/b"}, CronJobID: job.ID}
+	syncTask.SetState(tache.StateRunning)
+	SyncTaskManager.Add(syncTask)
+	t.Cleanup(func() { SyncTaskManager.Remove(syncTask.GetID()) })
+
+	activeSyncs.Store(syncTask.GetID(), syncTask)
+	t.Cleanup(func() { activeSyncs.Delete(syncTask.GetID()) })
+
+	if !HasActiveSyncJob(job.ID) {
+		t.Fatal("an unfinished sync for the job must be reported as active")
+	}
+
+	// 即使记录被删除（独立注册仍存在），也必须视为运行中。
+	SyncTaskManager.Remove(syncTask.GetID())
+	if !HasActiveSyncJob(job.ID) {
+		t.Fatal("active sync tracking must survive removal of the manager record")
+	}
+
+	activeSyncs.Delete(syncTask.GetID())
+	if HasActiveSyncJob(job.ID) {
+		t.Fatal("job should not be active after the sync finishes")
+	}
+}
+
 // TestCronSchedulerTickRunsExpiredJob 覆盖调度器真实 tick 到期触发逻辑。
 // 不等待 30 秒 ticker，而是直接调用每次 tick 执行的 tickCronJobs。
 func TestCronSchedulerTickRunsExpiredJob(t *testing.T) {
@@ -629,6 +657,9 @@ func TestMain(m *testing.M) {
 		tache.WithWorks(4),
 		tache.WithMaxRetry(0),
 	)
+
+	// 发布存储加载完成信号：恢复函数会等待该信号（与真实启动流程一致）。
+	conf.SendStoragesLoadedSignal()
 
 	// 注册 sync Handler。RegisterSyncHandler 会先创建默认 SyncTaskManager，
 	// 这里随后替换为无持久化版本，避免测试任务跨测试运行互相恢复。

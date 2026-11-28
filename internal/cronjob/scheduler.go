@@ -2,13 +2,16 @@ package cronjob
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/cron"
+	"github.com/OpenListTeam/tache"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -92,6 +95,66 @@ func IsRunning(id uint) bool {
 	return running
 }
 
+// cronJobIDKey 是注入到 Handler 上下文中的计划任务 ID 键。
+// 具体的任务类型（如 sync）可以据此把执行与计划任务关联起来。
+type cronJobIDKey struct{}
+
+// CronJobIDFromContext 返回当前执行所属的计划任务 ID。
+func CronJobIDFromContext(ctx context.Context) (uint, bool) {
+	id, ok := ctx.Value(cronJobIDKey{}).(uint)
+	return id, ok
+}
+
+// ErrJobRunning 表示计划任务正在执行，配置变更或删除被拒绝。
+var ErrJobRunning = errors.New("cronjob is running")
+
+// MutateCronJobSafely 在调度器运行锁保护下执行 fn。
+// 这样配置更新/删除与 startJob 串行化，避免"更新成功后仍按旧配置触发"的竞态。
+func MutateCronJobSafely(id uint, fn func() error) error {
+	defaultScheduler.mu.Lock()
+	defer defaultScheduler.mu.Unlock()
+	if _, running := defaultScheduler.running[id]; running {
+		return ErrJobRunning
+	}
+	return fn()
+}
+
+// HasActiveSyncJob 报告某个计划任务是否仍有未结束的同步编排任务。
+// 会同时检查独立跟踪的运行中同步（记录可能已被删除）以及管理器中恢复的同步任务，
+// 避免同一条计划任务被重复触发。
+func HasActiveSyncJob(jobID uint) bool {
+	if jobID == 0 {
+		return false
+	}
+	active := false
+	activeSyncs.Range(func(_, value any) bool {
+		syncTask, ok := value.(*SyncTask)
+		if !ok || syncTask.CronJobID != jobID {
+			return true
+		}
+		active = true
+		return false
+	})
+	if active {
+		return true
+	}
+	if SyncTaskManager == nil {
+		return false
+	}
+	for _, syncTask := range SyncTaskManager.GetAll() {
+		if syncTask.CronJobID != jobID {
+			continue
+		}
+		switch syncTask.GetState() {
+		case tache.StateSucceeded, tache.StateFailed, tache.StateCanceled:
+			// 终态，视作已结束。
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 // RunJob 手动触发一条计划任务。它会立即返回；真正执行在后台 goroutine 中进行。
 func RunJob(id uint) error {
 	job, err := db.GetCronJobByID(id)
@@ -113,6 +176,11 @@ func startJob(parent context.Context, job model.CronJob, scheduled bool) error {
 	defer defaultScheduler.mu.Unlock()
 	if _, exists := defaultScheduler.running[job.ID]; exists {
 		return fmt.Errorf("cronjob %d is already running", job.ID)
+	}
+	// 进程重启后运行锁是空的，但可能已经恢复了同一条计划任务的同步编排。
+	// 此时不能再次触发，否则会与尚未结束的复制/删除并发。
+	if HasActiveSyncJob(job.ID) {
+		return fmt.Errorf("cronjob %d has an unfinished sync task", job.ID)
 	}
 
 	now := time.Now()
@@ -161,7 +229,9 @@ func executeJob(ctx context.Context, job model.CronJob, handler Handler, lastRun
 				err = fmt.Errorf("cronjob panic: %v", recovered)
 			}
 		}()
-		return handler.Run(ctx, []byte(job.Args))
+		// 把计划任务 ID 注入上下文，供任务类型关联执行与调度记录。
+		runCtx := context.WithValue(ctx, cronJobIDKey{}, job.ID)
+		return handler.Run(runCtx, []byte(job.Args))
 	}()
 
 	lastError := ""
@@ -180,6 +250,14 @@ func executeJob(ctx context.Context, job model.CronJob, handler Handler, lastRun
 
 // tickCronJobs 每次定时器唤醒时检查所有启用任务是否到期。
 func tickCronJobs(ctx context.Context) {
+	// 存储尚未加载完成时不触发任务：
+	// 任务（尤其是 sync）会解析挂载路径，过早执行可能把嵌套挂载解析到父存储或直接失败。
+	select {
+	case <-conf.StoragesLoadSignal():
+	default:
+		return
+	}
+
 	jobs, err := db.GetCronJobs()
 	if err != nil {
 		log.Errorf("load cronjobs for scheduler: %+v", err)
