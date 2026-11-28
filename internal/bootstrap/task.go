@@ -2,12 +2,14 @@ package bootstrap
 
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/cronjob"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/tache"
+	log "github.com/sirupsen/logrus"
 )
 
 func taskFilterNegative(num int) int64 {
@@ -55,4 +57,9 @@ func InitTaskManager() {
 	saveOpts := tache.DefaultOptions()
 	saveOpts.Running = false
 	fs.SeedSaveTaskManager = tache.NewManager[*fs.SeedSaveTask](tache.WithOptions(*saveOpts))
+
+	cronjob.RegisterSyncHandler()
+	if err := cronjob.InitCronJobScheduler(); err != nil {
+		log.Fatalf("failed initialize cronjob scheduler: %s", err.Error())
+	}
 }

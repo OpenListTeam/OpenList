@@ -13,6 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/data"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/cronjob"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/transcode"
@@ -41,7 +42,24 @@ func Init() {
 }
 
 func Release() {
+	// 关闭数据库前先停止调度并取消/等待正在运行的同步与复制任务，
+	// 避免任务在数据库关闭后继续写入。
+	cronjob.StopCronJobScheduler()
+	drainTaskManagers()
 	db.Close()
+}
+
+// drainTaskManagers 取消并等待同步编排与复制任务退出。
+// 这些任务可能仍在执行文件操作，必须在关闭数据库前收敛。
+func drainTaskManagers() {
+	if cronjob.SyncTaskManager != nil {
+		cronjob.SyncTaskManager.CancelAll()
+		cronjob.SyncTaskManager.Wait()
+	}
+	if fs.CopyTaskManager != nil {
+		fs.CopyTaskManager.CancelAll()
+		fs.CopyTaskManager.Wait()
+	}
 }
 
 var (
@@ -278,6 +296,10 @@ func Start() {
 
 func Shutdown(timeout time.Duration) {
 	utils.Log.Println("Shutdown server...")
+	// 先停止计划任务调度，避免关闭过程中继续产生新的同步/复制工作。
+	cronjob.StopCronJobScheduler()
+	// 取消并等待仍在运行的同步与复制任务，再关闭 HTTP 端点与数据库。
+	drainTaskManagers()
 	fs.ArchiveContentUploadTaskManager.RemoveAll()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/cronjob"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 
@@ -235,4 +236,8 @@ func SetupTaskRoute(g *gin.RouterGroup) {
 	// 秒传/中转保存则是纯同步请求。现在两者都能在任务列表看到进度。
 	taskRoute(g.Group("/seed_generate"), fs.SeedGenerateTaskManager)
 	taskRoute(g.Group("/seed_save"), fs.SeedSaveTaskManager, false)
+	// cron_sync 是同步编排任务的持久化 key；管理员可像普通复制任务一样查询、取消。
+	// 不开放 retry：直接重试会复用旧的子任务状态并在计划任务运行锁之外执行，
+	// 可能与其他同步重叠；需要重跑时请使用计划任务的手动触发接口。
+	taskRoute(g.Group("/cron_sync"), cronjob.SyncTaskManager, false)
 }
