@@ -51,6 +51,7 @@ type fileMutation struct {
 	rollback    func() error
 	finalize    func()
 	backupPaths []string
+	moved       bool
 }
 
 type fileBackup struct {
@@ -213,11 +214,47 @@ func copyMutation(ctx context.Context, dstPath, stagePath string, dstBackup *fil
 	}
 }
 
-func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string, dstExisted bool) (*fileMutation, error) {
-	// Keep a source copy so a partially completed cross-storage MOVE can be undone.
-	srcBackup, err := newFileBackup(ctx, src, true)
-	if err != nil {
-		return nil, err
+// canRenameInPlace reports whether a same-directory rename of src can skip the
+// source backup. The rollback is a reverse rename, which is only safe when the
+// driver guarantees that a rename never overwrites an existing object. A
+// balanced mount picks a storage per operation, so every one behind the path
+// must give that guarantee.
+func canRenameInPlace(src string) bool {
+	storages := op.GetStoragesByPath(src)
+	for _, s := range storages {
+		if !s.Config().NoOverwriteRename {
+			return false
+		}
+	}
+	return len(storages) > 0
+}
+
+// undoInPlaceRename rolls back a rename that has no source backup.
+func undoInPlaceRename(ctx context.Context, moved bool, dst, srcName string, dstBackup *fileBackup) error {
+	if moved {
+		if err := fs.Rename(ctx, dst, srcName); err != nil {
+			// dst holds the only copy of the source; restoring the old
+			// destination would delete it.
+			return errors.WithMessagef(err, "failed to rename %s back to %s", dst, srcName)
+		}
+	} else if dstBackup != nil {
+		// A rename that returned an error may still have been applied, and then
+		// dst holds the only copy of the source. Nothing here can tell that apart
+		// from a rename that did not happen, so keep the old destination aside.
+		return errors.Errorf("rename outcome unknown; the old destination is kept at %s", dstBackup.backupPath)
+	}
+	return dstBackup.restore(ctx)
+}
+
+func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, dstName string, dstExisted, renameInPlace bool) (*fileMutation, error) {
+	var srcBackup *fileBackup
+	var err error
+	if !renameInPlace {
+		// Keep a source copy so a partially completed cross-storage MOVE can be undone.
+		srcBackup, err = newFileBackup(ctx, src, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var dstBackup *fileBackup
 	if dstExisted {
@@ -237,18 +274,26 @@ func moveWithRollback(ctx context.Context, src, dst, dstDir, srcDir, srcName, ds
 	if err := moveResource(ctx, src, dstDir, srcDir, srcName, dstName); err != nil {
 		return mutation, err
 	}
+	mutation.moved = true
 	return mutation, nil
 }
 
 func moveMutation(ctx context.Context, dst, dstDir, srcName, dstName string, srcBackup, dstBackup *fileBackup) *fileMutation {
-	paths := []string{srcBackup.backupPath}
+	var paths []string
+	if srcBackup != nil {
+		paths = append(paths, srcBackup.backupPath)
+	}
 	if dstBackup != nil {
 		paths = append(paths, dstBackup.backupPath)
 	}
-	return &fileMutation{
+	var m *fileMutation
+	m = &fileMutation{
 		backupPaths: paths,
 		rollback: func() error {
 			rollbackCtx := context.WithoutCancel(ctx)
+			if srcBackup == nil {
+				return undoInPlaceRename(rollbackCtx, m.moved, dst, srcName, dstBackup)
+			}
 			var rollbackErrs []error
 			candidates := []string{dst}
 			if srcName != dstName {
@@ -272,6 +317,7 @@ func moveMutation(ctx context.Context, dst, dstDir, srcName, dstName string, src
 			dstBackup.discard(ctx)
 		},
 	}
+	return m
 }
 
 func runDeadPropsFileMutation(ctx context.Context, update func(*gorm.DB) error, apply func() (*fileMutation, error)) error {
@@ -326,7 +372,8 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	if !common.CanWrite(user, srcMeta, srcDir) || !common.CanWrite(user, dstMeta, dstDir) {
 		return http.StatusForbidden, nil
 	}
-	if _, err = fs.Get(ctx, src, &fs.GetArgs{}); err != nil {
+	srcInfo, err := fs.Get(ctx, src, &fs.GetArgs{})
+	if err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusNotFound, err
 		}
@@ -352,7 +399,8 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	err = runDeadPropsFileMutation(ctx,
 		func(tx *gorm.DB) error { return moveDeadProps(tx, src, dst) },
 		func() (*fileMutation, error) {
-			return moveWithRollback(ctx, src, dst, dstDir, srcDir, srcName, dstName, dstExisted && overwrite)
+			renameInPlace := srcDir == dstDir && !srcInfo.IsDir() && canRenameInPlace(src)
+			return moveWithRollback(ctx, src, dst, dstDir, srcDir, srcName, dstName, dstExisted && overwrite, renameInPlace)
 		},
 	)
 	if err != nil {
