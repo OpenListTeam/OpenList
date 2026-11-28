@@ -428,6 +428,34 @@ func TestSyncExtraDirectoryKeepsProtectedDescendant(t *testing.T) {
 	assertTestFileAbsent(t, dstRoot, "archive/plain.txt")
 }
 
+// TestSweepChildTasksTreatsErroredAsIncomplete 覆盖子任务中间状态的处理。
+// StateErrored 是重试前的中间状态，不能计入完成，否则会在子任务仍重试时释放同步锁。
+func TestSweepChildTasksTreatsErroredAsIncomplete(t *testing.T) {
+	child := &fs.FileTransferTask{}
+	child.SetID("sweep-errored")
+	child.SetState(tache.StateErrored)
+	fs.CopyTaskManager.Add(child)
+	t.Cleanup(func() { fs.CopyTaskManager.Remove(child.GetID()) })
+
+	task := &SyncTask{ChildTaskIDs: []string{"sweep-errored"}}
+	task.startChildTracking()
+	completed, failed, unresolved := task.sweepChildTasks()
+	if completed != 0 || failed != 0 || unresolved != 1 {
+		t.Fatalf("errored child should stay unresolved, got completed=%d failed=%d unresolved=%d", completed, failed, unresolved)
+	}
+}
+
+// TestSweepChildTasksCountsMissingRecordAsFailed 覆盖子任务记录缺失的处理。
+// 记录缺失不能导致同步无限等待，必须记为已完成（并标记失败）。
+func TestSweepChildTasksCountsMissingRecordAsFailed(t *testing.T) {
+	task := &SyncTask{ChildTaskIDs: []string{"missing-child-id"}}
+	task.startChildTracking()
+	completed, failed, unresolved := task.sweepChildTasks()
+	if completed != 1 || failed != 1 || unresolved != 0 {
+		t.Fatalf("missing child should count as completed failure, got completed=%d failed=%d unresolved=%d", completed, failed, unresolved)
+	}
+}
+
 // TestCronSchedulerTickRunsExpiredJob 覆盖调度器真实 tick 到期触发逻辑。
 // 不等待 30 秒 ticker，而是直接调用每次 tick 执行的 tickCronJobs。
 func TestCronSchedulerTickRunsExpiredJob(t *testing.T) {

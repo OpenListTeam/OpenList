@@ -41,6 +41,13 @@ type SyncTask struct {
 	TotalTasks int `json:"total_tasks"`
 	// CompletedTasks 是已经到达终态的复制任务数量。
 	CompletedTasks int `json:"completed_tasks"`
+
+	// childMu 保护下面的子任务跟踪字段。
+	childMu sync.Mutex `json:"-"`
+	// childPending 是仍在等待终态的子任务 ID 集合。
+	childPending map[string]struct{} `json:"-"`
+	// childSeen 记录所有已提交过的子任务 ID，避免恢复或重入时重复计数。
+	childSeen map[string]struct{} `json:"-"`
 }
 
 // GetName 返回任务列表中展示的任务名。
@@ -105,6 +112,9 @@ func (t *SyncTask) Run() error {
 		return errors.WithMessagef(err, "failed get source object %s", t.Args.Src)
 	}
 
+	// 子任务跟踪与 tache 记录解耦，保证任何退出路径都能取消并等待尚未完成的复制。
+	t.startChildTracking()
+
 	// 支持单个文件同步：此时目标是目标目录下的同名文件。
 	if !srcObj.IsDir() {
 		// 单文件源也必须经过排除规则；这里给它一个相对于同步根的路径，
@@ -117,19 +127,110 @@ func (t *SyncTask) Run() error {
 		dstPath := stdpath.Join(t.Args.Dst, srcObj.GetName())
 		dstObjs, err := listObjects(ctx, t.Args.Dst, true, true)
 		if err != nil {
-			return errors.WithMessagef(err, "failed list destination %s", t.Args.Dst)
+			return t.abortChildTracking(errors.WithMessagef(err, "failed list destination %s", t.Args.Dst))
 		}
 		if err := t.syncFile(ctx, filters, t.Args.Src, dstPath, dstObjs); err != nil {
-			return err
+			return t.abortChildTracking(err)
 		}
 		return t.waitChildTasks(ctx)
 	}
 
 	t.Status = "syncing directory"
 	if err := t.syncDir(ctx, filters, t.Args.Src, t.Args.Dst, 0); err != nil {
-		return err
+		return t.abortChildTracking(err)
 	}
 	return t.waitChildTasks(ctx)
+}
+
+// abortChildTracking 处理同步规划阶段的失败：取消并等待已排队的复制子任务收敛，
+// 再把原始错误返回给调度器，避免这些传输在同步锁释放后继续写入。
+func (t *SyncTask) abortChildTracking(runErr error) error {
+	t.finishChildTracking()
+	t.cancelChildTasks()
+	t.drainChildTasks()
+	return runErr
+}
+
+// startChildTracking 用已持久化的子任务 ID 初始化跟踪表。
+// 恢复执行时这些 ID 仍然是本任务需要等待的复制任务。
+func (t *SyncTask) startChildTracking() {
+	t.childMu.Lock()
+	defer t.childMu.Unlock()
+	if t.childPending == nil {
+		t.childPending = make(map[string]struct{}, len(t.ChildTaskIDs))
+	}
+	for _, id := range t.ChildTaskIDs {
+		t.childPending[id] = struct{}{}
+	}
+	t.TotalTasks = len(t.ChildTaskIDs)
+}
+
+// finishChildTracking 在规划结束后补齐跟踪表，保证恢复任务也能等待已持久化的子任务。
+func (t *SyncTask) finishChildTracking() {
+	t.childMu.Lock()
+	defer t.childMu.Unlock()
+	if t.childPending == nil {
+		t.childPending = make(map[string]struct{})
+	}
+	for _, id := range t.ChildTaskIDs {
+		t.childPending[id] = struct{}{}
+	}
+}
+
+// trackChild 记录一个新排队的复制子任务。
+func (t *SyncTask) trackChild(id string) {
+	t.childMu.Lock()
+	defer t.childMu.Unlock()
+	if t.childPending == nil {
+		t.childPending = make(map[string]struct{})
+	}
+	t.childPending[id] = struct{}{}
+}
+
+// sweepChildTasks 轮询所有待完成子任务，返回已完成数、失败数与仍未完成数。
+// 跟踪表独立于 tache 记录：记录被清理不再导致同步永久等待，
+// 而 StateErrored 属于重试前的中间状态，不计入完成。
+func (t *SyncTask) sweepChildTasks() (completed, failed, unresolved int) {
+	if fs.CopyTaskManager == nil {
+		return len(t.ChildTaskIDs), 0, 0
+	}
+	t.childMu.Lock()
+	defer t.childMu.Unlock()
+	for id := range t.childPending {
+		child, ok := fs.CopyTaskManager.GetByID(id)
+		if !ok {
+			// 复制任务记录缺失：可能已被清理，也可能是重启后未恢复的任务。
+			// 两种情况都无法继续等待，按已完成（并记为失败）处理，避免死等。
+			delete(t.childPending, id)
+			completed++
+			failed++
+			continue
+		}
+		switch child.GetState() {
+		case tache.StateSucceeded:
+			delete(t.childPending, id)
+			completed++
+		case tache.StateFailed, tache.StateCanceled:
+			delete(t.childPending, id)
+			completed++
+			failed++
+		case tache.StateErrored:
+			// StateErrored 是重试前的中间状态，仍在进行中，继续等待。
+		}
+	}
+	return completed, failed, len(t.childPending)
+}
+
+// drainChildTasks 有界等待已取消的子任务退出，避免同步锁在子任务仍写入时释放。
+func (t *SyncTask) drainChildTasks() {
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		_, _, unresolved := t.sweepChildTasks()
+		if unresolved == 0 {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // validateSyncPaths 拒绝源和目标落到相同或互相包含的虚拟位置。
@@ -432,7 +533,8 @@ func (t *SyncTask) depthExceeded(depth int) bool {
 
 // waitChildTasks 等待所有复制子任务进入终态，并更新同步任务的总进度。
 func (t *SyncTask) waitChildTasks(ctx context.Context) error {
-	if len(t.ChildTaskIDs) == 0 {
+	t.finishChildTracking()
+	if t.TotalTasks == 0 {
 		t.Status = "no copy tasks queued"
 		t.SetProgress(100)
 		return nil
@@ -443,33 +545,17 @@ func (t *SyncTask) waitChildTasks(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			// 编排任务被取消时，也要取消还未完成的复制任务，避免后台继续传输。
 			t.cancelChildTasks()
+			t.drainChildTasks()
 			return err
 		}
 
-		completed := 0
-		failed := false
-		for _, id := range t.ChildTaskIDs {
-			child, ok := fs.CopyTaskManager.GetByID(id)
-			if !ok {
-				// 复制任务记录缺失通常发生在未持久化且进程重启后；此时无法继续等待。
-				failed = true
-				continue
-			}
-			switch child.GetState() {
-			case tache.StateSucceeded, tache.StateFailed, tache.StateCanceled, tache.StateErrored:
-				completed++
-				if child.GetState() != tache.StateSucceeded {
-					failed = true
-				}
-			}
-		}
-
+		completed, failed, unresolved := t.sweepChildTasks()
 		t.CompletedTasks = completed
 		t.Status = fmt.Sprintf("waiting for copy tasks (%d/%d)", completed, t.TotalTasks)
 		t.SetProgress(float64(completed) / float64(t.TotalTasks) * 100)
 
-		if completed >= t.TotalTasks {
-			if failed {
+		if unresolved == 0 {
+			if failed > 0 {
 				return fmt.Errorf("some copy tasks failed or were canceled")
 			}
 			t.Status = "copy tasks completed"
@@ -485,7 +571,16 @@ func (t *SyncTask) cancelChildTasks() {
 	if fs.CopyTaskManager == nil {
 		return
 	}
-	for _, id := range t.ChildTaskIDs {
+	t.childMu.Lock()
+	ids := make([]string, 0, len(t.childPending))
+	for id := range t.childPending {
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		ids = append(ids, t.ChildTaskIDs...)
+	}
+	t.childMu.Unlock()
+	for _, id := range ids {
 		fs.CopyTaskManager.Cancel(id)
 	}
 }
