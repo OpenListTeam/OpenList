@@ -107,8 +107,19 @@ func (t *SyncTask) Run() error {
 
 	// 支持单个文件同步：此时目标是目标目录下的同名文件。
 	if !srcObj.IsDir() {
+		// 单文件源也必须经过排除规则；这里给它一个相对于同步根的路径，
+		// 使 `*.log` 这类规则同样生效。
+		if filters.excluded(srcObj.GetName()) {
+			t.Status = "source excluded by filters"
+			t.SetProgress(100)
+			return nil
+		}
 		dstPath := stdpath.Join(t.Args.Dst, srcObj.GetName())
-		if err := t.syncFile(ctx, filters, t.Args.Src, dstPath, 0); err != nil {
+		dstObjs, err := listObjects(ctx, t.Args.Dst, true, true)
+		if err != nil {
+			return errors.WithMessagef(err, "failed list destination %s", t.Args.Dst)
+		}
+		if err := t.syncFile(ctx, filters, t.Args.Src, dstPath, dstObjs); err != nil {
 			return err
 		}
 		return t.waitChildTasks(ctx)
@@ -266,8 +277,19 @@ func (t *SyncTask) syncDir(ctx context.Context, filters *syncFilters, srcPath, d
 			nextDepth := depth + 1
 			// MaxDepth 的计数方式和 rclone 一致：同步根目录是第 0 层。
 			// MaxDepth=1 时不进入子目录；MaxDepth=2 只进入第一层子目录。
-			if t.Args.MaxDepth > 0 && nextDepth >= t.Args.MaxDepth {
+			if t.depthExceeded(nextDepth) {
 				continue
+			}
+			// 目标同名的可能是文件（源目录替换了目标文件）；要先删除冲突文件，
+			// 否则 MakeDir 会因 “file exists” 失败，导致后续同步无法反映新的目录结构。
+			if dstObj, ok := dstObjs[childName]; ok && !dstObj.IsDir() {
+				if t.Args.IgnoreExisting {
+					continue
+				}
+				if err := t.removeExtraObject(ctx, childDstPath); err != nil {
+					return err
+				}
+				delete(dstObjs, childName)
 			}
 			if err := fs.MakeDir(ctx, childDstPath); err != nil {
 				return errors.WithMessagef(err, "failed create destination directory %s", childDstPath)
@@ -279,36 +301,41 @@ func (t *SyncTask) syncDir(ctx context.Context, filters *syncFilters, srcPath, d
 		}
 
 		// MaxDepth=1 时第一层文件仍然要同步；这里无需额外判断深度。
-		if err := t.syncFile(ctx, filters, childSrcPath, childDstPath, depth); err != nil {
+		if err := t.syncFile(ctx, filters, childSrcPath, childDstPath, dstObjs); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// syncFile 判断单个文件是否需要同步；需要时先删除旧目标，再创建一个新的复制任务。
-func (t *SyncTask) syncFile(ctx context.Context, filters *syncFilters, srcPath, dstPath string, depth int) error {
+// syncFile 判断单个文件是否需要同步；需要时刷新计划并创建一个新的复制任务。
+// dstObjs 是当前目标目录的已知列表快照，用于避免对每个文件重复列出同一目录。
+func (t *SyncTask) syncFile(ctx context.Context, filters *syncFilters, srcPath, dstPath string, dstObjs map[string]model.Obj) error {
 	relPath := relativePath(t.Args.Src, srcPath)
 	// 读取源对象一次；大小/年龄过滤和变更比较都必须基于同一个对象快照。
 	srcObj, err := getObject(ctx, srcPath)
 	if err != nil {
 		return errors.WithMessagef(err, "failed get source object %s", srcPath)
 	}
+	// 文件名级排除在此处兜底，保证单文件源也遵循 exclude/exclude_regexp 规则。
+	if filters.excluded(relPath) {
+		return nil
+	}
 	// 大小/年龄过滤只作用于文件；目录排除已在 syncDir 中处理。
 	if filters.sizeExcluded(srcObj) || filters.ageExcluded(srcObj) {
 		return nil
 	}
-	// relPath/depth/filters 由 syncDir 传入；当前阶段刻意保留，方便后续增加按层级过滤。
-	_, _, _ = relPath, depth, filters
 
-	// 这里刻意使用 Refresh 重新列出父目录，避免目录列表和对象详情来自不同版本缓存。
-	dstObjs, err := listObjects(ctx, stdpath.Dir(dstPath), true, true)
-	if err != nil {
-		return errors.WithMessagef(err, "failed list destination parent %s", stdpath.Dir(dstPath))
-	}
 	dstObj, exists := dstObjs[stdpath.Base(dstPath)]
 	if exists && t.Args.IgnoreExisting {
 		return nil
+	}
+	// 源是文件但目标是目录时必须重建，避免"同名目录"被误判为已同步。
+	if exists && dstObj.IsDir() {
+		if err := t.removeExtraObject(ctx, dstPath); err != nil {
+			return err
+		}
+		exists = false
 	}
 
 	needSync := false
@@ -322,12 +349,13 @@ func (t *SyncTask) syncFile(ctx context.Context, filters *syncFilters, srcPath, 
 		return nil
 	}
 
-	// delete-before 第二步：同名但内容不同的对象先删除，避免依赖覆盖上传语义。
-	if exists {
-		t.Status = fmt.Sprintf("deleting changed destination object %s", dstPath)
-		if err := fs.Remove(ctx, dstPath); err != nil {
-			return errors.WithMessagef(err, "failed remove changed destination object %s", dstPath)
+	// RemoveBefore 为 true 时先删除目标同名文件：部分存储不支持覆盖上传或重命名。
+	// 默认关闭，避免在传输失败时丢失目标端旧副本。
+	if exists && t.Args.RemoveBefore {
+		if err := t.removeExtraObject(ctx, dstPath); err != nil {
+			return err
 		}
+		delete(dstObjs, stdpath.Base(dstPath))
 	}
 
 	t.Status = fmt.Sprintf("queuing copy %s to %s", srcPath, dstPath)
@@ -340,6 +368,8 @@ func (t *SyncTask) syncFile(ctx context.Context, filters *syncFilters, srcPath, 
 		t.ChildTaskIDs = append(t.ChildTaskIDs, info.GetID())
 		t.TotalTasks = len(t.ChildTaskIDs)
 	}
+	// 记录目标端将出现的文件，避免后续同名比较绕过目录快照。
+	dstObjs[stdpath.Base(dstPath)] = srcObj
 	return nil
 }
 

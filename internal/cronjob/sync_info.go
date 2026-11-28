@@ -37,6 +37,13 @@ func syncHandlerInfo() HandlerInfo {
 				Default:  "false",
 			},
 			{
+				Name:     "remove_before",
+				Type:     ArgFieldTypeBool,
+				LabelKey: "cronjobs.args.sync.remove_before",
+				HelpKey:  "cronjobs.args.sync.remove_before_help",
+				Default:  "false",
+			},
+			{
 				Name:     "max_size",
 				Type:     ArgFieldTypeNumber,
 				LabelKey: "cronjobs.args.sync.max_size",

@@ -19,6 +19,10 @@ type SyncArgs struct {
 	MaxDepth int `json:"max_depth"`
 	// IgnoreExisting 为 true 时，目标已存在的文件一律跳过，不做覆盖。
 	IgnoreExisting bool `json:"ignore_existing"`
+	// RemoveBefore 为 true 时，先删除目标同名文件再入复制队列（delete-before）。
+	// 部分存储不支持覆盖上传或重命名，需要先删；但它会在传输失败时丢失目标旧文件。
+	// 默认 false 时依赖覆盖语义，传输失败仍保留旧副本。
+	RemoveBefore bool `json:"remove_before"`
 	// MaxSize 单位为字节；源文件大小 >= MaxSize 时跳过，0 表示不限制。
 	MaxSize int64 `json:"max_size"`
 	// MinSize 单位为字节；源文件大小 <= MinSize 时跳过，0 表示不限制。
