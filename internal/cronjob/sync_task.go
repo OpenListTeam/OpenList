@@ -70,13 +70,14 @@ func (t *SyncTask) Run() error {
 		t.ApiUrl = conf.Conf.SiteURL
 	}
 
-	// TaskExtension 的 SetCtx 可同时注入 Creator 和 ApiUrl，供 fs.Copy 创建子任务时继承。
+	// TaskExtension 的 SetCtx 会根据 Creator/ApiUrl 注入值，因此设置之后必须重新读取，
+	// 否则 fs.Copy 创建的子任务会丢失创建者（GetCreator 为 nil）。
 	ctx := t.Ctx()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// task.TaskExtension.SetCtx 会同时注入 Creator 与 ApiUrl。
 	t.SetCtx(ctx)
+	ctx = t.Ctx()
 
 	t.Status = "checking sync paths"
 	if err := validateSyncPaths(t.Args); err != nil {
