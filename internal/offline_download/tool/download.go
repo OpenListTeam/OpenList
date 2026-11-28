@@ -1,8 +1,10 @@
 package tool
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -25,11 +27,15 @@ type DownloadTask struct {
 	TempDir           string       `json:"temp_dir"`
 	DeletePolicy      DeletePolicy `json:"delete_policy"`
 	Toolname          string       `json:"toolname"`
+	FileName          string       `json:"file_name,omitempty"`
 	Status            string       `json:"-"`
 	Signal            chan int     `json:"-"`
 	GID               string       `json:"-"`
 	tool              Tool
 	callStatusRetried int
+	// fileMu guards FileName and TotalBytes. The download worker writes them
+	// while task APIs and persistence read them.
+	fileMu sync.RWMutex
 }
 
 func (t *DownloadTask) Run() error {
@@ -157,14 +163,20 @@ func (t *DownloadTask) Update() (bool, error) {
 		return false, nil
 	}
 	t.callStatusRetried = 0
-	t.SetProgress(info.Progress)
-	t.SetTotalBytes(info.TotalBytes)
-	t.Status = fmt.Sprintf("[%s]: %s", t.tool.Name(), info.Status)
+	// followedBy starts a different aria2 download. Drop the previous GID's
+	// file name and size before persisting progress, or the metadata download
+	// stays attached to the content download.
 	if info.NewGID != "" {
 		log.Debugf("followen by: %+v", info.NewGID)
 		t.GID = info.NewGID
+		t.clearFileInfo()
+		t.SetProgress(info.Progress)
+		t.Status = fmt.Sprintf("[%s]: %s", t.tool.Name(), info.Status)
 		return false, nil
 	}
+	t.SetFileInfo(info.FileName, info.TotalBytes)
+	t.SetProgress(info.Progress)
+	t.Status = fmt.Sprintf("[%s]: %s", t.tool.Name(), info.Status)
 	// if download completed
 	if info.Completed {
 		err := t.Transfer()
@@ -217,6 +229,97 @@ func (t *DownloadTask) Transfer() error {
 
 func (t *DownloadTask) GetName() string {
 	return fmt.Sprintf("download %s to (%s)", t.Url, t.DstDirPath)
+}
+
+func (t *DownloadTask) SetTotalBytes(totalBytes int64) {
+	t.fileMu.Lock()
+	t.TotalBytes = totalBytes
+	t.fileMu.Unlock()
+}
+
+func (t *DownloadTask) GetTotalBytes() int64 {
+	t.fileMu.RLock()
+	defer t.fileMu.RUnlock()
+	return t.TotalBytes
+}
+
+func (t *DownloadTask) SetFileInfo(fileName string, fileSize int64) {
+	t.fileMu.Lock()
+	defer t.fileMu.Unlock()
+	if fileName != "" {
+		t.FileName = fileName
+	}
+	if fileSize > 0 {
+		t.TotalBytes = fileSize
+	}
+}
+
+func (t *DownloadTask) clearFileInfo() {
+	t.fileMu.Lock()
+	t.FileName = ""
+	t.TotalBytes = 0
+	t.fileMu.Unlock()
+}
+
+func (t *DownloadTask) GetFileName() string {
+	t.fileMu.RLock()
+	defer t.fileMu.RUnlock()
+	return t.FileName
+}
+
+// GetFileSize returns the download size. Offline download tasks reuse TotalBytes
+// instead of storing a second copy of the same value.
+func (t *DownloadTask) GetFileSize() int64 {
+	return t.GetTotalBytes()
+}
+
+// downloadTaskPersist is the on-disk form of DownloadTask.
+// Add new exported DownloadTask fields here. file_size is accepted from older
+// builds of this feature and folded into TotalBytes.
+type downloadTaskPersist struct {
+	task.TaskExtension
+	Url          string       `json:"url"`
+	DstDirPath   string       `json:"dst_dir_path"`
+	TempDir      string       `json:"temp_dir"`
+	DeletePolicy DeletePolicy `json:"delete_policy"`
+	Toolname     string       `json:"toolname"`
+	FileName     string       `json:"file_name,omitempty"`
+	FileSize     int64        `json:"file_size,omitempty"`
+}
+
+func (t *DownloadTask) MarshalJSON() ([]byte, error) {
+	t.fileMu.RLock()
+	snap := downloadTaskPersist{
+		TaskExtension: t.TaskExtension,
+		Url:           t.Url,
+		DstDirPath:    t.DstDirPath,
+		TempDir:       t.TempDir,
+		DeletePolicy:  t.DeletePolicy,
+		Toolname:      t.Toolname,
+		FileName:      t.FileName,
+	}
+	t.fileMu.RUnlock()
+	return json.Marshal(snap)
+}
+
+func (t *DownloadTask) UnmarshalJSON(data []byte) error {
+	var snap downloadTaskPersist
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return err
+	}
+	if snap.TotalBytes == 0 && snap.FileSize > 0 {
+		snap.TotalBytes = snap.FileSize
+	}
+	t.fileMu.Lock()
+	t.TaskExtension = snap.TaskExtension
+	t.Url = snap.Url
+	t.DstDirPath = snap.DstDirPath
+	t.TempDir = snap.TempDir
+	t.DeletePolicy = snap.DeletePolicy
+	t.Toolname = snap.Toolname
+	t.FileName = snap.FileName
+	t.fileMu.Unlock()
+	return nil
 }
 
 func (t *DownloadTask) GetStatus() string {

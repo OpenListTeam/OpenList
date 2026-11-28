@@ -16,6 +16,7 @@ type AddUrlArgs struct {
 
 type Status struct {
 	TotalBytes int64
+	FileName   string
 	Progress   float64
 	NewGID     string
 	Completed  bool
