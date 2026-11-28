@@ -178,6 +178,8 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 	// 因为alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
 	// 所以这里对象不会传回到alias，也就不需要返回BalancedObjs了
 	objMap := make(map[string]model.Obj)
+	var firstErr error
+	listFailed := false
 	for _, dir := range dirs {
 		if dir == nil {
 			continue
@@ -189,6 +191,12 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 			WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
 		})
 		if err != nil {
+			// 后端列表失败时不能当成空目录返回：
+			// 依赖列出结果判断“多余对象”的调用方（例如 cron sync）会因此误删目标数据。
+			listFailed = true
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%w: failed list alias backend %s", err, dirPath)
+			}
 			continue
 		}
 		for _, obj := range tmp {
@@ -237,6 +245,10 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		if d.ExtractFolder == "" && sort.ExtractFolder != "" {
 			model.ExtractFolder(objs, sort.ExtractFolder)
 		}
+	}
+	// 只要有一个后端列表失败，就返回不完整错误，而不是静默返回部分/空结果。
+	if listFailed {
+		return nil, fmt.Errorf("%w (alias listing is incomplete, %d objs collected)", firstErr, len(objs))
 	}
 	return objs, nil
 }
