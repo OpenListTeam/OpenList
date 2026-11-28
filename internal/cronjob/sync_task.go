@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -120,24 +121,76 @@ func (t *SyncTask) Run() error {
 	return t.waitChildTasks(ctx)
 }
 
-// validateSyncPaths 拒绝同一个存储内源和目标互相包含的情况。
-// 这种配置会导致复制任务把目标复制回自己，甚至同步删除逻辑可能影响源目录。
+// validateSyncPaths 拒绝源和目标落到相同或互相包含的虚拟位置。
+// 只比较存储 ID 是不够的：balanced 挂载会让同一个虚拟路径轮换到不同存储，
+// Alias 也可能把目标指回源数据所在的实际路径，这些情况都会让同步复制或删除到自身。
 func validateSyncPaths(args SyncArgs) error {
-	srcStorage, srcActualPath, err := op.GetStorageAndActualPath(args.Src)
+	overlaps, err := syncPathsOverlap(args.Src, args.Dst)
 	if err != nil {
-		return errors.WithMessagef(err, "failed get source %s", args.Src)
+		return err
 	}
-	dstStorage, dstActualPath, err := op.GetStorageAndActualPath(args.Dst)
-	if err != nil {
-		return errors.WithMessagef(err, "failed get destination %s", args.Dst)
-	}
-	if srcStorage.GetStorage().ID != dstStorage.GetStorage().ID {
-		return nil
-	}
-	if isPathInside(dstActualPath, srcActualPath) || isPathInside(srcActualPath, dstActualPath) {
-		return fmt.Errorf("source and destination must not overlap in the same storage")
+	if overlaps {
+		return fmt.Errorf("source and destination must not overlap")
 	}
 	return nil
+}
+
+// syncPathsOverlap 判断两个同步路径的物理位置是否相同或互相包含。
+func syncPathsOverlap(src, dst string) (bool, error) {
+	srcStorage, srcActualPath, err := op.GetStorageAndActualPath(src)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed get source %s", src)
+	}
+	dstStorage, dstActualPath, err := op.GetStorageAndActualPath(dst)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed get destination %s", dst)
+	}
+
+	// 同一个物理存储（可能是同一个驱动实例，也可能是同一后端的不同挂载）时，
+	// 直接比较实际路径是否互相包含。
+	if sameBackingStore(srcStorage, dstStorage) {
+		if pathsOverlap(srcActualPath, dstActualPath) {
+			return true, nil
+		}
+	}
+
+	// balanced 挂载下同一个虚拟路径每次解析可能落到不同存储，
+	// 因此再用确定性的逻辑路径比较一次。
+	srcMount, srcLogical, err := op.GetLogicalActualPath(src)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed resolve source %s", src)
+	}
+	dstMount, dstLogical, err := op.GetLogicalActualPath(dst)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed resolve destination %s", dst)
+	}
+	if srcMount == dstMount && pathsOverlap(srcLogical, dstLogical) {
+		return true, nil
+	}
+	return false, nil
+}
+
+// sameBackingStore 判断两个驱动是否指向同一份物理数据。
+func sameBackingStore(a, b driver.Driver) bool {
+	if a.GetStorage().ID != 0 && a.GetStorage().ID == b.GetStorage().ID {
+		return true
+	}
+	// 不同挂载（ID 不同）也可能指向同一后端；此时比较驱动配置。
+	// Alias/URL 等驱动的 Paths 定义就是其实际数据位置。
+	pa, ok := a.GetAddition().(interface{ GetPaths() string })
+	if !ok {
+		return false
+	}
+	pb, ok := b.GetAddition().(interface{ GetPaths() string })
+	if !ok {
+		return false
+	}
+	return pa.GetPaths() != "" && pa.GetPaths() == pb.GetPaths()
+}
+
+// pathsOverlap 判断 child 与 parent 是否相同或互相包含。
+func pathsOverlap(a, b string) bool {
+	return isPathInside(a, b) || isPathInside(b, a)
 }
 
 // syncDir 递归同步一个目录。

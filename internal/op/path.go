@@ -44,6 +44,27 @@ func GetStorageVirtualMountPath(rawPath string) (string, error) {
 	return utils.FixAndCleanPath(utils.GetActualMountPath(storages[0].GetStorage().MountPath)), nil
 }
 
+// GetLogicalActualPath 返回路径所在的虚拟挂载点（不含 balance 后缀），
+// 以及它在该挂载点下的相对路径。
+// 与 GetStorageAndActualPath 不同，它固定使用排序后的第一个存储，
+// 不会推进 balanced-storage 计数器，因此对同一个逻辑路径是确定性的，
+// 适合用于比较两个逻辑路径是否会落到相同的虚拟位置。
+func GetLogicalActualPath(rawPath string) (virtualMountPath, actualPath string, err error) {
+	rawPath = utils.FixAndCleanPath(rawPath)
+	storages := getStoragesByPath(rawPath)
+	if len(storages) == 0 {
+		if rawPath == "/" {
+			err = errs.NewErr(errs.StorageNotFound, "please add a storage first")
+			return
+		}
+		err = errs.NewErr(errs.StorageNotFound, "rawPath: %s", rawPath)
+		return
+	}
+	virtualMountPath = utils.FixAndCleanPath(utils.GetActualMountPath(storages[0].GetStorage().MountPath))
+	actualPath = utils.FixAndCleanPath(strings.TrimPrefix(rawPath, virtualMountPath))
+	return
+}
+
 // urlTreeSplitLineFormPath 分割path中分割真实路径和UrlTree定义字符串
 func urlTreeSplitLineFormPath(path string) (pp string, file string) {
 	// url.PathUnescape 会移除 // ，手动加回去
