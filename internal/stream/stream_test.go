@@ -5,7 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -181,5 +185,96 @@ func TestStreamSectionReader(t *testing.T) {
 				conf.MinFreeMemory = prevMinFreeMemory
 			})
 		}
+	}
+}
+
+type slowChunkReader struct {
+	r            io.Reader
+	reads        int
+	inSecondRead chan struct{}
+	freed        chan struct{}
+	done         chan struct{}
+	once         sync.Once
+}
+
+func (s *slowChunkReader) Read(p []byte) (int, error) {
+	s.reads++
+	if s.reads == 2 {
+		// 通知服务端 writeLoop 已进入第 2 次 Read，随后等待 FreeSectionReader 完成
+		close(s.inSecondRead)
+		<-s.freed
+	}
+	if len(p) > 8192 {
+		p = p[:8192]
+	}
+	n, err := s.r.Read(p)
+	if err != nil {
+		s.once.Do(func() { close(s.done) })
+	}
+	return n, err
+}
+
+func TestHybridSectionReaderEarlyHTTPResponse(t *testing.T) {
+	prevAutoMemoryLimit := conf.AutoMemoryLimit
+	prevMaxBlockLimit := conf.MaxBlockLimit
+	prevConf := conf.Conf
+	t.Cleanup(func() {
+		conf.AutoMemoryLimit = prevAutoMemoryLimit
+		conf.MaxBlockLimit = prevMaxBlockLimit
+		conf.Conf = prevConf
+	})
+	conf.AutoMemoryLimit = 0
+	conf.MaxBlockLimit = 1 << 20
+	conf.Conf = &conf.Config{}
+
+	const size = 16 << 10
+	f := &stream.FileStream{
+		Obj:    &model.Object{Size: size},
+		Reader: io.NopCloser(bytes.NewReader(make([]byte, size))),
+	}
+	ss, err := stream.NewStreamSectionReader(f, size, nil)
+	if err != nil {
+		t.Fatalf("NewStreamSectionReader() error = %v", err)
+	}
+	rs, err := ss.GetSectionReader(0, size)
+	if err != nil {
+		t.Fatalf("GetSectionReader() error = %v", err)
+	}
+
+	inSecondRead := make(chan struct{})
+	// 服务端确认 writeLoop 已卡在第 2 次 Read 后，再提前返回 401
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-inSecondRead
+		w.Header().Set("Connection", "close")
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	body := &slowChunkReader{
+		r:            rs,
+		inSecondRead: inSecondRead,
+		freed:        make(chan struct{}),
+		done:         make(chan struct{}),
+	}
+	req, err := http.NewRequest(http.MethodPut, srv.URL, body)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.ContentLength = size
+
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("Client.Do() error = %v", err)
+	}
+	res.Body.Close()
+
+	// readLoop 已收到 401 返回，此时 writeLoop 必然正卡在第 2 次 Read 上
+	ss.FreeSectionReader(rs)
+	close(body.freed)
+
+	select {
+	case <-body.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for HTTP writeLoop to observe closed reader")
 	}
 }
