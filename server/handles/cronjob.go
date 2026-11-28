@@ -2,6 +2,7 @@ package handles
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // CronJobReq 是创建/更新计划任务时的请求体。
@@ -42,6 +44,21 @@ func (r *CronJobReq) toModel() (*model.CronJob, error) {
 		Enabled:   r.Enabled,
 		Args:      args,
 	}, nil
+}
+
+// CronJobReq.UpdateModel 更新已有模型的可配置字段，同时保留运行历史。
+// LastRunAt/LastError 等运行状态不属于配置，编辑时不能把它们清空。
+func (r *CronJobReq) UpdateModel(job *model.CronJob) error {
+	args := string(r.Args)
+	if args == "" {
+		args = "{}"
+	}
+	job.Name = r.Name
+	job.Type = r.Type
+	job.CronSpecs = r.CronSpecs
+	job.Enabled = r.Enabled
+	job.Args = args
+	return nil
 }
 
 // validateCronJobReq 校验 cron 表达式、任务类型和任务参数。
@@ -144,36 +161,45 @@ func UpdateCronJob(c *gin.Context) {
 		common.ErrorStrResp(c, "invalid id", 400)
 		return
 	}
-	old, err := db.GetCronJobByID(uint(id))
-	if err != nil {
-		common.ErrorResp(c, err, 500, true)
-		return
-	}
-	if cronjob.IsRunning(old.ID) {
-		common.ErrorStrResp(c, "cronjob is running", 409)
-		return
-	}
 	if err := validateCronJobReq(&req); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
 
-	job, err := req.toModel()
+	// 在调度器运行锁保护下读取-修改-写入：
+	// 避免与 startJob 交错导致“更新成功后调度器仍按旧配置触发”。
+	var updated *model.CronJob
+	err = cronjob.MutateCronJobSafely(uint(id), func() error {
+		old, err := db.GetCronJobByID(uint(id))
+		if err != nil {
+			return err
+		}
+		if err := req.UpdateModel(old); err != nil {
+			return err
+		}
+		// 保留数据库主键与运行历史，只重置下一次执行时间。
+		if err := setNextRunAt(old); err != nil {
+			return err
+		}
+		if err := db.UpdateCronJob(old); err != nil {
+			return err
+		}
+		updated = old
+		return nil
+	})
 	if err != nil {
-		common.ErrorResp(c, err, 400)
-		return
-	}
-	// 保留数据库主键，并重置下一次执行时间；调度器会在 30 秒内看到新配置。
-	job.ID = old.ID
-	if err := setNextRunAt(job); err != nil {
-		common.ErrorResp(c, err, 400)
-		return
-	}
-	if err := db.UpdateCronJob(job); err != nil {
+		if errors.Is(err, cronjob.ErrJobRunning) {
+			common.ErrorStrResp(c, "cronjob is running", 409)
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ErrorResp(c, err, 404, true)
+			return
+		}
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
-	common.SuccessResp(c, job)
+	common.SuccessResp(c, updated)
 }
 
 // DeleteCronJob 删除一条计划任务；正在运行的任务不允许删除。
@@ -183,11 +209,15 @@ func DeleteCronJob(c *gin.Context) {
 		common.ErrorStrResp(c, "invalid id", 400)
 		return
 	}
-	if cronjob.IsRunning(uint(id)) {
-		common.ErrorStrResp(c, "cronjob is running", 409)
-		return
-	}
-	if err := db.DeleteCronJobByID(uint(id)); err != nil {
+	// 删除同样在运行锁保护下执行，避免删除成功后调度器仍启动已删除的任务。
+	err = cronjob.MutateCronJobSafely(uint(id), func() error {
+		return db.DeleteCronJobByID(uint(id))
+	})
+	if err != nil {
+		if errors.Is(err, cronjob.ErrJobRunning) {
+			common.ErrorStrResp(c, "cronjob is running", 409)
+			return
+		}
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
