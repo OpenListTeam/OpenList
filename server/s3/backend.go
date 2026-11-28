@@ -214,6 +214,11 @@ func (b *s3Backend) GetObject(ctx context.Context, bucketName, objectName string
 	if val, ok := b.meta.Load(fp); ok {
 		metaMap := val.(map[string]string)
 		for k, v := range metaMap {
+			// A stored checksum covers the whole object; sent with a part
+			// of it, SDKs that validate checksums reject the response.
+			if rnge != nil && strings.HasPrefix(k, "X-Amz-Checksum-") {
+				continue
+			}
 			meta[k] = v
 		}
 	}
