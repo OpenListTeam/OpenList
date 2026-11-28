@@ -6,6 +6,7 @@ import (
 	"fmt"
 	stdpath "path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -426,6 +427,8 @@ func isPathInside(child, parent string) bool {
 }
 
 // RegisterSyncHandler 初始化同步任务管理器并注册 sync 类型。
+// 该函数在每次 bootstrap.Start 时都会被调用，因此这里用 sync.Once 保证
+// handler 只注册一次，同时每次都重建 manager 以支持嵌入式场景下的重复启动。
 func RegisterSyncHandler() {
 	SyncTaskManager = tache.NewManager[*SyncTask](
 		// 最多同时编排两条同步；具体文件上传并发仍由 CopyTaskManager 控制。
@@ -438,24 +441,30 @@ func RegisterSyncHandler() {
 			updateTaskDataFunc("cron_sync"),
 		),
 	)
-	RegisterHandler("sync", DescribedHandler{
-		Info: syncHandlerInfo(),
-		HandlerFunc: HandlerFunc{
-			ValidateFunc: func(raw json.RawMessage) error {
-				var args SyncArgs
-				if err := json.Unmarshal(raw, &args); err != nil {
-					return fmt.Errorf("invalid sync args: %w", err)
-				}
-				if err := validateSyncArgs(args); err != nil {
-					return err
-				}
-				// 创建/编辑时也要检查路径互套；不能等到定时触发时才暴露配置错误。
-				return validateSyncPaths(args)
+	// 重复注册会 panic；不再重复启动时直接返回。
+	registerSyncHandlerOnce.Do(func() {
+		RegisterHandler("sync", DescribedHandler{
+			Info: syncHandlerInfo(),
+			HandlerFunc: HandlerFunc{
+				ValidateFunc: func(raw json.RawMessage) error {
+					var args SyncArgs
+					if err := json.Unmarshal(raw, &args); err != nil {
+						return fmt.Errorf("invalid sync args: %w", err)
+					}
+					if err := validateSyncArgs(args); err != nil {
+						return err
+					}
+					// 创建/编辑时也要检查路径互套；不能等到定时触发时才暴露配置错误。
+					return validateSyncPaths(args)
+				},
+				RunFunc: runSync,
 			},
-			RunFunc: runSync,
-		},
+		})
 	})
 }
+
+// registerSyncHandlerOnce 保证 sync handler 在进程内只注册一次。
+var registerSyncHandlerOnce sync.Once
 
 // runSync 创建并等待一个 SyncTask；调度器据此保持 running 锁直到整个同步结束。
 func runSync(ctx context.Context, raw json.RawMessage) error {

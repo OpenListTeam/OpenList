@@ -57,6 +57,7 @@ func InitCronJobScheduler() error {
 }
 
 // StopCronJobScheduler 停止产生新的调度 tick，并取消/等待当前正在执行的任务。
+// 停止后允许再次调用 InitCronJobScheduler 重新启动，支持嵌入式生命周期。
 func StopCronJobScheduler() {
 	defaultScheduler.mu.Lock()
 	if !defaultScheduler.started || defaultScheduler.scheduler == nil {
@@ -73,6 +74,14 @@ func StopCronJobScheduler() {
 
 	// 等待在锁外进行，避免长时间阻塞其他调度操作。
 	defaultScheduler.wg.Wait()
+
+	// 运行中的任务已全部退出，重置内部状态，使调度器可以再次初始化。
+	defaultScheduler.mu.Lock()
+	defaultScheduler.scheduler = nil
+	defaultScheduler.running = make(map[uint]struct{})
+	defaultScheduler.cancels = make(map[uint]context.CancelFunc)
+	defaultScheduler.started = false
+	defaultScheduler.mu.Unlock()
 }
 
 // IsRunning 查询某个计划任务是否正在执行。
