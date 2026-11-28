@@ -75,6 +75,11 @@ type IntRange struct {
 	max int
 	// values 是该字段命中的所有取值。
 	values map[int]struct{}
+	// wildcard 表示该字段以 "*" 开头。
+	// DOM/DOW 是否按 AND 或 OR 组合必须依据这个语法信息判断，
+	// 而不能用“展开后是否覆盖全部取值”代替：例如 "1-31" 覆盖了全部日期，
+	// 但 crontab 仍把它视为受限字段，需要与受限的 DOW 做 OR 组合。
+	wildcard bool
 }
 
 // Contains 判断某个整数是否命中当前字段。
@@ -139,6 +144,10 @@ func parseCronField(field string, min, max int) (IntRange, error) {
 		max:    max,
 		values: make(map[int]struct{}),
 	}
+
+	// crontab 通过字段是否以 "*" 开头来判断通配，
+	// "*/5" 这类步进写法同样属于通配字段。
+	result.wildcard = strings.HasPrefix(field, "*")
 
 	// 逗号分隔的每一项都独立解析后合并。
 	for _, part := range strings.Split(field, ",") {
@@ -236,12 +245,13 @@ func formatCronField(field IntRange) string {
 // matches 判断时间点是否命中整条 cron 规则。
 func (c CronSpec) matches(t time.Time) bool {
 	// crontab 的标准行为：DOM 和 DOW 同时受限时，任一命中即可；
-	// 其中一方为通配（*，即覆盖完整范围）时按 AND 处理，只有另一方生效。
-	domFull := len(c.dayOfMonth.values) == c.dayOfMonth.max-c.dayOfMonth.min+1
-	// DOW 解析后 7 已并入 0，完整范围是 0..6 共 7 个值。
-	dowFull := len(c.dayOfWeek.values) == 7
+	// 其中一方以 "*" 开头（通配）时按 AND 处理，只有另一方生效。
+	// 这里必须使用解析时记录的 wildcard，而不能用命中集合是否覆盖完整范围来判断：
+	// "*/2" 与 "1-31" 都覆盖多个取值，但前者是通配语法，语义与后者不同。
+	domStar := c.dayOfMonth.wildcard
+	dowStar := c.dayOfWeek.wildcard
 	var dayMatches bool
-	if domFull || dowFull {
+	if domStar || dowStar {
 		dayMatches = c.dayOfMonth.Contains(t.Day()) && c.dayOfWeek.Contains(int(t.Weekday()))
 	} else {
 		dayMatches = c.dayOfMonth.Contains(t.Day()) || c.dayOfWeek.Contains(int(t.Weekday()))

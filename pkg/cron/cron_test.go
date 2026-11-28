@@ -75,3 +75,33 @@ func TestCronSpecDomDowOr(t *testing.T) {
 		t.Fatalf("unexpected next time: %s", next)
 	}
 }
+
+// TestCronSpecFullRangeDomIsRestricted 测试 "1-31" 这类覆盖全部取值的 DOM
+// 仍然是受限字段，必须与受限的 DOW 做 OR 组合。
+// 若按“展开后是否覆盖全部取值”判断通配，"0 0 1-31 * 1" 会被错误地限制为周一。
+func TestCronSpecFullRangeDomIsRestricted(t *testing.T) {
+	spec, err := ParseCronSpec("0 0 1-31 * 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2026-11-10 是周二，DOM 受限命中全部日期，应当在下一天零点触发。
+	next := spec.NextAfter(time.Date(2026, 11, 10, 0, 0, 0, 0, time.Local))
+	if next.Month() != time.November || next.Day() != 11 {
+		t.Fatalf("expected daily run for full-range DOM with restricted DOW, got %s", next)
+	}
+}
+
+// TestCronSpecStepWildcardIsWildcard 测试 "*/2" 这类以 "*" 开头的步进写法仍是通配语法。
+// DOM 通配时按 AND 组合：既要满足 DOM 的奇数日，也要满足 DOW 的周一。
+func TestCronSpecStepWildcardIsWildcard(t *testing.T) {
+	spec, err := ParseCronSpec("0 0 */2 * 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2026-11-10（周二）之后满足“奇数日且为周一”的下一次是 2026-11-23。
+	next := spec.NextAfter(time.Date(2026, 11, 10, 0, 0, 0, 0, time.Local))
+	if next.Month() != time.November || next.Day() != 23 || next.Weekday() != time.Monday {
+		t.Fatalf("expected next odd-day Monday for step wildcard DOM, got %s", next)
+	}
+}
+
