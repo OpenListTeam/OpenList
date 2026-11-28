@@ -267,8 +267,12 @@ func (c CronSpec) matches(t time.Time) bool {
 func (c CronSpec) NextAfter(after time.Time) time.Time {
 	// 去掉秒和纳秒，cron 只精确到分钟。
 	next := after.Truncate(time.Minute)
-	// 最多向后搜索一年（366 天 * 1440 分钟），避免畸形规则导致死循环。
-	for i := 0; i < 527040; i++ {
+	// 搜索上限要覆盖最稀疏的合法规则：
+	// "0 0 29 2 *" 这类闰日规则在非闰年不会命中，跨世纪时最长间隔可达 8 年
+	// （例如 2096-02-29 之后要等到 2104-02-29）。
+	// 这里按 8 年 + 一天的上限搜索，避免正常规则被误判为无解。
+	const maxSearchMinutes = (8*366 + 1) * 24 * 60
+	for i := 0; i < maxSearchMinutes; i++ {
 		next = next.Add(time.Minute)
 		if c.matches(next) {
 			return next

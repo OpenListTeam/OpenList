@@ -105,3 +105,19 @@ func TestCronSpecStepWildcardIsWildcard(t *testing.T) {
 	}
 }
 
+// TestCronSpecLeapDay 测试闰日规则跨越非闰年仍能计算出下一次触发时间。
+// "0 0 29 2 *" 在平年不会命中，上一次与下一次之间可能相隔数年。
+func TestCronSpecLeapDay(t *testing.T) {
+	spec, err := ParseCronSpec("0 0 29 2 *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2026-03-01 之后下一个闰日是 2028-02-29。
+	next := spec.NextAfter(time.Date(2026, 3, 1, 0, 0, 0, 0, time.Local))
+	if next.IsZero() {
+		t.Fatal("leap day schedule should have a next run time")
+	}
+	if next.Year() != 2028 || next.Month() != time.February || next.Day() != 29 {
+		t.Fatalf("unexpected next leap day: %s", next)
+	}
+}
