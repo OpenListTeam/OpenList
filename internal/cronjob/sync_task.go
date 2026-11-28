@@ -784,6 +784,14 @@ func runSync(ctx context.Context, raw json.RawMessage) error {
 	if jobID, ok := CronJobIDFromContext(ctx); ok {
 		syncTask.CronJobID = jobID
 	}
+	// 任务在进入 worker 前就会出现在任务列表中；普通用户查询任务会访问 Creator，
+	// 因此必须在入队前设置好创建者，避免 nil 解引用 panic。
+	if admin, err := op.GetAdmin(); err == nil {
+		syncTask.Creator = admin
+	}
+	if syncTask.ApiUrl == "" {
+		syncTask.ApiUrl = conf.Conf.SiteURL
+	}
 	// 独立注册运行中的同步任务：即使管理器中该任务的记录被用户删除，
 	// 调度器的运行锁也能保持到同步真正结束，避免与后续运行重叠。
 	activeSyncs.Store(syncTask.GetID(), syncTask)

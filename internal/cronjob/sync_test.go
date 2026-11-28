@@ -484,6 +484,48 @@ func TestSchedulerRestoreGuardBlocksDuplicateRun(t *testing.T) {
 	}
 }
 
+// TestRunSyncAssignsCreatorBeforeQueueing 覆盖入队前创建者的设置。
+// 任务在 worker 执行前就可见，普通用户查询时会读取 Creator；必须非 nil 以避免 panic。
+func TestRunSyncAssignsCreatorBeforeQueueing(t *testing.T) {
+	raw, err := json.Marshal(SyncArgs{Src: "/src", Dst: "/dst"})
+	if err != nil {
+		t.Fatalf("failed marshal args: %+v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// runSync 会阻塞等待任务终态；测试在观察到任务后立即取消。
+		_ = runSync(ctx, raw)
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	var found *SyncTask
+	for time.Now().Before(deadline) {
+		activeSyncs.Range(func(_, value any) bool {
+			if task, ok := value.(*SyncTask); ok {
+				found = task
+				return false
+			}
+			return true
+		})
+		if found != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if found == nil {
+		t.Fatal("runSync did not register an active sync task")
+	}
+	if found.GetCreator() == nil {
+		t.Fatal("sync task must have a creator assigned before queueing")
+	}
+	if found.CronJobID != 0 {
+		t.Fatalf("manual run should not be associated with a cronjob, got %d", found.CronJobID)
+	}
+	// 等待 runSync 退出，避免影响后续测试。
+	SyncTaskManager.Wait()
+}
+
 // TestCronSchedulerTickRunsExpiredJob 覆盖调度器真实 tick 到期触发逻辑。
 // 不等待 30 秒 ticker，而是直接调用每次 tick 执行的 tickCronJobs。
 func TestCronSchedulerTickRunsExpiredJob(t *testing.T) {
